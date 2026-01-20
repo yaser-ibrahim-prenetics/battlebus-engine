@@ -1,0 +1,235 @@
+// ============================================================================
+// IM8 BATTLE BUS - EVENT DEFINITIONS
+// ============================================================================
+// These events replace the old Task Table polling system.
+// Each event triggers a durable Inngest function instead of creating a DB row.
+
+export type ShopifyOrderCreatedEvent = {
+  name: "shopify/order.created";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    orderJson: ShopifyOrderPayload;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyRefundCreatedEvent = {
+  name: "shopify/refund.created";
+  data: {
+    shopifyOrderId: string;
+    refundId: string;
+    shopifyStore: string;
+    refundJson: ShopifyRefundPayload;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyOrderCancelledEvent = {
+  name: "shopify/order.cancelled";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    orderJson: ShopifyOrderPayload;
+    cancelledAt: string;
+    cancelReason: string | null;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyOrderPaidEvent = {
+  name: "shopify/order.paid";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    orderJson: ShopifyOrderPayload;
+    receivedAt: string;
+  };
+};
+
+export type GpsFulfilmentReceivedEvent = {
+  name: "gps/fulfilment.received";
+  data: {
+    gpsOrderId: string;
+    shopifyOrderId: string;
+    trackingNumber: string;
+    carrierCode: string;
+    fulfilmentJson: GpsFulfilmentPayload;
+    receivedAt: string;
+  };
+};
+
+export type StordFulfilmentReceivedEvent = {
+  name: "stord/fulfilment.received";
+  data: {
+    stordOrderId: string;
+    shopifyOrderId: string;
+    trackingNumber: string;
+    carrierCode: string;
+    fulfilmentJson: StordFulfilmentPayload;
+    receivedAt: string;
+  };
+};
+
+// Union type for all events
+export type BattleBusEvents =
+  | ShopifyOrderCreatedEvent
+  | ShopifyRefundCreatedEvent
+  | ShopifyOrderCancelledEvent
+  | ShopifyOrderPaidEvent
+  | GpsFulfilmentReceivedEvent
+  | StordFulfilmentReceivedEvent;
+
+// ============================================================================
+// PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
+// ============================================================================
+
+export interface ShopifyOrderPayload {
+  id: number;
+  name: string;
+  email: string;
+  created_at: string;
+  updated_at: string;
+  total_price: string;
+  subtotal_price: string;
+  total_tax: string;
+  currency: string;
+  financial_status: string;
+  fulfillment_status: string | null;
+  line_items: ShopifyLineItem[];
+  shipping_address: ShopifyAddress | null;
+  billing_address: ShopifyAddress | null;
+  shipping_lines: ShopifyShippingLine[];
+  discount_codes: ShopifyDiscountCode[];
+  note: string | null;
+  tags: string;
+  customer: ShopifyCustomer | null;
+  refunds: ShopifyRefund[];
+}
+
+export interface ShopifyLineItem {
+  id: number;
+  variant_id: number | null;
+  title: string;
+  quantity: number;
+  sku: string;
+  variant_title: string | null;
+  vendor: string | null;
+  fulfillment_service: string;
+  product_id: number | null;
+  requires_shipping: boolean;
+  taxable: boolean;
+  gift_card: boolean;
+  name: string;
+  price: string;
+  total_discount: string;
+  fulfillment_status: string | null;
+  properties: { name: string; value: string }[];
+  tax_lines: ShopifyTaxLine[];
+}
+
+export interface ShopifyAddress {
+  first_name: string;
+  last_name: string;
+  address1: string;
+  address2: string | null;
+  city: string;
+  province: string;
+  country: string;
+  zip: string;
+  phone: string | null;
+  company: string | null;
+  country_code: string;
+  province_code: string;
+}
+
+export interface ShopifyShippingLine {
+  id: number;
+  title: string;
+  price: string;
+  code: string;
+  source: string;
+  carrier_identifier: string | null;
+  tax_lines: ShopifyTaxLine[];
+}
+
+export interface ShopifyTaxLine {
+  title: string;
+  price: string;
+  rate: number;
+}
+
+export interface ShopifyDiscountCode {
+  code: string;
+  amount: string;
+  type: string;
+}
+
+export interface ShopifyCustomer {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  tags: string;
+}
+
+export interface ShopifyRefund {
+  id: number;
+  created_at: string;
+  refund_line_items: ShopifyRefundLineItem[];
+  transactions: ShopifyTransaction[];
+}
+
+export interface ShopifyRefundLineItem {
+  id: number;
+  quantity: number;
+  line_item_id: number;
+  line_item: ShopifyLineItem;
+  subtotal: string;
+  total_tax: string;
+}
+
+export interface ShopifyTransaction {
+  id: number;
+  kind: string;
+  gateway: string;
+  status: string;
+  amount: string;
+}
+
+export interface ShopifyRefundPayload {
+  id: number;
+  order_id: number;
+  created_at: string;
+  refund_line_items: ShopifyRefundLineItem[];
+  transactions: ShopifyTransaction[];
+}
+
+export interface GpsFulfilmentPayload {
+  orderId: string;
+  orderNumber: string;
+  trackingNumber: string;
+  carrierCode: string;
+  shippedDate: string;
+  items: {
+    sku: string;
+    quantity: number;
+  }[];
+}
+
+export interface StordFulfilmentPayload {
+  orderId: string;
+  orderNumber: string;
+  trackingNumber: string;
+  carrier: string;
+  shippedAt: string;
+  lineItems: {
+    sku: string;
+    quantity: number;
+  }[];
+}
+
