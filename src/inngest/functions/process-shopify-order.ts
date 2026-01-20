@@ -10,11 +10,12 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
-  toD365SalesOrderHeader,
-  toD365SalesOrderLine,
+  toD365SalesOrderHeaderV3,
+  toD365SalesOrderLines,
   toGpsOutboundOrder,
   calculatePrepaymentAmount,
   shouldSendToGps,
+  determineWarehouse,
 } from "@/lib/transformers/order";
 import type { ShopifyOrderPayload } from "../events";
 
@@ -34,6 +35,7 @@ export const processShopifyOrder = inngest.createFunction(
   { event: "shopify/order.created" },
   async ({ event, step }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    const order = orderJson as ShopifyOrderPayload;
 
     console.log(`[Battle Bus] Processing order: ${shopifyOrderName} (${shopifyOrderId})`);
 
@@ -46,6 +48,11 @@ export const processShopifyOrder = inngest.createFunction(
         orderName: shopifyOrderName,
       };
     }
+
+    // Determine warehouse based on shipping address
+    const warehouseName = determineWarehouse(
+      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+    );
 
     // =========================================================================
     // STEP 1: Check for existing D365 order (idempotency check)
@@ -71,11 +78,11 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     const d365Header = await step.run("create-d365-header", async () => {
       if (!config.features.enableDynamicsSync) {
-        return { SalesOrderNumber: `SKIP-${shopifyOrderId}` };
+        return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: {} };
       }
 
-      const header = toD365SalesOrderHeader(orderJson as unknown as Parameters<typeof toD365SalesOrderHeader>[0]);
-      return dynamics.createSalesOrderHeader(header);
+      const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
+      return dynamics.createSalesOrderHeaderV3(headerRequest);
     });
 
     const salesOrderNumber = d365Header.SalesOrderNumber;
@@ -89,13 +96,13 @@ export const processShopifyOrder = inngest.createFunction(
         return;
       }
 
-      const order = orderJson as unknown as Parameters<typeof toD365SalesOrderLine>[0] & { line_items: Parameters<typeof toD365SalesOrderLine>[0][] };
-      
-      for (const lineItem of order.line_items) {
-        if (lineItem.requires_shipping && !lineItem.gift_card) {
-          const line = toD365SalesOrderLine(lineItem, salesOrderNumber);
-          await dynamics.createSalesOrderLine(line);
-        }
+      const lines = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
+
+      for (const line of lines) {
+        await dynamics.createSalesOrderLine({
+          ...line,
+          salesOrderNumber,
+        });
       }
     });
 
@@ -108,7 +115,7 @@ export const processShopifyOrder = inngest.createFunction(
       if (!config.features.enableDynamicsSync) {
         return;
       }
-      await dynamics.confirmSalesOrder(config.dynamics.dataAreaId, salesOrderNumber);
+      await dynamics.confirmSalesOrder(salesOrderNumber, config.dynamics.dataAreaId);
     });
 
     console.log(`[Battle Bus] Confirmed D365 order: ${salesOrderNumber}`);
@@ -121,17 +128,11 @@ export const processShopifyOrder = inngest.createFunction(
         return;
       }
 
-      const order = orderJson as unknown as Parameters<typeof calculatePrepaymentAmount>[0];
       const prepaymentAmount = calculatePrepaymentAmount(order);
 
-      await dynamics.createPrepayment({
-        dataAreaId: config.dynamics.dataAreaId,
-        SalesOrderNumber: salesOrderNumber,
-        PrepaymentAmount: prepaymentAmount,
-        PaymentReference: `SHOPIFY-${shopifyOrderId}`,
-        PaymentDate: new Date().toISOString().split("T")[0],
-        CurrencyCode: order.currency,
-      });
+      if (prepaymentAmount > 0) {
+        await dynamics.createPrepayment(salesOrderNumber, config.dynamics.dataAreaId);
+      }
     });
 
     console.log(`[Battle Bus] Created prepayment for: ${salesOrderNumber}`);
@@ -139,13 +140,11 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     // STEP 6: Send to GPS Warehouse (with self-healing retry)
     // =========================================================================
-    const order = orderJson as unknown as Parameters<typeof shouldSendToGps>[0];
-    
     if (shouldSendToGps(order) && config.features.enableGpsSync) {
       try {
         await step.run("send-to-gps-warehouse", async () => {
-          const gpsOrder = toGpsOutboundOrder(order);
-          return gps.createOutboundOrder(gpsOrder);
+          const gpsOrder = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
+          return gps.createOutboundOrder(gpsOrder, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
         });
 
         console.log(`[Battle Bus] Sent to GPS warehouse: ${shopifyOrderName}`);
@@ -161,8 +160,8 @@ export const processShopifyOrder = inngest.createFunction(
 
           // Retry after sleep
           await step.run("retry-gps-after-oos", async () => {
-            const gpsOrder = toGpsOutboundOrder(order);
-            return gps.createOutboundOrder(gpsOrder);
+            const gpsOrder = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
+            return gps.createOutboundOrder(gpsOrder, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
           });
         } else {
           throw error; // Re-throw non-OOS errors for Inngest retry
@@ -178,6 +177,7 @@ export const processShopifyOrder = inngest.createFunction(
       shopifyOrderId,
       shopifyOrderName,
       d365OrderNumber: salesOrderNumber,
+      warehouse: warehouseName,
       processedAt: new Date().toISOString(),
     };
   }

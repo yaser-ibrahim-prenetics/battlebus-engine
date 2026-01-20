@@ -1,0 +1,103 @@
+{
+  "warehouses": {
+    "GPS Warehouse": {
+      "countryCode": "US",
+      "name": "GPS Warehouse",
+      "orderingCustomerAccountNumber": "U001-C000000001",
+      "dimensionValue": "Consumer - Nutrition",
+      "project": "P1201",
+      "dataAreaId": "U001",
+      "gpsCode": "JFK01W",
+      "logisticsChannel": "GPS-IM8-STANDARD",
+      "fulfilment": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "USOPS-WH04",
+        "shippingWarehouseLocationId": "Primary"
+      },
+      "return": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "USOPS-WH04-Q",
+        "shippingWarehouseLocationId": "Return"
+      },
+      "item": {
+        "tax": "IM8-SER-000001",
+        "refund": "IM8-SER-000003",
+        "shipping": "IM8-SER-000002"
+      }
+    },
+    "GPS UK Warehouse": {
+      "countryCode": "GB",
+      "name": "GPS UK Warehouse",
+      "orderingCustomerAccountNumber": "H007-C000000001",
+      "dimensionValue": "Consumer - Nutrition",
+      "project": "P1201",
+      "dataAreaId": "H007",
+      "gpsCode": "GB03RS",
+      "logisticsChannel": "GPS-IM8-STANDARD-UK",
+      "fulfilment": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH02",
+        "shippingWarehouseLocationId": "Primary"
+      },
+      "return": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH02-Q",
+        "shippingWarehouseLocationId": "Return"
+      },
+      "item": {
+        "tax": "IM8-SER-000001",
+        "refund": "IM8-SER-000003",
+        "shipping": "IM8-SER-000002"
+      }
+    },
+    "STORD ATL Location": {
+      "countryCode": "US",
+      "name": "STORD ATL Location",
+      "orderingCustomerAccountNumber": "U001-C000000006",
+      "dimensionValue": "Consumer - Nutrition",
+      "project": "P1201",
+      "dataAreaId": "U001",
+      "fulfilment": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "USOPS-WH05",
+        "shippingWarehouseLocationId": "Primary"
+      },
+      "return": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "USOPS-WH05-Q",
+        "shippingWarehouseLocationId": "Return"
+      },
+      "item": {
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
+        "shipping": "IM8-SER-000003"
+      }
+    },
+    "HK Warehouse": {
+      "countryCode": "HK",
+      "name": "HK Warehouse",
+      "orderingCustomerAccountNumber": "H005-C000000001",
+      "dimensionValue": "Consumer - Nutrition",
+      "project": "P1201",
+      "dataAreaId": "H007",
+      "fulfilment": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH01",
+        "shippingWarehouseLocationId": "Primary"
+      },
+      "return": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH01",
+        "shippingWarehouseLocationId": "Return"
+      },
+      "item": {
+        "tax": "IM8-SER-000001",
+        "refund": "IM8-SER-000003",
+        "shipping": "IM8-SER-000002"
+      }
+    }
+  },
+  "gpsWarehouses": ["GPS Warehouse", "GPS UK Warehouse"],
+  "stordWarehouses": ["STORD ATL Location"],
+  "defaultWarehouse": "GPS Warehouse"
+}

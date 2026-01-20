@@ -121,13 +121,14 @@ export const processGpsFulfilment = inngest.createFunction(
 
       await dynamics.createFulfilment({
         dataAreaId: config.dynamics.dataAreaId,
-        SalesOrderNumber: d365Order.SalesOrderNumber!,
-        PackingSlipId: `GPS-${trackingNumber}`,
-        ShipDate: fulfilment.shippedDate || new Date().toISOString().split("T")[0],
-        Lines: fulfilment.items.map((item, index) => ({
-          ItemNumber: item.sku,
-          Quantity: item.quantity,
-          LineNumber: index + 1,
+        salesOrderNumber: d365Order.SalesOrderNumber!,
+        type: "PackingSlip",
+        confirmedShippedDate: fulfilment.shippedDate || new Date().toISOString().split("T")[0],
+        lines: fulfilment.items.map((item) => ({
+          itemNumber: item.sku,
+          quantity: item.quantity,
+          shippingSiteId: "Prenetics",
+          trackingNumber: trackingNumber,
         })),
       });
     });

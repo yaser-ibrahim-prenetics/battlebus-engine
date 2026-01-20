@@ -118,13 +118,14 @@ export const processStordFulfilment = inngest.createFunction(
 
       await dynamics.createFulfilment({
         dataAreaId: config.dynamics.dataAreaId,
-        SalesOrderNumber: d365Order.SalesOrderNumber!,
-        PackingSlipId: `STORD-${trackingNumber}`,
-        ShipDate: fulfilment.shippedAt?.split("T")[0] || new Date().toISOString().split("T")[0],
-        Lines: fulfilment.lineItems.map((item, index) => ({
-          ItemNumber: item.sku,
-          Quantity: item.quantity,
-          LineNumber: index + 1,
+        salesOrderNumber: d365Order.SalesOrderNumber!,
+        type: "PackingSlip",
+        confirmedShippedDate: fulfilment.shippedAt?.split("T")[0] || new Date().toISOString().split("T")[0],
+        lines: fulfilment.lineItems.map((item) => ({
+          itemNumber: item.sku,
+          quantity: item.quantity,
+          shippingSiteId: "Prenetics",
+          trackingNumber: trackingNumber,
         })),
       });
     });

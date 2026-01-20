@@ -10,16 +10,20 @@ export const config = {
     tenantId: process.env.D365_TENANT_ID || "",
     clientId: process.env.D365_CLIENT_ID || "",
     clientSecret: process.env.D365_CLIENT_SECRET || "",
+    // OAuth2 scope for D365 (v2.0 endpoint)
+    scope: process.env.D365_SCOPE || `${process.env.D365_BASE_URL}/.default`,
+    // Legacy resource for v1.0 endpoint (if needed)
     resource: process.env.D365_RESOURCE || "",
-    dataAreaId: process.env.D365_DATA_AREA_ID || "im8",
+    dataAreaId: process.env.D365_DATA_AREA_ID || "U001",
   },
 
   // GPS Warehouse Configuration
+  // Uses authcode query param with sorted-key HMAC
   gps: {
-    baseUrl: process.env.GPS_BASE_URL || "",
+    baseUrl: process.env.GPS_BASE_URL || "https://api.xlwms.com",
     apiKey: process.env.GPS_API_KEY || "",
     apiSecret: process.env.GPS_API_SECRET || "",
-    warehouseCode: process.env.GPS_WAREHOUSE_CODE || "",
+    warehouseCode: process.env.GPS_WAREHOUSE_CODE || "JFK01W",
   },
 
   // STORD Warehouse Configuration

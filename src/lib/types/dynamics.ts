@@ -1,82 +1,7 @@
 // ============================================================================
 // DYNAMICS 365 TYPES
 // ============================================================================
-// These types represent the D365 OData schemas for sales orders
-
-export interface D365SalesOrderHeader {
-  dataAreaId: string;
-  SalesOrderNumber?: string;
-  CustomerAccountNumber: string;
-  InvoiceCustomerAccountNumber: string;
-  SalesOrderName: string;
-  OrderingCustomerAccountNumber: string;
-  RequestedShippingDate: string;
-  RequestedReceiptDate: string;
-  DeliveryAddressName: string;
-  DeliveryAddressStreet: string;
-  DeliveryAddressCity: string;
-  DeliveryAddressState: string;
-  DeliveryAddressCountryRegionId: string;
-  DeliveryAddressZipCode: string;
-  DeliveryAddressDescription: string;
-  SalesOrderOriginCode: string;
-  Email: string;
-  CurrencyCode: string;
-  LanguageId: string;
-  DeliveryModeCode: string;
-  SiteId: string;
-  WarehouseId: string;
-  DefaultShippingSiteId: string;
-  DefaultShippingWarehouseId: string;
-  // IM8 Custom Fields
-  IM8ShopifyOrderId?: string;
-  IM8ShopifyOrderName?: string;
-  IM8ShopifyStore?: string;
-}
-
-export interface D365SalesOrderLine {
-  dataAreaId: string;
-  SalesOrderNumber: string;
-  LineNumber?: number;
-  ItemNumber: string;
-  SalesQuantity: number;
-  SalesPrice: number;
-  LineAmount: number;
-  SalesUnitSymbol: string;
-  RequestedShippingDate: string;
-  ShippingSiteId: string;
-  ShippingWarehouseId: string;
-  LineDescription: string;
-  // Tax
-  SalesTaxGroupCode?: string;
-  ItemSalesTaxGroupCode?: string;
-  // Discount
-  LineDiscountAmount?: number;
-  LineDiscountPercentage?: number;
-}
-
-export interface D365PrepaymentRequest {
-  dataAreaId: string;
-  SalesOrderNumber: string;
-  PrepaymentAmount: number;
-  PaymentReference: string;
-  PaymentDate: string;
-  CurrencyCode: string;
-}
-
-export interface D365FulfilmentRequest {
-  dataAreaId: string;
-  SalesOrderNumber: string;
-  PackingSlipId: string;
-  ShipDate: string;
-  Lines: D365FulfilmentLine[];
-}
-
-export interface D365FulfilmentLine {
-  ItemNumber: string;
-  Quantity: number;
-  LineNumber: number;
-}
+// Ported from spock-store src/type/dynamics.ts
 
 export interface D365AuthToken {
   access_token: string;
@@ -85,16 +10,157 @@ export interface D365AuthToken {
   expires_at?: number;
 }
 
-export interface D365ApiConfig {
-  baseUrl: string;
-  tenantId: string;
-  clientId: string;
-  clientSecret: string;
-  resource: string;
+// ============================================================================
+// THK API Response
+// ============================================================================
+
+export interface D365ThkApiResponse {
+  status: number;
+  Message: string;
+  Result: string;
+  $id: string;
 }
 
-export interface D365Response<T> {
-  value: T[];
-  "@odata.context"?: string;
-  "@odata.nextLink"?: string;
+// ============================================================================
+// Address Types
+// ============================================================================
+
+export interface D365SalesOrderHeadersV3Address {
+  addressCity: string;
+  addressCountryCode: string;
+  addressLine: string;
+  addressName: string;
+  addressStateId: string;
+  addressStreet: string;
+  addressZipCode: string;
+  addressPhone: string;
+}
+
+// ============================================================================
+// Sales Order Header V3 Request (THK Custom Fields)
+// ============================================================================
+
+export interface D365SalesOrderHeaderV3Request {
+  customerId: string;
+  orderId: string;
+  dataAreaId: string;
+  orderingCustomerAccountNumber: string;
+  defaultLedgerDimensionDisplayValue: string;
+  customerOrderReference: string;
+  email: string;
+  name: string;
+  shopifyReference: string;
+  shippingAddress?: D365SalesOrderHeadersV3Address;
+  billingAddress?: D365SalesOrderHeadersV3Address;
+  comment?: string;
+  shippingWarehouseId?: string;
+  currency?: string;
+  paymentId?: string;
+  skipFulfillmentNotification?: "Yes" | "No";
+}
+
+// ============================================================================
+// Sales Order Line Request
+// ============================================================================
+
+export interface D365SalesOrderLineRequest {
+  salesOrderNumber?: string;
+  dataAreaId: string;
+  itemNumber: string;
+  quantity: number;
+  price: number;
+  discount?: number;
+  giftCardNumber?: string;
+  shippingWarehouseId?: string;
+  currency?: string;
+  countryCode?: string;
+  discountCode?: string[];
+}
+
+// ============================================================================
+// Fulfilment Request
+// ============================================================================
+
+export interface D365FulfilmentLine {
+  itemNumber: string;
+  quantity: number;
+  shippingSiteId: string;
+  shippingWarehouseId?: string;
+  shippingWarehouseLocationId?: string;
+  trackingNumber?: string;
+  lotId?: string;
+}
+
+export interface D365FulfilmentRequest {
+  salesOrderNumber: string;
+  dataAreaId: string;
+  type: "PackingSlip" | "Invoice";
+  confirmedShippedDate: string;
+  lines: D365FulfilmentLine[];
+}
+
+// ============================================================================
+// Legacy Types (for backwards compatibility)
+// ============================================================================
+
+export interface D365SalesOrderHeader {
+  dataAreaId: string;
+  SalesOrderNumber?: string;
+  CustomerAccountNumber?: string;
+  InvoiceCustomerAccountNumber?: string;
+  SalesOrderName?: string;
+  OrderingCustomerAccountNumber?: string;
+  RequestedShippingDate?: string;
+  RequestedReceiptDate?: string;
+  DeliveryAddressName?: string;
+  DeliveryAddressStreet?: string;
+  DeliveryAddressCity?: string;
+  DeliveryAddressState?: string;
+  DeliveryAddressCountryRegionId?: string;
+  DeliveryAddressZipCode?: string;
+  DeliveryAddressDescription?: string;
+  SalesOrderOriginCode?: string;
+  Email?: string;
+  CurrencyCode?: string;
+  LanguageId?: string;
+  DeliveryModeCode?: string;
+  SiteId?: string;
+  WarehouseId?: string;
+  DefaultShippingSiteId?: string;
+  DefaultShippingWarehouseId?: string;
+  // THK Custom Fields
+  THK_ShopifyReference?: string;
+  THK_ShopifyCustName?: string;
+  THK_ShopifyCustomerEmail?: string;
+  THK_BillingName?: string;
+  THK_BillingAddressCountryRegionId?: string;
+  THK_BillingAddressZipCode?: string;
+  THK_BillingAddressStreet?: string;
+  THK_BillingAddressCity?: string;
+  THK_ShopifyCustomerPhonenum?: string;
+  THK_Comments?: string;
+  THK_ShopifyPaymentReference?: string;
+  THK_SkipFulfillmentNotification?: string;
+}
+
+export interface D365SalesOrderLine {
+  dataAreaId: string;
+  SalesOrderNumber: string;
+  ItemNumber: string;
+  SalesQuantity: number;
+  SalesPrice: number;
+  LineAmount?: number;
+  SalesUnitSymbol?: string;
+  RequestedShippingDate?: string;
+  ShippingSiteId?: string;
+  ShippingWarehouseId?: string;
+  LineDescription?: string;
+  LineDiscountAmount?: number;
+}
+
+export interface D365PrepaymentRequest {
+  dataAreaId: string;
+  SalesOrderNumber: string;
+  PrepaymentAmount: number;
+  CurrencyCode: string;
 }

@@ -1,8 +1,8 @@
 // ============================================================================
 // DYNAMICS 365 API CLIENT
 // ============================================================================
-// Extracted from spock-store src/component/dynamics.ts
-// Refactored for stateless execution with Inngest
+// Ported from spock-store src/component/integration/dynamics.ts
+// Uses THK custom API endpoints (not generic OData)
 
 import { config } from "../config";
 import type {
@@ -11,28 +11,46 @@ import type {
   D365SalesOrderLine,
   D365PrepaymentRequest,
   D365FulfilmentRequest,
+  D365ThkApiResponse,
+  D365SalesOrderHeaderV3Request,
+  D365SalesOrderLineRequest,
+  D365FulfilmentLine,
 } from "../types/dynamics";
 
 // Token cache (in-memory, will refresh on cold starts)
 let tokenCache: D365AuthToken | null = null;
 
+// THK API success status code
+export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
+
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+
 /**
  * Authenticate with D365 using OAuth2 client credentials
+ * Ported from spock-store integration/dynamics.ts
  */
 export async function authenticate(): Promise<D365AuthToken> {
   // Check if we have a valid cached token
-  if (tokenCache && tokenCache.expires_at && Date.now() < tokenCache.expires_at - 60000) {
+  if (
+    tokenCache &&
+    tokenCache.expires_at &&
+    Date.now() < tokenCache.expires_at - 60000
+  ) {
     return tokenCache;
   }
 
-  const tokenUrl = `https://login.microsoftonline.com/${config.dynamics.tenantId}/oauth2/token`;
+  const tokenUrl = `https://login.microsoftonline.com/${config.dynamics.tenantId}/oauth2/v2.0/token`;
 
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: config.dynamics.clientId,
     client_secret: config.dynamics.clientSecret,
-    resource: config.dynamics.resource,
+    scope: config.dynamics.scope,
   });
+
+  console.log(`[D365] Authenticating to ${tokenUrl}`);
 
   const response = await fetch(tokenUrl, {
     method: "POST",
@@ -51,142 +69,418 @@ export async function authenticate(): Promise<D365AuthToken> {
   token.expires_at = Date.now() + token.expires_in * 1000;
   tokenCache = token;
 
+  console.log(`[D365] Authentication successful, token expires in ${token.expires_in}s`);
+
   return token;
 }
 
-/**
- * Create a Sales Order Header in D365
- */
-export async function createSalesOrderHeader(
-  header: D365SalesOrderHeader
-): Promise<{ SalesOrderNumber: string }> {
+async function getAuthToken(): Promise<string> {
   const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2`;
+  return token.access_token;
+}
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
-    },
-    body: JSON.stringify(header),
-  });
+// ============================================================================
+// SALES ORDER HEADER (V3 API)
+// ============================================================================
+
+/**
+ * Create a Sales Order Header in D365 using SalesOrderHeadersV3
+ * Ported from spock-store - uses THK custom fields
+ */
+export async function createSalesOrderHeaderV3(
+  req: D365SalesOrderHeaderV3Request
+): Promise<{ SalesOrderNumber: string; request: object }> {
+  const {
+    shippingAddress,
+    billingAddress,
+    customerId,
+    orderId,
+    dataAreaId,
+    orderingCustomerAccountNumber,
+    defaultLedgerDimensionDisplayValue,
+    customerOrderReference,
+    email,
+    name,
+    shopifyReference,
+    comment,
+    shippingWarehouseId,
+    currency,
+    paymentId,
+    skipFulfillmentNotification,
+  } = req;
+
+  const body = {
+    SalesOrderPoolId: "D2C",
+    DefaultShippingSiteId: "Prenetics",
+    CurrencyCode: currency ?? "USD",
+    OrderingCustomerAccountNumber: orderingCustomerAccountNumber,
+    DefaultLedgerDimensionDisplayValue: defaultLedgerDimensionDisplayValue,
+    dataAreaId,
+    CustomersOrderReference: customerOrderReference,
+    // THK Custom Fields
+    THK_ShopifyReference: shopifyReference,
+    THK_ShopifyCustName: name,
+    THK_ShopifyCustomerEmail: email,
+    THK_BillingName: billingAddress?.addressLine,
+    THK_BillingAddressCountryRegionId: billingAddress?.addressCountryCode,
+    THK_BillingAddressZipCode: billingAddress?.addressZipCode,
+    THK_BillingAddressStreet: billingAddress?.addressStreet,
+    THK_BillingAddressCity: billingAddress?.addressCity,
+    THK_ShopifyCustomerPhonenum: billingAddress?.addressPhone,
+    THK_Comments: comment,
+    THK_ShopifyPaymentReference: paymentId,
+    // Delivery Address
+    DeliveryAddressName: shippingAddress?.addressName,
+    DeliveryAddressDescription: shippingAddress?.addressLine,
+    DeliveryAddressCountryRegionId: shippingAddress?.addressCountryCode,
+    DeliveryAddressZipCode: shippingAddress?.addressZipCode,
+    DeliveryAddressStreet: shippingAddress?.addressStreet,
+    DeliveryAddressCity: shippingAddress?.addressCity,
+    ...(shippingWarehouseId
+      ? { DefaultShippingWarehouseId: shippingWarehouseId }
+      : {}),
+    ...(skipFulfillmentNotification
+      ? { THK_SkipFulfillmentNotification: skipFulfillmentNotification }
+      : {}),
+  };
+
+  console.log(`[D365] Creating sales order header: ${JSON.stringify(body)}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would create sales order for ${orderId}`);
+    return {
+      SalesOrderNumber: `DRY-RUN-${Date.now()}`,
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to create D365 sales order header: ${response.status} - ${error}`);
+    throw new Error(
+      `[D365] Failed to create sales order header for ${orderId}: ${response.status} - ${error}`
+    );
   }
 
-  return response.json();
+  const result = await response.json();
+  console.log(`[D365] Created sales order: ${result.SalesOrderNumber}`);
+
+  return {
+    SalesOrderNumber: result.SalesOrderNumber,
+    request: body,
+  };
 }
+
+// ============================================================================
+// SALES ORDER LINE
+// ============================================================================
 
 /**
  * Create a Sales Order Line in D365
+ * Ported from spock-store
  */
 export async function createSalesOrderLine(
-  line: D365SalesOrderLine
-): Promise<{ LineNumber: number }> {
-  const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderLines`;
+  req: D365SalesOrderLineRequest
+): Promise<{ InventoryLotId: string; request: object }> {
+  const {
+    giftCardNumber,
+    salesOrderNumber,
+    discount,
+    quantity,
+    itemNumber,
+    price,
+    dataAreaId,
+    shippingWarehouseId,
+    currency,
+    countryCode,
+    discountCode,
+  } = req;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
-    },
-    body: JSON.stringify(line),
-  });
+  const body = {
+    dataAreaId,
+    CurrencyCode: currency ?? "USD",
+    SalesOrderNumber: salesOrderNumber,
+    ItemNumber: itemNumber,
+    OrderedSalesQuantity: quantity,
+    SalesPrice: price,
+    LineDiscountAmount: discount,
+    THK_DiscountType: giftCardNumber,
+    THK_PromotionCode: discountCode && discountCode.length > 0 ? discountCode[0] : "",
+    ...(shippingWarehouseId ? { ShippingWarehouseId: shippingWarehouseId } : {}),
+  };
+
+  console.log(`[D365] Creating sales order line: ${JSON.stringify(body)}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would create line for ${salesOrderNumber}`);
+    return {
+      InventoryLotId: `DRY-RUN-LOT-${Date.now()}`,
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderLines`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to create D365 sales order line: ${response.status} - ${error}`);
+    throw new Error(
+      `[D365] Failed to create sales order line ${itemNumber} for ${salesOrderNumber}: ${response.status} - ${error}`
+    );
   }
 
-  return response.json();
+  const result = await response.json();
+  console.log(`[D365] Created sales order line with lot ID: ${result.InventoryLotId}`);
+
+  return {
+    InventoryLotId: result.InventoryLotId,
+    request: body,
+  };
 }
 
+// ============================================================================
+// THK CUSTOM API ENDPOINTS
+// ============================================================================
+
 /**
- * Confirm a Sales Order in D365
+ * Confirm a Sales Order using THK API
+ * Ported from spock-store - uses THK_APISyncServiceGroup endpoint
  */
 export async function confirmSalesOrder(
-  dataAreaId: string,
-  salesOrderNumber: string
-): Promise<void> {
-  const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')/Microsoft.Dynamics.DataEntities.ConfirmSalesOrder`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
+  salesOrderNumber: string,
+  dataAreaId: string
+): Promise<{ response: D365ThkApiResponse; request: object }> {
+  const body = {
+    _dataContract: {
+      DataAreaId: dataAreaId,
+      SalesId: salesOrderNumber,
     },
-  });
+  };
+
+  console.log(`[D365] Confirming sales order: ${salesOrderNumber}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would confirm ${salesOrderNumber}`);
+    return {
+      response: {
+        status: DYNAMICS_THK_API_SUCCESS_STATUS,
+        Message: "DRY RUN SUCCESS",
+        Result: "DRY_RUN_RESULT",
+        $id: "DRY_RUN_ID",
+      },
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/confirmSO`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to confirm D365 sales order: ${response.status} - ${error}`);
+    throw new Error(
+      `[D365] Failed to confirm sales order ${salesOrderNumber}: ${response.status} - ${error}`
+    );
   }
+
+  const result: D365ThkApiResponse = await response.json();
+
+  if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    throw new Error(
+      `[D365] THK API failed to confirm ${salesOrderNumber}: ${result.Message}`
+    );
+  }
+
+  console.log(`[D365] Confirmed sales order: ${salesOrderNumber}`);
+
+  return { response: result, request: body };
 }
 
 /**
- * Create a Prepayment for a Sales Order
+ * Create Prepayment using THK API
+ * Ported from spock-store - uses THK_APISyncServiceGroup endpoint
  */
 export async function createPrepayment(
-  prepayment: D365PrepaymentRequest
-): Promise<void> {
-  const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderPrepayments`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
+  salesOrderNumber: string,
+  dataAreaId: string
+): Promise<{ response: D365ThkApiResponse; request: object }> {
+  const body = {
+    _dataContract: {
+      DataAreaId: dataAreaId,
+      SalesId: salesOrderNumber,
     },
-    body: JSON.stringify(prepayment),
-  });
+  };
+
+  console.log(`[D365] Creating prepayment for: ${salesOrderNumber}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would create prepayment for ${salesOrderNumber}`);
+    return {
+      response: {
+        status: DYNAMICS_THK_API_SUCCESS_STATUS,
+        Message: "DRY RUN SUCCESS",
+        Result: "DRY_RUN_RESULT",
+        $id: "DRY_RUN_ID",
+      },
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/PostPrepayment`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to create D365 prepayment: ${response.status} - ${error}`);
+    throw new Error(
+      `[D365] Failed to create prepayment for ${salesOrderNumber}: ${response.status} - ${error}`
+    );
   }
+
+  const result: D365ThkApiResponse = await response.json();
+
+  if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    throw new Error(
+      `[D365] THK API failed to create prepayment for ${salesOrderNumber}: ${result.Message}`
+    );
+  }
+
+  console.log(`[D365] Created prepayment for: ${salesOrderNumber}`);
+
+  return { response: result, request: body };
 }
 
 /**
- * Create a Fulfilment (Packing Slip) in D365
+ * Create Fulfilment (Packing Slip) using THK API
+ * Ported from spock-store - uses THK_APISyncServiceGroup endpoint
  */
 export async function createFulfilment(
-  fulfilment: D365FulfilmentRequest
-): Promise<void> {
-  const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderPackingSlips`;
+  req: D365FulfilmentRequest
+): Promise<{ response: D365ThkApiResponse; request: object }> {
+  const { salesOrderNumber, dataAreaId, lines, type, confirmedShippedDate } = req;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
+  const body = {
+    _dataContract: {
+      DataAreaId: dataAreaId,
+      Type: type,
+      D365FOSalesOrder: salesOrderNumber,
+      ConfirmedShippedDate: confirmedShippedDate,
+      Lines: lines.map((line) => {
+        const lineData: Record<string, unknown> = {
+          ItemNumber: line.itemNumber,
+          Quantity: line.quantity,
+          Site: line.shippingSiteId,
+          TrackingNumber: line.trackingNumber,
+          Lotid: line.lotId,
+        };
+
+        if (line.shippingWarehouseId && line.shippingWarehouseLocationId) {
+          // U001 (US) doesn't use warehouse/location in fulfilment
+          if (dataAreaId === "U001") {
+            lineData["Warehouse"] = "";
+            lineData["Location"] = "";
+          } else {
+            lineData["Warehouse"] = line.shippingWarehouseId;
+            lineData["Location"] = line.shippingWarehouseLocationId;
+          }
+        }
+
+        return lineData;
+      }),
     },
-    body: JSON.stringify(fulfilment),
-  });
+  };
+
+  console.log(`[D365] Creating fulfilment for: ${salesOrderNumber}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would create fulfilment for ${salesOrderNumber}`);
+    return {
+      response: {
+        status: DYNAMICS_THK_API_SUCCESS_STATUS,
+        Message: "DRY RUN SUCCESS",
+        Result: "DRY_RUN_RESULT",
+        $id: "DRY_RUN_ID",
+      },
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to create D365 fulfilment: ${response.status} - ${error}`);
+    throw new Error(
+      `[D365] Failed to create fulfilment for ${salesOrderNumber}: ${response.status} - ${error}`
+    );
   }
+
+  const result: D365ThkApiResponse = await response.json();
+
+  if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    throw new Error(
+      `[D365] THK API failed to create fulfilment for ${salesOrderNumber}: ${result.Message}`
+    );
+  }
+
+  console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
+
+  return { response: result, request: body };
 }
+
+// ============================================================================
+// QUERY FUNCTIONS
+// ============================================================================
 
 /**
  * Get Sales Order by Shopify Order ID
@@ -195,24 +489,45 @@ export async function getSalesOrderByShopifyId(
   shopifyOrderId: string,
   dataAreaId: string = config.dynamics.dataAreaId
 ): Promise<D365SalesOrderHeader | null> {
-  const token = await authenticate();
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2?$filter=dataAreaId eq '${dataAreaId}' and IM8ShopifyOrderId eq '${shopifyOrderId}'`;
+  console.log(`[D365] Looking up order by Shopify ID: ${shopifyOrderId}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would look up ${shopifyOrderId}`);
+    return null;
+  }
+
+  const token = await getAuthToken();
+  const filter = `dataAreaId eq '${dataAreaId}' and THK_ShopifyReference eq '${shopifyOrderId}'`;
+  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(filter)}`;
 
   const response = await fetch(url, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${token.access_token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
     },
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to get D365 sales order: ${response.status} - ${error}`);
+    throw new Error(`[D365] Failed to get sales order: ${response.status} - ${error}`);
   }
 
   const result = await response.json();
-  return result.value?.[0] || null;
+  const order = result.value?.[0] || null;
+
+  if (order) {
+    console.log(`[D365] Found order: ${order.SalesOrderNumber}`);
+  } else {
+    console.log(`[D365] No order found for Shopify ID: ${shopifyOrderId}`);
+  }
+
+  return order;
 }
+
+// ============================================================================
+// LEGACY EXPORTS (for backwards compatibility)
+// ============================================================================
+
+// Alias for the old function name
+export const createSalesOrderHeader = createSalesOrderHeaderV3;

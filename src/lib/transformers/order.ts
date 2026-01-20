@@ -1,219 +1,305 @@
 // ============================================================================
 // ORDER TRANSFORMERS
 // ============================================================================
-// Extracted from spock-store src/component/salesorder.ts
+// Ported from spock-store src/component/salesorder.ts
 // Pure functions for transforming Shopify orders to D365/GPS formats
 
 import { config } from "../config";
-import type { ShopifyOrder, ShopifyLineItem, ShopifyAddress } from "../clients/shopify";
-import type { D365SalesOrderHeader, D365SalesOrderLine } from "../types/dynamics";
-import type { GpsOutboundOrder, GpsOrderItem } from "../types/gps";
+import type {
+  ShopifyOrderPayload,
+  ShopifyLineItem,
+  ShopifyAddress,
+} from "../../inngest/events";
+import type {
+  D365SalesOrderHeaderV3Request,
+  D365SalesOrderLineRequest,
+  D365SalesOrderHeadersV3Address,
+} from "../types/dynamics";
+import {
+  toSalesOrderHeadersV3Address,
+  toGpsOrderAddress,
+  formatAddressName,
+} from "./address";
+import {
+  mapShopifySkuToDynamics,
+  createShopifyToDynamicsLineTransformer,
+  mergeGpsDuplicateSkuLines,
+  filterServiceSkus,
+  filterDummySkus,
+} from "./sku";
+import {
+  getWarehouseConfig,
+  determineWarehouse,
+  toDefaultLedgerDimensionDisplayValue,
+  getGpsWarehouseCode,
+  getGpsLogisticsChannel,
+  isGpsUkWarehouse,
+  getShippingSku,
+  getTaxSku,
+} from "../helpers/warehouse";
+import type { GpsOrderData, GpsProductItem } from "../clients/gps";
 
-// SKU Mapping (simplified - in production, load from config/database)
-const SKU_MAPPING: Record<string, string> = {
-  // Shopify SKU -> D365 Item Number
-  // Add your mappings here
-};
+// GPS Order Type constants
+const GpsOrderType = {
+  PRODUCT_OUTBOUND: 1,
+  SAMPLE_OUTBOUND: 2,
+  RETURN_OUTBOUND: 3,
+} as const;
+
+// ============================================================================
+// D365 TRANSFORMERS
+// ============================================================================
 
 /**
- * Transform Shopify Order to D365 Sales Order Header
+ * Transform Shopify Order to D365 Sales Order Header V3 Request
+ * Uses THK custom fields as per spock-store
  */
-export function toD365SalesOrderHeader(
-  order: ShopifyOrder,
-  dataAreaId: string = config.dynamics.dataAreaId
-): D365SalesOrderHeader {
+export function toD365SalesOrderHeaderV3(
+  order: ShopifyOrderPayload,
+  warehouseName?: string
+): D365SalesOrderHeaderV3Request {
+  const warehouse = warehouseName || determineWarehouse(
+    order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+  );
+  const warehouseConfig = getWarehouseConfig(warehouse);
+
   const shippingAddress = order.shipping_address || order.billing_address;
+  const billingAddress = order.billing_address || order.shipping_address;
 
   return {
-    dataAreaId,
-    CustomerAccountNumber: getCustomerAccountNumber(order),
-    InvoiceCustomerAccountNumber: getCustomerAccountNumber(order),
-    SalesOrderName: order.name,
-    OrderingCustomerAccountNumber: getCustomerAccountNumber(order),
-    RequestedShippingDate: formatD365Date(order.created_at),
-    RequestedReceiptDate: formatD365Date(order.created_at, 7), // +7 days
-    DeliveryAddressName: formatAddressName(shippingAddress),
-    DeliveryAddressStreet: formatStreet(shippingAddress),
-    DeliveryAddressCity: shippingAddress?.city || "",
-    DeliveryAddressState: shippingAddress?.province_code || "",
-    DeliveryAddressCountryRegionId: shippingAddress?.country_code || "",
-    DeliveryAddressZipCode: shippingAddress?.zip || "",
-    DeliveryAddressDescription: formatAddressDescription(shippingAddress),
-    SalesOrderOriginCode: "WEB",
-    Email: order.email,
-    CurrencyCode: order.currency,
-    LanguageId: "en-us",
-    DeliveryModeCode: getDeliveryModeCode(order),
-    SiteId: getSiteId(order),
-    WarehouseId: getWarehouseId(order),
-    DefaultShippingSiteId: getSiteId(order),
-    DefaultShippingWarehouseId: getWarehouseId(order),
-    // IM8 Custom Fields
-    IM8ShopifyOrderId: String(order.id),
-    IM8ShopifyOrderName: order.name,
-    IM8ShopifyStore: "im8",
+    customerId: String(order.customer?.id || ""),
+    orderId: String(order.id),
+    dataAreaId: warehouseConfig.dataAreaId,
+    orderingCustomerAccountNumber: warehouseConfig.orderingCustomerAccountNumber,
+    defaultLedgerDimensionDisplayValue: toDefaultLedgerDimensionDisplayValue(warehouse),
+    customerOrderReference: order.name,
+    email: order.email,
+    name: order.customer
+      ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+      : formatAddressName(shippingAddress),
+    shopifyReference: order.name,
+    shippingAddress: shippingAddress
+      ? toSalesOrderHeadersV3Address(shippingAddress)
+      : undefined,
+    billingAddress: billingAddress
+      ? toSalesOrderHeadersV3Address(billingAddress)
+      : undefined,
+    comment: buildOrderComment(order),
+    currency: order.currency,
+    // Skip fulfilment notification for GPS UK to avoid double notification
+    skipFulfillmentNotification: isGpsUkWarehouse(warehouse) ? "Yes" : undefined,
   };
 }
 
 /**
- * Transform Shopify Line Item to D365 Sales Order Line
+ * Build order comment for D365
+ * Includes gift card info, associated orders, etc.
+ */
+function buildOrderComment(order: ShopifyOrderPayload): string {
+  const parts: string[] = [];
+
+  // Add discount codes
+  if (order.discount_codes?.length > 0) {
+    parts.push(`Discount Codes: ${order.discount_codes.map((d) => d.code).join(", ")}`);
+  }
+
+  // Add order note
+  if (order.note) {
+    parts.push(`Note: ${order.note}`);
+  }
+
+  // Add tags
+  if (order.tags) {
+    parts.push(`Tags: ${order.tags}`);
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Transform Shopify Line Item to D365 Sales Order Line Request
  */
 export function toD365SalesOrderLine(
   lineItem: ShopifyLineItem,
   salesOrderNumber: string,
-  dataAreaId: string = config.dynamics.dataAreaId
-): D365SalesOrderLine {
-  const itemNumber = mapSku(lineItem.sku);
+  dataAreaId: string,
+  discountCodes?: string[]
+): D365SalesOrderLineRequest {
+  const itemNumber = mapShopifySkuToDynamics(lineItem.sku);
   const price = parseFloat(lineItem.price);
-  const discount = parseFloat(lineItem.total_discount);
+  const totalDiscount = parseFloat(lineItem.total_discount);
+  const discountPerUnit = lineItem.quantity > 0 ? totalDiscount / lineItem.quantity : 0;
 
   return {
+    salesOrderNumber,
     dataAreaId,
-    SalesOrderNumber: salesOrderNumber,
-    ItemNumber: itemNumber,
-    SalesQuantity: lineItem.quantity,
-    SalesPrice: price,
-    LineAmount: price * lineItem.quantity - discount,
-    SalesUnitSymbol: "ea",
-    RequestedShippingDate: formatD365Date(new Date().toISOString()),
-    ShippingSiteId: "IM8",
-    ShippingWarehouseId: "GPS",
-    LineDescription: lineItem.name,
-    LineDiscountAmount: discount,
+    itemNumber,
+    quantity: lineItem.quantity,
+    price,
+    discount: discountPerUnit,
+    discountCode: discountCodes,
   };
 }
+
+/**
+ * Create all D365 sales order lines from Shopify order
+ * Includes shipping and tax lines
+ */
+export function toD365SalesOrderLines(
+  order: ShopifyOrderPayload,
+  salesOrderNumber: string,
+  warehouseName: string,
+  includeShippingAndTax: boolean = true
+): D365SalesOrderLineRequest[] {
+  const warehouseConfig = getWarehouseConfig(warehouseName);
+  const dataAreaId = warehouseConfig.dataAreaId;
+  const discountCodes = order.discount_codes?.map((d) => d.code);
+  const skuTransformer = createShopifyToDynamicsLineTransformer();
+
+  const lines: D365SalesOrderLineRequest[] = [];
+
+  // Add product lines
+  for (const item of order.line_items) {
+    if (item.gift_card) continue; // Skip gift card purchases
+
+    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, discountCodes);
+    const transformedLine = skuTransformer(line);
+    lines.push(transformedLine);
+  }
+
+  // Add shipping line
+  if (includeShippingAndTax) {
+    const shippingCost = calculateShippingCost(order);
+    if (shippingCost > 0) {
+      lines.push({
+        salesOrderNumber,
+        dataAreaId,
+        itemNumber: getShippingSku(warehouseName),
+        quantity: 1,
+        price: shippingCost,
+      });
+    }
+
+    // Add tax line
+    const taxAmount = calculateTaxAmount(order);
+    if (taxAmount > 0) {
+      lines.push({
+        salesOrderNumber,
+        dataAreaId,
+        itemNumber: getTaxSku(warehouseName),
+        quantity: 1,
+        price: taxAmount,
+      });
+    }
+  }
+
+  return lines;
+}
+
+// ============================================================================
+// GPS TRANSFORMERS
+// ============================================================================
 
 /**
  * Transform Shopify Order to GPS Outbound Order
  */
-export function toGpsOutboundOrder(order: ShopifyOrder): GpsOutboundOrder {
+export function toGpsOutboundOrder(
+  order: ShopifyOrderPayload,
+  d365SalesOrderNumber: string,
+  warehouseName: string = "GPS Warehouse"
+): GpsOrderData {
   const shippingAddress = order.shipping_address || order.billing_address;
 
+  if (!shippingAddress) {
+    throw new Error(`No shipping address for order ${order.name}`);
+  }
+
+  // Get GPS-specific config
+  const whCode = getGpsWarehouseCode(warehouseName);
+  const logisticsChannel = getGpsLogisticsChannel(warehouseName);
+
+  // Transform address
+  const gpsAddress = toGpsOrderAddress({
+    ...shippingAddress,
+    email: order.email,
+  });
+
+  // Transform line items (filter and merge duplicates)
+  const skuTransformer = createShopifyToDynamicsLineTransformer();
+  const productLines = order.line_items
+    .filter((item) => item.requires_shipping && !item.gift_card)
+    .map((item) => ({
+      itemNumber: item.sku,
+      quantity: item.quantity,
+    }))
+    .map(skuTransformer);
+
+  // Filter service/dummy SKUs and merge duplicates
+  const filteredLines = filterDummySkus(filterServiceSkus(productLines));
+  const productList = mergeGpsDuplicateSkuLines(filteredLines);
+
   return {
-    orderNumber: order.name,
-    orderDate: order.created_at,
-    customerCode: getCustomerAccountNumber(order),
-    shipToName: formatAddressName(shippingAddress),
-    shipToAddress1: shippingAddress?.address1 || "",
-    shipToAddress2: shippingAddress?.address2 || undefined,
-    shipToCity: shippingAddress?.city || "",
-    shipToState: shippingAddress?.province_code || "",
-    shipToZip: shippingAddress?.zip || "",
-    shipToCountry: shippingAddress?.country_code || "",
-    shipToPhone: shippingAddress?.phone || undefined,
-    shipToEmail: order.email,
-    carrierCode: getCarrierCode(order),
-    serviceCode: getServiceCode(order),
-    items: order.line_items
-      .filter((item) => item.requires_shipping && !item.gift_card)
-      .map(toGpsOrderItem),
-    shopifyOrderId: String(order.id),
-    shopifyOrderName: order.name,
+    platformOrderNo: order.name,
+    thirdOrderNo: d365SalesOrderNumber,
+    whCode,
+    subOrderType: GpsOrderType.PRODUCT_OUTBOUND,
+    logisticsChannel,
+    ...gpsAddress,
+    productList,
   };
+}
+
+// ============================================================================
+// CALCULATION HELPERS
+// ============================================================================
+
+/**
+ * Calculate total shipping cost from order
+ */
+export function calculateShippingCost(order: ShopifyOrderPayload): number {
+  if (!order.shipping_lines?.length) return 0;
+
+  return order.shipping_lines.reduce((total, line) => {
+    const price = parseFloat(line.price) || 0;
+    // Shipping line discounts are handled separately in Shopify
+    return total + price;
+  }, 0);
 }
 
 /**
- * Transform Shopify Line Item to GPS Order Item
+ * Calculate total tax amount from order
  */
-export function toGpsOrderItem(lineItem: ShopifyLineItem): GpsOrderItem {
-  return {
-    sku: lineItem.sku,
-    quantity: lineItem.quantity,
-    description: lineItem.name,
-    unitPrice: parseFloat(lineItem.price),
-  };
-}
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-function mapSku(shopifySku: string): string {
-  return SKU_MAPPING[shopifySku] || shopifySku;
-}
-
-function getCustomerAccountNumber(order: ShopifyOrder): string {
-  // Default customer account for web orders
-  return "WEBIM8";
-}
-
-function formatD365Date(isoDate: string, addDays: number = 0): string {
-  const date = new Date(isoDate);
-  date.setDate(date.getDate() + addDays);
-  return date.toISOString().split("T")[0];
-}
-
-function formatAddressName(address: ShopifyAddress | null): string {
-  if (!address) return "";
-  return `${address.first_name} ${address.last_name}`.trim();
-}
-
-function formatStreet(address: ShopifyAddress | null): string {
-  if (!address) return "";
-  return [address.address1, address.address2].filter(Boolean).join(", ");
-}
-
-function formatAddressDescription(address: ShopifyAddress | null): string {
-  if (!address) return "";
-  return `${formatAddressName(address)}, ${formatStreet(address)}, ${address.city}`;
-}
-
-function getDeliveryModeCode(order: ShopifyOrder): string {
-  const shippingLine = order.shipping_lines[0];
-  if (!shippingLine) return "STANDARD";
-
-  const code = shippingLine.code?.toLowerCase() || "";
-  if (code.includes("express") || code.includes("priority")) return "EXPRESS";
-  if (code.includes("overnight")) return "OVERNIGHT";
-  return "STANDARD";
-}
-
-function getSiteId(order: ShopifyOrder): string {
-  // IM8 default site
-  return "IM8";
-}
-
-function getWarehouseId(order: ShopifyOrder): string {
-  // Determine warehouse based on shipping destination or other logic
-  // For IM8, default to GPS warehouse
-  return "GPS";
-}
-
-function getCarrierCode(order: ShopifyOrder): string {
-  const shippingLine = order.shipping_lines[0];
-  if (!shippingLine) return "USPS";
-
-  const title = shippingLine.title?.toLowerCase() || "";
-  if (title.includes("ups")) return "UPS";
-  if (title.includes("fedex")) return "FEDEX";
-  if (title.includes("dhl")) return "DHL";
-  return "USPS";
-}
-
-function getServiceCode(order: ShopifyOrder): string {
-  const shippingLine = order.shipping_lines[0];
-  if (!shippingLine) return "GROUND";
-
-  const code = shippingLine.code?.toLowerCase() || "";
-  if (code.includes("express") || code.includes("2day")) return "2DAY";
-  if (code.includes("overnight") || code.includes("next")) return "OVERNIGHT";
-  if (code.includes("priority")) return "PRIORITY";
-  return "GROUND";
+export function calculateTaxAmount(order: ShopifyOrderPayload): number {
+  return parseFloat(order.total_tax) || 0;
 }
 
 /**
  * Calculate total prepayment amount from order
  */
-export function calculatePrepaymentAmount(order: ShopifyOrder): number {
-  return parseFloat(order.total_price);
+export function calculatePrepaymentAmount(order: ShopifyOrderPayload): number {
+  return parseFloat(order.total_price) || 0;
 }
+
+/**
+ * Calculate total order cost from lines
+ */
+export function calculateOrderCost(
+  lines: Array<{ price: number; discount?: number; quantity: number }>
+): number {
+  return lines.reduce((total, line) => {
+    const lineTotal = (line.price - (line.discount || 0)) * line.quantity;
+    return total + lineTotal;
+  }, 0);
+}
+
+// ============================================================================
+// ROUTING HELPERS
+// ============================================================================
 
 /**
  * Check if order should be sent to GPS warehouse
  */
-export function shouldSendToGps(order: ShopifyOrder): boolean {
-  // IM8 orders go to GPS by default
-  // Add logic to check for specific conditions
+export function shouldSendToGps(order: ShopifyOrderPayload): boolean {
   return order.line_items.some(
     (item) => item.requires_shipping && !item.gift_card
   );
@@ -222,8 +308,37 @@ export function shouldSendToGps(order: ShopifyOrder): boolean {
 /**
  * Check if order should be sent to STORD warehouse
  */
-export function shouldSendToStord(order: ShopifyOrder): boolean {
-  // Add logic for STORD routing
-  // For now, return false as GPS is primary
+export function shouldSendToStord(order: ShopifyOrderPayload): boolean {
+  // STORD routing logic - currently not used for IM8
   return false;
 }
+
+/**
+ * Check if order is a test order
+ */
+export function isTestOrder(order: ShopifyOrderPayload): boolean {
+  const testTags = ["testing", "load-testing", "test"];
+  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  return testTags.some((tag) => tags.includes(tag));
+}
+
+// ============================================================================
+// LEGACY EXPORTS (for backwards compatibility)
+// ============================================================================
+
+export {
+  toSalesOrderHeadersV3Address,
+  toGpsOrderAddress,
+  formatAddressName,
+} from "./address";
+
+export {
+  mapShopifySkuToDynamics,
+  mergeGpsDuplicateSkuLines as mergeGPSDuplicateSKUOrderLines,
+} from "./sku";
+
+export {
+  determineWarehouse,
+  getWarehouseConfig,
+  toDefaultLedgerDimensionDisplayValue,
+} from "../helpers/warehouse";
