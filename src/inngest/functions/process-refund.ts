@@ -15,8 +15,36 @@ export const processRefund = inngest.createFunction(
     // Idempotency: Prevent duplicate processing of the same refund
     idempotency: "event.data.refundId",
     retries: 5,
-    concurrency: {
+
+    // =========================================================================
+    // THROTTLING: Prevent overwhelming D365 API
+    // Credit note creation is sensitive - limit to 5/sec per store
+    // =========================================================================
+    throttle: {
       limit: 5,
+      period: "1s",
+      key: "event.data.shopifyStore",
+    },
+
+    // =========================================================================
+    // KEY-BASED CONCURRENCY: Process refunds for same order sequentially
+    // Prevents race conditions when multiple refunds hit the same order
+    // =========================================================================
+    concurrency: [
+      {
+        limit: 1, // Only 1 refund at a time per order
+        key: "event.data.shopifyOrderId",
+      },
+    ],
+
+    // =========================================================================
+    // RATE LIMIT: Fraud protection
+    // Max 3 refunds per order per 24 hours - prevents refund abuse
+    // =========================================================================
+    rateLimit: {
+      key: "event.data.shopifyOrderId",
+      limit: 3,
+      period: "24h",
     },
   },
   { event: "shopify/refund.created" },

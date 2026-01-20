@@ -27,10 +27,29 @@ export const processShopifyOrder = inngest.createFunction(
     idempotency: "event.data.shopifyOrderId",
     // Retry configuration
     retries: 5,
-    // Concurrency limit to prevent overwhelming downstream systems
-    concurrency: {
+
+    // =========================================================================
+    // THROTTLING: Prevent "hammering" D365 API (Leon's #1 concern)
+    // Limits to 10 function runs per second, per store
+    // This keeps us well under D365's rate limits (~60-100 req/min)
+    // =========================================================================
+    throttle: {
       limit: 10,
+      period: "1s",
+      key: "event.data.shopifyStore",
     },
+
+    // =========================================================================
+    // KEY-BASED CONCURRENCY: Prevent race conditions per warehouse
+    // Orders for the same country/warehouse are processed sequentially
+    // Different warehouses can process in parallel
+    // =========================================================================
+    concurrency: [
+      {
+        limit: 3, // Max 3 concurrent orders per warehouse region
+        key: "event.data.orderJson.shipping_address.country_code",
+      },
+    ],
   },
   { event: "shopify/order.created" },
   async ({ event, step }) => {

@@ -26,8 +26,35 @@ export const processGpsFulfilment = inngest.createFunction(
     // Idempotency: Prevent duplicate processing of the same fulfilment
     idempotency: "event.data.gpsOrderId + '-' + event.data.trackingNumber",
     retries: 5,
-    concurrency: {
-      limit: 10,
+
+    // =========================================================================
+    // THROTTLING: Prevent overwhelming Shopify Fulfillment API
+    // Shopify has rate limits of ~2 requests/second for REST API
+    // =========================================================================
+    throttle: {
+      limit: 2,
+      period: "1s",
+    },
+
+    // =========================================================================
+    // KEY-BASED CONCURRENCY: Prevent race conditions
+    // Only 1 fulfilment processed at a time per Shopify order
+    // This prevents duplicate fulfillments for the same order
+    // =========================================================================
+    concurrency: [
+      {
+        limit: 1, // Strict: 1 fulfilment at a time per order
+        key: "event.data.shopifyOrderId",
+      },
+    ],
+
+    // =========================================================================
+    // RATE LIMIT: Fraud protection - max 5 fulfilments per order per day
+    // =========================================================================
+    rateLimit: {
+      key: "event.data.shopifyOrderId",
+      limit: 5,
+      period: "24h",
     },
   },
   { event: "gps/fulfilment.received" },

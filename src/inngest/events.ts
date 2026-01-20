@@ -50,6 +50,19 @@ export type ShopifyOrderPaidEvent = {
   };
 };
 
+export type ShopifyOrderUpdatedEvent = {
+  name: "shopify/order.updated";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    orderJson: ShopifyOrderPayload;
+    receivedAt: string;
+    // Track what changed for smarter processing
+    changedFields?: string[];
+  };
+};
+
 export type GpsFulfilmentReceivedEvent = {
   name: "gps/fulfilment.received";
   data: {
@@ -80,6 +93,7 @@ export type BattleBusEvents =
   | ShopifyRefundCreatedEvent
   | ShopifyOrderCancelledEvent
   | ShopifyOrderPaidEvent
+  | ShopifyOrderUpdatedEvent
   | GpsFulfilmentReceivedEvent
   | StordFulfilmentReceivedEvent;
 

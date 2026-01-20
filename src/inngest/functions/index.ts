@@ -8,6 +8,7 @@ export { processRefund } from "./process-refund";
 export { processGpsFulfilment } from "./process-gps-fulfilment";
 export { processStordFulfilment } from "./process-stord-fulfilment";
 export { processOrderCancellation } from "./process-order-cancellation";
+export { processOrderUpdate } from "./process-order-update";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -15,6 +16,7 @@ import { processRefund } from "./process-refund";
 import { processGpsFulfilment } from "./process-gps-fulfilment";
 import { processStordFulfilment } from "./process-stord-fulfilment";
 import { processOrderCancellation } from "./process-order-cancellation";
+import { processOrderUpdate } from "./process-order-update";
 
 export const functions = [
   processShopifyOrder,
@@ -22,4 +24,5 @@ export const functions = [
   processGpsFulfilment,
   processStordFulfilment,
   processOrderCancellation,
+  processOrderUpdate,
 ];

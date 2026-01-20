@@ -13,6 +13,39 @@ export const processOrderCancellation = inngest.createFunction(
     id: "process-order-cancellation",
     name: "Process Order Cancellation",
     retries: 3,
+
+    // =========================================================================
+    // IDEMPOTENCY: Prevent duplicate cancellation processing
+    // =========================================================================
+    idempotency: "event.data.shopifyOrderId",
+
+    // =========================================================================
+    // THROTTLING: Prevent overwhelming D365/GPS APIs during mass cancellations
+    // =========================================================================
+    throttle: {
+      limit: 5,
+      period: "1s",
+      key: "event.data.shopifyStore",
+    },
+
+    // =========================================================================
+    // KEY-BASED CONCURRENCY: Only 1 cancellation per order at a time
+    // =========================================================================
+    concurrency: [
+      {
+        limit: 1,
+        key: "event.data.shopifyOrderId",
+      },
+    ],
+
+    // =========================================================================
+    // RATE LIMIT: Prevent cancellation spam - max 1 per order per hour
+    // =========================================================================
+    rateLimit: {
+      key: "event.data.shopifyOrderId",
+      limit: 1,
+      period: "1h",
+    },
   },
   { event: "shopify/order.cancelled" },
   async ({ event, step }) => {
