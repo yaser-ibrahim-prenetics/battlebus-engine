@@ -27,10 +27,13 @@ export async function POST(request: NextRequest) {
     console.log(`[Webhook] Received Shopify ${topic} from ${shopDomain}`);
 
     // Route to appropriate event based on topic
+    // IMPORTANT: Each event includes an `id` for event-level idempotency
+    // This prevents duplicate events from being stored (24-hour window)
     switch (topic) {
       // Order creation - main flow
       case "orders/create":
         await inngest.send({
+          id: `shopify-order-created-${payload.id}`, // Event-level idempotency key
           name: "shopify/order.created",
           data: {
             shopifyOrderId: String(payload.id),
@@ -46,6 +49,7 @@ export async function POST(request: NextRequest) {
       // Order paid - triggers order processing (alternative to orders/create)
       case "orders/paid":
         await inngest.send({
+          id: `shopify-order-paid-${payload.id}`, // Event-level idempotency key
           name: "shopify/order.paid",
           data: {
             shopifyOrderId: String(payload.id),
@@ -63,7 +67,9 @@ export async function POST(request: NextRequest) {
         // Only process if order is paid (avoid processing draft updates)
         if (payload.financial_status === "paid") {
           await inngest.send({
-            name: "shopify/order.created", // Reuse same handler, idempotency will handle duplicates
+            // Use updated_at to allow re-processing when order actually changes
+            id: `shopify-order-updated-${payload.id}-${payload.updated_at}`,
+            name: "shopify/order.updated", // Now routes to debounced handler
             data: {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
@@ -72,7 +78,7 @@ export async function POST(request: NextRequest) {
               receivedAt: new Date().toISOString(),
             },
           });
-          console.log(`[Webhook] Sent shopify/order.created (from update) for ${payload.name}`);
+          console.log(`[Webhook] Sent shopify/order.updated for ${payload.name}`);
         } else {
           console.log(`[Webhook] Skipped orders/updated for ${payload.name} - status: ${payload.financial_status}`);
         }
@@ -81,6 +87,7 @@ export async function POST(request: NextRequest) {
       // Order cancelled - need to cancel in D365 and GPS
       case "orders/cancelled":
         await inngest.send({
+          id: `shopify-order-cancelled-${payload.id}`, // Event-level idempotency key
           name: "shopify/order.cancelled",
           data: {
             shopifyOrderId: String(payload.id),
@@ -103,6 +110,7 @@ export async function POST(request: NextRequest) {
       // Refund created - need to create credit note in D365
       case "refunds/create":
         await inngest.send({
+          id: `shopify-refund-created-${payload.id}`, // Event-level idempotency key
           name: "shopify/refund.created",
           data: {
             shopifyOrderId: String(payload.order_id),

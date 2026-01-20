@@ -23,13 +23,18 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Webhook] Received GPS fulfilment for order: ${payload.orderNumber}`);
 
-    // Send event to Inngest
+    // Send event to Inngest with event-level idempotency
+    const gpsOrderId = payload.orderId || payload.orderNumber;
+    const trackingNumber = payload.trackingNumber;
+    
     await inngest.send({
+      // Event-level idempotency: unique per order + tracking number
+      id: `gps-fulfilment-${gpsOrderId}-${trackingNumber}`,
       name: "gps/fulfilment.received",
       data: {
-        gpsOrderId: payload.orderId || payload.orderNumber,
+        gpsOrderId,
         shopifyOrderId: payload.shopifyOrderId || extractShopifyOrderId(payload),
-        trackingNumber: payload.trackingNumber,
+        trackingNumber,
         carrierCode: payload.carrierCode,
         fulfilmentJson: payload,
         receivedAt: new Date().toISOString(),

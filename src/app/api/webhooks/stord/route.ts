@@ -22,13 +22,18 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Webhook] Received STORD fulfilment for order: ${payload.orderNumber}`);
 
-    // Send event to Inngest
+    // Send event to Inngest with event-level idempotency
+    const stordOrderId = payload.orderId || payload.id;
+    const trackingNumber = payload.trackingNumber || payload.tracking?.number || "";
+    
     await inngest.send({
+      // Event-level idempotency: unique per order + tracking number
+      id: `stord-fulfilment-${stordOrderId}-${trackingNumber}`,
       name: "stord/fulfilment.received",
       data: {
-        stordOrderId: payload.orderId || payload.id,
+        stordOrderId,
         shopifyOrderId: payload.externalOrderId || payload.shopifyOrderId || "",
-        trackingNumber: payload.trackingNumber || payload.tracking?.number || "",
+        trackingNumber,
         carrierCode: payload.carrier || payload.tracking?.carrier || "",
         fulfilmentJson: payload,
         receivedAt: new Date().toISOString(),
