@@ -62,7 +62,7 @@ export default function Home() {
           />
           <StatusCard
             title="Functions"
-            status="6 Active"
+            status="4 Active"
             icon={
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
@@ -82,8 +82,6 @@ export default function Home() {
             <FunctionRow name="process-shopify-refund" trigger="shopify/refund.created" />
             <FunctionRow name="process-gps-fulfilment" trigger="gps/fulfilment.received" />
             <FunctionRow name="process-stord-fulfilment" trigger="stord/fulfilment.received" />
-            <FunctionRow name="process-loop-return" trigger="loop/return.created" />
-            <FunctionRow name="process-prive-notification" trigger="prive/notification.received" />
           </div>
         </div>
 
