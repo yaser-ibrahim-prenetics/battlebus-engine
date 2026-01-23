@@ -61,11 +61,8 @@ export const processStordFulfilment = inngest.createFunction(
   async ({ event, step }) => {
     const { stordOrderId, shopifyOrderId, trackingNumber, carrierCode, fulfilmentJson } = event.data;
 
-    console.log(`[Battle Bus] Processing STORD fulfilment: ${stordOrderId} -> ${trackingNumber}`);
-
     // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
-      console.log(`[Dry Run] Would process STORD fulfilment: ${stordOrderId}`);
       return {
         status: "dry_run",
         stordOrderId,
@@ -80,8 +77,6 @@ export const processStordFulfilment = inngest.createFunction(
       return shopify.getOrder(shopifyOrderId);
     });
 
-    console.log(`[Battle Bus] Found Shopify order: ${shopifyOrder.name}`);
-
     // =========================================================================
     // STEP 2: Get Shopify Fulfillment Orders
     // =========================================================================
@@ -94,7 +89,6 @@ export const processStordFulfilment = inngest.createFunction(
     );
 
     if (!openFulfillmentOrder) {
-      console.log(`[Battle Bus] No open fulfillment order found for: ${shopifyOrder.name}`);
       return {
         status: "no_open_fulfillment_order",
         shopifyOrderId,
@@ -125,8 +119,6 @@ export const processStordFulfilment = inngest.createFunction(
       );
     });
 
-    console.log(`[Battle Bus] Created Shopify fulfillment: ${shopifyFulfillment.id}`);
-
     // =========================================================================
     // STEP 4: Create D365 Packing Slip
     // =========================================================================
@@ -137,14 +129,16 @@ export const processStordFulfilment = inngest.createFunction(
 
       const d365Order = await dynamics.getSalesOrderByShopifyId(shopifyOrderId);
       if (!d365Order) {
-        console.log(`[Battle Bus] No D365 order found for: ${shopifyOrderId}`);
         return;
       }
 
       const fulfilment = fulfilmentJson as StordFulfilmentPayload;
 
+      // Use dataAreaId from D365 order, fallback to config
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+
       await dynamics.createFulfilment({
-        dataAreaId: config.dynamics.dataAreaId,
+        dataAreaId,
         salesOrderNumber: d365Order.SalesOrderNumber!,
         type: "PackingSlip",
         confirmedShippedDate: fulfilment.shippedAt?.split("T")[0] || new Date().toISOString().split("T")[0],
@@ -156,8 +150,6 @@ export const processStordFulfilment = inngest.createFunction(
         })),
       });
     });
-
-    console.log(`[Battle Bus] Created D365 packing slip for: ${shopifyOrder.name}`);
 
     // =========================================================================
     // SUCCESS: Return final status

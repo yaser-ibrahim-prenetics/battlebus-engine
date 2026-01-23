@@ -7,6 +7,7 @@ export { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-
 export { processRefund } from "./process-refund";
 export { processGpsFulfilment } from "./process-gps-fulfilment";
 export { processStordFulfilment } from "./process-stord-fulfilment";
+export { processShopifyFulfillment } from "./process-shopify-fulfillment";
 export { processOrderCancellation } from "./process-order-cancellation";
 export { processOrderUpdate } from "./process-order-update";
 
@@ -15,6 +16,7 @@ import { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-
 import { processRefund } from "./process-refund";
 import { processGpsFulfilment } from "./process-gps-fulfilment";
 import { processStordFulfilment } from "./process-stord-fulfilment";
+import { processShopifyFulfillment } from "./process-shopify-fulfillment";
 import { processOrderCancellation } from "./process-order-cancellation";
 import { processOrderUpdate } from "./process-order-update";
 
@@ -24,6 +26,7 @@ export const functions = [
   processRefund,
   processGpsFulfilment,
   processStordFulfilment,
+  processShopifyFulfillment,
   processOrderCancellation,
   processOrderUpdate,
 ];

@@ -228,9 +228,23 @@ export async function POST(request: NextRequest) {
         console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.cancelled for ${payload.name}`);
         break;
 
-      // Order fulfilled - Shopify notifying us (we usually initiate this)
+      // Order fulfilled - Shopify notifying us (Flow 7: Shopify Direct Fulfillment)
+      // This happens when Shopify is the source of truth (manual, Stord, etc.)
       case "orders/fulfilled":
-        console.log(`[Webhook] [${requestId}] ℹ️  Received orders/fulfilled for ${payload.name} - no action needed (we initiate fulfillments)`);
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.fulfilled`);
+        await inngest.send({
+          id: `shopify-order-fulfilled-${payload.id}-${payload.updated_at}`, // Event-level idempotency key
+          name: "shopify/order.fulfilled",
+          data: {
+            shopifyOrderId: String(payload.id),
+            shopifyOrderName: payload.name,
+            shopifyStore: shopDomain || "im8",
+            orderJson: payload,
+            fulfillments: payload.fulfillments || [],
+            receivedAt: new Date().toISOString(),
+          },
+        });
+        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.fulfilled for ${payload.name}`);
         break;
 
       // Refund created - need to create credit note in D365
