@@ -561,3 +561,7 @@ export const confirmDynamicsReturn = (payload) => {
 export const processRefundPayment = (payload) => {
   return {};
 }
+
+export const updateDynamicDeliveryAddress = (payload) => {
+  return {};
+}
