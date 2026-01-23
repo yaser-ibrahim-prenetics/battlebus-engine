@@ -290,42 +290,6 @@ export const processShopifyOrder = inngest.createFunction(
     }
 
     // =========================================================================
-    // STEP 7: Record to mock JSON DB (for local dev observability)
-    // =========================================================================
-    await step.run("record-mock-order", async () => {
-      try {
-        await appendOrderRecord({
-          createdAt: new Date().toISOString(),
-          eventId: event.id ?? `shopify-order-created-${shopifyOrderId}`,
-          shopifyOrderId,
-          shopifyOrderName,
-          shopDomain: order?.email ? config.shopify.im8.shopDomain || null : null,
-          warehouse: warehouseName,
-          d365: {
-            salesOrderNumber,
-            headerRequest: d365Header.request ?? {},
-            linesRequest: d365Lines ?? [],
-            prepaymentAmount,
-          },
-          gps: shouldSendToGps(order)
-            ? {
-                enabled: config.features.enableGpsSync,
-                warehouse: warehouseName,
-                outboundOrder: gpsOrderPayload ?? null,
-              }
-            : undefined,
-          rawShopifyOrder: order,
-        });
-
-        console.log(
-          `[Battle Bus] [DEV] Recorded mock order to data/orders.json (Shopify ID=${shopifyOrderId}, D365=${salesOrderNumber})`
-        );
-      } catch (err) {
-        console.error("[Battle Bus] Failed to write mock order record:", err);
-      }
-    });
-
-    // =========================================================================
     // SUCCESS: Return final status
     // =========================================================================
     return {
