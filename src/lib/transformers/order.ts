@@ -162,7 +162,16 @@ export function toD365SalesOrderLines(
   const lines: D365SalesOrderLineRequest[] = [];
 
   // Add product lines
-  for (const item of order.line_items) {
+  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+
+  if (!Array.isArray(order.line_items)) {
+    console.warn(
+      "[Transformers] order.line_items is missing or not an array – skipping product lines. " +
+        "This usually means a test payload is incomplete."
+    );
+  }
+
+  for (const item of lineItems) {
     if (item.gift_card) continue; // Skip gift card purchases
 
     const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, currency, discountCodes);
@@ -232,8 +241,16 @@ export function toGpsOutboundOrder(
   });
 
   // Transform line items (filter and merge duplicates)
+  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+  
+  if (!Array.isArray(order.line_items)) {
+    console.warn(
+      `[Transformers] order.line_items is missing or not an array for GPS order ${order.name} – using empty product list`
+    );
+  }
+
   const skuTransformer = createShopifyToDynamicsLineTransformer();
-  const productLines = order.line_items
+  const productLines = lineItems
     .filter((item) => item.requires_shipping && !item.gift_card)
     .map((item) => ({
       itemNumber: item.sku,
@@ -307,7 +324,16 @@ export function calculateOrderCost(
  * Check if order should be sent to GPS warehouse
  */
 export function shouldSendToGps(order: ShopifyOrderPayload): boolean {
-  return order.line_items.some(
+  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+
+  if (!Array.isArray(order.line_items)) {
+    console.warn(
+      "[Transformers] order.line_items is missing or not an array – treating as no-GPS order. " +
+        "This usually means a test payload is incomplete."
+    );
+  }
+
+  return lineItems.some(
     (item) => item.requires_shipping && !item.gift_card
   );
 }

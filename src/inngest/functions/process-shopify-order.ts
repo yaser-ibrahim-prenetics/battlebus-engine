@@ -51,12 +51,16 @@ export const processShopifyOrder = inngest.createFunction(
       },
     ],
   },
-  // NOTE: Inngest dev server doesn't support array triggers
-  // Using order.created - the webhook route sends this for orders/create
-  // For orders/paid, we have a separate handler below
+  // NOTE: Inngest dev server doesn't support array triggers reliably,
+  // so the main processor listens to order.created and we use a
+  // separate function below to forward order.paid events.
   { event: "shopify/order.created" },
   async ({ event, step }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
+
+    console.log(
+      `[Battle Bus] processShopifyOrder triggered by ${event.name} for ${shopifyOrderName} (${shopifyOrderId})`
+    );
     const order = orderJson as ShopifyOrderPayload;
 
     console.log(`[Battle Bus] Processing order: ${shopifyOrderName} (${shopifyOrderId})`);
@@ -126,11 +130,19 @@ export const processShopifyOrder = inngest.createFunction(
     // STEP 2: Create D365 Sales Order Header
     // =========================================================================
     const d365Header = await step.run("create-d365-header", async () => {
+      const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
+
+      // In local/dev we often don't want to hit real D365, but we still
+      // want to see exactly what would be sent. So:
+      // - When enableDynamicsSync=false, we SKIP the HTTP call but keep
+      //   the request payload for logging + mock DB.
       if (!config.features.enableDynamicsSync) {
-        return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: {} };
+        console.log(
+          `[Battle Bus] [DEV] Skipping real D365 header creation – writing to mock DB only`
+        );
+        return { SalesOrderNumber: `MOCK-${shopifyOrderId}`, request: headerRequest };
       }
 
-      const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
       return dynamics.createSalesOrderHeaderV3(headerRequest);
     });
 
@@ -140,12 +152,16 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     // STEP 3: Create D365 Sales Order Lines
     // =========================================================================
-    await step.run("create-d365-lines", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return;
-      }
-
+    const d365Lines = await step.run("create-d365-lines", async () => {
       const lines = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
+
+      if (!config.features.enableDynamicsSync) {
+        console.log(
+          `[Battle Bus] [DEV] Skipping real D365 line creation – writing to mock DB only`
+        );
+        // Just return the lines so we can log them
+        return lines;
+      }
 
       for (const line of lines) {
         await dynamics.createSalesOrderLine({
@@ -153,6 +169,8 @@ export const processShopifyOrder = inngest.createFunction(
           salesOrderNumber,
         });
       }
+
+      return lines;
     });
 
     console.log(`[Battle Bus] Created D365 lines for: ${salesOrderNumber}`);
@@ -199,16 +217,21 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     // STEP 6: Create D365 Prepayment
     // =========================================================================
-    await step.run("create-d365-prepayment", async () => {
+    const prepaymentAmount = await step.run("create-d365-prepayment", async () => {
+      const amount = calculatePrepaymentAmount(order);
+
       if (!config.features.enableDynamicsSync) {
-        return;
+        console.log(
+          `[Battle Bus] [DEV] Skipping real D365 prepayment – writing to mock DB only (amount=${amount})`
+        );
+        return amount;
       }
 
-      const prepaymentAmount = calculatePrepaymentAmount(order);
-
-      if (prepaymentAmount > 0) {
+      if (amount > 0) {
         await dynamics.createPrepayment(salesOrderNumber, config.dynamics.dataAreaId);
       }
+
+      return amount;
     });
 
     console.log(`[Battle Bus] Created prepayment for: ${salesOrderNumber}`);
@@ -216,11 +239,28 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     // STEP 7: Send to GPS Warehouse (with self-healing retry)
     // =========================================================================
-    if (shouldSendToGps(order) && config.features.enableGpsSync) {
+    let gpsOrderPayload: ReturnType<typeof toGpsOutboundOrder> | undefined;
+
+    // Always build GPS payload (for mock DB logging), even if we won't send to real GPS
+    await step.run("build-gps-payload", async () => {
+      try {
+        gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
+        console.log(`[Battle Bus] Built GPS payload for: ${shopifyOrderName}`);
+        return gpsOrderPayload;
+      } catch (error) {
+        // If GPS payload building fails (e.g., missing address), log but don't fail
+        console.warn(`[Battle Bus] Failed to build GPS payload: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      }
+    });
+
+    // Only send to real GPS if shouldSendToGps is true AND enableGpsSync is enabled
+    const shouldSendToRealGps = shouldSendToGps(order) && config.features.enableGpsSync;
+
+    if (shouldSendToRealGps && gpsOrderPayload) {
       try {
         await step.run("send-to-gps-warehouse", async () => {
-          const gpsOrder = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
-          return gps.createOutboundOrder(gpsOrder, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
+          return gps.createOutboundOrder(gpsOrderPayload!, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
         });
 
         console.log(`[Battle Bus] Sent to GPS warehouse: ${shopifyOrderName}`);
@@ -236,14 +276,54 @@ export const processShopifyOrder = inngest.createFunction(
 
           // Retry after sleep
           await step.run("retry-gps-after-oos", async () => {
-            const gpsOrder = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
-            return gps.createOutboundOrder(gpsOrder, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
+            if (!gpsOrderPayload) {
+              gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
+            }
+            return gps.createOutboundOrder(gpsOrderPayload, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
           });
         } else {
           throw error; // Re-throw non-OOS errors for Inngest retry
         }
       }
+    } else {
+      console.log(`[Battle Bus] Skipping real GPS send (shouldSendToGps=${shouldSendToGps(order)}, enableGpsSync=${config.features.enableGpsSync}, hasPayload=${!!gpsOrderPayload})`);
     }
+
+    // =========================================================================
+    // STEP 7: Record to mock JSON DB (for local dev observability)
+    // =========================================================================
+    await step.run("record-mock-order", async () => {
+      try {
+        await appendOrderRecord({
+          createdAt: new Date().toISOString(),
+          eventId: event.id ?? `shopify-order-created-${shopifyOrderId}`,
+          shopifyOrderId,
+          shopifyOrderName,
+          shopDomain: order?.email ? config.shopify.im8.shopDomain || null : null,
+          warehouse: warehouseName,
+          d365: {
+            salesOrderNumber,
+            headerRequest: d365Header.request ?? {},
+            linesRequest: d365Lines ?? [],
+            prepaymentAmount,
+          },
+          gps: shouldSendToGps(order)
+            ? {
+                enabled: config.features.enableGpsSync,
+                warehouse: warehouseName,
+                outboundOrder: gpsOrderPayload ?? null,
+              }
+            : undefined,
+          rawShopifyOrder: order,
+        });
+
+        console.log(
+          `[Battle Bus] [DEV] Recorded mock order to data/orders.json (Shopify ID=${shopifyOrderId}, D365=${salesOrderNumber})`
+        );
+      } catch (err) {
+        console.error("[Battle Bus] Failed to write mock order record:", err);
+      }
+    });
 
     // =========================================================================
     // SUCCESS: Return final status
