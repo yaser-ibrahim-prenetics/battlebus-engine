@@ -57,17 +57,10 @@ export const processShopifyOrder = inngest.createFunction(
   { event: "shopify/order.created" },
   async ({ event, step }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
-
-    console.log(
-      `[Battle Bus] processShopifyOrder triggered by ${event.name} for ${shopifyOrderName} (${shopifyOrderId})`
-    );
     const order = orderJson as ShopifyOrderPayload;
-
-    console.log(`[Battle Bus] Processing order: ${shopifyOrderName} (${shopifyOrderId})`);
 
     // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
-      console.log(`[Dry Run] Would process order: ${shopifyOrderName}`);
       return {
         status: "dry_run",
         orderId: shopifyOrderId,
@@ -118,7 +111,6 @@ export const processShopifyOrder = inngest.createFunction(
     });
 
     if (existingOrder) {
-      console.log(`[Battle Bus] Order already exists in D365: ${existingOrder.SalesOrderNumber}`);
       return {
         status: "already_exists",
         d365OrderNumber: existingOrder.SalesOrderNumber,
@@ -137,9 +129,6 @@ export const processShopifyOrder = inngest.createFunction(
       // - When enableDynamicsSync=false, we SKIP the HTTP call but keep
       //   the request payload for logging + mock DB.
       if (!config.features.enableDynamicsSync) {
-        console.log(
-          `[Battle Bus] [DEV] Skipping real D365 header creation – writing to mock DB only`
-        );
         return { SalesOrderNumber: `MOCK-${shopifyOrderId}`, request: headerRequest };
       }
 
@@ -147,7 +136,6 @@ export const processShopifyOrder = inngest.createFunction(
     });
 
     const salesOrderNumber = d365Header.SalesOrderNumber;
-    console.log(`[Battle Bus] Created D365 header: ${salesOrderNumber}`);
 
     // =========================================================================
     // STEP 3: Create D365 Sales Order Lines
@@ -156,10 +144,6 @@ export const processShopifyOrder = inngest.createFunction(
       const lines = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
 
       if (!config.features.enableDynamicsSync) {
-        console.log(
-          `[Battle Bus] [DEV] Skipping real D365 line creation – writing to mock DB only`
-        );
-        // Just return the lines so we can log them
         return lines;
       }
 
@@ -172,8 +156,6 @@ export const processShopifyOrder = inngest.createFunction(
 
       return lines;
     });
-
-    console.log(`[Battle Bus] Created D365 lines for: ${salesOrderNumber}`);
 
     // =========================================================================
     // STEP 4: Wait for D365 order propagation
@@ -203,7 +185,6 @@ export const processShopifyOrder = inngest.createFunction(
             error.message.includes("does not exist");
           
           if (isNotFoundError && attempt < maxRetries) {
-            console.log(`[Battle Bus] D365 order not ready yet, retry ${attempt}/${maxRetries} in ${retryDelayMs}ms`);
             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
           } else {
             throw error; // Re-throw on final attempt or non-retryable error
@@ -212,8 +193,6 @@ export const processShopifyOrder = inngest.createFunction(
       }
     });
 
-    console.log(`[Battle Bus] Confirmed D365 order: ${salesOrderNumber}`);
-
     // =========================================================================
     // STEP 6: Create D365 Prepayment
     // =========================================================================
@@ -221,9 +200,6 @@ export const processShopifyOrder = inngest.createFunction(
       const amount = calculatePrepaymentAmount(order);
 
       if (!config.features.enableDynamicsSync) {
-        console.log(
-          `[Battle Bus] [DEV] Skipping real D365 prepayment – writing to mock DB only (amount=${amount})`
-        );
         return amount;
       }
 
@@ -234,8 +210,6 @@ export const processShopifyOrder = inngest.createFunction(
       return amount;
     });
 
-    console.log(`[Battle Bus] Created prepayment for: ${salesOrderNumber}`);
-
     // =========================================================================
     // STEP 7: Send to GPS Warehouse (with self-healing retry)
     // =========================================================================
@@ -245,11 +219,8 @@ export const processShopifyOrder = inngest.createFunction(
     await step.run("build-gps-payload", async () => {
       try {
         gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
-        console.log(`[Battle Bus] Built GPS payload for: ${shopifyOrderName}`);
         return gpsOrderPayload;
       } catch (error) {
-        // If GPS payload building fails (e.g., missing address), log but don't fail
-        console.warn(`[Battle Bus] Failed to build GPS payload: ${error instanceof Error ? error.message : String(error)}`);
         return null;
       }
     });
@@ -262,15 +233,11 @@ export const processShopifyOrder = inngest.createFunction(
         await step.run("send-to-gps-warehouse", async () => {
           return gps.createOutboundOrder(gpsOrderPayload!, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
         });
-
-        console.log(`[Battle Bus] Sent to GPS warehouse: ${shopifyOrderName}`);
       } catch (error) {
         // =====================================================================
         // SELF-HEALING: Out of Stock Retry
         // =====================================================================
         if (error instanceof OutOfStockError) {
-          console.log(`[Battle Bus] Out of stock, sleeping for ${config.delays.outOfStockRetryHours} hours`);
-
           // Sleep and retry - this is the "Battle Bus" magic!
           await step.sleep("wait-for-stock", `${config.delays.outOfStockRetryHours}h`);
 
@@ -285,8 +252,6 @@ export const processShopifyOrder = inngest.createFunction(
           throw error; // Re-throw non-OOS errors for Inngest retry
         }
       }
-    } else {
-      console.log(`[Battle Bus] Skipping real GPS send (shouldSendToGps=${shouldSendToGps(order)}, enableGpsSync=${config.features.enableGpsSync}, hasPayload=${!!gpsOrderPayload})`);
     }
 
     // =========================================================================
