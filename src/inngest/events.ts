@@ -120,6 +120,7 @@ export interface ShopifyOrderPayload {
   email: string;
   created_at: string;
   updated_at: string;
+  cancelled_at: string | null;
   total_price: string;
   subtotal_price: string;
   total_tax: string;
