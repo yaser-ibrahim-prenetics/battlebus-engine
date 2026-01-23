@@ -19,7 +19,7 @@ const CARRIER_MAPPING: Record<string, string> = {
   lasership: "LaserShip",
 };
 
-export const processShopifyFulfillment = inngest.createFunction(
+export const processShopifyFulfilment = inngest.createFunction(
   { 
     id: 'shopify-fulfillment-processor',
     name: 'Process Shopify Order Fulfillment'
