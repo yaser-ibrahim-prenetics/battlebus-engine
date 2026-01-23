@@ -531,3 +531,33 @@ export async function getSalesOrderByShopifyId(
 
 // Alias for the old function name
 export const createSalesOrderHeader = createSalesOrderHeaderV3;
+
+export async function createSalesOrderHeadersV3ForReturn(payload) {
+  return {
+    SalesOrderNumber: `MOCK_SALES_ORDER_NUMBER_123`,
+    request: payload,
+  };
+}
+
+export const createDynamicsReturnLines = (payload) => {
+  return {
+    InventoryLotId: `MOCK_INVENTORY_LOT_ID_123`,
+    request: payload,
+  }
+};
+
+export const confirmDynamicsReturn = (payload) => {
+  return {
+    response: {
+      status: DYNAMICS_THK_API_SUCCESS_STATUS,
+      Message: 'MOCK_SUCCESS',
+      Result: 'MOCK_RESULT',
+      $id: 'MOCK_ID',
+    },
+    request: payload,
+  }
+};
+
+export const processRefundPayment = (payload) => {
+  return {};
+}
