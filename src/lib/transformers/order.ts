@@ -4,6 +4,14 @@
 // Ported from spock-store src/component/salesorder.ts
 // Pure functions for transforming Shopify orders to D365/GPS formats
 
+/**
+ * Get line items from order, with defensive check for missing/invalid data
+ * Returns empty array if line_items is missing or not an array
+ */
+function getLineItems(order: ShopifyOrderPayload): ShopifyLineItem[] {
+  return Array.isArray(order.line_items) ? order.line_items : [];
+}
+
 import { config } from "../config";
 import type {
   ShopifyOrderPayload,
@@ -162,7 +170,7 @@ export function toD365SalesOrderLines(
   const lines: D365SalesOrderLineRequest[] = [];
 
   // Add product lines
-  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+  const lineItems = getLineItems(order);
 
   if (!Array.isArray(order.line_items)) {
     console.warn(
@@ -241,7 +249,7 @@ export function toGpsOutboundOrder(
   });
 
   // Transform line items (filter and merge duplicates)
-  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+  const lineItems = getLineItems(order);
   
   if (!Array.isArray(order.line_items)) {
     console.warn(
@@ -324,7 +332,7 @@ export function calculateOrderCost(
  * Check if order should be sent to GPS warehouse
  */
 export function shouldSendToGps(order: ShopifyOrderPayload): boolean {
-  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+  const lineItems = getLineItems(order);
 
   if (!Array.isArray(order.line_items)) {
     console.warn(

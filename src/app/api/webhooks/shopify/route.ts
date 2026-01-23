@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
+import { config } from "@/lib/config";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 
@@ -44,7 +45,12 @@ export async function POST(request: NextRequest) {
     const isDev = process.env.NODE_ENV !== "production";
     let signatureValid = true;
 
-    if (hmacHeader) {
+    // Check if webhook secret is configured
+    if (!config.shopify.im8.webhookSecret) {
+      console.log(
+        `[Webhook] [${requestId}] ⚠️  Webhook secret not configured - skipping signature verification`
+      );
+    } else if (hmacHeader) {
       // In development, allow a special "test" value to bypass real HMAC validation
       if (isDev && hmacHeader === "test") {
         console.log(

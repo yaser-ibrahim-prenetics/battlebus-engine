@@ -213,13 +213,10 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
     // STEP 7: Send to GPS Warehouse (with self-healing retry)
     // =========================================================================
-    let gpsOrderPayload: ReturnType<typeof toGpsOutboundOrder> | undefined;
-
-    // Always build GPS payload (for mock DB logging), even if we won't send to real GPS
-    await step.run("build-gps-payload", async () => {
+    // Always build GPS payload, even if we won't send to real GPS
+    const gpsOrderPayload = await step.run("build-gps-payload", async () => {
       try {
-        gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
-        return gpsOrderPayload;
+        return toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
       } catch (error) {
         return null;
       }
@@ -231,7 +228,7 @@ export const processShopifyOrder = inngest.createFunction(
     if (shouldSendToRealGps && gpsOrderPayload) {
       try {
         await step.run("send-to-gps-warehouse", async () => {
-          return gps.createOutboundOrder(gpsOrderPayload!, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
+          return gps.createOutboundOrder(gpsOrderPayload, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
         });
       } catch (error) {
         // =====================================================================
@@ -241,12 +238,10 @@ export const processShopifyOrder = inngest.createFunction(
           // Sleep and retry - this is the "Battle Bus" magic!
           await step.sleep("wait-for-stock", `${config.delays.outOfStockRetryHours}h`);
 
-          // Retry after sleep
+          // Retry after sleep - rebuild payload if needed
           await step.run("retry-gps-after-oos", async () => {
-            if (!gpsOrderPayload) {
-              gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
-            }
-            return gps.createOutboundOrder(gpsOrderPayload, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
+            const retryPayload = gpsOrderPayload || toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
+            return gps.createOutboundOrder(retryPayload, warehouseName as "GPS Warehouse" | "GPS UK Warehouse");
           });
         } else {
           throw error; // Re-throw non-OOS errors for Inngest retry
