@@ -1,8 +1,10 @@
 // ============================================================================
 // INNGEST FUNCTION: Process Shopify Order
 // ============================================================================
-// This replaces the old "shopify" task type from spock-store taskprocessor.ts
-// Durable execution with checkpointing via step.run()
+// Flow 1: Order Processing
+// Shopify → Inngest → Dynamics + GPS/STORD
+// Direct event-driven flow - no database in the middle
+// Inngest provides durability and state management via step.run()
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";

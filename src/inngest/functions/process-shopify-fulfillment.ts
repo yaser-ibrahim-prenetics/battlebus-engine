@@ -1,9 +1,11 @@
 // ============================================================================
 // INNGEST FUNCTION: Process Shopify Fulfillment
 // ============================================================================
-// Handles orders/fulfilled webhook from Shopify
-// Syncs fulfillment to Dynamics 365 (Flow 7: Shopify Direct Fulfillment)
-// This is used when Shopify is the source of truth (manual fulfillment, Stord, etc.)
+// Flow 7: Shopify Direct Fulfillment (Push-based)
+// Shopify → Inngest → Dynamics
+// Direct event-driven flow - no database in the middle
+// Inngest provides durability and state management
+// Used when Shopify is the source of truth (manual fulfillment, Stord, etc.)
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
@@ -54,14 +56,14 @@ export const processShopifyFulfillment = inngest.createFunction(
     }
 
     // =========================================================================
-    // STEP 1: Get D365 Sales Order
+    // STEP 1: Get D365 Sales Order (Direct API call - no database lookup)
     // =========================================================================
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
       }
 
-      // Try to find by Shopify order ID
+      // Query D365 directly by Shopify order ID - no local database
       const order = await dynamics.getSalesOrderByShopifyId(shopifyOrderId);
       if (!order) {
         return null;
@@ -84,7 +86,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     // =========================================================================
     const fulfillmentResults = await step.run("process-fulfillments", async () => {
       if (!config.features.enableDynamicsSync) {
-        return fulfillments.map((f) => ({
+        return fulfillments.map((f: ShopifyFulfillment) => ({
           fulfillmentId: f.id,
           status: "skipped_dynamics_disabled",
         }));
@@ -104,7 +106,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
         try {
           // Map fulfillment to D365 format
-          const fulfillmentLines = fulfillment.line_items.map((item) => ({
+          const fulfillmentLines = fulfillment.line_items.map((item: { sku: string; quantity: number }) => ({
             itemNumber: item.sku,
             quantity: item.quantity,
             trackingNumber: fulfillment.tracking_number || undefined,

@@ -1,7 +1,9 @@
 // ============================================================================
 // INNGEST FUNCTION: Process STORD Fulfilment
 // ============================================================================
-// Handles fulfilment notifications from STORD warehouse
+// STORD → Inngest → Shopify + Dynamics
+// Direct event-driven flow - no database in the middle
+// Inngest provides durability and state management
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";

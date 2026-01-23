@@ -1,8 +1,10 @@
 // ============================================================================
 // INNGEST FUNCTION: Process GPS Fulfilment
 // ============================================================================
-// This replaces the old "gps" task type from spock-store
-// Handles fulfilment notifications from GPS warehouse
+// Flow 3: GPS Fulfillment (Pull-based)
+// GPS → Inngest → Shopify + Dynamics
+// Direct event-driven flow - no database in the middle
+// Inngest provides durability and state management
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
