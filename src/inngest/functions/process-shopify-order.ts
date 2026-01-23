@@ -51,6 +51,9 @@ export const processShopifyOrder = inngest.createFunction(
       },
     ],
   },
+  // NOTE: Inngest dev server doesn't support array triggers
+  // Using order.created - the webhook route sends this for orders/create
+  // For orders/paid, we have a separate handler below
   { event: "shopify/order.created" },
   async ({ event, step }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
@@ -198,6 +201,48 @@ export const processShopifyOrder = inngest.createFunction(
       d365OrderNumber: salesOrderNumber,
       warehouse: warehouseName,
       processedAt: new Date().toISOString(),
+    };
+  }
+);
+
+// ============================================================================
+// INNGEST FUNCTION: Process Shopify Order (Paid Trigger)
+// ============================================================================
+// This handles the orders/paid webhook by forwarding to the main order processor
+// Inngest dev server doesn't support array triggers, so we need separate functions
+export const processShopifyOrderPaid = inngest.createFunction(
+  {
+    id: "process-shopify-order-paid",
+    name: "Process Shopify Order (Paid)",
+    // Same idempotency as main function - prevents duplicate processing
+    idempotency: "event.data.shopifyOrderId",
+    retries: 5,
+    throttle: {
+      limit: 10,
+      period: "1s",
+      key: "event.data.shopifyStore",
+    },
+    concurrency: [
+      {
+        limit: 3,
+        key: "event.data.orderJson.shipping_address.country_code",
+      },
+    ],
+  },
+  { event: "shopify/order.paid" },
+  async ({ event, step }) => {
+    // Forward to the main order processing by sending order.created event
+    // This ensures both triggers use the same processing logic
+    await step.sendEvent("forward-to-order-created", {
+      name: "shopify/order.created",
+      data: event.data,
+    });
+
+    return {
+      status: "forwarded",
+      shopifyOrderId: event.data.shopifyOrderId,
+      shopifyOrderName: event.data.shopifyOrderName,
+      forwardedTo: "shopify/order.created",
     };
   }
 );

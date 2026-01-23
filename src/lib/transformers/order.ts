@@ -123,6 +123,7 @@ export function toD365SalesOrderLine(
   lineItem: ShopifyLineItem,
   salesOrderNumber: string,
   dataAreaId: string,
+  currency: string,
   discountCodes?: string[]
 ): D365SalesOrderLineRequest {
   const itemNumber = mapShopifySkuToDynamics(lineItem.sku);
@@ -137,6 +138,7 @@ export function toD365SalesOrderLine(
     quantity: lineItem.quantity,
     price,
     discount: discountPerUnit,
+    currency,
     discountCode: discountCodes,
   };
 }
@@ -153,6 +155,7 @@ export function toD365SalesOrderLines(
 ): D365SalesOrderLineRequest[] {
   const warehouseConfig = getWarehouseConfig(warehouseName);
   const dataAreaId = warehouseConfig.dataAreaId;
+  const currency = order.currency || "USD";
   const discountCodes = order.discount_codes?.map((d) => d.code);
   const skuTransformer = createShopifyToDynamicsLineTransformer();
 
@@ -162,13 +165,15 @@ export function toD365SalesOrderLines(
   for (const item of order.line_items) {
     if (item.gift_card) continue; // Skip gift card purchases
 
-    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, discountCodes);
+    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, currency, discountCodes);
     const transformedLine = skuTransformer(line);
     lines.push(transformedLine);
   }
 
   // Add shipping line
-  if (includeShippingAndTax) {
+  // NOTE: Temporarily disabled - IM8-SER-* SKUs don't exist in D365 sandbox yet
+  // TODO: Re-enable once service SKUs are created in D365
+  if (includeShippingAndTax && false) {
     const shippingCost = calculateShippingCost(order);
     if (shippingCost > 0) {
       lines.push({
@@ -177,6 +182,7 @@ export function toD365SalesOrderLines(
         itemNumber: getShippingSku(warehouseName),
         quantity: 1,
         price: shippingCost,
+        currency,
       });
     }
 
@@ -189,6 +195,7 @@ export function toD365SalesOrderLines(
         itemNumber: getTaxSku(warehouseName),
         quantity: 1,
         price: taxAmount,
+        currency,
       });
     }
   }

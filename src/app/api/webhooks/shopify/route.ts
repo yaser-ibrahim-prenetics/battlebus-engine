@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
+import { config } from "@/lib/config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,10 +16,15 @@ export async function POST(request: NextRequest) {
     const topic = request.headers.get("x-shopify-topic");
     const shopDomain = request.headers.get("x-shopify-shop-domain");
 
-    // Verify webhook signature
-    if (hmacHeader && !verifyWebhookSignature(body, hmacHeader)) {
+    // Verify webhook signature (skip if no secret configured - local dev mode)
+    const webhookSecret = config.shopify.im8.webhookSecret;
+    if (webhookSecret && hmacHeader && !verifyWebhookSignature(body, hmacHeader)) {
       console.error("[Webhook] Invalid Shopify signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+    
+    if (!webhookSecret) {
+      console.log("[Webhook] Signature verification skipped (no secret configured)");
     }
 
     // Parse the webhook body

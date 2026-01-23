@@ -3,7 +3,7 @@
     "GPS Warehouse": {
       "countryCode": "US",
       "name": "GPS Warehouse",
-      "orderingCustomerAccountNumber": "U001-C000000001",
+      "orderingCustomerAccountNumber": "U001-C000000006",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
@@ -11,12 +11,12 @@
       "logisticsChannel": "GPS-IM8-STANDARD",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
-        "shippingWarehouseId": "USOPS-WH04",
+        "shippingWarehouseId": "USOPS-WH01",
         "shippingWarehouseLocationId": "Primary"
       },
       "return": {
         "shippingSiteId": "Prenetics",
-        "shippingWarehouseId": "USOPS-WH04-Q",
+        "shippingWarehouseId": "USOPS-WH01",
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
@@ -32,7 +32,7 @@
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "H007",
-      "gpsCode": "GB03RS",
+      "gpsCode": "LHR",
       "logisticsChannel": "GPS-IM8-STANDARD-UK",
       "fulfilment": {
         "shippingSiteId": "Prenetics",

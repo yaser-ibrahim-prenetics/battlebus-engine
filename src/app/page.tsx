@@ -1,4 +1,144 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
+
+// Simulation Panel Component for testing Inngest events
+function SimulationPanel() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [orderName, setOrderName] = useState("IM8-TEST-" + Date.now());
+
+  const simulateOrder = async () => {
+    setLoading(true);
+    setResult(null);
+    
+    try {
+      const response = await fetch("/api/webhooks/shopify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-shopify-topic": "orders/paid",
+          "x-shopify-shop-domain": "im8-test.myshopify.com",
+        },
+        body: JSON.stringify({
+          id: Date.now(),
+          name: orderName,
+          email: "test@example.co.uk",
+          financial_status: "paid",
+          total_price: "79.00",
+          total_tax: "13.17",
+          currency: "GBP",
+          line_items: [
+            {
+              id: 1,
+              sku: "IM8-FG-000080",
+              title: "Essential Starter Kit (Travel 30)",
+              quantity: 1,
+              price: "79.00",
+              total_discount: "0.00",
+              requires_shipping: true,
+              gift_card: false,
+            },
+          ],
+          shipping_address: {
+            first_name: "Test",
+            last_name: "User",
+            address1: "10 Downing Street",
+            address2: "",
+            city: "London",
+            province: "England",
+            country: "United Kingdom",
+            zip: "SW1A 2AA",
+            country_code: "GB",
+            province_code: "",
+            phone: "+44 20 7946 0958",
+          },
+          billing_address: {
+            first_name: "Test",
+            last_name: "User",
+            address1: "10 Downing Street",
+            address2: "",
+            city: "London",
+            province: "England",
+            country: "United Kingdom",
+            zip: "SW1A 2AA",
+            country_code: "GB",
+            province_code: "",
+            phone: "+44 20 7946 0958",
+          },
+          customer: {
+            id: 12345,
+            email: "test@example.co.uk",
+            first_name: "Test",
+            last_name: "User",
+          },
+          shipping_lines: [
+            {
+              id: 1,
+              title: "Standard Shipping",
+              price: "0.00",
+              code: "STANDARD",
+            },
+          ],
+          discount_codes: [],
+        }),
+      });
+
+      const data = await response.json();
+      setResult(JSON.stringify(data, null, 2));
+      setOrderName("IM8-TEST-" + Date.now()); // Generate new order name for next test
+    } catch (error) {
+      setResult(`Error: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-3xl bg-slate-900/50 backdrop-blur-xl rounded-2xl border border-amber-500/30 p-6 mb-8">
+      <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-amber-400" />
+        Test Simulation
+      </h2>
+      
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm text-slate-400 block mb-2">Order Name</label>
+          <input
+            type="text"
+            value={orderName}
+            onChange={(e) => setOrderName(e.target.value)}
+            className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-indigo-500"
+          />
+        </div>
+        
+        <button
+          onClick={simulateOrder}
+          disabled={loading}
+          className="w-full px-6 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 text-white rounded-xl font-medium transition-all hover:shadow-lg hover:shadow-amber-500/25"
+        >
+          {loading ? "Sending..." : "Simulate orders/paid Webhook"}
+        </button>
+        
+        {result && (
+          <div className="mt-4 p-4 bg-slate-800 rounded-lg">
+            <p className="text-xs text-slate-400 mb-2">Response:</p>
+            <pre className="text-xs text-emerald-400 font-mono overflow-auto">{result}</pre>
+          </div>
+        )}
+        
+        <p className="text-xs text-slate-500">
+          This sends a test webhook to the local endpoint. Check the{" "}
+          <a href="http://localhost:8288" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
+            Inngest Dev Server
+          </a>{" "}
+          to see the event being processed.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   return (
@@ -40,8 +180,11 @@ export default function Home() {
           Durable execution for Shopify → D365 → Warehouse integrations
         </p>
 
+        {/* Simulation Panel */}
+        <SimulationPanel />
+
         {/* Status Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12 w-full max-w-3xl">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12 w-full max-w-3xl mt-8">
           <StatusCard
             title="Inngest"
             status="Connected"
