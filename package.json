@@ -9,6 +9,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "tunnel": "npx cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
@@ -25,6 +27,7 @@
     "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.1.4",
+    "prettier": "^3.2.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

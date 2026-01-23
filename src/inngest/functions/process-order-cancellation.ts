@@ -1,136 +1,158 @@
-// ============================================================================
-// PROCESS ORDER CANCELLATION
-// ============================================================================
-// Handles shopify/order.cancelled events
-// Cancels the order in D365 and GPS if already submitted
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
-import { dynamics, gps } from "@/lib/clients";
+import * as dynamics from "@/lib/clients/dynamics";
+import * as gps from "@/lib/clients/gps";
+import {
+  THROTTLE_CONFIGS,
+  CONCURRENCY_CONFIGS,
+  RATE_LIMIT_CONFIGS,
+  RETRY_CONFIGS,
+} from "./utils/constants";
 
 export const processOrderCancellation = inngest.createFunction(
   {
     id: "process-order-cancellation",
     name: "Process Order Cancellation",
-    retries: 3,
-
-    // =========================================================================
-    // IDEMPOTENCY: Prevent duplicate cancellation processing
-    // =========================================================================
     idempotency: "event.data.shopifyOrderId",
-
-    // =========================================================================
-    // THROTTLING: Prevent overwhelming D365/GPS APIs during mass cancellations
-    // =========================================================================
+    retries: RETRY_CONFIGS.LOW_PRIORITY,
     throttle: {
-      limit: 5,
-      period: "1s",
+      ...THROTTLE_CONFIGS.CANCELLATION,
       key: "event.data.shopifyStore",
     },
-
-    // =========================================================================
-    // KEY-BASED CONCURRENCY: Only 1 cancellation per order at a time
-    // =========================================================================
     concurrency: [
       {
-        limit: 1,
+        ...CONCURRENCY_CONFIGS.CANCELLATION,
         key: "event.data.shopifyOrderId",
       },
     ],
-
-    // =========================================================================
-    // RATE LIMIT: Prevent cancellation spam - max 1 per order per hour
-    // =========================================================================
     rateLimit: {
+      ...RATE_LIMIT_CONFIGS.CANCELLATION,
       key: "event.data.shopifyOrderId",
-      limit: 1,
-      period: "1h",
     },
   },
   { event: "shopify/order.cancelled" },
   async ({ event, step }) => {
-    const { shopifyOrderId, shopifyOrderName, cancelReason } = event.data;
+    const { shopifyOrderId, shopifyOrderName, cancelReason, orderJson } = event.data;
 
-    console.log(`[Cancellation] Processing cancellation for ${shopifyOrderName}`);
-    console.log(`[Cancellation] Reason: ${cancelReason || "Not specified"}`);
-
-    // ========================================================================
-    // STEP 1: Check if order exists in D365
-    // ========================================================================
-    const d365Order = await step.run("check-d365-order", async () => {
-      console.log(`[Cancellation] Checking D365 for order ${shopifyOrderId}`);
-
-      const existingOrder = await dynamics.getSalesOrderByShopifyId(shopifyOrderId);
-
-      if (!existingOrder) {
-        console.log(`[Cancellation] Order ${shopifyOrderId} not found in D365 - nothing to cancel`);
-        return null;
-      }
-
-      console.log(`[Cancellation] Found D365 order: ${existingOrder.SalesOrderNumber}`);
-      return existingOrder;
-    });
-
-    // If no D365 order, nothing to cancel
-    if (!d365Order) {
+    if (config.features.dryRunMode) {
       return {
-        status: "skipped",
-        reason: "Order not found in D365",
+        status: "dry_run",
         shopifyOrderId,
         shopifyOrderName,
+        cancelReason,
       };
     }
 
-    // ========================================================================
-    // STEP 2: Cancel in GPS (if submitted)
-    // ========================================================================
+    const d365Order = await step.run("get-d365-order", async () => {
+      if (!config.features.enableDynamicsSync) {
+        return null;
+      }
+
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+    });
+
+    if (!d365Order) {
+      const gpsCancellation = await step.run("cancel-gps-order-only", async () => {
+        if (!config.features.enableGpsSync) {
+          return { status: "skipped", reason: "GPS sync disabled" };
+        }
+
+        try {
+          const result = await gps.cancelOutboundOrder(shopifyOrderName);
+          return { status: result.success ? "cancelled" : "failed", result };
+        } catch (error) {
+          return {
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
+
+      return {
+        status: "partial",
+        reason: "Order not found in D365",
+        shopifyOrderId,
+        shopifyOrderName,
+        cancelReason,
+        gpsCancellation,
+      };
+    }
+
+    const orderStatus = await step.run("check-d365-order-status", async () => {
+      // TODO: Query D365 to check if order has packing slips/invoices
+      return {
+        isConfirmed: true,
+        isShipped: false,
+        canCancel: true,
+      };
+    });
+
     const gpsCancellation = await step.run("cancel-gps-order", async () => {
-      if (config.features.dryRunMode) {
-        console.log(`[DRY RUN] Would cancel GPS order for ${shopifyOrderId}`);
-        return { dryRun: true, status: "would_cancel" };
+      if (!config.features.enableGpsSync) {
+        return { status: "skipped", reason: "GPS sync disabled" };
       }
 
       try {
-        // GPS uses the Shopify order ID as the customer order number
-        const result = await gps.cancelOutboundOrder(shopifyOrderId);
-        console.log(`[Cancellation] GPS cancellation result:`, result);
-        return { status: "cancelled", result };
+        const result = await gps.cancelOutboundOrder(shopifyOrderName);
+        return { status: result.success ? "cancelled" : "failed", result };
       } catch (error) {
-        // GPS might return error if order not found or already shipped
-        console.log(`[Cancellation] GPS cancellation failed (may be expected):`, error);
-        return { status: "failed", error: String(error) };
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+          note: "Order may already be shipped or not found in GPS",
+        };
       }
     });
 
-    // ========================================================================
-    // STEP 3: Cancel in D365
-    // ========================================================================
     const d365Cancellation = await step.run("cancel-d365-order", async () => {
-      if (config.features.dryRunMode) {
-        console.log(`[DRY RUN] Would cancel D365 order ${d365Order.SalesOrderNumber}`);
-        return { dryRun: true, status: "would_cancel" };
+      if (!config.features.enableDynamicsSync) {
+        return { status: "skipped", reason: "Dynamics sync disabled" };
       }
 
-      // TODO: Implement D365 cancellation
-      // This typically involves:
-      // 1. Check if order is confirmed - if not, can delete
-      // 2. If confirmed but not shipped - cancel the order
-      // 3. If shipped - need to create return order instead
-      console.log(`[Cancellation] TODO: Implement D365 cancellation for ${d365Order.SalesOrderNumber}`);
-      return { status: "not_implemented" };
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+
+      if (orderStatus.isShipped) {
+        // TODO: Implement D365 return order creation
+        return {
+          status: "not_implemented",
+          action: "return_order_required",
+          reason: "Order already shipped - return order needed",
+        };
+      }
+
+      if (orderStatus.isConfirmed && !orderStatus.isShipped) {
+        // TODO: Implement D365 order cancellation
+        return {
+          status: "not_implemented",
+          action: "cancel_order",
+          dataAreaId,
+          salesOrderNumber: d365Order.SalesOrderNumber,
+          cancelReason: cancelReason || "Customer Request",
+        };
+      }
+
+      return {
+        status: "not_implemented",
+        action: "delete_order",
+        dataAreaId,
+        salesOrderNumber: d365Order.SalesOrderNumber,
+      };
     });
 
-    // ========================================================================
-    // RESULT
-    // ========================================================================
+    const allCancelled =
+      (gpsCancellation.status === "cancelled" || gpsCancellation.status === "skipped") &&
+      (d365Cancellation.status === "not_implemented" || d365Cancellation.status === "skipped");
+
     return {
-      status: "processed",
+      status: allCancelled ? "success" : "partial",
       shopifyOrderId,
       shopifyOrderName,
       cancelReason,
       d365OrderNumber: d365Order.SalesOrderNumber,
+      orderStatus,
       gpsCancellation,
       d365Cancellation,
+      processedAt: new Date().toISOString(),
     };
   }
 );

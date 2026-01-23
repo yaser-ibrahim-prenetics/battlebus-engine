@@ -1,17 +1,9 @@
-// ============================================================================
-// INNGEST FUNCTION: Process STORD Fulfilment
-// ============================================================================
-// STORD → Inngest → Shopify + Dynamics
-// Direct event-driven flow - no database in the middle
-// Inngest provides durability and state management
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
 import type { StordFulfilmentPayload } from "../events";
 
-// Carrier code mapping for STORD
 const CARRIER_MAPPING: Record<string, string> = {
   usps: "USPS",
   ups: "UPS",
@@ -25,34 +17,18 @@ export const processStordFulfilment = inngest.createFunction(
   {
     id: "process-stord-fulfilment",
     name: "Process STORD Fulfilment",
-    // Idempotency: Prevent duplicate processing
     idempotency: "event.data.stordOrderId + '-' + event.data.trackingNumber",
     retries: 5,
-
-    // =========================================================================
-    // THROTTLING: Prevent overwhelming Shopify Fulfillment API
-    // Shopify has rate limits of ~2 requests/second for REST API
-    // =========================================================================
     throttle: {
       limit: 2,
       period: "1s",
     },
-
-    // =========================================================================
-    // KEY-BASED CONCURRENCY: Prevent race conditions
-    // Only 1 fulfilment processed at a time per Shopify order
-    // This prevents duplicate fulfillments for the same order
-    // =========================================================================
     concurrency: [
       {
-        limit: 1, // Strict: 1 fulfilment at a time per order
+        limit: 1,
         key: "event.data.shopifyOrderId",
       },
     ],
-
-    // =========================================================================
-    // RATE LIMIT: Fraud protection - max 5 fulfilments per order per day
-    // =========================================================================
     rateLimit: {
       key: "event.data.shopifyOrderId",
       limit: 5,
@@ -63,7 +39,6 @@ export const processStordFulfilment = inngest.createFunction(
   async ({ event, step }) => {
     const { stordOrderId, shopifyOrderId, trackingNumber, carrierCode, fulfilmentJson } = event.data;
 
-    // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
       return {
         status: "dry_run",
@@ -72,16 +47,10 @@ export const processStordFulfilment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 1: Get Shopify Order Details
-    // =========================================================================
     const shopifyOrder = await step.run("get-shopify-order", async () => {
       return shopify.getOrder(shopifyOrderId);
     });
 
-    // =========================================================================
-    // STEP 2: Get Shopify Fulfillment Orders
-    // =========================================================================
     const fulfillmentOrders = await step.run("get-fulfillment-orders", async () => {
       return shopify.getFulfillmentOrders(shopifyOrderId);
     });
@@ -98,9 +67,6 @@ export const processStordFulfilment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 3: Create Shopify Fulfillment
-    // =========================================================================
     const shopifyFulfillment = await step.run("create-shopify-fulfillment", async () => {
       const carrierName = CARRIER_MAPPING[carrierCode.toLowerCase()] || carrierCode;
 
@@ -121,9 +87,6 @@ export const processStordFulfilment = inngest.createFunction(
       );
     });
 
-    // =========================================================================
-    // STEP 4: Create D365 Packing Slip
-    // =========================================================================
     await step.run("create-d365-packing-slip", async () => {
       if (!config.features.enableDynamicsSync) {
         return;
@@ -135,8 +98,6 @@ export const processStordFulfilment = inngest.createFunction(
       }
 
       const fulfilment = fulfilmentJson as StordFulfilmentPayload;
-
-      // Use dataAreaId from D365 order, fallback to config
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
       await dynamics.createFulfilment({
@@ -153,9 +114,6 @@ export const processStordFulfilment = inngest.createFunction(
       });
     });
 
-    // =========================================================================
-    // SUCCESS: Return final status
-    // =========================================================================
     return {
       status: "success",
       stordOrderId,
@@ -167,10 +125,6 @@ export const processStordFulfilment = inngest.createFunction(
     };
   }
 );
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 
 function mapStordItemsToShopifyLineItems(
   stordItems: { sku: string; quantity: number }[],

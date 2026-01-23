@@ -1,51 +1,42 @@
-// ============================================================================
-// INNGEST FUNCTION: Process Shopify Fulfillment
-// ============================================================================
-// Flow 7: Shopify Direct Fulfillment (Push-based)
-// Shopify → Inngest → Dynamics
-// Direct event-driven flow - no database in the middle
-// Inngest provides durability and state management
-// Used when Shopify is the source of truth (manual fulfillment, Stord, etc.)
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import type { ShopifyOrderPayload, ShopifyFulfillment } from "../events";
+import { isDummyFulfillment } from "./utils/validation";
+import {
+  THROTTLE_CONFIGS,
+  CONCURRENCY_CONFIGS,
+  RATE_LIMIT_CONFIGS,
+  RETRY_CONFIGS,
+} from "./utils/constants";
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
     id: "process-shopify-fulfillment",
     name: "Process Shopify Fulfillment",
-    // Idempotency: Prevent duplicate processing of the same fulfillment
-    idempotency: "event.data.shopifyOrderId + '-' + event.data.fulfillments.map(f => f.id).join(',')",
-    retries: 5,
-
-    // =========================================================================
-    // THROTTLING: Prevent overwhelming Dynamics API
-    // =========================================================================
+    idempotency:
+      "event.data.shopifyOrderId + '-' + event.data.fulfillments.map(f => f.id).join(',')",
+    retries: RETRY_CONFIGS.DEFAULT,
     throttle: {
-      limit: 10,
-      period: "1s",
+      ...THROTTLE_CONFIGS.DYNAMICS,
       key: "event.data.shopifyStore",
     },
-
-    // =========================================================================
-    // KEY-BASED CONCURRENCY: Prevent race conditions
-    // Only 1 fulfillment processed at a time per Shopify order
-    // =========================================================================
     concurrency: [
       {
-        limit: 1,
+        ...CONCURRENCY_CONFIGS.FULFILLMENT,
         key: "event.data.shopifyOrderId",
       },
     ],
+    rateLimit: {
+      ...RATE_LIMIT_CONFIGS.FULFILLMENT,
+      key: "event.data.shopifyOrderId",
+    },
   },
   { event: "shopify/order.fulfilled" },
   async ({ event, step }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 
-    // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
       return {
         status: "dry_run",
@@ -55,21 +46,11 @@ export const processShopifyFulfillment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 1: Get D365 Sales Order (Direct API call - no database lookup)
-    // =========================================================================
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
       }
-
-      // Query D365 directly by Shopify order ID - no local database
-      const order = await dynamics.getSalesOrderByShopifyId(shopifyOrderId);
-      if (!order) {
-        return null;
-      }
-
-      return order;
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
     });
 
     if (!d365Order) {
@@ -81,9 +62,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 2: Process Each Fulfillment
-    // =========================================================================
     const fulfillmentResults = await step.run("process-fulfillments", async () => {
       if (!config.features.enableDynamicsSync) {
         return fulfillments.map((f: ShopifyFulfillment) => ({
@@ -95,7 +73,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       const results = [];
 
       for (const fulfillment of fulfillments) {
-        // Skip dummy/refund fulfillments
         if (isDummyFulfillment(fulfillment)) {
           results.push({
             fulfillmentId: fulfillment.id,
@@ -105,17 +82,16 @@ export const processShopifyFulfillment = inngest.createFunction(
         }
 
         try {
-          // Map fulfillment to D365 format
-          const fulfillmentLines = fulfillment.line_items.map((item: { sku: string; quantity: number }) => ({
-            itemNumber: item.sku,
-            quantity: item.quantity,
-            trackingNumber: fulfillment.tracking_number || undefined,
-            shippingSiteId: "Prenetics",
-            // Note: lotId would come from D365 order lines if needed
-            lotId: undefined,
-          }));
+          const fulfillmentLines = fulfillment.line_items.map(
+            (item: { sku: string; quantity: number }) => ({
+              itemNumber: item.sku,
+              quantity: item.quantity,
+              trackingNumber: fulfillment.tracking_number || undefined,
+              shippingSiteId: "Prenetics",
+              lotId: undefined,
+            })
+          );
 
-          // Create D365 fulfillment (packing slip)
           await dynamics.createFulfilment({
             dataAreaId: d365Order.dataAreaId || config.dynamics.dataAreaId,
             salesOrderNumber: d365Order.SalesOrderNumber!,
@@ -144,9 +120,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       return results;
     });
 
-    // =========================================================================
-    // SUCCESS: Return final status
-    // =========================================================================
     return {
       status: "success",
       shopifyOrderId,
@@ -159,26 +132,4 @@ export const processShopifyFulfillment = inngest.createFunction(
   }
 );
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
-
-/**
- * Check if fulfillment is a dummy/refund fulfillment
- * Filters out adjustment SKUs and negative fulfillments
- */
-function isDummyFulfillment(fulfillment: ShopifyFulfillment): boolean {
-  // Check if all line items are dummy/adjustment SKUs
-  const hasRealItems = fulfillment.line_items.some((item) => {
-    const sku = item.sku || "";
-    return (
-      sku.length > 0 &&
-      !sku.startsWith("ADJUSTMENT") &&
-      !sku.startsWith("SHIPPING") &&
-      !item.price.startsWith("-")
-    );
-  });
-
-  return !hasRealItems;
-}
 
