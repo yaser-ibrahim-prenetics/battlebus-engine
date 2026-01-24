@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
+import * as slack from "@/lib/clients/slack";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -10,8 +11,10 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
   determineWarehouse,
+  isOrderTaggedWith,
 } from "@/lib/transformers/order";
 import type { ShopifyOrderPayload } from "../events";
+import { isWelcomeKitSku } from "@/lib/transformers/sku";
 
 export const processShopifyOrder = inngest.createFunction(
   {
@@ -49,6 +52,41 @@ export const processShopifyOrder = inngest.createFunction(
       order.shipping_address?.country_code || order.billing_address?.country_code || "US"
     );
 
+    // =========================================================================
+    // Check for high-risk fraud orders
+    // =========================================================================
+    const validated = await step.run("validate-shopify-order", async () => {
+      if (isOrderTaggedWith(order, 'high-risk-order')) {
+        slack.sendWarningMessage('shopify', `[Battle Bus] Skip high risk order for ${shopifyOrderId}})`);
+        return false;
+      }
+      return true;
+    });
+    if (!validated) {
+      return {
+        status: "fraud_hold",
+        orderName: shopifyOrderName,
+      };
+    }
+
+    //
+    // Check order.fraud_analysis or order.risks array from Shopify
+    // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
+    // =========================================================================
+
+    // =========================================================================
+    // Filter for Welcome Kits only (Phase 1)
+    // =========================================================================
+    if (!isWelcomeKitSku(order.line_items)) {
+      return {
+        status: "skipped_non_welcome_kit",
+        orderName: shopifyOrderName,
+      }
+    }
+
+    // =========================================================================
+    // STEP 1: Check for existing D365 order (idempotency check)
+    // =========================================================================
     const existingOrder = await step.run("check-existing-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;

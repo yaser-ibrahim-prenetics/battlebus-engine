@@ -363,6 +363,12 @@ export function isTestOrder(order: ShopifyOrderPayload): boolean {
   return testTags.some((tag) => tags.includes(tag));
 }
 
+export function isOrderTaggedWith(order: Pick<ShopifyOrderPayload, 'tags'>, tagToCheck: string) {
+  if (!order.tags) return false;
+  const normalizedTag = tagToCheck.toLowerCase();
+  return order.tags.split(',').some(tag => tag.trim().toLowerCase().startsWith(normalizedTag));
+}
+
 // ============================================================================
 // LEGACY EXPORTS (for backwards compatibility)
 // ============================================================================
