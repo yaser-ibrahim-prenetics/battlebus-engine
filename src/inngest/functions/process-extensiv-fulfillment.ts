@@ -10,8 +10,8 @@ import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import { ExtensivOrderConfirmPayload } from "../events";
-import { filterDummySkus } from "./utils/validation";
-import { THROTTLE_CONFIGS, RETRY_CONFIGS, CONCURRENCY_CONFIGS } from "./utils/constants";
+import { filterDummySkus } from "@/lib/utils/validation";
+import { THROTTLE_CONFIGS, RETRY_CONFIGS, CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
 
 export const processExtensivFulfillment = inngest.createFunction(
   {

@@ -323,6 +323,7 @@ export interface ShopifyFulfillment {
   tracking_numbers: string[];
   tracking_url: string | null;
   tracking_urls: string[];
+  location_id: number | null;
   line_items: ShopifyFulfillmentLineItem[];
 }
 

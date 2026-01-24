@@ -4,7 +4,7 @@
 // Order validation functions ported from spock-store
 
 import { config } from "@/lib/config";
-import type { ShopifyOrderPayload, ShopifyFulfillment } from "../../events";
+import type { ShopifyOrderPayload, ShopifyFulfillment } from "../../inngest/events";
 
 // ============================================================================
 // ORDER VALIDATION

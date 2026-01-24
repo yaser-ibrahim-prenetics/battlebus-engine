@@ -16,13 +16,13 @@ import {
   isStordFulfillment,
   getDataAreaIdFromLocation,
   filterDummySkus,
-} from "./utils/validation";
+} from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
-} from "./utils/constants";
+} from "@/lib/utils/constants";
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
@@ -55,13 +55,13 @@ export const processShopifyFulfillment = inngest.createFunction(
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
       id: f.id,
       locationId: f.location_id,
-      isGps: isGpsFulfillment(f.location_id),
-      isStord: isStordFulfillment(f.location_id),
+      isGps: isGpsFulfillment(f.location_id || ""),
+      isStord: isStordFulfillment(f.location_id || ""),
     }));
 
     // Skip GPS fulfillments - they are handled by cron-gps-sync
     // This webhook may fire when GPS sync creates Shopify fulfillment
-    const gpsOnly = fulfillmentSources.every((s) => s.isGps);
+    const gpsOnly = fulfillmentSources.every((s: { isGps: boolean }) => s.isGps);
     if (gpsOnly) {
       return {
         status: "skipped_gps",
@@ -88,9 +88,9 @@ export const processShopifyFulfillment = inngest.createFunction(
       }
 
       // Determine data area from first non-GPS fulfillment location
-      const nonGpsFulfillment = fulfillmentSources.find((s) => !s.isGps);
+      const nonGpsFulfillment = fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps);
       const dataAreaId = nonGpsFulfillment
-        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId)
+        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "")
         : config.dynamics.dataAreaId;
 
       return dynamics.getSalesOrderByShopifyId(shopifyOrderId, dataAreaId);
@@ -123,7 +123,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
       for (const fulfillment of fulfillments) {
         // Skip GPS fulfillments
-        if (isGpsFulfillment(fulfillment.location_id)) {
+        if (isGpsFulfillment(fulfillment.location_id || "")) {
           results.push({
             fulfillmentId: fulfillment.id,
             status: "skipped_gps",
@@ -176,7 +176,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           results.push({
             fulfillmentId: fulfillment.id,
             status: "success",
-            source: isStordFulfillment(fulfillment.location_id) ? "STORD" : "Direct",
+            source: isStordFulfillment(fulfillment.location_id || "") ? "STORD" : "Direct",
             trackingNumber: fulfillment.tracking_number,
             carrier: fulfillment.tracking_company,
           });
@@ -184,7 +184,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           const errorMsg = error instanceof Error ? error.message : String(error);
 
           await slack.sendErrorMessage(
-            isStordFulfillment(fulfillment.location_id) ? "stord" : "dynamics",
+            isStordFulfillment(fulfillment.location_id || "") ? "stord" : "dynamics",
             `D365 Fulfillment failed for ${shopifyOrderName}: ${errorMsg}`
           );
 
@@ -201,7 +201,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
     // Send success notification for STORD orders
     const stordFulfillments = fulfillmentResults.filter(
-      (r) => r.status === "success" && r.source === "STORD"
+      (r: { status: string; source?: string }) => r.status === "success" && r.source === "STORD"
     );
     if (stordFulfillments.length > 0) {
       await slack.sendInfoMessage(

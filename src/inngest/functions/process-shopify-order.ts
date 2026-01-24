@@ -22,13 +22,13 @@ import {
   determineWarehouse,
   isOrderTaggedWith,
 } from "@/lib/transformers/order";
-import { validateOrderForProcessing } from "./utils/validation";
+import { validateOrderForProcessing } from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
-} from "./utils/constants";
+} from "@/lib/utils/constants";
 import type { ShopifyOrderPayload } from "../events";
 import { isWelcomeKitSku } from "@/lib/transformers/sku";
 

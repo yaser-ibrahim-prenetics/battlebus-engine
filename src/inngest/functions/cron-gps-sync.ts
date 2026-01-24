@@ -13,8 +13,8 @@ import * as slack from "@/lib/clients/slack";
 import {
   getGpsWarehouseFromLocation,
   filterDummySkus,
-} from "./utils/validation";
-import { THROTTLE_CONFIGS } from "./utils/constants";
+} from "@/lib/utils/validation";
+import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 

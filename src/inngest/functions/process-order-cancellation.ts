@@ -9,7 +9,7 @@ import {
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
-} from "./utils/constants";
+} from "@/lib/utils/constants";
 import { ShopifyOrderPayload } from "../events";
 
 export const processOrderCancellation = inngest.createFunction(
