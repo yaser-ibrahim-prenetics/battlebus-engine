@@ -151,10 +151,6 @@ export function verifyWebhookSignature(
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader));
 }
 
-export async function getLatestShopifyOrder(orderId: string) {
-  return {};
-}
-
 // Types
 export interface ShopifyOrder {
   id: number;
