@@ -1,15 +1,9 @@
-// ============================================================================
-// INNGEST FUNCTION: Process STORD Fulfilment
-// ============================================================================
-// Handles fulfilment notifications from STORD warehouse
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
 import type { StordFulfilmentPayload } from "../events";
 
-// Carrier code mapping for STORD
 const CARRIER_MAPPING: Record<string, string> = {
   usps: "USPS",
   ups: "UPS",
@@ -23,34 +17,18 @@ export const processStordFulfilment = inngest.createFunction(
   {
     id: "process-stord-fulfilment",
     name: "Process STORD Fulfilment",
-    // Idempotency: Prevent duplicate processing
     idempotency: "event.data.stordOrderId + '-' + event.data.trackingNumber",
     retries: 5,
-
-    // =========================================================================
-    // THROTTLING: Prevent overwhelming Shopify Fulfillment API
-    // Shopify has rate limits of ~2 requests/second for REST API
-    // =========================================================================
     throttle: {
       limit: 2,
       period: "1s",
     },
-
-    // =========================================================================
-    // KEY-BASED CONCURRENCY: Prevent race conditions
-    // Only 1 fulfilment processed at a time per Shopify order
-    // This prevents duplicate fulfillments for the same order
-    // =========================================================================
     concurrency: [
       {
-        limit: 1, // Strict: 1 fulfilment at a time per order
+        limit: 1,
         key: "event.data.shopifyOrderId",
       },
     ],
-
-    // =========================================================================
-    // RATE LIMIT: Fraud protection - max 5 fulfilments per order per day
-    // =========================================================================
     rateLimit: {
       key: "event.data.shopifyOrderId",
       limit: 5,
@@ -61,11 +39,7 @@ export const processStordFulfilment = inngest.createFunction(
   async ({ event, step }) => {
     const { stordOrderId, shopifyOrderId, trackingNumber, carrierCode, fulfilmentJson } = event.data;
 
-    console.log(`[Battle Bus] Processing STORD fulfilment: ${stordOrderId} -> ${trackingNumber}`);
-
-    // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
-      console.log(`[Dry Run] Would process STORD fulfilment: ${stordOrderId}`);
       return {
         status: "dry_run",
         stordOrderId,
@@ -73,18 +47,10 @@ export const processStordFulfilment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 1: Get Shopify Order Details
-    // =========================================================================
     const shopifyOrder = await step.run("get-shopify-order", async () => {
       return shopify.getOrder(shopifyOrderId);
     });
 
-    console.log(`[Battle Bus] Found Shopify order: ${shopifyOrder.name}`);
-
-    // =========================================================================
-    // STEP 2: Get Shopify Fulfillment Orders
-    // =========================================================================
     const fulfillmentOrders = await step.run("get-fulfillment-orders", async () => {
       return shopify.getFulfillmentOrders(shopifyOrderId);
     });
@@ -94,7 +60,6 @@ export const processStordFulfilment = inngest.createFunction(
     );
 
     if (!openFulfillmentOrder) {
-      console.log(`[Battle Bus] No open fulfillment order found for: ${shopifyOrder.name}`);
       return {
         status: "no_open_fulfillment_order",
         shopifyOrderId,
@@ -102,9 +67,6 @@ export const processStordFulfilment = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 3: Create Shopify Fulfillment
-    // =========================================================================
     const shopifyFulfillment = await step.run("create-shopify-fulfillment", async () => {
       const carrierName = CARRIER_MAPPING[carrierCode.toLowerCase()] || carrierCode;
 
@@ -125,11 +87,6 @@ export const processStordFulfilment = inngest.createFunction(
       );
     });
 
-    console.log(`[Battle Bus] Created Shopify fulfillment: ${shopifyFulfillment.id}`);
-
-    // =========================================================================
-    // STEP 4: Create D365 Packing Slip
-    // =========================================================================
     await step.run("create-d365-packing-slip", async () => {
       if (!config.features.enableDynamicsSync) {
         return;
@@ -137,14 +94,14 @@ export const processStordFulfilment = inngest.createFunction(
 
       const d365Order = await dynamics.getSalesOrderByShopifyId(shopifyOrderId);
       if (!d365Order) {
-        console.log(`[Battle Bus] No D365 order found for: ${shopifyOrderId}`);
         return;
       }
 
       const fulfilment = fulfilmentJson as StordFulfilmentPayload;
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
       await dynamics.createFulfilment({
-        dataAreaId: config.dynamics.dataAreaId,
+        dataAreaId,
         salesOrderNumber: d365Order.SalesOrderNumber!,
         type: "PackingSlip",
         confirmedShippedDate: fulfilment.shippedAt?.split("T")[0] || new Date().toISOString().split("T")[0],
@@ -157,11 +114,6 @@ export const processStordFulfilment = inngest.createFunction(
       });
     });
 
-    console.log(`[Battle Bus] Created D365 packing slip for: ${shopifyOrder.name}`);
-
-    // =========================================================================
-    // SUCCESS: Return final status
-    // =========================================================================
     return {
       status: "success",
       stordOrderId,
@@ -173,10 +125,6 @@ export const processStordFulfilment = inngest.createFunction(
     };
   }
 );
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 
 function mapStordItemsToShopifyLineItems(
   stordItems: { sku: string; quantity: number }[],

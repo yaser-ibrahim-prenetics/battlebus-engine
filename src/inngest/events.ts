@@ -63,6 +63,18 @@ export type ShopifyOrderUpdatedEvent = {
   };
 };
 
+export type ShopifyOrderFulfilledEvent = {
+  name: "shopify/order.fulfilled";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    orderJson: ShopifyOrderPayload;
+    fulfillments: ShopifyFulfillment[];
+    receivedAt: string;
+  };
+};
+
 export type GpsFulfilmentReceivedEvent = {
   name: "gps/fulfilment.received";
   data: {
@@ -94,6 +106,7 @@ export type BattleBusEvents =
   | ShopifyOrderCancelledEvent
   | ShopifyOrderPaidEvent
   | ShopifyOrderUpdatedEvent
+  | ShopifyOrderFulfilledEvent
   | GpsFulfilmentReceivedEvent
   | StordFulfilmentReceivedEvent;
 
@@ -107,6 +120,7 @@ export interface ShopifyOrderPayload {
   email: string;
   created_at: string;
   updated_at: string;
+  cancelled_at: string | null;
   total_price: string;
   subtotal_price: string;
   total_tax: string;
@@ -245,5 +259,30 @@ export interface StordFulfilmentPayload {
     sku: string;
     quantity: number;
   }[];
+}
+
+export interface ShopifyFulfillment {
+  id: number;
+  order_id: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  tracking_company: string | null;
+  tracking_number: string | null;
+  tracking_numbers: string[];
+  tracking_url: string | null;
+  tracking_urls: string[];
+  line_items: ShopifyFulfillmentLineItem[];
+}
+
+export interface ShopifyFulfillmentLineItem {
+  id: number;
+  variant_id: number;
+  title: string;
+  quantity: number;
+  sku: string;
+  name: string;
+  price: string;
+  fulfillment_status: string;
 }
 
