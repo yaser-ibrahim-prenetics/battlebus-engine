@@ -77,6 +77,33 @@ export const processShopifyOrder = inngest.createFunction(
     );
 
     // =========================================================================
+    // TODO (Nazreen): Check for high-risk fraud orders
+    // =========================================================================
+    // Before processing, check if this order is flagged as high-risk fraud.
+    // Shopify provides fraud analysis in the order payload.
+    // If high-risk, we should:
+    // 1. Skip processing (don't send to D365 or GPS)
+    // 2. Send a Slack notification to the team
+    // 3. Return early with status "fraud_hold"
+    //
+    // Check order.fraud_analysis or order.risks array from Shopify
+    // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
+    // =========================================================================
+
+    // =========================================================================
+    // TODO (Nazreen): Filter for Welcome Kits only (Phase 1)
+    // =========================================================================
+    // For the initial rollout, we only want to process "Welcome Kit" orders.
+    // Check if ALL line items are welcome kit SKUs before proceeding.
+    // If not a welcome kit order, return early with status "skipped_non_welcome_kit"
+    //
+    // Welcome kit SKUs to check: (get list from product team)
+    // - IM8-WK-XXXXX pattern?
+    //
+    // This filter can be removed once we're confident the system is stable.
+    // =========================================================================
+
+    // =========================================================================
     // STEP 1: Check for existing D365 order (idempotency check)
     // =========================================================================
     const existingOrder = await step.run("check-existing-d365-order", async () => {
@@ -131,19 +158,46 @@ export const processShopifyOrder = inngest.createFunction(
     console.log(`[Battle Bus] Created D365 lines for: ${salesOrderNumber}`);
 
     // =========================================================================
-    // STEP 4: Confirm D365 Sales Order
+    // STEP 4: Wait for D365 order propagation
+    // D365 has eventual consistency - the order may not be immediately available
+    // after creation. Wait a few seconds before confirming.
+    // =========================================================================
+    await step.sleep("wait-for-d365-propagation", "5s");
+
+    // =========================================================================
+    // STEP 5: Confirm D365 Sales Order (with retry for propagation delay)
     // =========================================================================
     await step.run("confirm-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return;
       }
-      await dynamics.confirmSalesOrder(salesOrderNumber, config.dynamics.dataAreaId);
+
+      // Retry logic for D365 eventual consistency
+      const maxRetries = 3;
+      const retryDelayMs = 3000;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          await dynamics.confirmSalesOrder(salesOrderNumber, config.dynamics.dataAreaId);
+          return; // Success, exit the retry loop
+        } catch (error) {
+          const isNotFoundError = error instanceof Error && 
+            error.message.includes("does not exist");
+          
+          if (isNotFoundError && attempt < maxRetries) {
+            console.log(`[Battle Bus] D365 order not ready yet, retry ${attempt}/${maxRetries} in ${retryDelayMs}ms`);
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+          } else {
+            throw error; // Re-throw on final attempt or non-retryable error
+          }
+        }
+      }
     });
 
     console.log(`[Battle Bus] Confirmed D365 order: ${salesOrderNumber}`);
 
     // =========================================================================
-    // STEP 5: Create D365 Prepayment
+    // STEP 6: Create D365 Prepayment
     // =========================================================================
     await step.run("create-d365-prepayment", async () => {
       if (!config.features.enableDynamicsSync) {
@@ -160,7 +214,7 @@ export const processShopifyOrder = inngest.createFunction(
     console.log(`[Battle Bus] Created prepayment for: ${salesOrderNumber}`);
 
     // =========================================================================
-    // STEP 6: Send to GPS Warehouse (with self-healing retry)
+    // STEP 7: Send to GPS Warehouse (with self-healing retry)
     // =========================================================================
     if (shouldSendToGps(order) && config.features.enableGpsSync) {
       try {
