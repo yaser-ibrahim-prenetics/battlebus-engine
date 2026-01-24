@@ -4,6 +4,7 @@
 // Export all Inngest functions for registration
 
 export { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-order";
+export { processRefund } from "./process-refund";
 export { processShopifyRefund } from "./process-shopify-refund";
 export { processGpsFulfilment } from "./process-gps-fulfilment";
 export { processShopifyFulfilment } from "./process-shopify-fulfilment";
@@ -14,6 +15,7 @@ export { processOrderUpdate } from "./process-order-update";
 
 // Re-export as array for easy registration
 import { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-order";
+import { processRefund } from "./process-refund";
 import { processShopifyRefund } from "./process-shopify-refund";
 import { processGpsFulfilment } from "./process-gps-fulfilment";
 import { processShopifyFulfilment } from "./process-shopify-fulfilment";
@@ -25,6 +27,7 @@ import { processOrderUpdate } from "./process-order-update";
 export const functions = [
   processShopifyOrder,
   processShopifyOrderPaid,
+  processRefund,
   processShopifyRefund,
   processGpsFulfilment,
   processShopifyFulfilment,
