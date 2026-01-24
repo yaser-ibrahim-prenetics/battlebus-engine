@@ -1,61 +1,41 @@
-// ============================================================================
-// INNGEST FUNCTION: Process Shopify Refund
-// ============================================================================
-// This replaces the old "shopify-refund" task type from spock-store
-// Handles Shopify refunds and creates corresponding D365 credit notes
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
+import type { ShopifyRefundPayload } from "../events";
+import {
+  THROTTLE_CONFIGS,
+  CONCURRENCY_CONFIGS,
+  RATE_LIMIT_CONFIGS,
+  RETRY_CONFIGS,
+} from "./utils/constants";
 
 export const processRefund = inngest.createFunction(
   {
     id: "process-shopify-refund",
     name: "Process Shopify Refund",
-    // Idempotency: Prevent duplicate processing of the same refund
     idempotency: "event.data.refundId",
-    retries: 5,
-
-    // =========================================================================
-    // THROTTLING: Prevent overwhelming D365 API
-    // Credit note creation is sensitive - limit to 5/sec per store
-    // =========================================================================
+    retries: RETRY_CONFIGS.DEFAULT,
     throttle: {
-      limit: 5,
-      period: "1s",
+      ...THROTTLE_CONFIGS.REFUND,
       key: "event.data.shopifyStore",
     },
-
-    // =========================================================================
-    // KEY-BASED CONCURRENCY: Process refunds for same order sequentially
-    // Prevents race conditions when multiple refunds hit the same order
-    // =========================================================================
     concurrency: [
       {
-        limit: 1, // Only 1 refund at a time per order
+        ...CONCURRENCY_CONFIGS.REFUND,
         key: "event.data.shopifyOrderId",
       },
     ],
-
-    // =========================================================================
-    // RATE LIMIT: Fraud protection
-    // Max 3 refunds per order per 24 hours - prevents refund abuse
-    // =========================================================================
     rateLimit: {
+      ...RATE_LIMIT_CONFIGS.REFUND,
       key: "event.data.shopifyOrderId",
-      limit: 3,
-      period: "24h",
     },
   },
   { event: "shopify/refund.created" },
   async ({ event, step }) => {
-    const { shopifyOrderId, refundId } = event.data;
+    const { shopifyOrderId, refundId, refundJson } = event.data;
+    const refund = refundJson as ShopifyRefundPayload;
 
-    console.log(`[Battle Bus] Processing refund: ${refundId} for order ${shopifyOrderId}`);
-
-    // Check if dry run mode is enabled
     if (config.features.dryRunMode) {
-      console.log(`[Dry Run] Would process refund: ${refundId}`);
       return {
         status: "dry_run",
         refundId,
@@ -63,9 +43,6 @@ export const processRefund = inngest.createFunction(
       };
     }
 
-    // =========================================================================
-    // STEP 1: Get the original D365 Sales Order
-    // =========================================================================
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
@@ -74,48 +51,52 @@ export const processRefund = inngest.createFunction(
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
-      console.log(`[Battle Bus] No D365 order found for Shopify order: ${shopifyOrderId}`);
       return {
         status: "no_d365_order",
         refundId,
         shopifyOrderId,
+        message: "D365 order not found - refund cannot be processed",
       };
     }
 
-    // =========================================================================
-    // STEP 2: Create D365 Credit Note / Return Order
-    // =========================================================================
-    const creditNote = await step.run("create-d365-credit-note", async () => {
-      if (!config.features.enableDynamicsSync || !d365Order) {
-        return { CreditNoteNumber: `SKIP-${refundId}` };
-      }
+    const refundAmount = await step.run("calculate-refund-amount", async () => {
+      const totalAmount = refund.transactions
+        ?.filter((tx) => tx.kind === "refund" && tx.status === "success")
+        .reduce((sum, tx) => sum + parseFloat(tx.amount || "0"), 0) || 0;
 
-      // In production, this would call the D365 API to create a credit note
-      // For now, we'll log the intent
-      console.log(`[Battle Bus] Would create credit note for D365 order: ${d365Order.SalesOrderNumber}`);
-
-      // TODO: Implement D365 credit note creation
-      // return dynamics.createCreditNote({
-      //   dataAreaId: d365Order.dataAreaId,
-      //   OriginalSalesOrderNumber: d365Order.SalesOrderNumber,
-      //   RefundAmount: calculateRefundAmount(refundJson),
-      //   RefundReference: `REFUND-${refundId}`,
-      // });
-
-      return { CreditNoteNumber: `CN-${refundId}` };
+      return totalAmount;
     });
 
-    console.log(`[Battle Bus] Created credit note: ${creditNote.CreditNoteNumber}`);
+    const creditNote = await step.run("create-d365-credit-note", async () => {
+      if (!config.features.enableDynamicsSync || !d365Order) {
+        return { CreditNoteNumber: `SKIP-${refundId}`, status: "skipped" };
+      }
 
-    // =========================================================================
-    // SUCCESS: Return final status
-    // =========================================================================
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+      const refundLines = refund.refund_line_items?.map((line) => ({
+        itemNumber: line.line_item.sku,
+        quantity: line.quantity,
+        refundAmount: parseFloat(line.subtotal || "0") + parseFloat(line.total_tax || "0"),
+      })) || [];
+
+      // TODO: Implement D365 credit note creation via THK API
+      return {
+        CreditNoteNumber: `CN-${refundId}`,
+        status: "not_implemented",
+        dataAreaId,
+        originalSalesOrderNumber: d365Order.SalesOrderNumber,
+        refundAmount,
+        refundLines,
+      };
+    });
+
     return {
-      status: "success",
+      status: creditNote.status === "not_implemented" ? "partial" : "success",
       refundId,
       shopifyOrderId,
       d365OrderNumber: d365Order?.SalesOrderNumber,
       creditNoteNumber: creditNote.CreditNoteNumber,
+      refundAmount,
       processedAt: new Date().toISOString(),
     };
   }
