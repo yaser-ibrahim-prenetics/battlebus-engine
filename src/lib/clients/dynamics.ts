@@ -15,6 +15,8 @@ import type {
   D365SalesOrderHeaderV3Request,
   D365SalesOrderLineRequest,
   D365FulfilmentLine,
+  D365SalesOrderHeaderV3RequestForReturn,
+  D365SalesOrderLineForReturn,
 } from "../types/dynamics";
 
 // Token cache (in-memory, will refresh on cold starts)
@@ -253,6 +255,158 @@ export async function createSalesOrderLine(
 
   const result = await response.json();
   console.log(`[D365] Created sales order line with lot ID: ${result.InventoryLotId}`);
+
+  return {
+    InventoryLotId: result.InventoryLotId,
+    request: body,
+  };
+}
+
+// ============================================================================
+// RETURN SALES ORDER FUNCTIONS
+// ============================================================================
+
+/**
+ * Create a Return Sales Order Header in D365 using SalesOrderHeadersV3
+ */
+export async function createSalesOrderHeadersV3ForReturn(
+  req: D365SalesOrderHeaderV3RequestForReturn
+): Promise<{ SalesOrderNumber: string; request: object }> {
+  const {
+    customerId,
+    orderId,
+    dataAreaId,
+    orderingCustomerAccountNumber,
+    defaultLedgerDimensionDisplayValue,
+    customerOrderReference,
+    email,
+    name,
+    shopifyReference,
+  } = req;
+
+  const body = {
+    SalesOrderPoolId: "Return",
+    DefaultShippingSiteId: "Prenetics",
+    CurrencyCode: "USD",
+    OrderingCustomerAccountNumber: orderingCustomerAccountNumber,
+    DefaultLedgerDimensionDisplayValue: defaultLedgerDimensionDisplayValue,
+    dataAreaId,
+    CustomersOrderReference: customerOrderReference,
+    THK_ShopifyReference: shopifyReference,
+    THK_ShopifyCustName: name,
+    THK_ShopifyCustomerEmail: email,
+  };
+
+  console.log(
+    `[D365] Creating return sales order header: ${JSON.stringify(body)}`
+  );
+
+  if (config.features.dryRunMode) {
+    console.log(
+      `[D365] DRY RUN - Would create return sales order for ${orderId}`
+    );
+    return {
+      SalesOrderNumber: `DRY-RUN-RETURN-${Date.now()}`,
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `[D365] Failed to create return sales order header for ${orderId}: ${response.status} - ${error}`
+    );
+  }
+
+  const result = await response.json();
+  console.log(`[D365] Created return sales order: ${result.SalesOrderNumber}`);
+
+  return {
+    SalesOrderNumber: result.SalesOrderNumber,
+    request: body,
+  };
+}
+
+/**
+ * Create a Return Sales Order Line in D365
+ */
+export async function createSalesOrderLineForReturn(
+  req: D365SalesOrderLineForReturn
+): Promise<{ InventoryLotId: string; request: object }> {
+  const {
+    salesOrderNumber,
+    quantity,
+    itemNumber,
+    price,
+    discount,
+    dataAreaId,
+    inventTransIdReturn,
+    shippingSiteId,
+  } = req;
+
+  const body = {
+    dataAreaId,
+    CurrencyCode: "USD",
+    SalesOrderNumber: salesOrderNumber,
+    ItemNumber: itemNumber,
+    OrderedSalesQuantity: quantity,
+    SalesPrice: price,
+    LineDiscountAmount: discount,
+    InventTransIdReturn: inventTransIdReturn,
+    ShippingSiteId: shippingSiteId,
+  };
+
+  console.log(
+    `[D365] Creating return sales order line: ${JSON.stringify(body)}`
+  );
+
+  if (config.features.dryRunMode) {
+    console.log(
+      `[D365] DRY RUN - Would create return line for ${salesOrderNumber}`
+    );
+    return {
+      InventoryLotId: `DRY-RUN-RETURN-LOT-${Date.now()}`,
+      request: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderLines`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `[D365] Failed to create return sales order line ${itemNumber} for ${salesOrderNumber}: ${response.status} - ${error}`
+    );
+  }
+
+  const result = await response.json();
+  console.log(
+    `[D365] Created return sales order line with lot ID: ${result.InventoryLotId}`
+  );
 
   return {
     InventoryLotId: result.InventoryLotId,
@@ -523,6 +677,50 @@ export async function getSalesOrderByShopifyId(
   }
 
   return order;
+}
+
+/**
+ * Get Sales Order Lines by Sales Order Number
+ */
+export async function getSalesOrderLines(
+  salesOrderNumber: string,
+  dataAreaId: string = config.dynamics.dataAreaId
+): Promise<D365SalesOrderLine[]> {
+  console.log(
+    `[D365] Getting lines for sales order: ${salesOrderNumber} (${dataAreaId})`
+  );
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would get lines for ${salesOrderNumber}`);
+    return [];
+  }
+
+  const token = await getAuthToken();
+  const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
+  const url = `${
+    config.dynamics.baseUrl
+  }/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `[D365] Failed to get sales order lines: ${response.status} - ${error}`
+    );
+  }
+
+  const result = await response.json();
+  const lines = result.value || [];
+  console.log(`[D365] Found ${lines.length} lines for ${salesOrderNumber}`);
+
+  return lines;
 }
 
 // ============================================================================

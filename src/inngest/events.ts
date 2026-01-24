@@ -99,6 +99,31 @@ export type StordFulfilmentReceivedEvent = {
   };
 };
 
+export type ExtensivOrderConfirmEvent = {
+  name: "extensiv/order.confirm";
+  data: {
+    wmsEventId: string;
+    extensivOrderId: string;
+    shopifyOrderName: string;
+    trackingNumber: string;
+    carrier: string;
+    dataAreaId: string;
+    eventJson: ExtensivOrderConfirmPayload;
+    receivedAt: string;
+  };
+};
+
+export type ExtensivReceiverConfirmEvent = {
+  name: "extensiv/receiver.confirm";
+  data: {
+    wmsEventId: string;
+    receiverId: string;
+    referenceNum: string;
+    eventJson: ExtensivReceiverConfirmPayload;
+    receivedAt: string;
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -108,7 +133,9 @@ export type BattleBusEvents =
   | ShopifyOrderUpdatedEvent
   | ShopifyOrderFulfilledEvent
   | GpsFulfilmentReceivedEvent
-  | StordFulfilmentReceivedEvent;
+  | StordFulfilmentReceivedEvent
+  | ExtensivOrderConfirmEvent
+  | ExtensivReceiverConfirmEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
@@ -259,6 +286,30 @@ export interface StordFulfilmentPayload {
     sku: string;
     quantity: number;
   }[];
+}
+
+export interface ExtensivOrderConfirmPayload {
+  referenceNum: string;
+  readOnly: {
+    orderId: number;
+    customerIdentifier: { id: number; name: string };
+    facilityIdentifier: { id: number; name: string };
+    createdByIdentifier: { id: number; name: string };
+  };
+  routingInfo: {
+    carrier: string;
+    mode: string;
+    trackingNumber: string;
+  };
+}
+
+export interface ExtensivReceiverConfirmPayload {
+  referenceNum: string;
+  readOnly: {
+    receiverId: number;
+    customerIdentifier: { id: number; name: string };
+    facilityIdentifier: { id: number; name: string };
+  };
 }
 
 export interface ShopifyFulfillment {
