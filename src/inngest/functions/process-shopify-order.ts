@@ -53,14 +53,8 @@ export const processShopifyOrder = inngest.createFunction(
     );
 
     // =========================================================================
-    // TODO (Nazreen): Check for high-risk fraud orders
+    // Check for high-risk fraud orders
     // =========================================================================
-    // Before processing, check if this order is flagged as high-risk fraud.
-    // Shopify provides fraud analysis in the order payload.
-    // If high-risk, we should:
-    // 1. Skip processing (don't send to D365 or GPS)
-    // 2. Send a Slack notification to the team
-    // 3. Return early with status "fraud_hold"
     const validated = await step.run("validate-shopify-order", async () => {
       if (isOrderTaggedWith(order, 'high-risk-order')) {
         slack.sendWarningMessage('shopify', `[Battle Bus] Skip high risk order for ${shopifyOrderId}})`);
@@ -81,16 +75,7 @@ export const processShopifyOrder = inngest.createFunction(
     // =========================================================================
 
     // =========================================================================
-    // TODO (Nazreen): Filter for Welcome Kits only (Phase 1)
-    // =========================================================================
-    // For the initial rollout, we only want to process "Welcome Kit" orders.
-    // Check if ALL line items are welcome kit SKUs before proceeding.
-    // If not a welcome kit order, return early with status "skipped_non_welcome_kit"
-    //
-    // Welcome kit SKUs to check: (get list from product team)
-    // - IM8-WK-XXXXX pattern?
-    //
-    // This filter can be removed once we're confident the system is stable.
+    // Filter for Welcome Kits only (Phase 1)
     // =========================================================================
     if (!isWelcomeKitSku(order.line_items)) {
       return {
