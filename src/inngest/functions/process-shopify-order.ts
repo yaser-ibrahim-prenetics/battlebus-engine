@@ -65,7 +65,7 @@ export const processShopifyOrder = inngest.createFunction(
     console.log(`[Battle Bus] Processing order: ${shopifyOrderName} (${shopifyOrderId})`);
 
     // Check if dry run mode is enabled
-    if (!config.features.dryRunMode) {
+    if (config.features.dryRunMode) {
       console.log(`[Dry Run] Would process order: ${shopifyOrderName}`);
       return {
         status: "dry_run",
