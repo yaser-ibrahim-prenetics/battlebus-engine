@@ -69,6 +69,30 @@ export const config = {
       10
     ),
   },
+
+  // Slack config
+  slack: {
+    applicationName: 'store',
+    appEnv: 'local',
+    integration: 'real',
+    channel: {
+      order: "http://mockserver:1080/status/201",
+      general: "http://mockserver:1080/status/201",
+      europa: "http://mockserver:1080/status/201",
+      system: "http://mockserver:1080/status/201",
+      shopify: "http://mockserver:1080/status/201",
+      shopifylow: "http://mockserver:1080/status/201",
+      prive: "http://mockserver:1080/status/201",
+      loop: "http://mockserver:1080/status/201",
+      dynamics: "http://mockserver:1080/status/201",
+      extensiv: "http://mockserver:1080/status/201",
+      circledna: "http://mockserver:1080/status/201",
+      circlednaorder: "http://mockserver:1080/status/201",
+      gps: "http://mockserver:1080/status/201",
+      gpslow: "http://mockserver:1080/status/201",
+      stord: "http://mockserver:1080/status/201"
+    }
+  },
 } as const;
 
 // Validate required configuration

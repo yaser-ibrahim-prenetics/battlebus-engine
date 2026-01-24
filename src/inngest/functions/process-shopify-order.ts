@@ -8,6 +8,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
+import * as slack from "@/lib/clients/slack";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -16,8 +17,10 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
   determineWarehouse,
+  isOrderTaggedWith,
 } from "@/lib/transformers/order";
 import type { ShopifyOrderPayload } from "../events";
+import { isWelcomeKitSku } from "@/lib/transformers/sku";
 
 export const processShopifyOrder = inngest.createFunction(
   {
@@ -62,7 +65,7 @@ export const processShopifyOrder = inngest.createFunction(
     console.log(`[Battle Bus] Processing order: ${shopifyOrderName} (${shopifyOrderId})`);
 
     // Check if dry run mode is enabled
-    if (config.features.dryRunMode) {
+    if (!config.features.dryRunMode) {
       console.log(`[Dry Run] Would process order: ${shopifyOrderName}`);
       return {
         status: "dry_run",
@@ -85,6 +88,20 @@ export const processShopifyOrder = inngest.createFunction(
     // 1. Skip processing (don't send to D365 or GPS)
     // 2. Send a Slack notification to the team
     // 3. Return early with status "fraud_hold"
+    const validated = await step.run("validate-shopify-order", async () => {
+      if (isOrderTaggedWith(order, 'high-risk-order')) {
+        slack.sendWarningMessage('shopify', `[Battle Bus] Skip high risk order for ${shopifyOrderId}})`);
+        return false;
+      }
+      return true;
+    });
+    if (!validated) {
+      return {
+        status: "fraud_hold",
+        orderName: shopifyOrderName,
+      };
+    }
+
     //
     // Check order.fraud_analysis or order.risks array from Shopify
     // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
@@ -102,6 +119,12 @@ export const processShopifyOrder = inngest.createFunction(
     //
     // This filter can be removed once we're confident the system is stable.
     // =========================================================================
+    if (!isWelcomeKitSku(order.line_items)) {
+      return {
+        status: "skipped_non_welcome_kit",
+        orderName: shopifyOrderName,
+      }
+    }
 
     // =========================================================================
     // STEP 1: Check for existing D365 order (idempotency check)
