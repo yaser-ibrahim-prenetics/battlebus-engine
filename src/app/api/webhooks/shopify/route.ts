@@ -7,8 +7,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -110,42 +108,6 @@ export async function POST(request: NextRequest) {
       console.log(`[Webhook] [${requestId}] Refund ID: ${payload.id}`);
       console.log(`[Webhook] [${requestId}] Order ID: ${payload.order_id}`);
       console.log(`[Webhook] [${requestId}] Refund Amount: ${payload.transactions?.[0]?.amount || "N/A"}`);
-    }
-
-    // =========================================================================
-    // LOG: Full JSON payload to file
-    // =========================================================================
-    try {
-      const logsDir = join(process.cwd(), "logs", "webhooks");
-      await mkdir(logsDir, { recursive: true });
-      
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      // Sanitize topic for filename (e.g. \"orders/paid\" -> \"orders_paid\")
-      const safeTopic = (topic || "unknown").replace(/[^a-zA-Z0-9._-]+/g, "_");
-      const filename = `${safeTopic}-${payload.id || payload.order_id || "unknown"}-${timestamp}.json`;
-      const filepath = join(logsDir, filename);
-      
-      const logData = {
-        requestId,
-        timestamp: new Date().toISOString(),
-        topic,
-        shopDomain,
-        webhookId,
-        apiVersion,
-        headers: {
-          hmac: hmacHeader ? "present" : "missing",
-          topic,
-          shopDomain,
-          webhookId,
-          apiVersion,
-        },
-        payload,
-      };
-      
-      await writeFile(filepath, JSON.stringify(logData, null, 2), "utf-8");
-      console.log(`[Webhook] [${requestId}] 💾 Saved to: ${filepath}`);
-    } catch (fileError) {
-      console.error(`[Webhook] [${requestId}] ❌ Failed to save log file:`, fileError);
     }
 
     // Route to appropriate event based on topic
