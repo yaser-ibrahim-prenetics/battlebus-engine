@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import * as shopify from "@/lib/clients";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -65,25 +66,34 @@ export const processShopifyOrder = inngest.createFunction(
       }
       return true;
     });
-    if (!validated) {
-      return {
-        status: "fraud_hold",
-        orderName: shopifyOrderName,
-      };
-    }
+    if (!validated) return { status: "fraud_hold",  orderName: shopifyOrderName };
 
     // Check order.fraud_analysis or order.risks array from Shopify
     // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
     // =========================================================================
+    if (config.shopify.enabledRiskCheck) {
+      const flaggedRisks = await step.run("risk-check-order", async () => {
+        const risks = await shopify.getOrderRisks(shopifyOrderId);
+        if (!risks.length) return [];
+        
+        const riskMessages: string[] = [];
+        for (const risk of risks) {
+          if (!risk.display) {
+            console.warn('[Battle Bus] Order risk check was set to false');
+            continue;
+          }
+          if (Number(risk.score) >= 0.8) riskMessages.push(risk.message);
+        }
+        return riskMessages;
+      });
+      if (flaggedRisks.length > 0) return { status: "risk_order", message: flaggedRisks, orderName: shopifyOrderName };
+    }
 
     // =========================================================================
     // Filter for Welcome Kits only (Phase 1)
     // =========================================================================
     if (!isWelcomeKitSku(order.line_items)) {
-      return {
-        status: "skipped_non_welcome_kit",
-        orderName: shopifyOrderName,
-      }
+      return { status: "skipped_non_welcome_kit", orderName: shopifyOrderName };
     }
 
     // =========================================================================
