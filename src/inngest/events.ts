@@ -136,6 +136,7 @@ export interface ShopifyOrderPayload {
   tags: string;
   customer: ShopifyCustomer | null;
   refunds: ShopifyRefund[];
+  cancel_reason: keyof typeof CancelReasonEnum | null;
 }
 
 export interface ShopifyLineItem {
@@ -286,3 +287,10 @@ export interface ShopifyFulfillmentLineItem {
   fulfillment_status: string;
 }
 
+export enum CancelReasonEnum {
+  customer = 'The customer canceled the order',
+  fraud = 'The order was fraudulent',
+  inventory = 'Items in the order were not in inventory',
+  declined = 'The payment was declined',
+  other = 'Other reason',
+}
