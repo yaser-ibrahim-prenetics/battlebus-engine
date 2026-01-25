@@ -41,6 +41,7 @@ export const config = {
       apiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
       webhookSecret: process.env.SHOPIFY_IM8_WEBHOOK_SECRET || "",
     },
+    enabledRiskCheck: false,
   },
 
   // Feature Flags
