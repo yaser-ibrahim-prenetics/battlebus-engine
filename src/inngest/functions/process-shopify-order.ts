@@ -13,7 +13,7 @@ import {
   determineWarehouse,
   isOrderTaggedWith,
 } from "@/lib/transformers/order";
-import type { ShopifyOrderPayload } from "../events";
+import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { isWelcomeKitSku } from "@/lib/transformers/sku";
 
 export const processShopifyOrder = inngest.createFunction(
@@ -59,6 +59,9 @@ export const processShopifyOrder = inngest.createFunction(
       if (isOrderTaggedWith(order, 'high-risk-order')) {
         slack.sendWarningMessage('shopify', `[Battle Bus] Skip high risk order for ${shopifyOrderId}})`);
         return false;
+      } else if (order.cancel_reason) {
+        console.log(`[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]})`);
+        slack.sendWarningMessage('shopify', `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}})`);
       }
       return true;
     });
@@ -69,7 +72,6 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    //
     // Check order.fraud_analysis or order.risks array from Shopify
     // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
     // =========================================================================
