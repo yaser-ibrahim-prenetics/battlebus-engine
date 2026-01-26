@@ -3,7 +3,7 @@
 // ============================================================================
 // Export all Inngest functions for registration
 
-export { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-order";
+export { processShopifyOrder } from "./process-shopify-order";
 export { processRefund } from "./process-refund";
 export { processShopifyFulfillment } from "./process-shopify-fulfillment";
 export { processOrderCancellation } from "./process-order-cancellation";
@@ -15,7 +15,7 @@ export {
 } from "./process-extensiv-fulfillment";
 
 // Re-export as array for easy registration
-import { processShopifyOrder, processShopifyOrderPaid } from "./process-shopify-order";
+import { processShopifyOrder } from "./process-shopify-order";
 import { processRefund } from "./process-refund";
 import { processShopifyFulfillment } from "./process-shopify-fulfillment";
 import { processOrderCancellation } from "./process-order-cancellation";
@@ -28,7 +28,6 @@ import {
 
 export const functions = [
   processShopifyOrder,
-  processShopifyOrderPaid,
   processRefund,
   processShopifyFulfillment,
   processOrderCancellation,

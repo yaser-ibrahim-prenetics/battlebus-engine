@@ -230,12 +230,14 @@ export default function Home() {
 
         {/* Links */}
         <div className="flex gap-4">
-          <Link
-            href="/api/inngest"
+          <a
+            href="http://localhost:8288"
+            target="_blank"
+            rel="noopener noreferrer"
             className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium transition-all hover:shadow-lg hover:shadow-indigo-500/25"
           >
             Inngest Dashboard →
-          </Link>
+          </a>
           <a
             href="https://app.inngest.com"
             target="_blank"

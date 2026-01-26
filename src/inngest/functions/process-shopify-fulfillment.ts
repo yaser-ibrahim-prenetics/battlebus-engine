@@ -9,7 +9,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
-import type { ShopifyOrderPayload, ShopifyFulfillment } from "../events";
+import type { ShopifyOrderPayload, ShopifyFulfillment, ShopifyFulfillmentLineItem } from "../events";
 import {
   isDummyFulfillment,
   isGpsFulfillment,
@@ -28,8 +28,7 @@ export const processShopifyFulfillment = inngest.createFunction(
   {
     id: "process-shopify-fulfillment",
     name: "Process Shopify Fulfillment → D365",
-    idempotency:
-      "event.data.shopifyOrderId + '-' + event.data.fulfillments.map(f => f.id).join(',')",
+    idempotency: "event.data.shopifyOrderId + '-' + event.id",
     retries: RETRY_CONFIGS.DEFAULT,
     throttle: {
       ...THROTTLE_CONFIGS.DYNAMICS,
@@ -143,7 +142,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
         try {
           // Filter out dummy SKUs and map to D365 format
-          const filteredItems = filterDummySkus(fulfillment.line_items);
+          const filteredItems = filterDummySkus<ShopifyFulfillmentLineItem>(fulfillment.line_items);
           const fulfillmentLines = filteredItems.map((item) => ({
             itemNumber: item.sku,
             quantity: item.quantity,
