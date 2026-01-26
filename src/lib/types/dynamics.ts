@@ -194,3 +194,9 @@ export interface D365PrepaymentRequest {
   PrepaymentAmount: number;
   CurrencyCode: string;
 }
+
+export interface D365ReturnOrderInvoiceRequest {
+  salesOrderNumber: string,
+  dataAreaId: string,
+  invoiceDate: Date,
+}
