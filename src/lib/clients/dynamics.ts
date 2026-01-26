@@ -311,6 +311,33 @@ export async function updateSalesOrderHeaderV3(
   };
 }
 
+/**
+ * Cancel a SalesOrder in D365 using SalesOrderHeadersV3
+ * Ported from spock-store - uses THK custom fields
+ */
+export async function deleteSalesOrderHeaderV3(
+  dataAreaId: string,
+  salesOrderNumber: string
+) {
+  const token = await getAuthToken();
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'OData-Version': '4.0',
+      'OData-MaxVersion': '4.0'
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Delete failed: ${response.status} - ${error}`);
+  }
+
+  console.log(`Deleted sales order: ${salesOrderNumber}`);
+  return true;
+}
+
 // ============================================================================
 // SALES ORDER LINE
 // ============================================================================
