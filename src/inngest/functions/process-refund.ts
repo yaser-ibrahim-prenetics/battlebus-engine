@@ -79,7 +79,12 @@ export const processRefund = inngest.createFunction(
         refundAmount: parseFloat(line.subtotal || "0") + parseFloat(line.total_tax || "0"),
       })) || [];
 
-      // TODO: Implement D365 credit note creation via THK API
+      // Implement D365 credit note creation via THK API
+      await dynamics.postReturnOrderInvoice({
+        salesOrderNumber: d365Order.SalesOrderNumber!,
+        dataAreaId: d365Order.dataAreaId,
+        invoiceDate: new Date(refund.created_at),
+      });
       return {
         CreditNoteNumber: `CN-${refundId}`,
         status: "not_implemented",

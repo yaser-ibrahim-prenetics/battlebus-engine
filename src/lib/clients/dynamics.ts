@@ -17,6 +17,7 @@ import type {
   D365FulfilmentLine,
   D365ReturnSalesOrderHeadersV3Request,
   D365ReturnSalesOrderLineRequest,
+  D365ReturnOrderInvoiceRequest,
 } from "../types/dynamics";
 
 // Token cache (in-memory, will refresh on cold starts)
@@ -773,6 +774,51 @@ export async function createFulfilment(
   console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
 
   return { response: result, request: body };
+}
+
+export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest) {
+  const { salesOrderNumber, dataAreaId, invoiceDate } = req;
+  const body = {
+    salesOrderNumber,
+    dataAreaId,
+    invoiceDate: invoiceDate ?? new Date().toISOString().split('T')[0],
+  };
+
+  console.log(`[D365] Posting return order invoice: ${JSON.stringify(body)}`);
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would post invoice for ${salesOrderNumber}`);
+    return {
+      creditNoteNumber: `DRY-CN-${Date.now()}`,
+      success: true,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_SalesOrderService/postReturnOrderInvoice`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `[D365] Failed to post return invoice for ${salesOrderNumber}: ${response.status} - ${error}`
+    );
+  }
+
+  const result = await response.json();
+  console.log(`[D365] Posted return invoice: ${result.creditNoteNumber}`);
+  return {
+    creditNoteNumber: result.creditNoteNumber,
+    success: true,
+  };
 }
 
 // ============================================================================
