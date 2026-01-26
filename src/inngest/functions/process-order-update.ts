@@ -76,6 +76,7 @@ export const processOrderUpdate = inngest.createFunction(
     if (updateActions.length > 0 && config.features.enableDynamicsSync) {
       await step.run("update-d365-order", async () => {
         // TODO: Implement D365 order update
+        await dynamics.updateSalesOrderHeaderV3(shopifyOrderId, order);
       });
     }
 
