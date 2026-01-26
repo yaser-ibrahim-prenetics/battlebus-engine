@@ -183,6 +183,134 @@ export async function createSalesOrderHeaderV3(
   };
 }
 
+/**
+ * Update a Sales Order Header in D365 using SalesOrderHeadersV3
+ * Ported from spock-store - uses THK custom fields
+ */
+export async function updateSalesOrderHeaderV3(
+  salesOrderNumber: string,
+  req: Partial<D365SalesOrderHeaderV3Request>
+): Promise<{ SalesOrderNumber: string; request: object; response: object }> {
+  const {
+    shippingAddress,
+    billingAddress,
+    dataAreaId,
+    orderingCustomerAccountNumber,
+    defaultLedgerDimensionDisplayValue,
+    customerOrderReference,
+    email,
+    name,
+    shopifyReference,
+    comment,
+    shippingWarehouseId,
+    currency,
+    paymentId,
+    skipFulfillmentNotification,
+  } = req;
+
+  // Build the update body - only include fields that are provided
+  const body: Record<string, any> = {};
+
+  if (req.orderingCustomerAccountNumber !== undefined) 
+    body.OrderingCustomerAccountNumber = orderingCustomerAccountNumber;
+  if (req.defaultLedgerDimensionDisplayValue !== undefined) 
+    body.DefaultLedgerDimensionDisplayValue = defaultLedgerDimensionDisplayValue;
+  if (req.customerOrderReference !== undefined) 
+    body.CustomersOrderReference = customerOrderReference;
+  if (currency !== undefined) 
+    body.CurrencyCode = currency;
+
+  // THK Custom Fields
+  if (shopifyReference !== undefined) 
+    body.THK_ShopifyReference = shopifyReference;
+  if (name !== undefined) 
+    body.THK_ShopifyCustName = name;
+  if (email !== undefined) 
+    body.THK_ShopifyCustomerEmail = email;
+  if (comment !== undefined) 
+    body.THK_Comments = comment;
+  if (paymentId !== undefined) 
+    body.THK_ShopifyPaymentReference = paymentId;
+  if (skipFulfillmentNotification !== undefined) 
+    body.THK_SkipFulfillmentNotification = skipFulfillmentNotification;
+
+  // Billing Address
+  if (billingAddress) {
+    if (billingAddress.addressLine !== undefined) 
+      body.THK_BillingName = billingAddress.addressLine;
+    if (billingAddress.addressCountryCode !== undefined) 
+      body.THK_BillingAddressCountryRegionId = billingAddress.addressCountryCode;
+    if (billingAddress.addressZipCode !== undefined) 
+      body.THK_BillingAddressZipCode = billingAddress.addressZipCode;
+    if (billingAddress.addressStreet !== undefined) 
+      body.THK_BillingAddressStreet = billingAddress.addressStreet;
+    if (billingAddress.addressCity !== undefined) 
+      body.THK_BillingAddressCity = billingAddress.addressCity;
+    if (billingAddress.addressPhone !== undefined) 
+      body.THK_ShopifyCustomerPhonenum = billingAddress.addressPhone;
+  }
+
+  // Delivery Address
+  if (shippingAddress) {
+    if (shippingAddress.addressName !== undefined) 
+      body.DeliveryAddressName = shippingAddress.addressName;
+    if (shippingAddress.addressLine !== undefined) 
+      body.DeliveryAddressDescription = shippingAddress.addressLine;
+    if (shippingAddress.addressCountryCode !== undefined) 
+      body.DeliveryAddressCountryRegionId = shippingAddress.addressCountryCode;
+    if (shippingAddress.addressZipCode !== undefined) 
+      body.DeliveryAddressZipCode = shippingAddress.addressZipCode;
+    if (shippingAddress.addressStreet !== undefined) 
+      body.DeliveryAddressStreet = shippingAddress.addressStreet;
+    if (shippingAddress.addressCity !== undefined) 
+      body.DeliveryAddressCity = shippingAddress.addressCity;
+  }
+
+  if (shippingWarehouseId !== undefined) 
+    body.DefaultShippingWarehouseId = shippingWarehouseId;
+
+  console.log(`[D365] Updating sales order header ${salesOrderNumber}: ${JSON.stringify(body)}`);
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would update sales order ${salesOrderNumber}`);
+    return {
+      SalesOrderNumber: salesOrderNumber,
+      request: body,
+      response: body,
+    };
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "OData-Version": "4.0",
+        "OData-MaxVersion": "4.0",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `[D365] Failed to update sales order header ${salesOrderNumber}: ${response.status} - ${error}`
+    );
+  }
+
+  const result = await response.json();
+  console.log(`[D365] Updated sales order: ${salesOrderNumber}`);
+
+  return {
+    SalesOrderNumber: salesOrderNumber,
+    request: body,
+    response: result,
+  };
+}
+
 // ============================================================================
 // SALES ORDER LINE
 // ============================================================================
