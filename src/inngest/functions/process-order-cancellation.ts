@@ -112,7 +112,9 @@ export const processOrderCancellation = inngest.createFunction(
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
       if (orderStatus.isShipped) {
-        // TODO: Implement D365 return order creation
+        // Implement D365 return order creation
+        await dynamics.createReturnSalesOrderHeaderV3(orderJson);
+        await dynamics.createReturnSalesOrderLineV3(orderJson);
         return {
           status: "not_implemented",
           action: "return_order_required",
