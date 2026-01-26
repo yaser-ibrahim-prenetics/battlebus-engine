@@ -121,7 +121,8 @@ export const processOrderCancellation = inngest.createFunction(
       }
 
       if (orderStatus.isConfirmed && !orderStatus.isShipped) {
-        // TODO: Implement D365 order cancellation
+        // Implement D365 order cancellation
+        await dynamics.deleteSalesOrderHeaderV3(dataAreaId, d365Order.SalesOrderNumber!);
         return {
           status: "not_implemented",
           action: "cancel_order",
