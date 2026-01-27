@@ -1095,50 +1095,6 @@ export async function getSalesOrderByShopifyId(
   return order;
 }
 
-/**
- * Get Sales Order Lines by Sales Order Number
- */
-export async function getSalesOrderLines(
-  salesOrderNumber: string,
-  dataAreaId: string = config.dynamics.dataAreaId
-): Promise<D365SalesOrderLine[]> {
-  console.log(
-    `[D365] Getting lines for sales order: ${salesOrderNumber} (${dataAreaId})`
-  );
-
-  if (config.features.dryRunMode) {
-    console.log(`[D365] DRY RUN - Would get lines for ${salesOrderNumber}`);
-    return [];
-  }
-
-  const token = await getAuthToken();
-  const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
-  const url = `${
-    config.dynamics.baseUrl
-  }/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}`;
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(
-      `[D365] Failed to get sales order lines: ${response.status} - ${error}`
-    );
-  }
-
-  const result = await response.json();
-  const lines = result.value || [];
-  console.log(`[D365] Found ${lines.length} lines for ${salesOrderNumber}`);
-
-  return lines;
-}
-
 // ============================================================================
 // LEGACY EXPORTS (for backwards compatibility)
 // ============================================================================
