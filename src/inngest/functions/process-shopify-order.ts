@@ -21,9 +21,11 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
   determineWarehouse,
-  isOrderTaggedWith,
 } from "@/lib/transformers/order";
-import { validateOrderForProcessing } from "@/lib/utils/validation";
+import {
+  validateOrderForProcessing,
+  validateOrderCompletely,
+} from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -31,7 +33,6 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
-import { isWelcomeKitSku } from "@/lib/transformers/sku";
 import { slackChannelEnum } from "@/lib/types/slack";
 
 export const processShopifyOrder = inngest.createFunction(
@@ -60,34 +61,6 @@ export const processShopifyOrder = inngest.createFunction(
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 
-    // 1. Validate Order
-    const validation = validateOrderForProcessing(order);
-
-    if (!validation.valid) {
-      await slack.sendErrorMessage(
-        "shopify",
-        `Order ${shopifyOrderName} validation failed: ${validation.reason}`
-      );
-      return {
-        status: "failed_validation",
-        reason: validation.reason,
-      };
-    }
-
-    if (validation.skip) {
-      if (validation.reason === "High-risk order") {
-        await slack.sendWarningMessage(
-          "shopify",
-          `Skipping High Risk Order: ${shopifyOrderName}`
-        );
-      }
-      return {
-        status: "skipped",
-        reason: validation.reason,
-        shopifyOrderId,
-      };
-    }
-
     if (config.features.dryRunMode) {
       return {
         status: "dry_run",
@@ -96,49 +69,49 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    // Check for high-risk fraud orders
-    const validated = await step.run("validate-shopify-order", async () => {
-      if (isOrderTaggedWith(order, 'high-risk-order')) {
-        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Skip high risk order for ${shopifyOrderId}`);
-        return false;
-      } else if (order.cancel_reason) {
-        console.log(`[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]})`);
-        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}})`);
-      }
-      return true;
+    // Comprehensive order validation - all checks in one place
+    const validation = await step.run("validate-order-completely", async () => {
+      return validateOrderCompletely(order, shopifyOrderId, shopifyOrderName);
     });
-    if (!validated) return { status: "fraud_hold",  orderName: shopifyOrderName };
 
-    // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
-    if (config.slack.enabledRiskCheck) {
-      const flaggedRisks = await step.run("risk-check-order", async () => {
-        const risks = await shopify.getOrderRisks(shopifyOrderId);
-        if (!risks.length) return [];
-        
-        const riskMessages: string[] = [];
-        for (const risk of risks) {
-          if (!risk.display) {
-            console.warn('[Battle Bus] Order risk check was set to false');
-            continue;
-          }
-          if (Number(risk.score) >= 0.8) riskMessages.push(risk.message);
-        }
-        return riskMessages;
-      });
-      if (flaggedRisks.length > 0) return { status: "risk_order", message: flaggedRisks, orderName: shopifyOrderName };
-    }
-
-    // Filter for Welcome Kits only (Phase 1) - controlled by feature flag
-    if (config.features.enableWelcomeKitFilter) {
-      if (!isWelcomeKitSku(order.line_items)) {
-        const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
+    // Handle validation failures
+    if (!validation.valid || validation.skip) {
+      if (validation.status === "failed_validation") {
+        await slack.sendErrorMessage(
+          "shopify",
+          `Order ${shopifyOrderName} validation failed: ${validation.reason}`
+        );
+      } else if (validation.status === "skipped" && validation.reason === "High-risk order") {
+        await slack.sendWarningMessage(
+          "shopify",
+          `Skipping High Risk Order: ${shopifyOrderName}`
+        );
+      } else if (validation.status === "fraud_hold") {
+        await slack.sendWarningMessage(
+          slackChannelEnum.SHOPIFY,
+          `[Battle Bus] Skip high risk order for ${shopifyOrderId}`
+        );
+      } else if (validation.status === "cancelled") {
+        const cancelReason = CancelReasonEnum[validation.cancelReason as keyof typeof CancelReasonEnum] || validation.cancelReason;
+        console.log(`[Battle Bus] Order was cancelled due to ${cancelReason}`);
+        await slack.sendWarningMessage(
+          slackChannelEnum.SHOPIFY,
+          `[Battle Bus] Order was cancelled due to ${cancelReason}`
+        );
+      } else if (validation.status === "skipped_non_welcome_kit") {
+        const skus = validation.skus?.join(", ") || "";
         console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
-        return {
-          status: "skipped_non_welcome_kit",
-          orderName: shopifyOrderName,
-          skus: order.line_items.map((item) => item.sku || "NO-SKU"),
-        };
       }
+
+      return {
+        status: validation.status,
+        reason: validation.reason,
+        shopifyOrderId,
+        orderName: shopifyOrderName,
+        ...(validation.message && { message: validation.message }),
+        ...(validation.skus && { skus: validation.skus }),
+        ...(validation.cancelReason && { cancelReason: validation.cancelReason }),
+      };
     }
 
     try {

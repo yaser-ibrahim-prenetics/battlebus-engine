@@ -5,6 +5,8 @@
 
 import { config } from "@/lib/config";
 import type { ShopifyOrderPayload, ShopifyFulfillment } from "../../inngest/events";
+import * as shopify from "@/lib/clients/shopify";
+import { isWelcomeKitSku } from "@/lib/transformers/sku";
 
 // ============================================================================
 // ORDER VALIDATION
@@ -207,4 +209,200 @@ export function getDataAreaIdFromLocation(locationId: string | number): string {
     default:
       return "U001"; // US data area
   }
+}
+
+// ============================================================================
+// ADVANCED ORDER VALIDATION
+// ============================================================================
+
+/**
+ * Check if order is tagged with a specific tag
+ */
+export function isOrderTaggedWith(
+  order: Pick<ShopifyOrderPayload, "tags">,
+  tagToCheck: string
+): boolean {
+  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  return tags.includes(tagToCheck.toLowerCase());
+}
+
+/**
+ * Validate high-risk fraud orders and cancelled orders
+ * Returns validation result
+ */
+export function validateFraudAndCancellation(
+  order: Pick<ShopifyOrderPayload, "tags" | "cancel_reason">,
+  shopifyOrderId: number | string
+): {
+  valid: boolean;
+  isFraud: boolean;
+  isCancelled: boolean;
+  cancelReason?: string;
+} {
+  // Check for high-risk fraud tag
+  if (isOrderTaggedWith(order, "high-risk-order")) {
+    return {
+      valid: false,
+      isFraud: true,
+      isCancelled: false,
+    };
+  }
+
+  // Check if order is cancelled
+  if (order.cancel_reason) {
+    return {
+      valid: false,
+      isFraud: false,
+      isCancelled: true,
+      cancelReason: order.cancel_reason,
+    };
+  }
+
+  return {
+    valid: true,
+    isFraud: false,
+    isCancelled: false,
+  };
+}
+
+/**
+ * Check Shopify order risks and return flagged risk messages
+ * Returns array of risk messages for risks with score >= 0.8
+ */
+export async function checkShopifyOrderRisks(
+  shopifyOrderId: number | string
+): Promise<string[]> {
+  if (!config.slack.enabledRiskCheck) {
+    return [];
+  }
+
+  const risks = await shopify.getOrderRisks(shopifyOrderId);
+  if (!risks.length) return [];
+
+  const riskMessages: string[] = [];
+  for (const risk of risks) {
+    if (!risk.display) {
+      console.warn("[Battle Bus] Order risk check was set to false");
+      continue;
+    }
+    if (Number(risk.score) >= 0.8) {
+      riskMessages.push(risk.message);
+    }
+  }
+  return riskMessages;
+}
+
+/**
+ * Validate Welcome Kit filter
+ * Returns validation result with SKUs if order should be skipped
+ */
+export function validateWelcomeKitFilter(
+  order: Pick<ShopifyOrderPayload, "line_items">
+): {
+  valid: boolean;
+  skus: string[];
+} {
+  if (!config.features.enableWelcomeKitFilter) {
+    return { valid: true, skus: [] };
+  }
+
+  if (!isWelcomeKitSku(order.line_items)) {
+    const skus = order.line_items.map((item) => item.sku || "NO-SKU");
+    return {
+      valid: false,
+      skus,
+    };
+  }
+
+  return { valid: true, skus: [] };
+}
+
+/**
+ * Comprehensive order validation - combines all validation checks
+ * Returns a single validation result with all checks
+ */
+export async function validateOrderCompletely(
+  order: ShopifyOrderPayload,
+  shopifyOrderId: number | string,
+  shopifyOrderName: string
+): Promise<{
+  valid: boolean;
+  skip: boolean;
+  status: string;
+  reason?: string;
+  message?: string[];
+  skus?: string[];
+  cancelReason?: string;
+}> {
+  // 1. Basic order validation (test orders, high-risk, dummy SKUs)
+  const basicValidation = validateOrderForProcessing(order);
+  if (!basicValidation.valid) {
+    return {
+      valid: false,
+      skip: false,
+      status: "failed_validation",
+      reason: basicValidation.reason,
+    };
+  }
+
+  if (basicValidation.skip) {
+    return {
+      valid: true,
+      skip: true,
+      status: "skipped",
+      reason: basicValidation.reason,
+    };
+  }
+
+  // 2. Fraud and cancellation check
+  const fraudValidation = validateFraudAndCancellation(order, shopifyOrderId);
+  if (fraudValidation.isFraud) {
+    return {
+      valid: false,
+      skip: false,
+      status: "fraud_hold",
+      reason: "High-risk order tag detected",
+    };
+  }
+
+  if (fraudValidation.isCancelled) {
+    return {
+      valid: false,
+      skip: false,
+      status: "cancelled",
+      reason: "Order is cancelled",
+      cancelReason: fraudValidation.cancelReason,
+    };
+  }
+
+  // 3. Shopify risk check
+  const flaggedRisks = await checkShopifyOrderRisks(shopifyOrderId);
+  if (flaggedRisks.length > 0) {
+    return {
+      valid: false,
+      skip: false,
+      status: "risk_order",
+      reason: "High risk score detected",
+      message: flaggedRisks,
+    };
+  }
+
+  // 4. Welcome Kit filter
+  const welcomeKitValidation = validateWelcomeKitFilter(order);
+  if (!welcomeKitValidation.valid) {
+    return {
+      valid: false,
+      skip: true,
+      status: "skipped_non_welcome_kit",
+      reason: "Not a Welcome Kit order",
+      skus: welcomeKitValidation.skus,
+    };
+  }
+
+  // All validations passed
+  return {
+    valid: true,
+    skip: false,
+    status: "valid",
+  };
 }
