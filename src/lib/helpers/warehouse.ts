@@ -112,14 +112,14 @@ export function getOrderingCustomerAccountNumber(warehouseName: string): string 
  * Derive customer account number from data area ID
  * Pattern: {dataAreaId}-C{number}
  * - U001 (US): U001-C000000006
- * - U007 (UK): U007-C000000001
+ * - U001 (UK): U001-C000000001
  * - H005 (HK): H005-C000000001
  */
 function deriveCustomerAccountNumber(dataAreaId: string): string {
   // Map data area to customer account suffix
   const customerAccountSuffix: Record<string, string> = {
     "U001": "C000000006", // US
-    "U007": "C000000001", // UK
+    "U001": "C000000001", // UK
     "H005": "C000000001", // HK
   };
   

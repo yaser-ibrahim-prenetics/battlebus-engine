@@ -220,7 +220,7 @@ async function processFulfilledGpsOrder(
 
   // 3. Sync to D365
   if (config.features.enableDynamicsSync) {
-    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "U007" : "U001";
+    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "U001" : "U001";
     
     // Find D365 order (use order name, not ID, since THK_ShopifyReference stores the order name)
     const d365Order = await dynamics.getSalesOrderByShopifyId(
