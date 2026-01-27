@@ -115,6 +115,56 @@ export async function createFulfillment(
 }
 
 /**
+ * Get Unfulfilled Orders
+ */
+export async function getUnfulfilledOrders(
+  limit: number = 50
+): Promise<ShopifyOrder[]> {
+  const url = buildUrl(
+    `/orders.json?status=open&fulfillment_status=unfulfilled&limit=${limit}`
+  );
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `Failed to get unfulfilled orders: ${response.status} - ${error}`
+    );
+  }
+
+  const data = await response.json();
+  return data.orders;
+}
+
+/**
+ * Search Orders by Name (e.g., IM8-1001)
+ */
+export async function searchOrdersByName(
+  orderName: string
+): Promise<ShopifyOrder[]> {
+  const url = buildUrl(`/orders.json?name=${encodeURIComponent(orderName)}&status=any`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(
+      `Failed to search orders by name: ${response.status} - ${error}`
+    );
+  }
+
+  const data = await response.json();
+  return data.orders;
+}
+
+/**
  * Get Order Transactions
  */
 export async function getOrderTransactions(
@@ -180,6 +230,7 @@ export interface ShopifyOrder {
   email: string;
   created_at: string;
   updated_at: string;
+  cancelled_at: string | null;
   total_price: string;
   subtotal_price: string;
   total_tax: string;
@@ -292,6 +343,19 @@ export interface ShopifyFulfillmentOrder {
   id: number;
   order_id: number;
   status: string;
+  assigned_location_id: number | null;
+  assigned_location?: {
+    id: number;
+    name: string;
+    address1: string;
+    city: string;
+    province: string;
+    country: string;
+    zip: string;
+  };
+  delivery_method?: {
+    method_type: string;
+  };
   line_items: ShopifyFulfillmentOrderLineItem[];
 }
 

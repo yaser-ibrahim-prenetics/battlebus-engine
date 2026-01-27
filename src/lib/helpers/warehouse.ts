@@ -94,10 +94,37 @@ export function getDataAreaId(warehouseName: string): string {
 
 /**
  * Get ordering customer account number from warehouse
+ * Dynamically derives from dataAreaId if not explicitly set in config
  */
 export function getOrderingCustomerAccountNumber(warehouseName: string): string {
   const config = getWarehouseConfig(warehouseName);
-  return config.orderingCustomerAccountNumber;
+  
+  // If explicitly set in config, use it
+  if (config.orderingCustomerAccountNumber) {
+    return config.orderingCustomerAccountNumber;
+  }
+  
+  // Otherwise, derive from dataAreaId
+  return deriveCustomerAccountNumber(config.dataAreaId);
+}
+
+/**
+ * Derive customer account number from data area ID
+ * Pattern: {dataAreaId}-C{number}
+ * - U001 (US): U001-C000000006
+ * - U007 (UK): U007-C000000001
+ * - H005 (HK): H005-C000000001
+ */
+function deriveCustomerAccountNumber(dataAreaId: string): string {
+  // Map data area to customer account suffix
+  const customerAccountSuffix: Record<string, string> = {
+    "U001": "C000000006", // US
+    "U007": "C000000001", // UK
+    "H005": "C000000001", // HK
+  };
+  
+  const suffix = customerAccountSuffix[dataAreaId] || "C000000001"; // Default fallback
+  return `${dataAreaId}-${suffix}`;
 }
 
 /**
@@ -109,7 +136,8 @@ export function toDefaultLedgerDimensionDisplayValue(
   warehouseName: string
 ): string {
   const config = getWarehouseConfig(warehouseName);
-  const { dimensionValue, project, orderingCustomerAccountNumber } = config;
+  const { dimensionValue, project } = config;
+  const orderingCustomerAccountNumber = getOrderingCustomerAccountNumber(warehouseName);
   return `~${dimensionValue}~${project}~~${orderingCustomerAccountNumber}`;
 }
 

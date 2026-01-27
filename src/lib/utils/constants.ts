@@ -28,6 +28,14 @@ export const THROTTLE_CONFIGS = {
     limit: 5,
     period: "1s" as const,
   },
+  FULFILLMENT: {
+    limit: 5,
+    period: "1s" as const,
+  },
+  CRON: {
+    limit: 1,
+    period: "60s" as const,
+  },
 } as const;
 
 // ============================================================================
@@ -45,6 +53,12 @@ export const CONCURRENCY_CONFIGS = {
     limit: 1,
   },
   CANCELLATION: {
+    limit: 1,
+  },
+  STANDARD: {
+    limit: 2,
+  },
+  CRON: {
     limit: 1,
   },
 } as const;
@@ -76,5 +90,7 @@ export const RETRY_CONFIGS = {
   DEFAULT: 5,
   CRITICAL: 10,
   LOW_PRIORITY: 3,
+  STANDARD: 5,
+  CRON: 3,
 } as const;
 

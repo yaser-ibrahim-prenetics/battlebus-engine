@@ -5,9 +5,10 @@
 // Uses correct GPS auth code algorithm with sorted keys
 
 import crypto from "crypto";
-import { config } from "../config";
+import { config, GPS_STATUS } from "../config";
 import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
+import { gpsSimulationStore } from "../stores/gps-simulation";
 
 // ============================================================================
 // GPS AUTH CODE GENERATION (Ported from spock-store)
@@ -170,6 +171,24 @@ function getWarehouseConfig(warehouseName: GpsWarehouseName) {
   return warehouse;
 }
 
+function getApiCredentials(warehouseName: GpsWarehouseName) {
+  if (warehouseName === "GPS UK Warehouse") {
+    // If GPS UK credentials are not explicitly set, fallback to main GPS credentials?
+    // Or assume config validation ensures they are set if needed.
+    // config.gpsUk defaults to gps if not set, but let's be explicit.
+    return {
+      appKey: config.gpsUk.apiKey || config.gps.apiKey,
+      appSecret: config.gpsUk.apiSecret || config.gps.apiSecret,
+      baseUrl: config.gpsUk.baseUrl || config.gps.baseUrl,
+    };
+  }
+  return {
+    appKey: config.gps.apiKey,
+    appSecret: config.gps.apiSecret,
+    baseUrl: config.gps.baseUrl,
+  };
+}
+
 function epochInSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -181,12 +200,15 @@ function epochInSeconds(): number {
 export async function createOutboundOrder(
   orderData: GpsOrderData,
   warehouseName: GpsWarehouseName = "GPS Warehouse"
-): Promise<{ response: GpsCreateOrderResponse; request: GpsCreateOrderRequest }> {
-  const warehouse = getWarehouseConfig(warehouseName);
-  const data: GpsOrderData[] = [orderData];
+): Promise<{
+  response: GpsCreateOrderResponse;
+  request: GpsCreateOrderRequest;
+}> {
+  // Validate warehouse exists
+  getWarehouseConfig(warehouseName);
+  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
 
-  const appKey = config.gps.apiKey;
-  const appSecret = config.gps.apiSecret;
+  const data: GpsOrderData[] = [orderData];
   const timestamp = epochInSeconds().toString();
 
   const payload: GpsCreateOrderRequest = {
@@ -198,7 +220,9 @@ export async function createOutboundOrder(
   console.log(`[GPS] Creating outbound order: ${JSON.stringify(payload)}`);
 
   if (config.features.dryRunMode) {
-    console.log(`[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`);
+    console.log(
+      `[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`
+    );
     return {
       response: {
         code: 200,
@@ -219,7 +243,7 @@ export async function createOutboundOrder(
   const authCode = generateAuthCode(data, timestamp, appKey, appSecret);
 
   const response = await fetch(
-    `${config.gps.baseUrl}/openapi/v1/outboundOrder/create?authcode=${authCode}`,
+    `${baseUrl}/openapi/v1/outboundOrder/create?authcode=${authCode}`,
     {
       method: "POST",
       headers: {
@@ -235,8 +259,10 @@ export async function createOutboundOrder(
 
   // Check for out of stock error
   if (result.code !== 200) {
-    if (result.msg?.toLowerCase().includes("out of stock") || 
-        result.msg?.toLowerCase().includes("insufficient")) {
+    if (
+      result.msg?.toLowerCase().includes("out of stock") ||
+      result.msg?.toLowerCase().includes("insufficient")
+    ) {
       throw new OutOfStockError(`GPS out of stock: ${result.msg}`);
     }
     throw new Error(`GPS API error: ${result.code} - ${result.msg}`);
@@ -245,9 +271,13 @@ export async function createOutboundOrder(
   // Check individual order result
   if (result.data?.[0] && !result.data[0].success) {
     const orderResult = result.data[0];
-    if (orderResult.msg?.toLowerCase().includes("out of stock") ||
-        orderResult.msg?.toLowerCase().includes("insufficient")) {
-      throw new OutOfStockError(`GPS out of stock for ${orderData.platformOrderNo}: ${orderResult.msg}`);
+    if (
+      orderResult.msg?.toLowerCase().includes("out of stock") ||
+      orderResult.msg?.toLowerCase().includes("insufficient")
+    ) {
+      throw new OutOfStockError(
+        `GPS out of stock for ${orderData.platformOrderNo}: ${orderResult.msg}`
+      );
     }
     throw new Error(`GPS order failed: ${orderResult.msg}`);
   }
@@ -262,8 +292,7 @@ export async function getOutboundOrdersDetails(
   orderIds: string[],
   warehouseName: GpsWarehouseName = "GPS Warehouse"
 ): Promise<{ response: GpsGetOrdersDetailResponse }> {
-  const appKey = config.gps.apiKey;
-  const appSecret = config.gps.apiSecret;
+  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
   const timestamp = epochInSeconds().toString();
 
   const requestData = {
@@ -277,6 +306,47 @@ export async function getOutboundOrdersDetails(
   };
 
   console.log(`[GPS] Getting order details for: ${orderIds.join(", ")}`);
+
+  // Check for simulated fulfillments first (if simulation is enabled)
+  if (config.features.enableGpsFulfillmentSimulation) {
+    const simulatedFulfillments = gpsSimulationStore.getFulfillments(orderIds);
+    
+    if (simulatedFulfillments.length > 0) {
+      console.log(`[GPS] 🧪 SIMULATION: Found ${simulatedFulfillments.length} simulated fulfillments`);
+      
+      // Return simulated fulfillments as fulfilled (status 3)
+      const simulatedData = simulatedFulfillments.map((sim) => ({
+        outboundOrderNo: sim.platformOrderNo,
+        status: GPS_STATUS.FULFILLED,
+        logisticsTrackNo: sim.trackingNumber,
+        logisticsCarrier: sim.carrier,
+        platformOrderNo: sim.platformOrderNo,
+        thirdOrderNo: sim.thirdOrderNo,
+        outboundTime: sim.outboundTime,
+      }));
+
+      // Also include any orders not in simulation (return as processing)
+      const simulatedOrderNames = new Set(simulatedFulfillments.map((s) => s.platformOrderNo));
+      const nonSimulated = orderIds
+        .filter((id) => !simulatedOrderNames.has(id))
+        .map((id) => ({
+          outboundOrderNo: id,
+          status: GPS_STATUS.PROCESSING, // Not fulfilled yet
+          logisticsTrackNo: "",
+          logisticsCarrier: "",
+          platformOrderNo: id,
+          outboundTime: "",
+        }));
+
+      return {
+        response: {
+          code: 200,
+          msg: "SIMULATION SUCCESS",
+          data: [...simulatedData, ...nonSimulated],
+        },
+      };
+    }
+  }
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would get order details`);
@@ -299,7 +369,7 @@ export async function getOutboundOrdersDetails(
   const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
 
   const response = await fetch(
-    `${config.gps.baseUrl}/openapi/v1/outboundOrder/detail?authcode=${authCode}`,
+    `${baseUrl}/openapi/v1/outboundOrder/detail?authcode=${authCode}`,
     {
       method: "POST",
       headers: {

@@ -43,7 +43,8 @@ export const processOrderUpdate = inngest.createFunction(
       if (!config.features.enableDynamicsSync) {
         return null;
       }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
     });
 
     if (!d365Order) {

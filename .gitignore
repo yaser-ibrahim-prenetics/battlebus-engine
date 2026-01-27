@@ -45,3 +45,16 @@ next-env.d.ts
 
 # mock JSON DB
 /data
+.env*.local
+
+# documentation and scripts (not pushed)
+API_ACCESS_PATTERNS.md
+AWS_PARAMETER_STORE_GUIDE.md
+PARAMETER_STORE_MAPPING.md
+VERCEL_ENV_SETUP.md
+ecosystem.config.js
+scripts/README.md
+scripts/add-vercel-env.js
+scripts/add-vercel-env.sh
+scripts/get-ngrok-urls.sh
+scripts/test-api-connections.ts

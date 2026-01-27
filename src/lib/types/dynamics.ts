@@ -59,6 +59,18 @@ export interface D365SalesOrderHeaderV3Request {
   skipFulfillmentNotification?: "Yes" | "No";
 }
 
+export interface D365SalesOrderHeaderV3RequestForReturn {
+  customerId: string;
+  orderId: string;
+  dataAreaId: string;
+  orderingCustomerAccountNumber: string;
+  defaultLedgerDimensionDisplayValue: string;
+  customerOrderReference: string;
+  email: string;
+  name: string;
+  shopifyReference: string;
+}
+
 // ============================================================================
 // Sales Order Line Request
 // ============================================================================
@@ -75,6 +87,17 @@ export interface D365SalesOrderLineRequest {
   currency?: string;
   countryCode?: string;
   discountCode?: string[];
+}
+
+export interface D365SalesOrderLineForReturn {
+  salesOrderNumber: string;
+  quantity: number;
+  itemNumber: string;
+  price: number;
+  discount: number;
+  dataAreaId: string;
+  inventTransIdReturn: string;
+  shippingSiteId: string;
 }
 
 // ============================================================================
@@ -124,7 +147,7 @@ export interface D365FulfilmentLine {
 export interface D365FulfilmentRequest {
   salesOrderNumber: string;
   dataAreaId: string;
-  type: "PackingSlip" | "Invoice";
+  type: "PackingSlip" | "Invoice" | "return";
   confirmedShippedDate: string;
   lines: D365FulfilmentLine[];
 }
@@ -186,6 +209,7 @@ export interface D365SalesOrderLine {
   ShippingWarehouseId?: string;
   LineDescription?: string;
   LineDiscountAmount?: number;
+  InventoryLotId?: string;
 }
 
 export interface D365PrepaymentRequest {

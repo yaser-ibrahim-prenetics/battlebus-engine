@@ -3,7 +3,6 @@
     "GPS Warehouse": {
       "countryCode": "US",
       "name": "GPS Warehouse",
-      "orderingCustomerAccountNumber": "U001-C000000006",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
@@ -28,10 +27,9 @@
     "GPS UK Warehouse": {
       "countryCode": "GB",
       "name": "GPS UK Warehouse",
-      "orderingCustomerAccountNumber": "H007-C000000001",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "H007",
+      "dataAreaId": "U007",
       "gpsCode": "LHR",
       "logisticsChannel": "GPS-IM8-STANDARD-UK",
       "fulfilment": {
@@ -53,7 +51,6 @@
     "STORD ATL Location": {
       "countryCode": "US",
       "name": "STORD ATL Location",
-      "orderingCustomerAccountNumber": "U001-C000000006",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
@@ -76,10 +73,9 @@
     "HK Warehouse": {
       "countryCode": "HK",
       "name": "HK Warehouse",
-      "orderingCustomerAccountNumber": "H005-C000000001",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "H007",
+      "dataAreaId": "U007",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
         "shippingWarehouseId": "OPS-WH01",
