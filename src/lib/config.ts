@@ -99,6 +99,7 @@ export const config = {
       gpslow: process.env.SLACK_CHANNEL_GPS_LOW || "",
       stord: process.env.SLACK_CHANNEL_STORD || "",
     },
+    enabledRiskCheck: false,
   },
 
   // Feature Flags

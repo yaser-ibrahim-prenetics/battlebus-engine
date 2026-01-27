@@ -12,6 +12,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import * as shopify from "@/lib/clients";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -29,8 +30,9 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
-import type { ShopifyOrderPayload } from "../events";
+import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { isWelcomeKitSku } from "@/lib/transformers/sku";
+import { slackChannelEnum } from "@/lib/types/slack";
 
 export const processShopifyOrder = inngest.createFunction(
   {
@@ -69,6 +71,64 @@ export const processShopifyOrder = inngest.createFunction(
       return {
         status: "failed_validation",
         reason: validation.reason,
+      };
+    }
+
+    const warehouseName = determineWarehouse(
+      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+    );
+
+    // Check for high-risk fraud orders
+    const validated = await step.run("validate-shopify-order", async () => {
+      if (isOrderTaggedWith(order, 'high-risk-order')) {
+        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Skip high risk order for ${shopifyOrderId}`);
+        return false;
+      } else if (order.cancel_reason) {
+        console.log(`[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]})`);
+        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}})`);
+      }
+      return true;
+    });
+    if (!validated) return { status: "fraud_hold",  orderName: shopifyOrderName };
+
+    // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
+    if (config.slack.enabledRiskCheck) {
+      const flaggedRisks = await step.run("risk-check-order", async () => {
+        const risks = await shopify.getOrderRisks(shopifyOrderId);
+        if (!risks.length) return [];
+        
+        const riskMessages: string[] = [];
+        for (const risk of risks) {
+          if (!risk.display) {
+            console.warn('[Battle Bus] Order risk check was set to false');
+            continue;
+          }
+          if (Number(risk.score) >= 0.8) riskMessages.push(risk.message);
+        }
+        return riskMessages;
+      });
+      if (flaggedRisks.length > 0) return { status: "risk_order", message: flaggedRisks, orderName: shopifyOrderName };
+    }
+
+    // Filter for Welcome Kits only (Phase 1)
+    if (!isWelcomeKitSku(order.line_items)) {
+      return { status: "skipped_non_welcome_kit", orderName: shopifyOrderName };
+    }
+
+    // =========================================================================
+    // STEP 1: Check for existing D365 order (idempotency check)
+    // =========================================================================
+    const existingOrder = await step.run("check-existing-d365-order", async () => {
+      if (!config.features.enableDynamicsSync) {
+        return null;
+      }
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+    });
+
+    if (existingOrder) {
+      return {
+        status: "already_exists",
+        d365OrderNumber: existingOrder.SalesOrderNumber,
         shopifyOrderId,
       };
     }

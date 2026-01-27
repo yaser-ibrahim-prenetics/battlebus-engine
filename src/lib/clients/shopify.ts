@@ -201,6 +201,28 @@ export function verifyWebhookSignature(
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader));
 }
 
+/**
+ * Get Order Risk
+ */
+export async function getOrderRisks(
+  orderId: string | number
+): Promise<ShopifyFraudAnalysis[]> {
+  const url = buildUrl(`/latest/orders/${orderId}/risks.json`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get risk analysis order: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return data.risks;
+}
+
 // Types
 export interface ShopifyOrder {
   id: number;
@@ -355,4 +377,17 @@ export interface ShopifyFulfillment {
   tracking_number: string;
   tracking_company: string;
   tracking_url: string;
+}
+
+export interface ShopifyFraudAnalysis {
+  id: number;
+  order_id: number;
+  checkout_id: number | null;
+  source: string;
+  score: string;
+  recommendation: string;
+  display: boolean;
+  cause_cancel: boolean;
+  message: string;
+  merchant_message: string;
 }

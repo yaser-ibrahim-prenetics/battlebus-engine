@@ -35,4 +35,5 @@ export {
   createFulfillment as createShopifyFulfillment,
   getOrderTransactions as getShopifyTransactions,
   verifyWebhookSignature as verifyShopifyWebhook,
+  getOrderRisks as getOrderRisks,
 } from "./shopify";

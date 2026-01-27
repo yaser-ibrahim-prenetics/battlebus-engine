@@ -101,6 +101,36 @@ export interface D365SalesOrderLineForReturn {
 }
 
 // ============================================================================
+// Return Sales Order Request
+// ============================================================================
+export interface D365ReturnSalesOrderHeadersV3Request {
+  customerId: string;
+  orderId: string;
+  dataAreaId: string;
+  defaultLedgerDimensionDisplayValue: string;
+  orderingCustomerAccountNumber: string;
+  email: string;
+  name: string;
+  customerOrderReference: string;
+  shopifyReference: string;
+  discount?: number;
+}
+
+// ============================================================================
+// Return Sales Order Line Request
+// ============================================================================
+export interface D365ReturnSalesOrderLineRequest {
+  inventTransIdReturn: string;
+  shippingSiteId: string;
+  salesOrderNumber: string,
+  quantity: number,
+  itemNumber: string;
+  price: number;
+  discount?: number;
+  dataAreaId: string;
+}
+
+// ============================================================================
 // Fulfilment Request
 // ============================================================================
 
@@ -187,4 +217,10 @@ export interface D365PrepaymentRequest {
   SalesOrderNumber: string;
   PrepaymentAmount: number;
   CurrencyCode: string;
+}
+
+export interface D365ReturnOrderInvoiceRequest {
+  salesOrderNumber: string,
+  dataAreaId: string,
+  invoiceDate: Date,
 }

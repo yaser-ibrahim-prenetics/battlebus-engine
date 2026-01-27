@@ -15,6 +15,7 @@
     "test:api": "npx tsx scripts/test-api-connections.ts"
   },
   "dependencies": {
+    "@slack/webhook": "^7.0.6",
     "inngest": "^3.49.3",
     "next": "16.1.4",
     "react": "19.2.3",
