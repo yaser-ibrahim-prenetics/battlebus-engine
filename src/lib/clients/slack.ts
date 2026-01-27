@@ -1,18 +1,27 @@
 import { config } from "@/lib/config";
+import { ISlackAttachment } from "../types/slack";
 
 const slackSender = async (
   channel: keyof typeof config.slack.channel,
-  attachments: any[],
+  attachments: ISlackAttachment[],
 ) => {
-  await fetch(config.slack.channel[channel], {
-    method: "POST",
+  const webhookUrl = config.slack.channel[channel];
+  if (!webhookUrl) throw new Error(`Slack webhook URL not configured for channel: ${channel}`);
+
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      attachments,
-    }),
+    body: JSON.stringify({ attachments }),
   });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Slack API error: ${response.status} - ${errorText}`);
+  }
+
+  return response;
 };
 
 const sendSlackWarningMessage = async (
@@ -28,11 +37,11 @@ const sendSlackWarningMessage = async (
         text: msg,
         footer: config.slack.applicationName,
         footer_icon: undefined,
-        ts: (new Date().getTime() / 1000) | 0,
+        ts: Math.floor(Date.now() / 1000),
       },
     ]);
   } catch (e) {
-    console.error(`Unable to send message. Unexpected warning logging message: ${e}`);
+    console.error(`Unable to send Slack warning message to ${type}:`, e);
   }
 };
 
@@ -40,6 +49,6 @@ export const sendWarningMessage =
   config.slack.integration === 'real'
     ? sendSlackWarningMessage
     : async (
-        type: Exclude<keyof typeof config.slack.channel, symbol>,
+        type: keyof typeof config.slack.channel,
         msg: string,
-      ) => console.log(`[${type}], ${msg}`);
+      ) => console.log(`[WARNING][${type}] ${msg}`);
