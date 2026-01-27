@@ -74,9 +74,27 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    const warehouseName = determineWarehouse(
-      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-    );
+    if (validation.skip) {
+      if (validation.reason === "High-risk order") {
+        await slack.sendWarningMessage(
+          "shopify",
+          `Skipping High Risk Order: ${shopifyOrderName}`
+        );
+      }
+      return {
+        status: "skipped",
+        reason: validation.reason,
+        shopifyOrderId,
+      };
+    }
+
+    if (config.features.dryRunMode) {
+      return {
+        status: "dry_run",
+        shopifyOrderId,
+        shopifyOrderName,
+      };
+    }
 
     // Check for high-risk fraud orders
     const validated = await step.run("validate-shopify-order", async () => {
@@ -110,63 +128,18 @@ export const processShopifyOrder = inngest.createFunction(
       if (flaggedRisks.length > 0) return { status: "risk_order", message: flaggedRisks, orderName: shopifyOrderName };
     }
 
-    // Filter for Welcome Kits only (Phase 1)
-    if (!isWelcomeKitSku(order.line_items)) {
-      return { status: "skipped_non_welcome_kit", orderName: shopifyOrderName };
-    }
-
-    // =========================================================================
-    // STEP 1: Check for existing D365 order (idempotency check)
-    // =========================================================================
-    const existingOrder = await step.run("check-existing-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
+    // Filter for Welcome Kits only (Phase 1) - controlled by feature flag
+    if (config.features.enableWelcomeKitFilter) {
+      if (!isWelcomeKitSku(order.line_items)) {
+        const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
+        console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
+        return {
+          status: "skipped_non_welcome_kit",
+          orderName: shopifyOrderName,
+          skus: order.line_items.map((item) => item.sku || "NO-SKU"),
+        };
       }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
-    });
-
-    if (existingOrder) {
-      return {
-        status: "already_exists",
-        d365OrderNumber: existingOrder.SalesOrderNumber,
-        shopifyOrderId,
-      };
     }
-
-    if (validation.skip) {
-      if (validation.reason === "High-risk order") {
-        await slack.sendWarningMessage(
-          "shopify",
-          `Skipping High Risk Order: ${shopifyOrderName}`
-        );
-      }
-      return {
-        status: "skipped",
-        reason: validation.reason,
-        shopifyOrderId,
-      };
-    }
-
-    if (config.features.dryRunMode) {
-      return {
-        status: "dry_run",
-        shopifyOrderId,
-        shopifyOrderName,
-      };
-    }
-
-    // Filter for Welcome Kits only (Phase 1)
-    // DISABLED: Commented out per user request - no longer filtering by Welcome Kit SKUs
-    // const isWelcomeKit = isWelcomeKitSku(order.line_items);
-    // if (!isWelcomeKit) {
-    //   const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
-    //   console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
-    //   return {
-    //     status: "skipped_non_welcome_kit",
-    //     orderName: shopifyOrderName,
-    //     skus: order.line_items.map((item) => item.sku || "NO-SKU"),
-    //   };
-    // }
 
     try {
       const warehouseName = determineWarehouse(
@@ -176,13 +149,13 @@ export const processShopifyOrder = inngest.createFunction(
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
 
-      // 2. Check/Create D365 Order
+      // 2. Check for existing D365 order (idempotency check)
+      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
       const existingOrder = await step.run("check-existing-d365-order", async () => {
         if (skipD365) {
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
           return null;
         }
-        // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
         console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName}`);
         return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
       });

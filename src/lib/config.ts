@@ -113,6 +113,8 @@ export const config = {
     skipTestOrders: process.env.SKIP_TEST_ORDERS !== "false",
     // GPS fulfillment simulation: when enabled, scheduler will process simulated fulfillments
     enableGpsFulfillmentSimulation: process.env.ENABLE_GPS_FULFILLMENT_SIMULATION === "true",
+    // Welcome Kit filter: when enabled, only process orders with Welcome Kit SKUs
+    enableWelcomeKitFilter: process.env.ENABLE_WELCOME_KIT_FILTER === "true", // Default: false
   },
 
   // Retry Configuration
