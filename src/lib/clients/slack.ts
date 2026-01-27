@@ -1,123 +1,144 @@
-// ============================================================================
-// SLACK NOTIFICATION CLIENT
-// ============================================================================
-// Ported from spock-store src/component/integration/slack.ts
-// Sends error, warning, info, and order notifications to Slack channels
-
-import { config } from "../config";
+import { config } from "@/lib/config";
 import { ISlackAttachment } from "../types/slack";
 
-type SlackChannel = keyof typeof config.slack.channel;
+const slackSender = async (
+  channel: keyof typeof config.slack.channel,
+  attachments: ISlackAttachment[],
+) => {
+  const webhookUrl = config.slack.channel[channel];
+  if (!webhookUrl) throw new Error(`Slack webhook URL not configured for channel: ${channel}`);
 
-const APP_NAME = config.slack.applicationName;
-const APP_ENV = config.slack.appEnv;
-
-async function sendSlackMessage(
-  channel: SlackChannel,
-  attachments: ISlackAttachment[]
-): Promise<void> {
-  const channelUrl = config.slack.channel[channel];
-
-  if (!channelUrl) {
-    console.log(`[Slack] [${channel}] No channel URL configured, logging: ${attachments[0]?.text}`);
-    return;
-  }
-
-  if (config.features.dryRunMode) {
-    console.log(`[Slack] [${channel}] DRY RUN - Would send: ${attachments[0]?.text}`);
-    return;
-  }
-
-  // Check integration mode
-  if (config.slack.integration !== 'real') {
-    console.log(`[Slack] [${channel}] Integration mode: ${config.slack.integration}, logging: ${attachments[0]?.text}`);
-    return;
-  }
-
-  try {
-    const response = await fetch(channelUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ attachments }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Slack API error: ${response.status} - ${errorText}`);
-    }
-  } catch (error) {
-    console.error(`[Slack] Error sending message to ${channel}:`, error);
-    throw error;
-  }
-}
-
-export async function sendErrorMessage(
-  channel: SlackChannel,
-  message: string
-): Promise<void> {
-  await sendSlackMessage(channel, [
-    {
-      fallback: message,
-      color: "danger",
-      title: `:no_entry_sign: [${APP_ENV.toUpperCase()}] ${APP_NAME} error`,
-      text: message,
-      footer: APP_NAME,
-      ts: Math.floor(Date.now() / 1000),
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: {
+      "Content-Type": "application/json",
     },
-  ]);
-}
+    body: JSON.stringify({ attachments }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Slack API error: ${response.status} - ${errorText}`);
+  }
+
+  return response;
+};
+
+const sendSlackInfoMessage = async (
+  type: keyof typeof config.slack.channel,
+  msg: string,
+) => {
+  try {
+    await slackSender(type, [
+      {
+        fallback: msg,
+        color: '#36a64f',
+        title: `:white_check_mark: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} info`,
+        text: msg,
+        footer: config.slack.applicationName,
+        footer_icon: undefined,
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ]);
+  } catch (e) {
+    console.error(`Unable to send Slack info message to ${type}:`, e);
+  }
+};
 
 const sendSlackWarningMessage = async (
-  channel: SlackChannel,
-  message: string
-): Promise<void> => {
-  await sendSlackMessage(channel, [
-    {
-      fallback: message,
-      color: "#ffcc00",
-      title: `:warning: [${APP_ENV.toUpperCase()}] ${APP_NAME} warning`,
-      text: message,
-      footer: APP_NAME,
-      footer_icon: undefined,
-      ts: Math.floor(Date.now() / 1000),
-    },
-  ]);
+  type: keyof typeof config.slack.channel,
+  msg: string,
+) => {
+  try {
+    await slackSender(type, [
+      {
+        fallback: msg,
+        color: '#ffcc00',
+        title: `:warning: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} warning`,
+        text: msg,
+        footer: config.slack.applicationName,
+        footer_icon: undefined,
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ]);
+  } catch (e) {
+    console.error(`Unable to send Slack warning message to ${type}:`, e);
+  }
 };
+
+const sendSlackErrorMessage = async (
+  type: keyof typeof config.slack.channel,
+  msg: string,
+) => {
+  try {
+    await slackSender(type, [
+      {
+        fallback: msg,
+        color: 'danger',
+        title: `:no_entry_sign: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} error`,
+        text: msg,
+        footer: config.slack.applicationName,
+        footer_icon: undefined,
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ]);
+  } catch (e) {
+    console.error(`Unable to send Slack error message to ${type}:`, e);
+  }
+};
+
+const sendSlackOrderMessage = async (
+  type: keyof typeof config.slack.channel,
+  msg: string,
+) => {
+  try {
+    await slackSender(type, [
+      {
+        fallback: msg,
+        color: '#36a64f',
+        title: `:white_check_mark: Order Placement`,
+        text: msg,
+        footer: config.slack.applicationName,
+        footer_icon: undefined,
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ]);
+  } catch (e) {
+    console.error(`Unable to send Slack order message to ${type}:`, e);
+  }
+};
+
+export const sendInfoMessage =
+  config.slack.integration === 'real'
+    ? sendSlackInfoMessage
+    : async (
+        type: keyof typeof config.slack.channel,
+        msg: string,
+      ) => console.log(`[INFO][${type}] ${msg}`);
 
 export const sendWarningMessage =
   config.slack.integration === 'real'
     ? sendSlackWarningMessage
-    : async (channel: SlackChannel, msg: string) => 
-        console.log(`[WARNING][${channel}] ${msg}`);
+    : async (
+        type: keyof typeof config.slack.channel,
+        msg: string,
+      ) => console.log(`[WARNING][${type}] ${msg}`);
 
-export async function sendInfoMessage(
-  channel: SlackChannel,
-  message: string
-): Promise<void> {
-  await sendSlackMessage(channel, [
-    {
-      fallback: message,
-      color: "#36a64f",
-      title: `:white_check_mark: [${APP_ENV.toUpperCase()}] ${APP_NAME} info`,
-      text: message,
-      footer: APP_NAME,
-      ts: Math.floor(Date.now() / 1000),
-    },
-  ]);
-}
+export const sendErrorMessage =
+  config.slack.integration === 'real'
+    ? sendSlackErrorMessage
+    : async (
+        type: keyof typeof config.slack.channel,
+        msg: string,
+      ) => console.log(`[ERROR][${type}] ${msg}`);
 
-export async function sendOrderMessage(message: string): Promise<void> {
-  await sendSlackMessage("order", [
-    {
-      fallback: message,
-      color: "#36a64f",
-      title: `:white_check_mark: Order Placement`,
-      text: message,
-      footer: APP_NAME,
-      ts: Math.floor(Date.now() / 1000),
-    },
-  ]);
-}
+export const sendOrderMessage =
+  config.slack.integration === 'real'
+    ? sendSlackOrderMessage
+    : async (
+        type: keyof typeof config.slack.channel,
+        msg: string,
+      ) => console.log(`[ORDER][${type}] ${msg}`);
 
 export function determineErrorChannel(
   error: Error | string,
