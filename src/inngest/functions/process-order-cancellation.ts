@@ -47,12 +47,13 @@ export const processOrderCancellation = inngest.createFunction(
       };
     }
 
-    // 1. Get D365 Order
+    // 1. Get D365 Order (lookup by order name, not ID, since THK_ShopifyReference stores the order name)
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
       }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., #D365-GPS-123)
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
     });
 
     // 2. Try to Cancel GPS Order

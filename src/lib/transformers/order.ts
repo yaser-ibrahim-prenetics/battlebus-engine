@@ -44,6 +44,7 @@ import {
   isGpsUkWarehouse,
   getShippingSku,
   getTaxSku,
+  getOrderingCustomerAccountNumber,
 } from "../helpers/warehouse";
 import type { GpsOrderData, GpsProductItem } from "../clients/gps";
 
@@ -78,7 +79,7 @@ export function toD365SalesOrderHeaderV3(
     customerId: String(order.customer?.id || ""),
     orderId: String(order.id),
     dataAreaId: warehouseConfig.dataAreaId,
-    orderingCustomerAccountNumber: warehouseConfig.orderingCustomerAccountNumber,
+    orderingCustomerAccountNumber: getOrderingCustomerAccountNumber(warehouse),
     defaultLedgerDimensionDisplayValue: toDefaultLedgerDimensionDisplayValue(warehouse),
     customerOrderReference: order.name,
     email: order.email,
@@ -136,7 +137,7 @@ export function toD365SalesOrderLine(
 ): D365SalesOrderLineRequest {
   const itemNumber = mapShopifySkuToDynamics(lineItem.sku);
   const price = parseFloat(lineItem.price);
-  const totalDiscount = parseFloat(lineItem.total_discount);
+  const totalDiscount = parseFloat(lineItem.total_discount) || 0;
   const discountPerUnit = lineItem.quantity > 0 ? totalDiscount / lineItem.quantity : 0;
 
   return {
@@ -145,7 +146,7 @@ export function toD365SalesOrderLine(
     itemNumber,
     quantity: lineItem.quantity,
     price,
-    discount: discountPerUnit,
+    ...(discountPerUnit > 0 ? { discount: discountPerUnit } : {}),
     currency,
     discountCode: discountCodes,
   };

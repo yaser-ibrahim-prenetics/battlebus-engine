@@ -96,32 +96,35 @@ export const processShopifyOrder = inngest.createFunction(
     }
 
     // Filter for Welcome Kits only (Phase 1)
-    const isWelcomeKit = isWelcomeKitSku(order.line_items);
-    if (!isWelcomeKit && !config.features.testingMode) {
-      return {
-        status: "skipped_non_welcome_kit",
-        orderName: shopifyOrderName,
-      };
-    }
-    if (!isWelcomeKit && config.features.testingMode) {
-      console.log(`[Order] 🧪 TESTING_MODE: ${shopifyOrderName} is not a Welcome Kit, but continuing...`);
-    }
+    // DISABLED: Commented out per user request - no longer filtering by Welcome Kit SKUs
+    // const isWelcomeKit = isWelcomeKitSku(order.line_items);
+    // if (!isWelcomeKit) {
+    //   const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
+    //   console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
+    //   return {
+    //     status: "skipped_non_welcome_kit",
+    //     orderName: shopifyOrderName,
+    //     skus: order.line_items.map((item) => item.sku || "NO-SKU"),
+    //   };
+    // }
 
     try {
       const warehouseName = determineWarehouse(
         order.shipping_address?.country_code || order.billing_address?.country_code || "US"
       );
 
-      // Skip real D365 calls in testing mode
-      const skipD365 = !config.features.enableDynamicsSync || config.features.testingMode;
+      // D365 calls controlled by ENABLE_DYNAMICS_SYNC
+      const skipD365 = !config.features.enableDynamicsSync;
 
       // 2. Check/Create D365 Order
       const existingOrder = await step.run("check-existing-d365-order", async () => {
         if (skipD365) {
-          console.log("[D365] 🧪 TESTING_MODE: Skipping D365 order lookup");
+          console.log("[D365] Dynamics sync disabled, skipping order lookup");
           return null;
         }
-        return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+        // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
+        console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName}`);
+        return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
       });
 
       if (existingOrder) {
@@ -135,9 +138,7 @@ export const processShopifyOrder = inngest.createFunction(
       const d365Header = await step.run("create-d365-header", async () => {
         const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
         if (skipD365) {
-          const mockOrderNumber = `TEST-${shopifyOrderId}`;
-          console.log(`[D365] 🧪 TESTING_MODE: Mock D365 order created: ${mockOrderNumber}`);
-          return { SalesOrderNumber: mockOrderNumber, request: headerRequest };
+          return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
         }
         return dynamics.createSalesOrderHeaderV3(headerRequest);
       });
@@ -147,7 +148,6 @@ export const processShopifyOrder = inngest.createFunction(
       await step.run("create-d365-lines", async () => {
         const lines = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
         if (skipD365) {
-          console.log(`[D365] 🧪 TESTING_MODE: Mock D365 lines created: ${lines.length} items`);
           return lines;
         }
 
@@ -163,7 +163,6 @@ export const processShopifyOrder = inngest.createFunction(
 
       await step.run("confirm-d365-order", async () => {
         if (skipD365) {
-          console.log(`[D365] 🧪 TESTING_MODE: Mock D365 order confirmed: ${salesOrderNumber}`);
           return;
         }
 
@@ -187,7 +186,6 @@ export const processShopifyOrder = inngest.createFunction(
       await step.run("create-d365-prepayment", async () => {
         const amount = calculatePrepaymentAmount(order);
         if (skipD365) {
-          console.log(`[D365] 🧪 TESTING_MODE: Mock prepayment: $${amount}`);
           return amount;
         }
         if (amount > 0) {
@@ -213,19 +211,6 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Send to GPS warehouse
       const gpsResult = await step.run("send-to-gps-warehouse", async () => {
-        const isTestingMode = config.features.testingMode;
-        
-        if (isTestingMode) {
-          console.log(`[GPS] 🧪 TESTING_MODE enabled for order ${shopifyOrderName}`);
-          console.log(`[GPS] shouldSendToRealGps: ${shouldSendToRealGps}`);
-          console.log(`[GPS] gpsOrderPayload: ${gpsOrderPayload ? 'built' : 'null'}`);
-          console.log(`[GPS] warehouse: ${warehouseName}`);
-          
-          if (gpsOrderPayload) {
-            console.log(`[GPS] Payload: ${JSON.stringify(gpsOrderPayload, null, 2)}`);
-          }
-        }
-
         // If GPS is enabled and we have a payload, make the real call
         if (shouldSendToRealGps && gpsOrderPayload) {
           try {
@@ -233,9 +218,6 @@ export const processShopifyOrder = inngest.createFunction(
               gpsOrderPayload,
               warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
             );
-            if (isTestingMode) {
-              console.log(`[GPS] ✅ Real GPS call succeeded: ${JSON.stringify(result)}`);
-            }
             return { type: "real", result };
           } catch (error) {
             if (error instanceof OutOfStockError) {
@@ -246,21 +228,7 @@ export const processShopifyOrder = inngest.createFunction(
           }
         }
 
-        // Testing mode: return dummy response with payload details
-        if (isTestingMode) {
-          console.log(`[GPS] 🧪 TESTING_MODE: Returning dummy GPS response`);
-          return {
-            type: "dummy",
-            message: "TESTING_MODE - GPS sync disabled or no payload",
-            wouldHaveSent: gpsOrderPayload ? {
-              platformOrderNo: gpsOrderPayload.platformOrderNo,
-              whCode: gpsOrderPayload.whCode,
-              productCount: gpsOrderPayload.productList?.length || 0,
-            } : null,
-          };
-        }
-
-        // Production: skip if GPS not enabled
+        // Skip if GPS not enabled
         return { type: "skipped", reason: "GPS sync disabled or no payload" };
       });
 

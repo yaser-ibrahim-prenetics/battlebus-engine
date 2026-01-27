@@ -171,13 +171,19 @@ export async function createSalesOrderHeaderV3(
 
   if (!response.ok) {
     const error = await response.text();
+    console.error(`[D365] ❌ Failed to create sales order header for ${orderId}`);
+    console.error(`[D365] Error Status: ${response.status}`);
+    console.error(`[D365] Full Error Response: ${error}`);
+    console.error(`[D365] Request Payload: ${JSON.stringify(body, null, 2)}`);
     throw new Error(
       `[D365] Failed to create sales order header for ${orderId}: ${response.status} - ${error}`
     );
   }
 
   const result = await response.json();
-  console.log(`[D365] Created sales order: ${result.SalesOrderNumber}`);
+  console.log(`[D365] ✅ Created sales order: ${result.SalesOrderNumber}`);
+  console.log(`[D365] Full D365 response: ${JSON.stringify(result, null, 2)}`);
+  console.log(`[D365] Request payload: ${JSON.stringify(body, null, 2)}`);
 
   return {
     SalesOrderNumber: result.SalesOrderNumber,
@@ -217,7 +223,7 @@ export async function createSalesOrderLine(
     ItemNumber: itemNumber,
     OrderedSalesQuantity: quantity,
     SalesPrice: price,
-    LineDiscountAmount: discount,
+    ...(discount != null && discount !== undefined && !isNaN(discount) ? { LineDiscountAmount: discount } : {}),
     THK_DiscountType: giftCardNumber,
     THK_PromotionCode: discountCode && discountCode.length > 0 ? discountCode[0] : "",
     ...(shippingWarehouseId ? { ShippingWarehouseId: shippingWarehouseId } : {}),
@@ -364,7 +370,7 @@ export async function createSalesOrderLineForReturn(
     ItemNumber: itemNumber,
     OrderedSalesQuantity: quantity,
     SalesPrice: price,
-    LineDiscountAmount: discount,
+    ...(discount != null && discount !== undefined && !isNaN(discount) ? { LineDiscountAmount: discount } : {}),
     InventTransIdReturn: inventTransIdReturn,
     ShippingSiteId: shippingSiteId,
   };
@@ -674,6 +680,8 @@ export async function getSalesOrderByShopifyId(
     console.log(`[D365] Found order: ${order.SalesOrderNumber}`);
   } else {
     console.log(`[D365] No order found for Shopify ID: ${shopifyOrderId}`);
+    console.log(`[D365] Query used: ${filter}`);
+    console.log(`[D365] Response: ${JSON.stringify(result)}`);
   }
 
   return order;

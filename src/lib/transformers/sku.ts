@@ -65,11 +65,24 @@ export function getRewardMapping(): Record<string, string> {
 
 /**
  * Map a Shopify SKU to D365 SKU
- * Applies merge mapping if exists, otherwise returns original
+ * Applies refill mapping first, then merge mapping if exists, otherwise returns original
  */
 export function mapShopifySkuToDynamics(shopifySku: string): string {
+  // Check refill mapping first (e.g., IM8-FG-000010 -> IM8-FG-000035)
+  const refillMapping = getRefillMapping();
+  if (refillMapping[shopifySku]) {
+    console.log(`[SKU] Refill mapping: ${shopifySku} -> ${refillMapping[shopifySku]}`);
+    return refillMapping[shopifySku];
+  }
+  
+  // Then check merge mapping
   const mergeMapping = getShopifyToDynamicsMapping();
-  return mergeMapping[shopifySku] || shopifySku;
+  if (mergeMapping[shopifySku]) {
+    console.log(`[SKU] Merge mapping: ${shopifySku} -> ${mergeMapping[shopifySku]}`);
+    return mergeMapping[shopifySku];
+  }
+  
+  return shopifySku;
 }
 
 /**

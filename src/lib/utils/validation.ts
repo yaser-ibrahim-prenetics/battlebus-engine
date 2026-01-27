@@ -201,7 +201,7 @@ export function getDataAreaIdFromLocation(locationId: string | number): string {
 
   switch (location) {
     case "gpsUk":
-      return "H007"; // UK data area
+      return "U007"; // UK data area
     case "gps":
     case "stord":
     default:

@@ -62,6 +62,19 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     const totalFulfilled = processedBatches.reduce((sum, b) => sum + b.fulfilled.length, 0);
     const totalErrors = processedBatches.reduce((sum, b) => sum + b.errors.length, 0);
+    const allFulfilledOrderIds = processedBatches.flatMap((b) => b.fulfilled);
+
+    // Log summary of GPS orders with status 3
+    if (totalFulfilled > 0) {
+      console.log(
+        `[GPS Sync] Summary: Found ${totalFulfilled} GPS orders with status 3 (FULFILLED) across all batches`
+      );
+      console.log(
+        `[GPS Sync] All fulfilled order IDs: ${allFulfilledOrderIds.join(", ")}`
+      );
+    } else {
+      console.log(`[GPS Sync] Summary: No GPS orders with status 3 (FULFILLED) found`);
+    }
 
     if (totalFulfilled > 0 || totalErrors > 0) {
       await slack.sendInfoMessage(
@@ -74,6 +87,7 @@ export const syncGpsFulfillments = inngest.createFunction(
       status: "completed",
       checked: unfulfilledOrders.length,
       fulfilled: totalFulfilled,
+      fulfilledOrderIds: allFulfilledOrderIds,
       batches: processedBatches,
     };
   }
@@ -136,16 +150,29 @@ async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
         continue;
       }
 
-      // 3. Process Fulfilled Orders
-      for (const gpsOrder of response.data) {
-        if (gpsOrder.status === GPS_STATUS.FULFILLED) {
-          try {
-            await processFulfilledGpsOrder(gpsOrder, warehouse, gpsOrders);
-            fulfilled.push(gpsOrder.platformOrderNo);
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            errors.push(`${gpsOrder.platformOrderNo}: ${msg}`);
-          }
+      // 3. Filter and log GPS orders with status 3 (FULFILLED)
+      const fulfilledOrders = response.data.filter(
+        (gpsOrder) => gpsOrder.status === GPS_STATUS.FULFILLED
+      );
+
+      if (fulfilledOrders.length > 0) {
+        const fulfilledOrderIds = fulfilledOrders.map((order) => order.platformOrderNo);
+        console.log(
+          `[GPS Sync] [${warehouse}] Found ${fulfilledOrders.length} GPS orders with status 3 (FULFILLED):`
+        );
+        console.log(
+          `[GPS Sync] [${warehouse}] Order IDs: ${fulfilledOrderIds.join(", ")}`
+        );
+      }
+
+      // 4. Process Fulfilled Orders
+      for (const gpsOrder of fulfilledOrders) {
+        try {
+          await processFulfilledGpsOrder(gpsOrder, warehouse, gpsOrders);
+          fulfilled.push(gpsOrder.platformOrderNo);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          errors.push(`${gpsOrder.platformOrderNo}: ${msg}`);
         }
       }
     } catch (error) {
@@ -193,11 +220,11 @@ async function processFulfilledGpsOrder(
 
   // 3. Sync to D365
   if (config.features.enableDynamicsSync) {
-    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "H007" : "U001";
+    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "U007" : "U001";
     
-    // Find D365 order
+    // Find D365 order (use order name, not ID, since THK_ShopifyReference stores the order name)
     const d365Order = await dynamics.getSalesOrderByShopifyId(
-      orderInfo.id.toString(),
+      orderInfo.name, // Use order name, not ID
       dataAreaId
     );
 

@@ -120,8 +120,9 @@ export const processExtensivFulfillment = inngest.createFunction(
     if (config.features.enableDynamicsSync) {
       d365Result = await step.run("sync-to-dynamics", async () => {
         // Find D365 order
+        // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
         const d365Order = await dynamics.getSalesOrderByShopifyId(
-          shopifyOrderId.toString(),
+          shopifyOrderName,
           dataAreaId
         );
 

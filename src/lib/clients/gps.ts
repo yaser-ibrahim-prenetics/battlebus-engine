@@ -5,9 +5,10 @@
 // Uses correct GPS auth code algorithm with sorted keys
 
 import crypto from "crypto";
-import { config } from "../config";
+import { config, GPS_STATUS } from "../config";
 import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
+import { gpsSimulationStore } from "../stores/gps-simulation";
 
 // ============================================================================
 // GPS AUTH CODE GENERATION (Ported from spock-store)
@@ -305,6 +306,47 @@ export async function getOutboundOrdersDetails(
   };
 
   console.log(`[GPS] Getting order details for: ${orderIds.join(", ")}`);
+
+  // Check for simulated fulfillments first (if simulation is enabled)
+  if (config.features.enableGpsFulfillmentSimulation) {
+    const simulatedFulfillments = gpsSimulationStore.getFulfillments(orderIds);
+    
+    if (simulatedFulfillments.length > 0) {
+      console.log(`[GPS] 🧪 SIMULATION: Found ${simulatedFulfillments.length} simulated fulfillments`);
+      
+      // Return simulated fulfillments as fulfilled (status 3)
+      const simulatedData = simulatedFulfillments.map((sim) => ({
+        outboundOrderNo: sim.platformOrderNo,
+        status: GPS_STATUS.FULFILLED,
+        logisticsTrackNo: sim.trackingNumber,
+        logisticsCarrier: sim.carrier,
+        platformOrderNo: sim.platformOrderNo,
+        thirdOrderNo: sim.thirdOrderNo,
+        outboundTime: sim.outboundTime,
+      }));
+
+      // Also include any orders not in simulation (return as processing)
+      const simulatedOrderNames = new Set(simulatedFulfillments.map((s) => s.platformOrderNo));
+      const nonSimulated = orderIds
+        .filter((id) => !simulatedOrderNames.has(id))
+        .map((id) => ({
+          outboundOrderNo: id,
+          status: GPS_STATUS.PROCESSING, // Not fulfilled yet
+          logisticsTrackNo: "",
+          logisticsCarrier: "",
+          platformOrderNo: id,
+          outboundTime: "",
+        }));
+
+      return {
+        response: {
+          code: 200,
+          msg: "SIMULATION SUCCESS",
+          data: [...simulatedData, ...nonSimulated],
+        },
+      };
+    }
+  }
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would get order details`);

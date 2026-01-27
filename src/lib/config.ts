@@ -6,11 +6,11 @@
 export const config = {
   // Dynamics 365 Configuration
   dynamics: {
-    baseUrl: process.env.D365_BASE_URL || "",
+    baseUrl: process.env.D365_BASE_URL || "https://p-uat.sandbox.operations.dynamics.com",
     tenantId: process.env.D365_TENANT_ID || "fdea3f0c-62d4-40b7-bb83-017d9e8f6bd7",
     clientId: process.env.D365_CLIENT_ID || "740f1eb2-8f38-4c57-8150-81836a399a8e",
     clientSecret: process.env.D365_CLIENT_SECRET || "dEP8Q~WmFC9TWibaH3~rETToqmZDeh666zYEqcA3",
-    scope: process.env.D365_SCOPE || (process.env.D365_BASE_URL ? `${process.env.D365_BASE_URL}/.default` : ""),
+    scope: process.env.D365_SCOPE || (process.env.D365_BASE_URL ? `${process.env.D365_BASE_URL}/.default` : "https://p-uat.sandbox.operations.dynamics.com/.default"),
     resource: process.env.D365_RESOURCE || "",
     dataAreaId: process.env.D365_DATA_AREA_ID || "U001",
   },
@@ -46,7 +46,7 @@ export const config = {
   extensiv: {
     baseUrl: process.env.EXTENSIV_BASE_URL || "https://box.secure-wms.com",
     enabled: process.env.EXTENSIV_ENABLED !== "false", // Default to true, set to "false" to disable
-    disableWebhookVerification: process.env.DISABLE_EXTENSIV_WEBHOOK_VERIFICATION === "true" || process.env.TESTING_MODE === "true",
+    disableWebhookVerification: process.env.DISABLE_EXTENSIV_WEBHOOK_VERIFICATION === "true",
     warehouse: {
       charlotte: {
         name: "Charlotte Warehouse",
@@ -103,15 +103,15 @@ export const config = {
 
   // Feature Flags
   features: {
-    enableDynamicsSync: process.env.ENABLE_DYNAMICS_SYNC !== "false",
-    enableGpsSync: process.env.ENABLE_GPS_SYNC !== "false",
+    enableDynamicsSync: process.env.ENABLE_DYNAMICS_SYNC !== "false", // Default: true (set ENABLE_DYNAMICS_SYNC=false to disable)
+    enableGpsSync: process.env.ENABLE_GPS_SYNC === "true", // Default: false - must explicitly set "true" to enable
     enableStordSync: process.env.ENABLE_STORD_SYNC !== "false",
     enableExtensivSync: process.env.ENABLE_EXTENSIV_SYNC !== "false",
     dryRunMode: process.env.DRY_RUN_MODE === "true",
     skipHighRiskOrders: process.env.SKIP_HIGH_RISK_ORDERS !== "false",
     skipTestOrders: process.env.SKIP_TEST_ORDERS !== "false",
-    // Testing mode: bypasses filters, enables verbose logging, makes dummy GPS calls
-    testingMode: process.env.TESTING_MODE === "true",
+    // GPS fulfillment simulation: when enabled, scheduler will process simulated fulfillments
+    enableGpsFulfillmentSimulation: process.env.ENABLE_GPS_FULFILLMENT_SIMULATION === "true",
   },
 
   // Retry Configuration

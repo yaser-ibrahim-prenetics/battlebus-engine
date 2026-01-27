@@ -92,7 +92,8 @@ export const processShopifyFulfillment = inngest.createFunction(
         ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "")
         : config.dynamics.dataAreaId;
 
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId, dataAreaId);
+      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
+      return dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
     });
 
     if (!d365Order) {

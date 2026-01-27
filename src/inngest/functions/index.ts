@@ -13,6 +13,7 @@ export {
   processExtensivFulfillment,
   processExtensivReceiverConfirm,
 } from "./process-extensiv-fulfillment";
+export { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -25,6 +26,7 @@ import {
   processExtensivFulfillment,
   processExtensivReceiverConfirm,
 } from "./process-extensiv-fulfillment";
+import { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
 
 export const functions = [
   processShopifyOrder,
@@ -35,4 +37,5 @@ export const functions = [
   syncGpsFulfillments,
   processExtensivFulfillment,
   processExtensivReceiverConfirm,
+  simulateGpsFulfillment,
 ];

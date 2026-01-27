@@ -45,12 +45,18 @@ export const processRefund = inngest.createFunction(
       };
     }
 
-    // 1. Get D365 Order to confirm it exists and get SalesOrderNumber
+    // 1. Get Shopify Order first (needed for order name lookup)
+    const shopifyOrder = await step.run("get-shopify-order", async () => {
+      return shopify.getOrder(shopifyOrderId);
+    });
+
+    // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
+    // Use order name since THK_ShopifyReference stores the order name (e.g., #D365-GPS-123)
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
       }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
+      return dynamics.getSalesOrderByShopifyId(shopifyOrder.name);
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
@@ -65,11 +71,6 @@ export const processRefund = inngest.createFunction(
     if (!d365Order && !config.features.enableDynamicsSync) {
       return { status: "skipped", reason: "Dynamics sync disabled" };
     }
-
-    // 2. Get Shopify Order to determine warehouse (via shipping country)
-    const shopifyOrder = await step.run("get-shopify-order", async () => {
-      return shopify.getOrder(shopifyOrderId);
-    });
 
     // 3. Determine Warehouse and Refund SKU
     const warehouseInfo = await step.run("determine-warehouse-info", async () => {
