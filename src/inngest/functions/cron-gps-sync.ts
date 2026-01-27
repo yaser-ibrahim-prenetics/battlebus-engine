@@ -232,6 +232,9 @@ async function processFulfilledGpsOrder(
       const shopifyOrder = await shopify.getOrder(orderInfo.id);
       const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
 
+      // Get lotId mapping from D365 sales order lines
+      const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+
       await dynamics.createFulfilment({
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
@@ -244,7 +247,7 @@ async function processFulfilledGpsOrder(
           shippingSiteId: "",
           shippingWarehouseId: "",
           shippingWarehouseLocationId: "",
-          lotId: "",
+          lotId: lotIdMap[item.sku] || "",
         })),
       });
     }

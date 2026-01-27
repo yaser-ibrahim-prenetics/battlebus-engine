@@ -986,6 +986,71 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
 // ============================================================================
 
 /**
+ * Get Sales Order Lines by Sales Order Number
+ * Returns line items with their InventoryLotId for use in fulfillment
+ */
+export async function getSalesOrderLines(
+  salesOrderNumber: string,
+  dataAreaId: string = config.dynamics.dataAreaId
+): Promise<D365SalesOrderLine[]> {
+  console.log(`[D365] Getting sales order lines for: ${salesOrderNumber}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would get lines for ${salesOrderNumber}`);
+    return [];
+  }
+
+  const token = await getAuthToken();
+  const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
+  const select = 'ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount';
+  const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}&$select=${select}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`[D365] Failed to get sales order lines: ${response.status} - ${error}`);
+  }
+
+  const result = await response.json();
+  const lines: D365SalesOrderLine[] = result.value || [];
+
+  console.log(`[D365] Found ${lines.length} lines for ${salesOrderNumber}`);
+  if (lines.length > 0) {
+    console.log(`[D365] Line items with lotIds:`, lines.map(l => ({ item: l.ItemNumber, lotId: l.InventoryLotId })));
+  }
+
+  return lines;
+}
+
+/**
+ * Build a lookup map of ItemNumber -> InventoryLotId for a sales order
+ * Useful for fulfillment processing
+ */
+export async function getLotIdMap(
+  salesOrderNumber: string,
+  dataAreaId: string = config.dynamics.dataAreaId
+): Promise<Record<string, string>> {
+  const lines = await getSalesOrderLines(salesOrderNumber, dataAreaId);
+  
+  const lotIdMap: Record<string, string> = {};
+  for (const line of lines) {
+    if (line.ItemNumber && line.InventoryLotId) {
+      lotIdMap[line.ItemNumber] = line.InventoryLotId;
+    }
+  }
+  
+  console.log(`[D365] LotId map for ${salesOrderNumber}:`, lotIdMap);
+  return lotIdMap;
+}
+
+/**
  * Get Sales Order by Shopify Order ID
  */
 export async function getSalesOrderByShopifyId(

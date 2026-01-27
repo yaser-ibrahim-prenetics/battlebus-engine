@@ -144,6 +144,18 @@ export const processShopifyFulfillment = inngest.createFunction(
         try {
           // Filter out dummy SKUs and map to D365 format
           const filteredItems = filterDummySkus<ShopifyFulfillmentLineItem>(fulfillment.line_items);
+          
+          if (filteredItems.length === 0) {
+            results.push({
+              fulfillmentId: fulfillment.id,
+              status: "skipped_no_items",
+            });
+            continue;
+          }
+
+          // Get lotId mapping from D365 sales order lines
+          const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId);
+
           const fulfillmentLines = filteredItems.map((item) => ({
             itemNumber: item.sku,
             quantity: item.quantity,
@@ -151,16 +163,8 @@ export const processShopifyFulfillment = inngest.createFunction(
             shippingSiteId: "Prenetics",
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
-            lotId: "",
+            lotId: lotIdMap[item.sku] || "",
           }));
-
-          if (fulfillmentLines.length === 0) {
-            results.push({
-              fulfillmentId: fulfillment.id,
-              status: "skipped_no_items",
-            });
-            continue;
-          }
 
           // Create D365 packing slip
           await dynamics.createFulfilment({

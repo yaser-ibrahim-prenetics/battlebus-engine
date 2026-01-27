@@ -136,6 +136,9 @@ export const processExtensivFulfillment = inngest.createFunction(
         // Filter dummy SKUs
         const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
 
+        // Get lotId mapping from D365 sales order lines
+        const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+
         // Create D365 packing slip
         await dynamics.createFulfilment({
           salesOrderNumber: d365Order.SalesOrderNumber,
@@ -149,7 +152,7 @@ export const processExtensivFulfillment = inngest.createFunction(
             shippingSiteId: "",
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
-            lotId: "",
+            lotId: lotIdMap[item.sku] || "",
           })),
         });
 
