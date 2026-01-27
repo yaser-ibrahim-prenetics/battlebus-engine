@@ -110,9 +110,17 @@ export const processShopifyOrder = inngest.createFunction(
       if (flaggedRisks.length > 0) return { status: "risk_order", message: flaggedRisks, orderName: shopifyOrderName };
     }
 
-    // Filter for Welcome Kits only (Phase 1)
-    if (!isWelcomeKitSku(order.line_items)) {
-      return { status: "skipped_non_welcome_kit", orderName: shopifyOrderName };
+    // Filter for Welcome Kits only (Phase 1) - controlled by feature flag
+    if (config.features.enableWelcomeKitFilter) {
+      if (!isWelcomeKitSku(order.line_items)) {
+        const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
+        console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
+        return {
+          status: "skipped_non_welcome_kit",
+          orderName: shopifyOrderName,
+          skus: order.line_items.map((item) => item.sku || "NO-SKU"),
+        };
+      }
     }
 
     // =========================================================================
@@ -155,18 +163,6 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    // Filter for Welcome Kits only (Phase 1)
-    // DISABLED: Commented out per user request - no longer filtering by Welcome Kit SKUs
-    // const isWelcomeKit = isWelcomeKitSku(order.line_items);
-    // if (!isWelcomeKit) {
-    //   const skus = order.line_items.map((item) => item.sku || "NO-SKU").join(", ");
-    //   console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
-    //   return {
-    //     status: "skipped_non_welcome_kit",
-    //     orderName: shopifyOrderName,
-    //     skus: order.line_items.map((item) => item.sku || "NO-SKU"),
-    //   };
-    // }
 
     try {
       const warehouseName = determineWarehouse(
