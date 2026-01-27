@@ -74,9 +74,27 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    const warehouseName = determineWarehouse(
-      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-    );
+    if (validation.skip) {
+      if (validation.reason === "High-risk order") {
+        await slack.sendWarningMessage(
+          "shopify",
+          `Skipping High Risk Order: ${shopifyOrderName}`
+        );
+      }
+      return {
+        status: "skipped",
+        reason: validation.reason,
+        shopifyOrderId,
+      };
+    }
+
+    if (config.features.dryRunMode) {
+      return {
+        status: "dry_run",
+        shopifyOrderId,
+        shopifyOrderName,
+      };
+    }
 
     // Check for high-risk fraud orders
     const validated = await step.run("validate-shopify-order", async () => {
@@ -123,47 +141,6 @@ export const processShopifyOrder = inngest.createFunction(
       }
     }
 
-    // =========================================================================
-    // STEP 1: Check for existing D365 order (idempotency check)
-    // =========================================================================
-    const existingOrder = await step.run("check-existing-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
-      }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderId);
-    });
-
-    if (existingOrder) {
-      return {
-        status: "already_exists",
-        d365OrderNumber: existingOrder.SalesOrderNumber,
-        shopifyOrderId,
-      };
-    }
-
-    if (validation.skip) {
-      if (validation.reason === "High-risk order") {
-        await slack.sendWarningMessage(
-          "shopify",
-          `Skipping High Risk Order: ${shopifyOrderName}`
-        );
-      }
-      return {
-        status: "skipped",
-        reason: validation.reason,
-        shopifyOrderId,
-      };
-    }
-
-    if (config.features.dryRunMode) {
-      return {
-        status: "dry_run",
-        shopifyOrderId,
-        shopifyOrderName,
-      };
-    }
-
-
     try {
       const warehouseName = determineWarehouse(
         order.shipping_address?.country_code || order.billing_address?.country_code || "US"
@@ -172,13 +149,13 @@ export const processShopifyOrder = inngest.createFunction(
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
 
-      // 2. Check/Create D365 Order
+      // 2. Check for existing D365 order (idempotency check)
+      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
       const existingOrder = await step.run("check-existing-d365-order", async () => {
         if (skipD365) {
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
           return null;
         }
-        // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
         console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName}`);
         return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
       });

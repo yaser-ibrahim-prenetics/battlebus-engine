@@ -5,25 +5,16 @@
 // Sends error, warning, info, and order notifications to Slack channels
 
 import { config } from "../config";
+import { ISlackAttachment } from "../types/slack";
 
 type SlackChannel = keyof typeof config.slack.channel;
-
-interface SlackAttachment {
-  fallback: string;
-  color: string;
-  title: string;
-  text: string;
-  footer: string;
-  footer_icon?: string;
-  ts: number;
-}
 
 const APP_NAME = config.slack.applicationName;
 const APP_ENV = config.slack.appEnv;
 
 async function sendSlackMessage(
   channel: SlackChannel,
-  attachments: SlackAttachment[]
+  attachments: ISlackAttachment[]
 ): Promise<void> {
   const channelUrl = config.slack.channel[channel];
 
@@ -37,6 +28,12 @@ async function sendSlackMessage(
     return;
   }
 
+  // Check integration mode
+  if (config.slack.integration !== 'real') {
+    console.log(`[Slack] [${channel}] Integration mode: ${config.slack.integration}, logging: ${attachments[0]?.text}`);
+    return;
+  }
+
   try {
     const response = await fetch(channelUrl, {
       method: "POST",
@@ -45,10 +42,12 @@ async function sendSlackMessage(
     });
 
     if (!response.ok) {
-      console.error(`[Slack] Failed to send message to ${channel}: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`Slack API error: ${response.status} - ${errorText}`);
     }
   } catch (error) {
     console.error(`[Slack] Error sending message to ${channel}:`, error);
+    throw error;
   }
 }
 
@@ -68,10 +67,10 @@ export async function sendErrorMessage(
   ]);
 }
 
-export async function sendWarningMessage(
+const sendSlackWarningMessage = async (
   channel: SlackChannel,
   message: string
-): Promise<void> {
+): Promise<void> => {
   await sendSlackMessage(channel, [
     {
       fallback: message,
@@ -79,10 +78,17 @@ export async function sendWarningMessage(
       title: `:warning: [${APP_ENV.toUpperCase()}] ${APP_NAME} warning`,
       text: message,
       footer: APP_NAME,
+      footer_icon: undefined,
       ts: Math.floor(Date.now() / 1000),
     },
   ]);
-}
+};
+
+export const sendWarningMessage =
+  config.slack.integration === 'real'
+    ? sendSlackWarningMessage
+    : async (channel: SlackChannel, msg: string) => 
+        console.log(`[WARNING][${channel}] ${msg}`);
 
 export async function sendInfoMessage(
   channel: SlackChannel,
