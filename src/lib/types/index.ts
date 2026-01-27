@@ -1,6 +1,7 @@
 // Re-export all types
 export * from "./dynamics";
 export * from "./gps";
+export * from "./slack";
 
 // Common types
 export interface ProcessingResult {
