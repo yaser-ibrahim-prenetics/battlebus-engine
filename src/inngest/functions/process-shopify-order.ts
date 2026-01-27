@@ -1,12 +1,3 @@
-// ============================================================================
-// SHOPIFY ORDER → D365 & GPS SYNC
-// ============================================================================
-// Processes new Shopify orders (created/paid)
-// 1. Validates order (Test, High Risk, etc.)
-// 2. Creates D365 Sales Order
-// 3. Creates GPS Outbound Order (if applicable)
-// 4. Handles Out of Stock retries
-
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -21,11 +12,8 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
   determineWarehouse,
+  isOrderTaggedWith,
 } from "@/lib/transformers/order";
-import {
-  validateOrderForProcessing,
-  validateOrderCompletely,
-} from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -33,6 +21,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
+import { isWelcomeKitSku } from "@/lib/transformers/sku";
 import { slackChannelEnum } from "@/lib/types/slack";
 
 export const processShopifyOrder = inngest.createFunction(
@@ -69,56 +58,50 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    // Comprehensive order validation - all checks in one place
-    const validation = await step.run("validate-order-completely", async () => {
-      return validateOrderCompletely(order, shopifyOrderId, shopifyOrderName);
-    });
-
-    // Handle validation failures
-    if (!validation.valid || validation.skip) {
-      if (validation.status === "failed_validation") {
-        await slack.sendErrorMessage(
-          "shopify",
-          `Order ${shopifyOrderName} validation failed: ${validation.reason}`
-        );
-      } else if (validation.status === "skipped" && validation.reason === "High-risk order") {
-        await slack.sendWarningMessage(
-          "shopify",
-          `Skipping High Risk Order: ${shopifyOrderName}`
-        );
-      } else if (validation.status === "fraud_hold") {
-        await slack.sendWarningMessage(
-          slackChannelEnum.SHOPIFY,
-          `[Battle Bus] Skip high risk order for ${shopifyOrderId}`
-        );
-      } else if (validation.status === "cancelled") {
-        const cancelReason = CancelReasonEnum[validation.cancelReason as keyof typeof CancelReasonEnum] || validation.cancelReason;
-        console.log(`[Battle Bus] Order was cancelled due to ${cancelReason}`);
-        await slack.sendWarningMessage(
-          slackChannelEnum.SHOPIFY,
-          `[Battle Bus] Order was cancelled due to ${cancelReason}`
-        );
-      } else if (validation.status === "skipped_non_welcome_kit") {
-        const skus = validation.skus?.join(", ") || "";
-        console.log(`[Order] ⏭️ Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
-      }
-
-      return {
-        status: validation.status,
-        reason: validation.reason,
-        shopifyOrderId,
-        orderName: shopifyOrderName,
-        ...(validation.message && { message: validation.message }),
-        ...(validation.skus && { skus: validation.skus }),
-        ...(validation.cancelReason && { cancelReason: validation.cancelReason }),
-      };
+    // Filter for Welcome Kits only (Phase 1)
+    if (!isWelcomeKitSku(order.line_items)) {
+      return { status: "skipped_non_welcome_kit", orderName: shopifyOrderName };
     }
 
-    try {
-      const warehouseName = determineWarehouse(
-        order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-      );
+    // Check for high-risk fraud orders
+    const validations = await step.run("validate-shopify-order", async (): Promise<{ validated: boolean, status?: string, message?: string[] }> => {
+      if (isOrderTaggedWith(order, 'high-risk-order')) {
+        console.log('is tagged with high risk order');
+        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Skip high risk order for ${shopifyOrderId}`);
+        return { validated: false, status: 'fraud_hold' };
+      } else if (order.cancel_reason) {
+        console.log(`[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}`);
+        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}`);
+      }
 
+      // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
+      if (config.shopify.enabledRiskCheck) {
+        const risks = await shopify.getOrderRisks(shopifyOrderId);
+        if (!risks.length) return { validated: true };
+        
+        const riskMessages: string[] = [];
+        for (const risk of risks) {
+          if (!risk.display) {
+            console.warn('[Battle Bus] Order risk check was set to false');
+            continue;
+          }
+          if (Number(risk.score) >= 0.8) riskMessages.push(risk.message);
+        }
+        if (riskMessages.length > 0) {
+          slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order contain risk: ${riskMessages.join(', ')}`);
+          return { validated: false, status: "risk_order", message: riskMessages };
+        }
+      }
+
+      return { validated: true };
+    });
+    if (!validations.validated) return { status: validations.status, message: validations.message, orderName: shopifyOrderName };
+
+    const warehouseName = determineWarehouse(
+      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+    );
+
+    try {
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
 
@@ -256,6 +239,7 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       await slack.sendOrderMessage(
+        slackChannelEnum.SHOPIFY,
         `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNumber}`
       );
 
@@ -279,4 +263,3 @@ export const processShopifyOrder = inngest.createFunction(
     }
   }
 );
-
