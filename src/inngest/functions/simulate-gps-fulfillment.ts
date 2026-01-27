@@ -34,7 +34,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
       if (orderNames.length > 0) {
         // If specific orders provided, search by name
         const orders = await Promise.all(
-          orderNames.map(async (name) => {
+          orderNames.map(async (name: string) => {
             try {
               // Search by order name (e.g., #D365-GPS-123456)
               const foundOrders = await shopify.searchOrdersByName(name);
