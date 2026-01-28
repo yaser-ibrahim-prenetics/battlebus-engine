@@ -131,15 +131,27 @@ export async function createFulfillment(
  * Get Unfulfilled Orders
  * Fetches orders that are not yet fulfilled (unfulfilled or partial)
  * Includes any status (open, closed, etc.) to catch all pending fulfillments
+ * 
+ * Note: Uses created_at_min to include orders from the last 30 days,
+ * since the API returns orders in descending order by creation date
+ * and older orders may be missed if we only use limit.
  */
 export async function getUnfulfilledOrders(
-  limit: number = 50
+  limit: number = 250,
+  daysBack: number = 30
 ): Promise<ShopifyOrder[]> {
+  // Calculate date range - include orders from the last N days
+  const minDate = new Date();
+  minDate.setDate(minDate.getDate() - daysBack);
+  const createdAtMin = minDate.toISOString();
+
   // Query for unfulfilled orders - don't filter by status to catch all orders needing fulfillment
   // fulfillment_status can be: unfulfilled, partial, fulfilled, restocked
   const url = buildUrl(
-    `/orders.json?fulfillment_status=unfulfilled&limit=${limit}`
+    `/orders.json?fulfillment_status=unfulfilled&limit=${limit}&created_at_min=${createdAtMin}`
   );
+
+  console.log(`[Shopify] Fetching unfulfilled orders (limit=${limit}, daysBack=${daysBack})`);
 
   const response = await fetch(url, {
     method: "GET",
@@ -154,6 +166,7 @@ export async function getUnfulfilledOrders(
   }
 
   const data = await response.json();
+  console.log(`[Shopify] Found ${data.orders?.length || 0} unfulfilled orders`);
   return data.orders;
 }
 
@@ -318,10 +331,13 @@ export async function getGpsOrderMetafield(
  * Returns orders along with their GPS order data
  */
 export async function getUnfulfilledGpsOrders(
-  limit: number = 50
+  limit: number = 250,
+  daysBack: number = 30
 ): Promise<Array<ShopifyOrder & { gpsData: GpsOrderMetafield }>> {
   // Get unfulfilled orders
-  const orders = await getUnfulfilledOrders(limit);
+  const orders = await getUnfulfilledOrders(limit, daysBack);
+  
+  console.log(`[Shopify] Checking ${orders.length} orders for GPS metafields...`);
   
   // Fetch GPS metafields for each order
   const gpsOrders: Array<ShopifyOrder & { gpsData: GpsOrderMetafield }> = [];
@@ -330,6 +346,7 @@ export async function getUnfulfilledGpsOrders(
     try {
       const gpsData = await getGpsOrderMetafield(order.id);
       if (gpsData) {
+        console.log(`[Shopify] Found GPS metafield for order ${order.name}: ${gpsData.gpsOrderId}`);
         gpsOrders.push({
           ...order,
           gpsData,
@@ -341,6 +358,7 @@ export async function getUnfulfilledGpsOrders(
     }
   }
   
+  console.log(`[Shopify] Found ${gpsOrders.length} orders with GPS metafields`);
   return gpsOrders;
 }
 
