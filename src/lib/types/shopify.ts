@@ -195,7 +195,7 @@ export interface IShopifyFulfillmentOrder {
 }
 
 export interface IFulfillmentOrdersResponse {
-  fulfillment_orders: IFulfillmentOrder[];
+  fulfillment_orders: IShopifyFulfillmentOrder[];
 }
 
 // Utility types for specific use cases
