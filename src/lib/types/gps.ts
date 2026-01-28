@@ -58,3 +58,139 @@ export interface GpsAuthHeader {
   "X-Signature": string;
   "X-Timestamp": string;
 }
+
+export interface GpsIndividualFulfilmentPayload {
+  type: "individual";
+  warehouse: string; // e.g., "GPS Warehouse"
+  orderData: GpsIndividualOrderData;
+}
+
+export interface GpsIndividualOrderData {
+  // Order identifiers
+  outboundOrderNo: string;     // GPS internal order number, e.g., "OBS1632601170SM"
+  platformOrderNo: string;     // Shopify order name, e.g., "IM8-591560"
+  referOrderNo: string;        // D365 sales order number, e.g., "U001-SO-459898"
+  thirdOrderNo: string;        // Same as referOrderNo
+
+  // Order status
+  status: number;              // 3 = shipped (已出库)
+  statusName: string;          // e.g., "已出库"
+
+  // Warehouse info
+  whCode: string;              // Warehouse code, e.g., "JFK01W"
+
+  // Customer info
+  email: string;
+  receiver: string;            // Customer name
+  telephone: string;
+  companyName: string;
+
+  // Shipping address
+  addressOne: string;
+  addressTwo: string;
+  cityName: string;
+  cityCode: string;
+  provinceName: string;
+  provinceCode: string;
+  postCode: string;
+  countryRegionCode: string;   // ISO2 code, e.g., "AE"
+  countryRegionName: string;   // e.g., "United Arab Emirates"
+  houseNum: string;
+
+  // Products shipped
+  productList: GpsIndividualProductItem[];
+
+  // Shipment/tracking info
+  expressList: GpsExpressItem[];
+  logisticsCarrier: string;    // e.g., "GPS"
+  logisticsChannel: string;    // e.g., "GPS-IM8-STANDARD"
+  logisticsTrackNo: string;    // Primary tracking number
+  logisticsTrackNos: string[]; // All tracking numbers
+
+  // Timestamps
+  orderCreateTime: string;     // Format: "YYYY-MM-DD HH:mm:ss"
+  outboundTime: string;        // When shipped, Format: "YYYY-MM-DD HH:mm:ss"
+  canceledTime: string;
+  exceptionTime: string;
+  interceptTime: string;
+
+  // Cost info
+  costItems: GpsCostItem[];
+  costTotal: number;
+  costCurrencyCode: string;    // e.g., "USD"
+
+  // Order type
+  orderTypeName: string;       // e.g., "小包出库单"
+  subOrderTypeName: string;
+  salesPlatform: string;       // e.g., "9"
+
+  // Exception handling
+  exceptionDesc: string;
+
+  // Additional fields
+  remark: string;
+  taxNum: string;
+  orderList: string;
+  storeName: string;
+  needRelabel: number;         // 0 or 1
+  appendixList: unknown[];
+}
+
+export interface GpsIndividualProductItem {
+  sku: string;
+  skuId: string;               // e.g., "1082163IM8-FG-000010"
+  fnsku: string;
+  productName: string;
+  productAliasName: string;
+  quantity: number;            // Ordered quantity
+  realQuantity: number;        // Actually shipped quantity
+  availableAmount: number;     // Stock available
+  remark: string;
+  deleted: number;             // 0 or 1
+  createBy: string;            // e.g., "OPENAPI"
+  updateBy: string;            // e.g., "system"
+  createTime: string;
+  updateTime: string;
+}
+
+export interface GpsExpressItem {
+  trackNo: string;             // Tracking number
+  pkgSkuNumInfo: string;       // e.g., "IM8-FG-000010*2"
+  weight: number;              // kg
+  length: number;              // cm
+  width: number;               // cm
+  height: number;              // cm
+  fileUrl: string;             // Label URL if any
+}
+
+export interface GpsCostItem {
+  billItemName: string;        // e.g., "IM8-operation"
+  billItemTotal: number;       // Cost amount
+}
+
+export interface IGpsGetOrderData {
+  outboundOrderNo: string;
+  status: number;
+  logisticsTrackNo: string;
+  logisticsCarrier: string;
+  platformOrderNo: string;      // Shopify order name like "IM8-5654"
+  outboundTime: string;         // ISO 8601 timestamp when order shipped
+  referOrderNo?: string;        // D365 sales order number (optional for backward compat)
+  thirdOrderNo?: string;
+  productList?: GpsIndividualProductItem[];  // Optional detailed product info
+  expressList?: GpsExpressItem[];            // Optional tracking details
+}
+
+// ============================================================================
+// TYPE GUARDS
+// ============================================================================
+export function isGpsIndividualFulfilmentPayload(
+  payload: unknown
+): payload is GpsIndividualFulfilmentPayload {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    (payload as GpsIndividualFulfilmentPayload).type === "individual" &&
+    typeof (payload as GpsIndividualFulfilmentPayload).orderData === "object"
+  );
+}

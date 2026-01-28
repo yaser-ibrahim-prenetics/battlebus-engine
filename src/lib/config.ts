@@ -25,6 +25,7 @@ export const config = {
     scheduleIntervalMinutes: parseInt(process.env.GPS_SCHEDULE_INTERVAL_MINUTES || "60", 10),
     queryDaysBack: parseInt(process.env.GPS_QUERY_DAYS_BACK || "7", 10),
     batchSize: parseInt(process.env.GPS_BATCH_SIZE || "50", 10),
+    gpsFulfilledStatus: 3,
   },
 
   // GPS UK Warehouse Configuration
@@ -115,6 +116,10 @@ export const config = {
     enableGpsFulfillmentSimulation: process.env.ENABLE_GPS_FULFILLMENT_SIMULATION === "true",
     // Welcome Kit filter: when enabled, only process orders with Welcome Kit SKUs
     enableWelcomeKitFilter: process.env.ENABLE_WELCOME_KIT_FILTER === "true", // Default: false
+    enabledShopifyRiskCheck: false,
+    enabledShopifyRiskMock: false,
+    enabledShopifyOrderMock: false,
+    enabledShopifyCreateFulfillmentMock: false,
   },
 
   // Retry Configuration

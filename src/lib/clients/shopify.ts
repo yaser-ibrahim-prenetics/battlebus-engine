@@ -6,6 +6,7 @@
 
 import crypto from "crypto";
 import { config } from "../config";
+import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 
@@ -51,7 +52,13 @@ export async function getOrder(orderId: string | number): Promise<ShopifyOrder> 
  */
 export async function getFulfillmentOrders(
   orderId: string | number
-): Promise<ShopifyFulfillmentOrder[]> {
+): Promise<IShopifyFulfillmentOrder[]> {
+  if (config.features.enabledShopifyOrderMock) {
+    const mockData = await import('../mocks/shopify/fulfillments.json');
+    console.log(`Using mock shopify fulfillment data for order ${orderId}`);
+    return mockData.fulfillment_orders;
+  }
+
   const url = buildUrl(`/orders/${orderId}/fulfillment_orders.json`);
 
   const response = await fetch(url, {
@@ -80,6 +87,12 @@ export async function createFulfillment(
   },
   lineItems?: { id: number; quantity: number }[]
 ): Promise<ShopifyFulfillment> {
+  if (config.features.enabledShopifyCreateFulfillmentMock) {
+    const mockData = await import('../mocks/shopify/fulfillmentsCreate.json');
+    console.log(`Using mock shopify fulfillment data to create order ${fulfillmentOrderId}`);
+    return mockData.fulfillment;
+  }
+
   const url = buildUrl("/fulfillments.json");
 
   const body = {
@@ -144,8 +157,14 @@ export async function getUnfulfilledOrders(
  * Search Orders by Name (e.g., IM8-1001)
  */
 export async function searchOrdersByName(
-  orderName: string
-): Promise<ShopifyOrder[]> {
+  orderName: string,
+): Promise<IShopifyOrder[]> {
+  if (config.features.enabledShopifyOrderMock) {
+    const mockData = await import('../mocks/shopify/orders.json');
+    console.log(`Using mock shopify order data for order ${orderName}`);
+    return mockData.orders;
+  }
+
   const url = buildUrl(`/orders.json?name=${encodeURIComponent(orderName)}&status=any`);
 
   const response = await fetch(url, {
@@ -205,10 +224,17 @@ export function verifyWebhookSignature(
  * Get Order Risk
  */
 export async function getOrderRisks(
-  orderId: string | number
+  orderId: string | number,
 ): Promise<ShopifyFraudAnalysis[]> {
-  const url = buildUrl(`/latest/orders/${orderId}/risks.json`);
+  if (!config.features.enabledShopifyRiskCheck) return [];
 
+  if (config.features.enabledShopifyRiskMock) {
+    const mockData = await import('../mocks/shopify/risks.json');
+    console.log(`Using mock risk data for order ${orderId}`);
+    return mockData.risks;
+  }
+
+  const url = buildUrl(`/orders/${orderId}/risks.json`);
   const response = await fetch(url, {
     method: "GET",
     headers: getHeaders(),

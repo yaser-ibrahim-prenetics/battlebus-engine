@@ -4,6 +4,7 @@
 // Ported from spock-store src/component/warehouse.ts
 
 import warehouseConfig from "../mappings/warehouse-config.json";
+import { GpsIndividualFulfilmentPayload } from "../types/gps";
 
 // ============================================================================
 // Types
@@ -246,4 +247,48 @@ export function getReturnConfig(warehouseName: string) {
  */
 export function shouldSkipFulfilmentNotification(warehouseName: string): boolean {
   return isGpsUkWarehouse(warehouseName);
+}
+
+/**
+ * Check valid warehouse
+ */
+export function isValidGpsWarehouse(warehouseName: string): boolean {
+  const validWarehouses = ['GPS Warehouse', 'GPS UK Warehouse'];
+  return validWarehouses.includes(warehouseName);
+}
+
+/**
+ * Extract GPS fulfillment data
+ */
+export function extractGpsFulfilmentData(payload: GpsIndividualFulfilmentPayload) {
+  const { orderData, warehouse } = payload;
+  
+  return {
+    // Identifiers
+    gpsOrderNo: orderData.outboundOrderNo,
+    shopifyOrderName: orderData.platformOrderNo,
+    d365SalesOrderNumber: orderData.referOrderNo,
+    
+    // Tracking
+    trackingNumber: orderData.logisticsTrackNo,
+    trackingNumbers: orderData.logisticsTrackNos,
+    carrier: orderData.logisticsCarrier,
+    
+    // Status
+    status: orderData.status,
+    isFulfilled: orderData.status === 3,
+    
+    // Timestamps
+    shippedAt: orderData.outboundTime,
+    
+    // Warehouse
+    warehouse,
+    warehouseCode: orderData.whCode,
+    
+    // Items
+    items: orderData.productList.map((item) => ({
+      sku: item.sku,
+      quantity: item.realQuantity,
+    })),
+  };
 }
