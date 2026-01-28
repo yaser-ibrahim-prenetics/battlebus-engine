@@ -126,7 +126,8 @@ async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
       for (const fo of fulfillmentOrders) {
         if (fo.status !== 'open' && fo.status !== 'in_progress') continue;
         
-        const locationId = fo.assigned_location_id || (fo.assigned_location ? fo.assigned_location.id : null);
+        // assigned_location_id is the direct property, assigned_location.location_id is nested
+        const locationId = fo.assigned_location_id || (fo.assigned_location ? fo.assigned_location.location_id : null);
         const warehouse = getGpsWarehouseFromLocation(locationId || "");
         
         if (warehouse) {
