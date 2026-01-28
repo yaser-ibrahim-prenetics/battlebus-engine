@@ -21,8 +21,13 @@ function getHeaders() {
   };
 }
 
-async function getUnfulfilledOrders(limit = 50) {
-  const url = buildUrl(`/orders.json?fulfillment_status=unfulfilled&limit=${limit}`);
+async function getUnfulfilledOrders(limit = 250, daysBack = 30) {
+  // Calculate date range - include orders from the last N days
+  const minDate = new Date();
+  minDate.setDate(minDate.getDate() - daysBack);
+  const createdAtMin = minDate.toISOString();
+  
+  const url = buildUrl(`/orders.json?fulfillment_status=unfulfilled&limit=${limit}&created_at_min=${createdAtMin}`);
   console.log(`Fetching unfulfilled orders from: ${url}`);
   
   const response = await fetch(url, {
@@ -135,17 +140,33 @@ async function main() {
   }
   console.log('');
 
-  // Step 5: Check how many unfulfilled orders have GPS metafields
-  console.log('Step 5: Checking GPS metafields for all unfulfilled orders...');
+  // Step 5: Check GPS metafield specifically for IM8-14959 if it's in the list
+  if (targetOrder) {
+    console.log('Step 5: Checking GPS metafield for IM8-14959 from the unfulfilled list...');
+    const gpsDataFromList = await getGpsMetafield(targetOrder.id);
+    if (gpsDataFromList) {
+      console.log('✅ GPS metafield found from unfulfilled list:');
+      console.log(JSON.stringify(gpsDataFromList, null, 2));
+    } else {
+      console.log('❌ No GPS metafield found when checking from unfulfilled list');
+    }
+  }
+  
+  // Step 6: Check how many unfulfilled orders have GPS metafields (all of them)
+  console.log('');
+  console.log('Step 6: Checking GPS metafields for ALL unfulfilled orders...');
+  console.log('This may take a while...');
   let ordersWithGps = 0;
-  for (const order of unfulfilledOrders.slice(0, 10)) { // Check first 10
+  const ordersWithGpsList = [];
+  for (const order of unfulfilledOrders) {
     const gpsData = await getGpsMetafield(order.id);
     if (gpsData) {
       ordersWithGps++;
+      ordersWithGpsList.push({ name: order.name, gpsOrderId: gpsData.gpsOrderId });
       console.log(`  ✅ ${order.name} has GPS metafield: ${gpsData.gpsOrderId}`);
     }
   }
-  console.log(`Found ${ordersWithGps} orders with GPS metafields (checked first 10)`);
+  console.log(`Found ${ordersWithGps} orders with GPS metafields (checked all ${unfulfilledOrders.length})`);
 
   console.log('');
   console.log('='.repeat(60));

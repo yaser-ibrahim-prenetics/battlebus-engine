@@ -41,8 +41,9 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     // 1. Get Unfulfilled Orders with GPS metafields from Shopify
     // Only orders that have been sent to GPS will have the metafield
+    // Use default parameters (limit=250, daysBack=30) to catch older orders
     const gpsOrders = await step.run("get-unfulfilled-gps-orders", async () => {
-      return shopify.getUnfulfilledGpsOrders(50);
+      return shopify.getUnfulfilledGpsOrders();
     });
 
     if (gpsOrders.length === 0) {
