@@ -104,9 +104,20 @@ async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
     "GPS UK Warehouse": [],
   };
 
+  // TESTING MODE: Skip location ID check and send all orders to GPS UK Warehouse
+  // This allows testing without configuring Shopify location IDs
+  const skipLocationCheck = process.env.GPS_SKIP_LOCATION_CHECK === "true";
+
   // 1. Identify GPS Orders
   for (const order of orders) {
     try {
+      if (skipLocationCheck) {
+        // Testing mode: Send all orders to GPS UK Warehouse
+        console.log(`[GPS Sync] Testing mode: Adding ${order.name} to GPS UK Warehouse (location check skipped)`);
+        warehouseMap["GPS UK Warehouse"].push({ name: order.name, id: order.id });
+        continue;
+      }
+
       const fulfillmentOrders = await shopify.getFulfillmentOrders(order.id);
       
       // Find which warehouse this order is assigned to
