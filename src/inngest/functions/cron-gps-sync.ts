@@ -126,9 +126,8 @@ async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
       for (const fo of fulfillmentOrders) {
         if (fo.status !== 'open' && fo.status !== 'in_progress') continue;
         
-        const warehouse = getGpsWarehouseFromLocation(
-          fo.assigned_location_id || fo.assigned_location?.id || ""
-        );
+        const locationId = fo.assigned_location_id || (fo.assigned_location ? fo.assigned_location.id : null);
+        const warehouse = getGpsWarehouseFromLocation(locationId || "");
         
         if (warehouse) {
           assignedWarehouse = warehouse;
