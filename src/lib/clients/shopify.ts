@@ -129,12 +129,16 @@ export async function createFulfillment(
 
 /**
  * Get Unfulfilled Orders
+ * Fetches orders that are not yet fulfilled (unfulfilled or partial)
+ * Includes any status (open, closed, etc.) to catch all pending fulfillments
  */
 export async function getUnfulfilledOrders(
   limit: number = 50
 ): Promise<ShopifyOrder[]> {
+  // Query for unfulfilled orders - don't filter by status to catch all orders needing fulfillment
+  // fulfillment_status can be: unfulfilled, partial, fulfilled, restocked
   const url = buildUrl(
-    `/orders.json?status=open&fulfillment_status=unfulfilled&limit=${limit}`
+    `/orders.json?fulfillment_status=unfulfilled&limit=${limit}`
   );
 
   const response = await fetch(url, {
@@ -218,6 +222,126 @@ export function verifyWebhookSignature(
     .digest("base64");
 
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader));
+}
+
+// ============================================================================
+// GPS ORDER TRACKING VIA METAFIELDS (Secure Storage)
+// ============================================================================
+// Using metafields instead of tags for GPS order IDs because:
+// 1. Metafields are not visible in standard Shopify admin UI
+// 2. They use a private namespace (battle_bus) that's clearly internal
+// 3. Less likely to be accidentally modified by non-technical staff
+// 4. Can store structured data (JSON) with type safety
+
+const GPS_METAFIELD_NAMESPACE = "battle_bus";
+const GPS_METAFIELD_KEY = "gps_order";
+
+export interface GpsOrderMetafield {
+  gpsOrderId: string;
+  warehouse: string;
+  d365OrderNumber: string;
+  createdAt: string;
+}
+
+/**
+ * Set GPS order metafield on a Shopify order
+ * Stores GPS order ID and warehouse info securely
+ */
+export async function setGpsOrderMetafield(
+  orderId: string | number,
+  data: GpsOrderMetafield
+): Promise<void> {
+  const url = buildUrl(`/orders/${orderId}/metafields.json`);
+  
+  const body = {
+    metafield: {
+      namespace: GPS_METAFIELD_NAMESPACE,
+      key: GPS_METAFIELD_KEY,
+      value: JSON.stringify(data),
+      type: "json",
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to set GPS metafield: ${response.status} - ${error}`);
+  }
+
+  console.log(`[Shopify] Set GPS metafield on order ${orderId}: ${data.gpsOrderId}`);
+}
+
+/**
+ * Get GPS order metafield from a Shopify order
+ */
+export async function getGpsOrderMetafield(
+  orderId: string | number
+): Promise<GpsOrderMetafield | null> {
+  const url = buildUrl(
+    `/orders/${orderId}/metafields.json?namespace=${GPS_METAFIELD_NAMESPACE}&key=${GPS_METAFIELD_KEY}`
+  );
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get GPS metafield: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const metafields = data.metafields || [];
+  
+  const gpsMetafield = metafields.find(
+    (mf: any) => mf.namespace === GPS_METAFIELD_NAMESPACE && mf.key === GPS_METAFIELD_KEY
+  );
+
+  if (!gpsMetafield) return null;
+
+  try {
+    return JSON.parse(gpsMetafield.value) as GpsOrderMetafield;
+  } catch {
+    console.warn(`[Shopify] Failed to parse GPS metafield for order ${orderId}`);
+    return null;
+  }
+}
+
+/**
+ * Get unfulfilled orders that have GPS order metafields
+ * Returns orders along with their GPS order data
+ */
+export async function getUnfulfilledGpsOrders(
+  limit: number = 50
+): Promise<Array<ShopifyOrder & { gpsData: GpsOrderMetafield }>> {
+  // Get unfulfilled orders
+  const orders = await getUnfulfilledOrders(limit);
+  
+  // Fetch GPS metafields for each order
+  const gpsOrders: Array<ShopifyOrder & { gpsData: GpsOrderMetafield }> = [];
+  
+  for (const order of orders) {
+    try {
+      const gpsData = await getGpsOrderMetafield(order.id);
+      if (gpsData) {
+        gpsOrders.push({
+          ...order,
+          gpsData,
+        });
+      }
+    } catch (error) {
+      // Skip orders where we can't fetch metafields
+      console.warn(`[Shopify] Failed to get GPS metafield for order ${order.id}: ${error}`);
+    }
+  }
+  
+  return gpsOrders;
 }
 
 /**
