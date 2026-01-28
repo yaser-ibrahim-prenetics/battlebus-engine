@@ -27,6 +27,7 @@ import {
   processExtensivReceiverConfirm,
 } from "./process-extensiv-fulfillment";
 import { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
+import { processGpsIndividual } from "./process-gps-individual";
 
 export const functions = [
   processShopifyOrder,
@@ -38,4 +39,5 @@ export const functions = [
   processExtensivFulfillment,
   processExtensivReceiverConfirm,
   simulateGpsFulfillment,
+  processGpsIndividual,
 ];

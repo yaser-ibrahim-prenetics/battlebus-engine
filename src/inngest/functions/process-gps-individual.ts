@@ -1,0 +1,253 @@
+import { NonRetriableError } from 'inngest';
+import { inngest } from '../client';
+import { config } from '@/lib/config';
+import {
+  extractGpsFulfilmentData,
+  getDataAreaId,
+  isValidGpsWarehouse,
+} from '@/lib/helpers/warehouse';
+import { filterDummySkus } from '@/lib/utils/validation';
+import {
+  THROTTLE_CONFIGS,
+  CONCURRENCY_CONFIGS,
+  RATE_LIMIT_CONFIGS,
+  RETRY_CONFIGS,
+} from '@/lib/utils/constants';
+import { getTrackingUrl, mapGpsCarrierToShopify } from '@/lib/helpers/tracking';
+
+// Interfaces
+import { isGpsIndividualFulfilmentPayload } from '@/lib/types/gps';
+import { slackChannelEnum } from '@/lib/types/slack';
+
+// API Calls
+import * as slack from '@/lib/clients/slack';
+import * as shopify from '@/lib/clients/shopify';
+import * as dynamics from '@/lib/clients/dynamics';
+
+export const processGpsIndividual = inngest.createFunction(
+  {
+    id: 'process-gps-individual',
+    name: 'Process GPS Individual',
+    idempotency: 'event.data.outboundOrderNo',
+    retries: RETRY_CONFIGS.DEFAULT,
+    throttle: {
+      ...THROTTLE_CONFIGS.GPS,
+      key: 'event.data.warehouse',
+    },
+    concurrency: [
+      {
+        ...CONCURRENCY_CONFIGS.FULFILLMENT,
+      },
+    ],
+    rateLimit: {
+      ...RATE_LIMIT_CONFIGS.FULFILLMENT,
+      key: 'event.data.outboundOrderNo',
+    },
+  },
+  { event: 'gps/individual.fulfilment' },
+  async ({ event, step }) => {
+    const { fulfilmentPayload, warehouse } = event.data;
+
+    // Step 1: Validate and extract fulfilment data
+    const fulfilmentData = await step.run('validate-fulfilment-payload', async () => {
+      console.log(`[GPS Individual] Processing fulfilment for warehouse: ${warehouse}`);
+
+      // Validate payload structure
+      if (!isGpsIndividualFulfilmentPayload(fulfilmentPayload)) {
+        throw new NonRetriableError('Invalid GPS individual fulfilment payload structure');
+      }
+
+      // Validate warehouse
+      if (!warehouse || !isValidGpsWarehouse(warehouse)) {
+        throw new NonRetriableError(
+          `Invalid warehouse: ${warehouse}. Must be "GPS Warehouse" or "GPS UK Warehouse".`
+        );
+      }
+
+      // Extract key data
+      const data = extractGpsFulfilmentData(fulfilmentPayload);
+
+      // Validate fulfilled status
+      if (data.status !== config.gps.gpsFulfilledStatus) {
+        throw new NonRetriableError(
+          `Order ${data.gpsOrderNo} is not fulfilled (status: ${data.status})`
+        );
+      }
+
+      // Validate required fields
+      if (!data.shopifyOrderName) {
+        throw new NonRetriableError(
+          `GPS order ${data.gpsOrderNo} is missing platformOrderNo (Shopify order name)`
+        );
+      }
+      if (!data.trackingNumber) {
+        throw new NonRetriableError(
+          `GPS order ${data.gpsOrderNo} is missing tracking number`
+        );
+      }
+      if (!data.shippedAt) {
+        throw new NonRetriableError(
+          `GPS order ${data.gpsOrderNo} is missing outboundTime`
+        );
+      }
+
+      console.log(
+        `[GPS Individual] Validated fulfilment: ${data.gpsOrderNo} -> Shopify: ${data.shopifyOrderName}, Tracking: ${data.trackingNumber}`
+      );
+
+      return data;
+    });
+
+    // Step 2: Find Shopify order by name
+    const shopifyOrder = await step.run('get-shopify-order', async () => {
+      console.log(`[GPS Individual] Searching for Shopify order: ${fulfilmentData.shopifyOrderName}`);
+
+      const orders = await shopify.searchOrdersByName(fulfilmentData.shopifyOrderName);
+      if (!orders || orders.length === 0) {
+        throw new Error(`Shopify order not found for name: ${fulfilmentData.shopifyOrderName}`);
+      }
+
+      const order = orders[0];
+      console.log(`[GPS Individual] Found Shopify order: ${order.id} (${order.name})`);
+      return order;
+    });
+
+    // Step 3: Get Shopify fulfillment orders
+    const fulfillmentOrder = await step.run('get-fulfillment-orders', async () => {
+      console.log(`[GPS Individual] Getting fulfillment orders for Shopify order: ${shopifyOrder.id}`);
+      const fulfillmentOrders = await shopify.getFulfillmentOrders(shopifyOrder.id);
+
+      // Find open or in_progress fulfillment order
+      const openFulfillment = fulfillmentOrders.find(
+        (fo) => fo.status === 'open' || fo.status === 'in_progress'
+      );
+
+      if (!openFulfillment) {
+        console.log(`[GPS Individual] No open fulfillment orders found - order may already be fulfilled`);
+        return null;
+      }
+
+      console.log(`[GPS Individual] Found open fulfillment order: ${openFulfillment.id}`);
+      return openFulfillment;
+    });
+
+    // Step 4: Create Shopify fulfillment (if open fulfillment exists)
+    const shopifyFulfillment = await step.run('create-shopify-fulfillment', async () => {
+      if (!fulfillmentOrder) {
+        console.log(`[GPS Individual] Skipping Shopify fulfillment - no open fulfillment order`);
+        return { skipped: true, reason: 'No open fulfillment order' };
+      }
+
+      console.log(`[GPS Individual] Creating Shopify fulfillment with tracking: ${fulfilmentData.trackingNumber}`);
+      const trackingUrl = getTrackingUrl(fulfilmentData.carrier, fulfilmentData.trackingNumber);
+      const carrierName = mapGpsCarrierToShopify(fulfilmentData.carrier);
+
+      const lineItems = fulfillmentOrder.line_items.map((item) => ({
+        id: item.id,
+        quantity: item.fulfillable_quantity,
+      }));
+
+      const fulfillment = await shopify.createFulfillment(
+        fulfillmentOrder.id,
+        {
+          number: fulfilmentData.trackingNumber,
+          company: carrierName,
+          url: trackingUrl,
+        },
+        lineItems
+      );
+
+      console.log(`[GPS Individual] Created Shopify fulfillment: ${fulfillment.id}`);
+      return { skipped: false, fulfillmentId: fulfillment.id };
+    });
+
+    // Step 5: Sync to D365 (create packing slip)
+    const d365Result = await step.run('sync-to-d365', async () => {
+      if (!config.features.enableDynamicsSync) {
+        console.log(`[GPS Individual] D365 sync disabled - skipping`);
+        return { skipped: true, reason: 'D365 sync disabled' };
+      }
+
+      // Determine data area from warehouse
+      const dataAreaId = getDataAreaId(warehouse);
+      console.log(`[GPS Individual] Syncing to D365 with dataAreaId: ${dataAreaId}`);
+
+      // Find D365 order by Shopify order name
+      const d365Order = await dynamics.getSalesOrderByShopifyId(
+        fulfilmentData.shopifyOrderName,
+        dataAreaId
+      );
+
+      if (!d365Order?.SalesOrderNumber) {
+        console.log(
+          `[GPS Individual] D365 order not found for ${fulfilmentData.shopifyOrderName} - skipping D365 sync`
+        );
+        return { skipped: true, reason: 'D365 order not found' };
+      }
+      console.log(`[GPS Individual] Found D365 order: ${d365Order.SalesOrderNumber}`);
+
+      // Filter dummy SKUs from line items
+      const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
+      if (lineItemsFiltered.length === 0) {
+        console.log(`[GPS Individual] No valid line items after filtering - skipping D365 fulfilment`);
+        return { skipped: true, reason: 'No valid line items' };
+      }
+
+      // Get lotId mapping from D365 sales order lines
+      const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+
+      // Format shipped date (GPS uses "YYYY-MM-DD HH:mm:ss" format)
+      const shippedDate = fulfilmentData.shippedAt?.split(' ')[0] || new Date().toISOString().split('T')[0];
+
+      // Create fulfilment (packing slip)
+      await dynamics.createFulfilment({
+        salesOrderNumber: d365Order.SalesOrderNumber,
+        dataAreaId,
+        type: 'PackingSlip',
+        confirmedShippedDate: shippedDate,
+        lines: lineItemsFiltered.map((item) => ({
+          itemNumber: item.sku,
+          quantity: item.quantity,
+          trackingNumber: fulfilmentData.trackingNumber,
+          shippingSiteId: '',
+          shippingWarehouseId: '',
+          shippingWarehouseLocationId: '',
+          lotId: lotIdMap[item.sku] || '',
+        })),
+      });
+
+      console.log(`[GPS Individual] Created D365 packing slip for: ${d365Order.SalesOrderNumber}`);
+      return {
+        skipped: false,
+        salesOrderNumber: d365Order.SalesOrderNumber,
+        dataAreaId,
+      };
+    });
+
+    // Step 6: Send completion notification
+    await step.run('send-completion-notification', async () => {
+      const shopifyStatus = shopifyFulfillment.skipped ? 'skipped' : 'success';
+      const d365Status = d365Result.skipped ? 'skipped' : 'success';
+
+      console.log(
+        `[GPS Individual] Completed processing GPS order ${fulfilmentData.gpsOrderNo}: ` +
+        `Shopify=${shopifyStatus}, D365=${d365Status}`
+      );
+
+      await slack.sendInfoMessage(
+        slackChannelEnum.GPS,
+        `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
+        `Tracking: ${fulfilmentData.trackingNumber} | Shopify: ${shopifyStatus} | D365: ${d365Status}`
+      );
+    });
+
+    return {
+      status: 'success',
+      gpsOrderNo: fulfilmentData.gpsOrderNo,
+      shopifyOrderName: fulfilmentData.shopifyOrderName,
+      trackingNumber: fulfilmentData.trackingNumber,
+      shopifyFulfillment,
+      d365Result,
+    };
+  }
+);

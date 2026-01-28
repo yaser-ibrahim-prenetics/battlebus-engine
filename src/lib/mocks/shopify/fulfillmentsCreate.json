@@ -1,0 +1,74 @@
+{
+  "fulfillment": {
+    "id": 7891234567891,
+    "order_id": 6652098052264,
+    "status": "success",
+    "created_at": "2026-01-17T10:15:00-05:00",
+    "service": "manual",
+    "updated_at": "2026-01-17T10:15:00-05:00",
+    "tracking_company": "FedEx",
+    "shipment_status": null,
+    "location_id": 89123456789,
+    "origin_address": null,
+    "line_items": [
+      {
+        "id": 15716246618279,
+        "variant_id": 46166911778983,
+        "title": "Daily Ultimate Essentials: All-in-One Supplement",
+        "quantity": 2,
+        "sku": "IM8-WK-000076",
+        "variant_title": "Forever Jar / One Time Purchase",
+        "vendor": "im8health",
+        "fulfillment_service": "manual",
+        "product_id": 8360959148199,
+        "requires_shipping": true,
+        "taxable": true,
+        "gift_card": false,
+        "name": "Daily Ultimate Essentials: All-in-One Supplement - Forever Jar / One Time Purchase",
+        "variant_inventory_management": "shopify",
+        "properties": [],
+        "product_exists": true,
+        "fulfillable_quantity": 0,
+        "grams": 1506,
+        "price": "139.15",
+        "total_discount": "0.00",
+        "fulfillment_status": "fulfilled",
+        "price_set": {
+          "shop_money": {
+            "amount": "139.15",
+            "currency_code": "USD"
+          },
+          "presentment_money": {
+            "amount": "511.00",
+            "currency_code": "AED"
+          }
+        },
+        "total_discount_set": {
+          "shop_money": {
+            "amount": "0.00",
+            "currency_code": "USD"
+          },
+          "presentment_money": {
+            "amount": "0.00",
+            "currency_code": "AED"
+          }
+        },
+        "discount_allocations": [],
+        "duties": [],
+        "admin_graphql_api_id": "gid://shopify/LineItem/15716246618279",
+        "tax_lines": []
+      }
+    ],
+    "tracking_number": "784497187118",
+    "tracking_numbers": [
+      "784497187118"
+    ],
+    "tracking_url": "https://www.fedex.com/apps/fedextrack/?tracknumbers=784497187118",
+    "tracking_urls": [
+      "https://www.fedex.com/apps/fedextrack/?tracknumbers=784497187118"
+    ],
+    "receipt": {},
+    "name": "#591560.1",
+    "admin_graphql_api_id": "gid://shopify/Fulfillment/7891234567891"
+  }
+}
