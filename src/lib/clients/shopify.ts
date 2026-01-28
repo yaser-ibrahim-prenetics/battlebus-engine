@@ -234,7 +234,7 @@ export async function getOrderRisks(
     return mockData.risks;
   }
 
-  const url = buildUrl(`/orders/${orderId}/risks.json`);
+  const url = buildUrl(`/latest/orders/${orderId}/risks.json`);
   const response = await fetch(url, {
     method: "GET",
     headers: getHeaders(),
