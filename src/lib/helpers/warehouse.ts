@@ -4,7 +4,7 @@
 // Ported from spock-store src/component/warehouse.ts
 
 import warehouseConfig from "../mappings/warehouse-config.json";
-import { GpsIndividualFulfilmentPayload } from "../types/gps";
+import { IGpsIndividualFulfilment } from '../types/gps';
 
 // ============================================================================
 // Types
@@ -260,7 +260,7 @@ export function isValidGpsWarehouse(warehouseName: string): boolean {
 /**
  * Extract GPS fulfillment data
  */
-export function extractGpsFulfilmentData(payload: GpsIndividualFulfilmentPayload) {
+export function extractGpsFulfilmentData(payload: IGpsIndividualFulfilment) {
   const { orderData, warehouse } = payload;
   
   return {

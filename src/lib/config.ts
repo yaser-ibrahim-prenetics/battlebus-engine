@@ -121,6 +121,7 @@ export const config = {
     enabledShopifyRiskMock: false,
     enabledShopifyOrderMock: false,
     enabledShopifyCreateFulfillmentMock: false,
+    enabledGpsOutboundMock: false,
   },
 
   // Retry Configuration

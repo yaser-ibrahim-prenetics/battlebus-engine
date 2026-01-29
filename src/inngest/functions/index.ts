@@ -27,6 +27,7 @@ import {
   processExtensivReceiverConfirm,
 } from "./process-extensiv-fulfillment";
 import { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
+import { processGpsBatch } from "./process-gps-batch";
 import { processGpsIndividual } from "./process-gps-individual";
 
 export const functions = [
@@ -39,5 +40,6 @@ export const functions = [
   processExtensivFulfillment,
   processExtensivReceiverConfirm,
   simulateGpsFulfillment,
+  processGpsBatch,
   processGpsIndividual,
 ];

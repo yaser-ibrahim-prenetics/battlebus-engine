@@ -23,7 +23,7 @@ import {
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { isWelcomeKitSku } from "@/lib/transformers/sku";
-import { slackChannelEnum } from "@/lib/types/slack";
+import { SlackChannelEnum } from "@/lib/types/slack";
 
 export const processShopifyOrder = inngest.createFunction(
   {
@@ -68,11 +68,11 @@ export const processShopifyOrder = inngest.createFunction(
     const validations = await step.run("validate-shopify-order", async (): Promise<{ validated: boolean, status?: string, message?: string[] }> => {
       if (isOrderTaggedWith(order, 'high-risk-order')) {
         console.log('is tagged with high risk order');
-        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Skip high risk order for ${shopifyOrderId}`);
+        slack.sendWarningMessage(SlackChannelEnum.SHOPIFY, `[Battle Bus] Skip high risk order for ${shopifyOrderId}`);
         return { validated: false, status: 'fraud_hold' };
       } else if (order.cancel_reason) {
         console.log(`[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}`);
-        slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}`);
+        slack.sendWarningMessage(SlackChannelEnum.SHOPIFY, `[Battle Bus] Order was cancelled due to ${CancelReasonEnum[order.cancel_reason]}`);
       }
 
       // See: https://shopify.dev/docs/api/admin-rest/2024-01/resources/order#resource-object
@@ -89,7 +89,7 @@ export const processShopifyOrder = inngest.createFunction(
           if (Number(risk.score) >= 0.8) riskMessages.push(risk.message);
         }
         if (riskMessages.length > 0) {
-          slack.sendWarningMessage(slackChannelEnum.SHOPIFY, `[Battle Bus] Order contain risk: ${riskMessages.join(', ')}`);
+          slack.sendWarningMessage(SlackChannelEnum.SHOPIFY, `[Battle Bus] Order contain risk: ${riskMessages.join(', ')}`);
           return { validated: false, status: "risk_order", message: riskMessages };
         }
       }
@@ -258,7 +258,7 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       await slack.sendOrderMessage(
-        slackChannelEnum.SHOPIFY,
+        SlackChannelEnum.SHOPIFY,
         `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNumber}`
       );
 

@@ -292,6 +292,18 @@ export async function getOutboundOrdersDetails(
   orderIds: string[],
   warehouseName: GpsWarehouseName = "GPS Warehouse"
 ): Promise<{ response: GpsGetOrdersDetailResponse }> {
+  if (config.features.enabledGpsOutboundMock) {
+    const mockData = await import('../mocks/gps/outboundOrders.json');
+    console.log(`Using mock GPS outbound data for order ${orderIds}`);
+    return {
+      response: {
+        code: 200,
+        msg: '操作成功',
+        data: mockData.default,
+      },
+    };
+  }
+
   const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
   const timestamp = epochInSeconds().toString();
 

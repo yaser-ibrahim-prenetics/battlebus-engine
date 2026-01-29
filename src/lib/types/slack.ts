@@ -9,7 +9,7 @@ export interface ISlackAttachment {
   fields?: Array<{ title: string; value: string; short?: boolean }>;
 }
 
-export enum slackChannelEnum {
+export enum SlackChannelEnum {
   ORDER = 'order',
   GENERAL = 'general',
   EUROPA = 'europa',

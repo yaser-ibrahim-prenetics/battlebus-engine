@@ -1,0 +1,83 @@
+[
+  {
+    "email": "ivgrubac@gmail.com",
+    "remark": "",
+    "status": 3,
+    "taxNum": "",
+    "whCode": "JFK01W",
+    "cityCode": "",
+    "cityName": "Dubai",
+    "houseNum": "",
+    "postCode": "00000",
+    "receiver": "Ivana Grubac-Muftic",
+    "costItems": [
+      {
+        "billItemName": "IM8-operation",
+        "billItemTotal": 1.05
+      }
+    ],
+    "costTotal": 1.05,
+    "orderList": "",
+    "storeName": "",
+    "telephone": "0585524074",
+    "addressOne": "FAIRFIELD TOWER PARK ISLAND",
+    "addressTwo": "Flat 1403",
+    "statusName": "已出库",
+    "companyName": "",
+    "expressList": [
+      {
+        "width": 26,
+        "height": 28,
+        "length": 31,
+        "weight": 2.92,
+        "fileUrl": "",
+        "trackNo": "34905821613",
+        "pkgSkuNumInfo": "IM8-FG-000010*2"
+      }
+    ],
+    "needRelabel": 0,
+    "productList": [
+      {
+        "sku": "IM8-FG-000010",
+        "fnsku": "",
+        "skuId": "1082163IM8-FG-000010",
+        "remark": "",
+        "deleted": 0,
+        "createBy": "OPENAPI",
+        "quantity": 2,
+        "updateBy": "system",
+        "createTime": "2026-01-17 05:11:49",
+        "updateTime": "2026-01-17 11:10:28",
+        "productName": "Daily Ultimate Essentials - Starter Kit",
+        "realQuantity": 2,
+        "availableAmount": 1159,
+        "productAliasName": ""
+      }
+    ],
+    "appendixList": [],
+    "canceledTime": "",
+    "outboundTime": "2026-01-17 11:10:28",
+    "provinceCode": "DU",
+    "provinceName": "Dubai",
+    "referOrderNo": "U001-SO-459898",
+    "thirdOrderNo": "U001-SO-459898",
+    "exceptionDesc": "",
+    "exceptionTime": "",
+    "interceptTime": "",
+    "orderTypeName": "小包出库单",
+    "salesPlatform": "9",
+    "orderCreateTime": "2026-01-17 05:11:48",
+    "outboundOrderNo": "OBS1632601170SM",
+    "platformOrderNo": "IM8-591560",
+    "costCurrencyCode": "USD",
+    "logisticsCarrier": "GPS",
+    "logisticsChannel": "GPS-IM8-STANDARD",
+    "logisticsTrackNo": "34905821613",
+    "subOrderTypeName": "",
+    "countryRegionCode": "AE",
+    "countryRegionName": "United Arab Emirates",
+    "logisticsTrackNos": [
+      "34905821613"
+    ]
+  }
+]
