@@ -226,7 +226,7 @@ export const processGpsIndividual = inngest.createFunction(
       const d365Status = dynamicRecord.skipped ? 'skipped' : 'success';
 
       const message = `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
-        `Tracking: ${fulfilmentData.trackingNumber} | Shopify: ${shopifyStatus} | D365: ${d365Status}`;
+        `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
       
       console.log(message);
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
