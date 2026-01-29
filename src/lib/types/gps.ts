@@ -59,13 +59,13 @@ export interface GpsAuthHeader {
   "X-Timestamp": string;
 }
 
-export interface GpsIndividualFulfilmentPayload {
+export interface IGpsIndividualFulfilment {
   type: "individual";
   warehouse: string; // e.g., "GPS Warehouse"
-  orderData: GpsIndividualOrderData;
+  orderData: IGpsIndividualOrderData;
 }
 
-export interface GpsIndividualOrderData {
+export interface IGpsIndividualOrderData {
   // Order identifiers
   outboundOrderNo: string;     // GPS internal order number, e.g., "OBS1632601170SM"
   platformOrderNo: string;     // Shopify order name, e.g., "IM8-591560"
@@ -181,16 +181,27 @@ export interface IGpsGetOrderData {
   expressList?: GpsExpressItem[];            // Optional tracking details
 }
 
-// ============================================================================
-// TYPE GUARDS
-// ============================================================================
+export interface IGpsManualProcessRequest {
+  gpsOrderIds: string[];
+  warehouse: string;
+}
+
+export enum GpsWarehouseNameEnum {
+  gpsUS = 'GPS Warehouse',
+  gpsUK = 'GPS UK Warehouse',
+}
+
+export interface IGpsProcessingOrder {
+  gpsOrderId: string;
+}
+
 export function isGpsIndividualFulfilmentPayload(
   payload: unknown
-): payload is GpsIndividualFulfilmentPayload {
+): payload is IGpsIndividualFulfilment {
   return (
     typeof payload === "object" &&
     payload !== null &&
-    (payload as GpsIndividualFulfilmentPayload).type === "individual" &&
-    typeof (payload as GpsIndividualFulfilmentPayload).orderData === "object"
+    (payload as IGpsIndividualFulfilment).type === "individual" &&
+    typeof (payload as IGpsIndividualFulfilment).orderData === "object"
   );
 }

@@ -25,3 +25,10 @@ export interface WarehouseConfig {
   siteId: string;
   warehouseType: "GPS" | "STORD" | "EXTENSIV" | "D365";
 }
+
+export interface IResponse<T> {
+  success: boolean;
+  message: string;
+  error?: string;
+  data?: T;
+}

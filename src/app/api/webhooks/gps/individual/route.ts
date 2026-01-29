@@ -1,109 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { inngest } from '@/inngest/client';
-import { verifyWebhookSignature } from '@/lib/clients/gps';
-import { isGpsIndividualFulfilmentPayload } from '@/lib/types/gps';
-import { extractGpsFulfilmentData } from '@/lib/helpers/warehouse';
+
+import { errorResponse, successResponse } from '@/lib/utils/response';
+import { isValidGpsWarehouse } from '@/lib/helpers/warehouse';
+import { GpsWarehouseNameEnum, IGpsManualProcessRequest } from '@/lib/types/gps';
+import { IResponse } from '@/lib/types';
+import * as gps from '@/lib/clients/gps';
 
 /**
- * POST - Process GPS Individual 
+ * POST - Process GPS orders by batch and process it individually
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<NextResponse<IResponse<any>>> {
   try {
     const body = await request.text();
     const signature = request.headers.get('x-signature');
     const timestamp = request.headers.get('x-timestamp');
 
-    // Verify webhook signature (optional - skip if headers not present)
-    if (signature && timestamp) {
-      if (!verifyWebhookSignature(body, signature, timestamp)) {
-        console.error('Invalid signature');
-        return NextResponse.json(
-          { success: false, error: 'Invalid signature' },
-          { status: 401 }
-        );
-      }
-    }
-
     // Parse payload
-    const payload = JSON.parse(body);
+    const payload: IGpsManualProcessRequest = JSON.parse(body);
+    const { gpsOrderIds, warehouse } = payload;
 
-    // Validate payload structure
-    if (!isGpsIndividualFulfilmentPayload(payload)) {
-      console.error('Invalid payload structure:', JSON.stringify(payload).slice(0, 500));
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invalid payload structure. Expected { type: \'individual\', warehouse: string, orderData: {...} }',
-        },
-        { status: 400 },
-      );
+    // Verify webhook signature
+    if (signature && timestamp && !gps.verifyWebhookSignature(body, signature, timestamp)) {
+      console.error('[GPS Individual] Invalid signature');
+      return errorResponse('Invalid signature', 401);
     }
 
-    // Extract key data for logging
-    const extracted = extractGpsFulfilmentData(payload);
+    // Validate gps order IDs
+    if (!gpsOrderIds || !Array.isArray(gpsOrderIds) || gpsOrderIds.length === 0) {
+      return errorResponse('GPS order id is required and must be a non-empty array', 400);
+    }
 
-    console.log(
-      `Received fulfilment: ` +
-      `GPS Order: ${extracted.gpsOrderNo}, ` +
-      `Shopify: ${extracted.shopifyOrderName}, ` +
-      `Tracking: ${extracted.trackingNumber}, ` +
-      `Warehouse: ${payload.warehouse}`
+    // Filter out invalid order IDs
+    const validOrderIds = gpsOrderIds.filter(
+      (id) => id && typeof id === 'string' && id.trim().length > 0
     );
+    if (validOrderIds.length === 0) {
+      return errorResponse('No valid GPS order IDs provided', 400);
+    }
 
-    // Trigger Inngest event
-    const result = await inngest.send({
-      id: `gps-individual-${extracted.gpsOrderNo}-${extracted.trackingNumber}`,
-      name: 'gps/individual.fulfilment',
+    // Validate warehouse
+    if (!warehouse || !isValidGpsWarehouse(warehouse)) {
+      return errorResponse(`Invalid warehouse: ${warehouse}`, 400);
+    }
+
+    // Process orders in batches
+    console.log(`[GPS Individual] Starting processing with ${validOrderIds.length} GPS order IDs`);
+    const batchId = `gps-batch-${Date.now()}`;
+    await inngest.send({
+      id: batchId,
+      name: 'gps/batch.process',
       data: {
-        gpsOrderNo: extracted.gpsOrderNo,
-        shopifyOrderName: extracted.shopifyOrderName,
-        trackingNumber: extracted.trackingNumber,
-        warehouse: payload.warehouse,
-        fulfilmentPayload: payload,
+        gpsOrderIds: validOrderIds,
+        warehouse: warehouse as GpsWarehouseNameEnum,
+        batchId,
         receivedAt: new Date().toISOString(),
       },
     });
-    console.log(`Triggered Inngest event: ${result.ids?.[0] || 'unknown'}`);
 
-    return NextResponse.json(
-      {
-        success: true,
-        message: 'GPS individual fulfilment received',
-        data: {
-          gpsOrderNo: extracted.gpsOrderNo,
-          shopifyOrderName: extracted.shopifyOrderName,
-          trackingNumber: extracted.trackingNumber,
-          warehouse: payload.warehouse,
-          eventId: result.ids?.[0],
-        },
-      },
-      { status: 200 },
+    console.log('[GPS Individual] Processing GPS orders by batch');
+    return successResponse(
+      'Procesing GPS orders batch',
+      { warehouse, totalValidOrder: validOrderIds.length },
     );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error processing webhook:', errorMessage);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Internal server error',
-        message: errorMessage,
-      },
-      { status: 500 },
-    );
+    return errorResponse(`Error processing request: ${errorMessage}`, 500);
   }
-}
-
-/**
- * GET - Health check endpoint
- */
-export async function GET() {
-  return NextResponse.json(
-    {
-      status: 'ok',
-      endpoint: '/api/webhooks/gps/individual',
-      description: 'GPS Individual Fulfilment Webhook Handler',
-    },
-    { status: 200 },
-  );
 }
