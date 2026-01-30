@@ -22,6 +22,7 @@ import {
   shouldSendToGps,
   determineWarehouse,
 } from "@/lib/transformers/order";
+import { getDataAreaId } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
@@ -95,9 +96,6 @@ export const processShopifyOrder = inngest.createFunction(
           SlackChannelEnum.SHOPIFY,
           `[Battle Bus] Order was cancelled due to ${cancelReason}`
         );
-      } else if (validation.status === "skipped_non_welcome_kit") {
-        const skus = validation.skus?.join(", ") || "";
-        console.log(`[Order] Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
       } else if (validation.status === "risk_order") {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
@@ -169,6 +167,9 @@ export const processShopifyOrder = inngest.createFunction(
         await step.sleep("wait-for-d365-propagation", "5s");
       }
 
+      // Get the correct data area ID based on warehouse
+      const dataAreaId = getDataAreaId(warehouseName);
+
       await step.run("confirm-d365-order", async () => {
         if (skipD365) {
           return;
@@ -176,7 +177,7 @@ export const processShopifyOrder = inngest.createFunction(
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            await dynamics.confirmSalesOrder(salesOrderNumber, config.dynamics.dataAreaId);
+            await dynamics.confirmSalesOrder(salesOrderNumber, dataAreaId);
             return;
           } catch (error) {
             const isNotFoundError =
@@ -197,7 +198,7 @@ export const processShopifyOrder = inngest.createFunction(
           return amount;
         }
         if (amount > 0) {
-          await dynamics.createPrepayment(salesOrderNumber, config.dynamics.dataAreaId);
+          await dynamics.createPrepayment(salesOrderNumber, dataAreaId);
         }
         return amount;
       });
