@@ -4,6 +4,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as shopify from "@/lib/clients";
+import { setGpsOrderMetafield } from "@/lib/clients/shopify";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -220,6 +221,24 @@ export const processShopifyOrder = inngest.createFunction(
         // Skip if GPS not enabled
         return { type: "skipped", reason: "GPS sync disabled or no payload" };
       });
+
+      // Store GPS order ID in Shopify metafield for tracking (used by cron-gps-sync)
+      // Using metafields instead of tags for security - metafields are not visible in standard UI
+      // and less likely to be accidentally modified by non-technical staff
+      if (gpsResult.type === "real" && "result" in gpsResult && gpsResult.result?.response?.data?.[0]?.orderNo) {
+        const gpsOrderNo = gpsResult.result.response.data[0].orderNo;
+        await step.run("store-gps-order-metafield", async () => {
+          await setGpsOrderMetafield(shopifyOrderId, {
+            gpsOrderId: gpsOrderNo,
+            warehouse: warehouseName,
+            d365OrderNumber: salesOrderNumber,
+            createdAt: new Date().toISOString(),
+          });
+          
+          console.log(`[Shopify] Stored GPS metafield for order ${shopifyOrderName}: ${gpsOrderNo}`);
+          return { stored: true, gpsOrderNo };
+        });
+      }
 
       // Handle out of stock retry
       if (gpsResult.type === "out_of_stock" && gpsOrderPayload) {

@@ -3,6 +3,13 @@
 // ============================================================================
 // Polls GPS warehouse API for fulfilled orders and syncs to Shopify + D365
 // Serverless-friendly: splits processing into small batches
+//
+// GPS Order Tracking Strategy:
+// - When orders are sent to GPS (in process-shopify-order), we store the GPS order ID
+//   in a Shopify metafield (namespace: battle_bus, key: gps_order)
+// - This cron job fetches unfulfilled orders with GPS metafields and queries GPS
+//   using the actual GPS order ID (not Shopify order name)
+// - This is more reliable than spock-store's database approach since we're stateless
 
 import { inngest } from "../client";
 import { config, GPS_STATUS } from "@/lib/config";
@@ -10,16 +17,13 @@ import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
-import {
-  getGpsWarehouseFromLocation,
-  filterDummySkus,
-} from "@/lib/utils/validation";
+import { filterDummySkus } from "@/lib/utils/validation";
 import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
+import type { GpsOrderMetafield } from "@/lib/clients/shopify";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
 // Process orders in small batches to avoid serverless timeouts
-// Fetching fulfillment orders for 10 orders + GPS API calls should fit within standard timeouts
 const BATCH_SIZE = 10;
 
 export const syncGpsFulfillments = inngest.createFunction(
@@ -35,20 +39,23 @@ export const syncGpsFulfillments = inngest.createFunction(
       return { status: "skipped", reason: "GPS sync disabled" };
     }
 
-    // 1. Get Unfulfilled Orders from Shopify
-    // We fetch a larger pool to work through
-    const unfulfilledOrders = await step.run("get-unfulfilled-orders", async () => {
-      return shopify.getUnfulfilledOrders(50); // Start with 50 to be safe
+    // 1. Get Unfulfilled Orders with GPS metafields from Shopify
+    // Only orders that have been sent to GPS will have the metafield
+    // Use default parameters (limit=250, daysBack=30) to catch older orders
+    const gpsOrders = await step.run("get-unfulfilled-gps-orders", async () => {
+      return shopify.getUnfulfilledGpsOrders();
     });
 
-    if (unfulfilledOrders.length === 0) {
-      return { status: "success", message: "No unfulfilled orders found" };
+    if (gpsOrders.length === 0) {
+      return { status: "success", message: "No unfulfilled GPS orders found" };
     }
+
+    console.log(`[GPS Sync] Found ${gpsOrders.length} unfulfilled orders with GPS metafields`);
 
     const processedBatches = [];
     const orderChunks = [];
-    for (let i = 0; i < unfulfilledOrders.length; i += BATCH_SIZE) {
-      orderChunks.push(unfulfilledOrders.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < gpsOrders.length; i += BATCH_SIZE) {
+      orderChunks.push(gpsOrders.slice(i, i + BATCH_SIZE));
     }
 
     // 2. Process each chunk as a separate step
@@ -79,13 +86,13 @@ export const syncGpsFulfillments = inngest.createFunction(
     if (totalFulfilled > 0 || totalErrors > 0) {
       await slack.sendInfoMessage(
         "gps",
-        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${unfulfilledOrders.length} checked.`
+        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${gpsOrders.length} checked.`
       );
     }
 
     return {
       status: "completed",
-      checked: unfulfilledOrders.length,
+      checked: gpsOrders.length,
       fulfilled: totalFulfilled,
       fulfilledOrderIds: allFulfilledOrderIds,
       batches: processedBatches,
@@ -93,86 +100,91 @@ export const syncGpsFulfillments = inngest.createFunction(
   }
 );
 
-async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
+// Order type with GPS metafield data attached
+type GpsTrackedOrder = shopify.ShopifyOrder & { gpsData: GpsOrderMetafield };
+
+async function processOrderBatch(orders: GpsTrackedOrder[]) {
   const fulfilled: string[] = [];
   const errors: string[] = [];
-  const skipped: string[] = [];
 
-  // Group by warehouse
-  const warehouseMap: Record<GpsWarehouseName, Array<{ name: string; id: number }>> = {
+  // Group orders by warehouse using the metafield data (no need to check location IDs)
+  const warehouseMap: Record<GpsWarehouseName, Array<{
+    shopifyOrder: shopify.ShopifyOrder;
+    gpsData: GpsOrderMetafield;
+  }>> = {
     "GPS Warehouse": [],
     "GPS UK Warehouse": [],
   };
 
-  // 1. Identify GPS Orders
+  // 1. Group orders by warehouse from metafield data
   for (const order of orders) {
-    try {
-      const fulfillmentOrders = await shopify.getFulfillmentOrders(order.id);
-      
-      // Find which warehouse this order is assigned to
-      let assignedWarehouse: GpsWarehouseName | null = null;
-      
-      for (const fo of fulfillmentOrders) {
-        if (fo.status !== 'open' && fo.status !== 'in_progress') continue;
-        
-        const warehouse = getGpsWarehouseFromLocation(
-          fo.assigned_location_id || fo.assigned_location?.id || ""
-        );
-        
-        if (warehouse) {
-          assignedWarehouse = warehouse;
-          break; // Found primary GPS location
-        }
-      }
-
-      if (assignedWarehouse) {
-        warehouseMap[assignedWarehouse].push({ name: order.name, id: order.id });
-      } else {
-        skipped.push(order.name);
-      }
-    } catch (error) {
-      errors.push(`${order.name}: Failed to get fulfillment orders - ${error}`);
+    const warehouse = order.gpsData.warehouse as GpsWarehouseName;
+    if (warehouse === "GPS Warehouse" || warehouse === "GPS UK Warehouse") {
+      warehouseMap[warehouse].push({
+        shopifyOrder: order,
+        gpsData: order.gpsData,
+      });
+      console.log(`[GPS Sync] Order ${order.name} -> ${warehouse} (GPS ID: ${order.gpsData.gpsOrderId})`);
+    } else {
+      errors.push(`${order.name}: Unknown warehouse "${warehouse}" in metafield`);
     }
   }
 
   // 2. Check GPS Status for each warehouse group
   for (const warehouse of ["GPS Warehouse", "GPS UK Warehouse"] as GpsWarehouseName[]) {
-    const gpsOrders = warehouseMap[warehouse];
-    if (gpsOrders.length === 0) continue;
+    const warehouseOrders = warehouseMap[warehouse];
+    if (warehouseOrders.length === 0) continue;
 
-    const orderNames = gpsOrders.map(o => o.name);
+    // Use GPS order IDs (from metafield) to query GPS API
+    const gpsOrderIds = warehouseOrders.map(o => o.gpsData.gpsOrderId);
+    
+    console.log(`[GPS Sync] [${warehouse}] Querying GPS for ${gpsOrderIds.length} orders: ${gpsOrderIds.join(", ")}`);
     
     try {
-      const { response } = await gps.getOutboundOrdersDetails(orderNames, warehouse);
+      // Query GPS using the actual GPS order IDs (outboundOrderNoList)
+      const { response } = await gps.getOutboundOrdersDetails(gpsOrderIds, warehouse);
 
       if (!response.data || response.code !== 200) {
         errors.push(`${warehouse}: API error - ${response.msg}`);
         continue;
       }
 
-      // 3. Filter and log GPS orders with status 3 (FULFILLED)
-      const fulfilledOrders = response.data.filter(
+      console.log(`[GPS Sync] [${warehouse}] GPS returned ${response.data.length} orders`);
+
+      // 3. Filter for fulfilled orders (status 3)
+      const fulfilledGpsOrders = response.data.filter(
         (gpsOrder) => gpsOrder.status === GPS_STATUS.FULFILLED
       );
 
-      if (fulfilledOrders.length > 0) {
-        const fulfilledOrderIds = fulfilledOrders.map((order) => order.platformOrderNo);
+      if (fulfilledGpsOrders.length > 0) {
         console.log(
-          `[GPS Sync] [${warehouse}] Found ${fulfilledOrders.length} GPS orders with status 3 (FULFILLED):`
-        );
-        console.log(
-          `[GPS Sync] [${warehouse}] Order IDs: ${fulfilledOrderIds.join(", ")}`
+          `[GPS Sync] [${warehouse}] Found ${fulfilledGpsOrders.length} fulfilled orders`
         );
       }
 
       // 4. Process Fulfilled Orders
-      for (const gpsOrder of fulfilledOrders) {
+      for (const gpsOrder of fulfilledGpsOrders) {
+        // Find the matching Shopify order by GPS order ID (outboundOrderNo in response)
+        const matchedOrder = warehouseOrders.find(
+          o => o.gpsData.gpsOrderId === gpsOrder.outboundOrderNo
+        );
+        
+        if (!matchedOrder) {
+          errors.push(`GPS order ${gpsOrder.outboundOrderNo}: No matching Shopify order found`);
+          continue;
+        }
+
         try {
-          await processFulfilledGpsOrder(gpsOrder, warehouse, gpsOrders);
-          fulfilled.push(gpsOrder.platformOrderNo);
+          await processFulfilledGpsOrder(
+            gpsOrder,
+            warehouse,
+            matchedOrder.shopifyOrder,
+            matchedOrder.gpsData
+          );
+          fulfilled.push(matchedOrder.shopifyOrder.name);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          errors.push(`${gpsOrder.platformOrderNo}: ${msg}`);
+          errors.push(`${matchedOrder.shopifyOrder.name}: ${msg}`);
         }
       }
     } catch (error) {
@@ -181,26 +193,29 @@ async function processOrderBatch(orders: shopify.ShopifyOrder[]) {
     }
   }
 
-  return { fulfilled, errors, skippedCount: skipped.length };
+  return { fulfilled, errors, skippedCount: 0 };
 }
 
 async function processFulfilledGpsOrder(
-  gpsOrder: any, // Typed as any to match response structure
+  gpsOrder: any, // Typed as any to match GPS API response structure
   warehouseName: GpsWarehouseName,
-  orderLookup: Array<{ name: string; id: number }>
+  shopifyOrder: shopify.ShopifyOrder,
+  gpsData: GpsOrderMetafield
 ): Promise<void> {
-  const orderInfo = orderLookup.find((o) => o.name === gpsOrder.platformOrderNo);
-  if (!orderInfo) return;
+  console.log(`[GPS Sync] Processing fulfilled order: ${shopifyOrder.name} (GPS: ${gpsData.gpsOrderId})`);
 
-  // 1. Get fulfillment orders
-  const fulfillmentOrders = await shopify.getFulfillmentOrders(orderInfo.id);
+  // 1. Get fulfillment orders from Shopify
+  const fulfillmentOrders = await shopify.getFulfillmentOrders(shopifyOrder.id);
   const openFulfillment = fulfillmentOrders.find(
     (fo) => fo.status === "open" || fo.status === "in_progress"
   );
 
-  if (!openFulfillment) return;
+  if (!openFulfillment) {
+    console.log(`[GPS Sync] No open fulfillment found for ${shopifyOrder.name}, skipping`);
+    return;
+  }
 
-  // 2. Create Shopify fulfillment
+  // 2. Create Shopify fulfillment with tracking info
   const trackingUrl = getTrackingUrl(gpsOrder.logisticsCarrier, gpsOrder.logisticsTrackNo);
   
   const lineItems = openFulfillment.line_items.map((item) => ({
@@ -220,16 +235,16 @@ async function processFulfilledGpsOrder(
 
   // 3. Sync to D365
   if (config.features.enableDynamicsSync) {
-    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "U001" : "U001";
+    // Use H007 for GPS UK Warehouse, U001 for US and others
+    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "H007" : "U001";
     
     // Find D365 order (use order name, not ID, since THK_ShopifyReference stores the order name)
     const d365Order = await dynamics.getSalesOrderByShopifyId(
-      orderInfo.name, // Use order name, not ID
+      shopifyOrder.name, // Use order name, not ID
       dataAreaId
     );
 
     if (d365Order?.SalesOrderNumber) {
-      const shopifyOrder = await shopify.getOrder(orderInfo.id);
       const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
 
       // Get lotId mapping from D365 sales order lines

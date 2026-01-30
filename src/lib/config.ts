@@ -84,6 +84,7 @@ export const config = {
     applicationName: 'store',
     appEnv: 'local',
     integration: 'real',
+    enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
     channel: {
       order: process.env.SLACK_ORDER_CHANNEL,
       general: process.env.SLACK_GENERAL_CHANNEL,

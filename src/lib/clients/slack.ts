@@ -1,6 +1,9 @@
 import { config } from "@/lib/config";
 import { ISlackAttachment } from "../types/slack";
 
+// Type for Slack channel keys
+type SlackChannel = keyof typeof config.slack.channel;
+
 const slackSender = async (
   channel: keyof typeof config.slack.channel,
   attachments: ISlackAttachment[],

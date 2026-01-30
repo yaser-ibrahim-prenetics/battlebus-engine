@@ -29,7 +29,7 @@
       "name": "GPS UK Warehouse",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "U001",
+      "dataAreaId": "H007",
       "gpsCode": "LHR",
       "logisticsChannel": "GPS-IM8-STANDARD-UK",
       "fulfilment": {
@@ -75,7 +75,7 @@
       "name": "HK Warehouse",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "U001",
+      "dataAreaId": "H007",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
         "shippingWarehouseId": "OPS-WH01",

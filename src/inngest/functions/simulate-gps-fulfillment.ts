@@ -79,9 +79,9 @@ export const simulateGpsFulfillment = inngest.createFunction(
           for (const fo of fulfillmentOrders) {
             if (fo.status !== "open" && fo.status !== "in_progress") continue;
             
-            const detectedWarehouse = getGpsWarehouseFromLocation(
-              fo.assigned_location_id || fo.assigned_location?.id || ""
-            );
+            // assigned_location_id is the direct property, assigned_location.location_id is nested
+            const locationId = fo.assigned_location_id || (fo.assigned_location ? fo.assigned_location.location_id : null);
+            const detectedWarehouse = getGpsWarehouseFromLocation(locationId || "");
             
             if (detectedWarehouse) {
               warehouse = detectedWarehouse;
