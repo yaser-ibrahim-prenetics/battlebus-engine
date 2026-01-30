@@ -6,7 +6,6 @@
 import { config } from "@/lib/config";
 import type { ShopifyOrderPayload, ShopifyFulfillment } from "../../inngest/events";
 import * as shopify from "@/lib/clients/shopify";
-import { isWelcomeKitSku } from "@/lib/transformers/sku";
 
 // ============================================================================
 // ORDER VALIDATION
@@ -268,31 +267,6 @@ export async function checkShopifyOrderRisks(
 }
 
 /**
- * Validate Welcome Kit filter
- * Returns validation result with SKUs if order should be skipped
- */
-export function validateWelcomeKitFilter(
-  order: Pick<ShopifyOrderPayload, "line_items">
-): {
-  valid: boolean;
-  skus: string[];
-} {
-  if (!config.features.enableWelcomeKitFilter) {
-    return { valid: true, skus: [] };
-  }
-
-  if (!isWelcomeKitSku(order.line_items)) {
-    const skus = order.line_items.map((item) => item.sku || "NO-SKU");
-    return {
-      valid: false,
-      skus,
-    };
-  }
-
-  return { valid: true, skus: [] };
-}
-
-/**
  * Validate order for processing
  * Returns validation result with skip reason if order should be skipped
  */
@@ -384,18 +358,6 @@ export async function validateOrderCompletely(
       status: "risk_order",
       reason: "High risk score detected",
       message: flaggedRisks,
-    };
-  }
-
-  // 4. Welcome Kit filter (only applies if enableWelcomeKitFilter is true)
-  const welcomeKitValidation = validateWelcomeKitFilter(order);
-  if (!welcomeKitValidation.valid) {
-    return {
-      valid: false,
-      skip: true,
-      status: "skipped_non_welcome_kit",
-      reason: "Not a Welcome Kit order",
-      skus: welcomeKitValidation.skus,
     };
   }
 

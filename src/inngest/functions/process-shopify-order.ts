@@ -95,9 +95,6 @@ export const processShopifyOrder = inngest.createFunction(
           SlackChannelEnum.SHOPIFY,
           `[Battle Bus] Order was cancelled due to ${cancelReason}`
         );
-      } else if (validation.status === "skipped_non_welcome_kit") {
-        const skus = validation.skus?.join(", ") || "";
-        console.log(`[Order] Skipping ${shopifyOrderName} - Not a Welcome Kit. SKUs: ${skus}`);
       } else if (validation.status === "risk_order") {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,

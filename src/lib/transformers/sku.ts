@@ -221,13 +221,3 @@ export function isDummySku(sku: string): boolean {
 export function filterDummySkus<L extends OrderLine>(lines: L[]): L[] {
   return lines.filter((line) => !isDummySku(line.itemNumber));
 }
-
-export function isWelcomeKitSku(lineItems: Array<{ sku?: string | null }>): boolean {
-  if (!lineItems || lineItems.length === 0) return false;
-  const weekKitPattern = /^IM8-WK-.+/i; // Case-insensitive
-  
-  return lineItems.some(item => {
-    if (!item.sku) return false;
-    return weekKitPattern.test(item.sku);
-  });
-}
