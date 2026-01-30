@@ -291,3 +291,118 @@ export function validateWelcomeKitFilter(
 
   return { valid: true, skus: [] };
 }
+
+/**
+ * Validate order for processing
+ * Returns validation result with skip reason if order should be skipped
+ */
+export function validateOrderForProcessing(
+  order: ShopifyOrderPayload
+): { valid: boolean; skip: boolean; reason?: string } {
+  // Skip test orders
+  if (config.features.skipTestOrders && isTestOrder(order)) {
+    return { valid: true, skip: true, reason: "Test order" };
+  }
+
+  // Skip high-risk orders (with warning)
+  if (config.features.skipHighRiskOrders && isHighRiskOrder(order)) {
+    return { valid: true, skip: true, reason: "High-risk order" };
+  }
+
+  // Error on dummy-only orders
+  if (hasOnlyDummySkus(order)) {
+    return { valid: false, skip: false, reason: "Order has only dummy SKUs" };
+  }
+
+  return { valid: true, skip: false };
+}
+
+/**
+ * Comprehensive order validation - all checks in one place
+ * This is the main validation function that should be used in process-shopify-order
+ */
+export async function validateOrderCompletely(
+  order: ShopifyOrderPayload,
+  shopifyOrderId: number | string,
+  shopifyOrderName: string
+): Promise<{
+  valid: boolean;
+  skip: boolean;
+  status: string;
+  reason?: string;
+  message?: string[];
+  skus?: string[];
+  cancelReason?: string;
+}> {
+  // 1. Basic order validation (test orders, high-risk, dummy SKUs)
+  const basicValidation = validateOrderForProcessing(order);
+  if (!basicValidation.valid) {
+    return {
+      valid: false,
+      skip: false,
+      status: "failed_validation",
+      reason: basicValidation.reason,
+    };
+  }
+
+  if (basicValidation.skip) {
+    return {
+      valid: true,
+      skip: true,
+      status: "skipped",
+      reason: basicValidation.reason,
+    };
+  }
+
+  // 2. Fraud and cancellation check
+  const fraudValidation = validateFraudAndCancellation(order, shopifyOrderId);
+  if (fraudValidation.isFraud) {
+    return {
+      valid: false,
+      skip: false,
+      status: "fraud_hold",
+      reason: "High-risk order tag detected",
+    };
+  }
+
+  if (fraudValidation.isCancelled) {
+    return {
+      valid: false,
+      skip: false,
+      status: "cancelled",
+      reason: "Order is cancelled",
+      cancelReason: fraudValidation.cancelReason,
+    };
+  }
+
+  // 3. Shopify risk check
+  const flaggedRisks = await checkShopifyOrderRisks(shopifyOrderId);
+  if (flaggedRisks.length > 0) {
+    return {
+      valid: false,
+      skip: false,
+      status: "risk_order",
+      reason: "High risk score detected",
+      message: flaggedRisks,
+    };
+  }
+
+  // 4. Welcome Kit filter (only applies if enableWelcomeKitFilter is true)
+  const welcomeKitValidation = validateWelcomeKitFilter(order);
+  if (!welcomeKitValidation.valid) {
+    return {
+      valid: false,
+      skip: true,
+      status: "skipped_non_welcome_kit",
+      reason: "Not a Welcome Kit order",
+      skus: welcomeKitValidation.skus,
+    };
+  }
+
+  // All validations passed
+  return {
+    valid: true,
+    skip: false,
+    status: "valid",
+  };
+}
