@@ -22,6 +22,7 @@ import {
   shouldSendToGps,
   determineWarehouse,
 } from "@/lib/transformers/order";
+import { getDataAreaId } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
@@ -166,6 +167,9 @@ export const processShopifyOrder = inngest.createFunction(
         await step.sleep("wait-for-d365-propagation", "5s");
       }
 
+      // Get the correct data area ID based on warehouse
+      const dataAreaId = getDataAreaId(warehouseName);
+
       await step.run("confirm-d365-order", async () => {
         if (skipD365) {
           return;
@@ -173,7 +177,7 @@ export const processShopifyOrder = inngest.createFunction(
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
-            await dynamics.confirmSalesOrder(salesOrderNumber, config.dynamics.dataAreaId);
+            await dynamics.confirmSalesOrder(salesOrderNumber, dataAreaId);
             return;
           } catch (error) {
             const isNotFoundError =
@@ -194,7 +198,7 @@ export const processShopifyOrder = inngest.createFunction(
           return amount;
         }
         if (amount > 0) {
-          await dynamics.createPrepayment(salesOrderNumber, config.dynamics.dataAreaId);
+          await dynamics.createPrepayment(salesOrderNumber, dataAreaId);
         }
         return amount;
       });
