@@ -22,7 +22,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
 
     // Verify webhook signature
     if (signature && timestamp && !gps.verifyWebhookSignature(body, signature, timestamp)) {
-      console.error('[GPS Individual] Invalid signature');
       return errorResponse('Invalid signature', 401);
     }
 
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
 
     // Process orders in batches
     console.log(`[GPS Individual] Starting processing with ${validOrderIds.length} GPS order IDs`);
-    const batchId = `gps-batch-${Date.now()}`;
+    const batchId = `GPSB${Date.now()}`;
     await inngest.send({
       id: batchId,
       name: 'gps/batch.process',
