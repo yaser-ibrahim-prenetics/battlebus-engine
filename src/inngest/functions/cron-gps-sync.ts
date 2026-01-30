@@ -233,29 +233,25 @@ async function processFulfilledGpsOrder(
     lineItems
   );
 
-  console.log(`[GPS Sync] Created Shopify fulfillment for ${shopifyOrder.name}`);
-
-  // 3. Sync to D365 (create packing slip)
+  // 3. Sync to D365
   if (config.features.enableDynamicsSync) {
-    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "U001" : "U001";
+    // Use H007 for GPS UK Warehouse, U001 for US and others
+    const dataAreaId = warehouseName === "GPS UK Warehouse" ? "H007" : "U001";
     
-    // Use D365 order number from metafield if available, otherwise look it up
-    let d365OrderNumber = gpsData.d365OrderNumber;
-    
-    if (!d365OrderNumber || d365OrderNumber.startsWith("SKIP-")) {
-      // Look up D365 order by Shopify order name
-      const d365Order = await dynamics.getSalesOrderByShopifyId(shopifyOrder.name, dataAreaId);
-      d365OrderNumber = d365Order?.SalesOrderNumber || "";
-    }
+    // Find D365 order (use order name, not ID, since THK_ShopifyReference stores the order name)
+    const d365Order = await dynamics.getSalesOrderByShopifyId(
+      shopifyOrder.name, // Use order name, not ID
+      dataAreaId
+    );
 
-    if (d365OrderNumber && !d365OrderNumber.startsWith("SKIP-")) {
+    if (d365Order?.SalesOrderNumber) {
       const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
 
       // Get lotId mapping from D365 sales order lines
-      const lotIdMap = await dynamics.getLotIdMap(d365OrderNumber, dataAreaId);
+      const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
 
       await dynamics.createFulfilment({
-        salesOrderNumber: d365OrderNumber,
+        salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
         type: "PackingSlip",
         confirmedShippedDate: gpsOrder.outboundTime?.split("T")[0] || new Date().toISOString().split("T")[0],
@@ -269,8 +265,6 @@ async function processFulfilledGpsOrder(
           lotId: lotIdMap[item.sku] || "",
         })),
       });
-
-      console.log(`[GPS Sync] Created D365 packing slip for ${shopifyOrder.name} (${d365OrderNumber})`);
     }
   }
 }
