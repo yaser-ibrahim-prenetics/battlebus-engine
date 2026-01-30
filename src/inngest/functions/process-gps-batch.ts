@@ -41,7 +41,6 @@ export const processGpsBatch = inngest.createFunction(
       for (let i = 0; i < gpsOrderIds.length; i += config.gps.batchSize) {
         const batchNumber = Math.floor(i / config.gps.batchSize) + 1;
         const chunk = gpsOrderIds.slice(i, i + config.gps.batchSize);
-
         console.log(`[GPS Batch] Fetching batch ${batchNumber}/${totalBatches} with ${chunk.length} orders`);
 
         const gpsOrdersResponse = await gps.getOutboundOrdersDetails(chunk, warehouse);
@@ -64,21 +63,20 @@ export const processGpsBatch = inngest.createFunction(
           console.log(`[GPS Batch] Batch ${batchNumber}: Found ${fulfilled.length} fulfilled orders`);
         }
       }
-
       console.log(`[GPS Batch] Total fulfilled orders found: ${allFulfilledOrders.length}`);
-      return allFulfilledOrders;
-    });
 
-    // Step 2: Check if there are fulfilled orders
-    if (fulfilledOrders.length === 0) {
-      console.log('[GPS Batch] No GPS orders ready for fulfillment');
-      await step.run('notify-no-orders', async () => {
+      // Notify if no fulfilled orders found
+      if (allFulfilledOrders.length === 0) {
+        console.log('[GPS Batch] No GPS orders ready for fulfillment');
         await slack.sendInfoMessage(
           SlackChannelEnum.GPS,
           `[GPS Batch] Batch ${batchId}: No fulfilled orders found out of ${gpsOrderIds.length} orders`
         );
-      });
+      }
+      return allFulfilledOrders;
+    });
 
+    if (fulfilledOrders.length === 0) {
       return {
         batchId,
         status: 'completed',
@@ -88,7 +86,7 @@ export const processGpsBatch = inngest.createFunction(
       };
     }
 
-    // Step 3: Validate and filter orders
+    // Step 2: Validate and filter orders
     const validOrders = await step.run('validate-orders', async (): Promise<IGpsGetOrderData[]> => {
       return fulfilledOrders.filter((orderData) => {
         if (!orderData.outboundOrderNo || !orderData.logisticsTrackNo || !orderData.outboundTime) {
@@ -110,10 +108,10 @@ export const processGpsBatch = inngest.createFunction(
       };
     }
 
-    // Step 4: Trigger individual fulfilment events
+    // Step 3: Trigger individual fulfilment events
     const eventResults = await step.run('trigger-individual-events', async () => {
       const events = validOrders.map((orderData) => {
-        const eventId = `gps-individual-${orderData.outboundOrderNo}`;
+        const eventId = `GPSI${orderData.outboundOrderNo}`;
         const fulfilmentPayload: IGpsIndividualFulfilment = {
           type: 'individual',
           warehouse,
@@ -140,9 +138,10 @@ export const processGpsBatch = inngest.createFunction(
       return result.ids || [];
     });
 
-    // Step 5: Send completion notification
+    // Step 4: Send completion notification
     await step.run('send-completion-notification', async () => {
-      const message = `[GPS Batch] Batch ${batchId} completed: ${eventResults.length} fulfilment events triggered for ${validOrders.length} fulfilled orders`;
+      const message = `[GPS Batch] Batch ${batchId} completed: ${eventResults.length} fulfilment events triggered for ` +
+        `${validOrders.length} fulfilled orders`;
       console.log(message);
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
     });
