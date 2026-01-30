@@ -1,7 +1,7 @@
 # Flow 7: Shopify Direct Fulfilments
 
 > **Journey Name:** Shopify marks order fulfilled directly (e.g., manual or via another WMS like Stord)  
-> **Direction:** Shopify → spock-store → Dynamics
+> **Direction:** Shopify → battle-bus → Dynamics
 
 ## Overview
 
@@ -10,13 +10,13 @@ This flow tests when Shopify is the **source of truth** for fulfillment, not GPS
 - A different WMS (like Stord) fulfills directly through Shopify
 - Third-party logistics provider integrates with Shopify directly
 
-In this case, spock-store receives the `orders/fulfilled` webhook and needs to:
+In this case, battle-bus receives the `orders/fulfilled` webhook and needs to:
 1. Update internal `SalesOrder` and `Fulfilment` entities
 2. Notify Dynamics 365 of the fulfillment
 
 ```
 ┌─────────────┐   orders/fulfilled   ┌─────────────┐   POST fulfilment   ┌───────────────┐
-│   Shopify   │ ───────────────────► │ spock-store │ ─────────────────► │  Dynamics 365 │
+│   Shopify   │ ───────────────────► │ battle-bus │ ─────────────────► │  Dynamics 365 │
 │  (Manual    │      webhook         └─────────────┘                    └───────────────┘
 │   or WMS)   │                             │
 └─────────────┘                             │  Update Fulfilment entity
@@ -36,8 +36,8 @@ In this case, spock-store receives the `orders/fulfilled` webhook and needs to:
 
 | System | Direction | Endpoint | Description |
 |--------|-----------|----------|-------------|
-| Shopify → spock-store | Inbound | `POST /v1.0/shopify/webhook` | Receives fulfilled webhook |
-| spock-store → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates Dynamics fulfillment |
+| Shopify → battle-bus | Inbound | `POST /v1.0/shopify/webhook` | Receives fulfilled webhook |
+| battle-bus → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates Dynamics fulfillment |
 
 ---
 
@@ -147,7 +147,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 
 ### Scenario 7.2: Stord WMS Fulfillment
 
-**Description:** Stord fulfills order and notifies Shopify, which sends webhook to spock-store.
+**Description:** Stord fulfills order and notifies Shopify, which sends webhook to battle-bus.
 
 The Shopify webhook payload when fulfilled via Stord:
 
@@ -255,7 +255,7 @@ Note: The CLI uses the fulfilled webhook after marking GPS fulfillment, which is
 
 ---
 
-## spock-store Processing Logic
+## battle-bus Processing Logic
 
 ### notifyDynamicsOnStordFulfilment Flow
 
@@ -388,7 +388,7 @@ interface FulfillmentLineItem {
 
 | Step | Check | Method |
 |------|-------|--------|
-| 1 | Fulfilled webhook received | Check spock-store logs |
+| 1 | Fulfilled webhook received | Check battle-bus logs |
 | 2 | SalesOrder found | Query by Shopify ID |
 | 3 | Fulfilment entity created | Check internal DB |
 | 4 | `shopifyFulfilmentId` populated | Verify not dummy ID |
@@ -402,7 +402,7 @@ interface FulfillmentLineItem {
 
 ### Error 7.1: SalesOrder Not Found
 
-**Trigger:** Fulfilled webhook for order not in spock-store
+**Trigger:** Fulfilled webhook for order not in battle-bus
 
 **Expected Behavior:**
 - Log warning
@@ -493,7 +493,7 @@ When using Shopify Direct Fulfillment instead of GPS:
 | Aspect | GPS Flow (Flow 3) | Shopify Direct (Flow 7) |
 |--------|-------------------|-------------------------|
 | Source of truth | GPS status | Shopify fulfillment |
-| Direction | Pull (spock-store → GPS) | Push (Shopify → spock-store) |
+| Direction | Pull (battle-bus → GPS) | Push (Shopify → battle-bus) |
 | Trigger | Scheduled polling | Webhook |
 | Dynamics notification | After GPS status 3 | After webhook |
 
@@ -525,7 +525,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/fulfilled \
 ## Notes
 
 - Shopify is **source of truth** for fulfillment in this flow
-- spock-store mirrors fulfillment data and notifies Dynamics
+- battle-bus mirrors fulfillment data and notifies Dynamics
 - Works for any fulfillment source that updates Shopify (manual, Stord, etc.)
 - Handle partial fulfillments carefully
 - Filter out dummy SKUs and refund-related fulfillments

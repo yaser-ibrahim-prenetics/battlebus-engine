@@ -1,15 +1,15 @@
 # Flow 2: Extensiv Warehouse Fulfilment
 
 > **Journey Name:** Extensiv confirms outbound shipment → Shopify fulfillment + Dynamics fulfillment  
-> **Direction:** Extensiv → spock-store → Shopify + Dynamics
+> **Direction:** Extensiv → battle-bus → Shopify + Dynamics
 
 ## Overview
 
-This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order and notifies spock-store, which then creates fulfillments in both Shopify and Dynamics 365.
+This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order and notifies battle-bus, which then creates fulfillments in both Shopify and Dynamics 365.
 
 ```
 ┌───────────────┐  outbound webhook   ┌─────────────┐   POST fulfillments.json   ┌─────────────┐
-│    Extensiv   │ ──────────────────► │ spock-store │ ──────────────────────────► │   Shopify   │
+│    Extensiv   │ ──────────────────► │ battle-bus │ ──────────────────────────► │   Shopify   │
 │    (3PL)      │                     └─────────────┘                             └─────────────┘
 └───────────────┘                            │
                                              │  POST fulfilment
@@ -22,17 +22,17 @@ This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order a
 ## Trigger Events
 
 - Extensiv ships the order
-- Extensiv sends webhook/event to spock-store with shipment confirmation
+- Extensiv sends webhook/event to battle-bus with shipment confirmation
 - Contains tracking number, carrier, and shipped line items
 
 ## Key Endpoints
 
 | System | Direction | Endpoint | Description |
 |--------|-----------|----------|-------------|
-| Extensiv → spock-store | Inbound | `POST /v1.0/extensiv/webhook` | Receives shipment confirmation |
-| spock-store → Shopify | Outbound | `POST /admin/api/.../fulfillments.json` | Creates Shopify fulfillment |
-| spock-store → Shopify | Outbound | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
-| spock-store → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates Dynamics fulfillment |
+| Extensiv → battle-bus | Inbound | `POST /v1.0/extensiv/webhook` | Receives shipment confirmation |
+| battle-bus → Shopify | Outbound | `POST /admin/api/.../fulfillments.json` | Creates Shopify fulfillment |
+| battle-bus → Shopify | Outbound | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
+| battle-bus → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates Dynamics fulfillment |
 
 ---
 
@@ -48,7 +48,7 @@ This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order a
    npm run dev
    ```
 
-3. **Configure spock-store** to use Extensiv integration path
+3. **Configure battle-bus** to use Extensiv integration path
 
 ---
 
@@ -56,7 +56,7 @@ This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order a
 
 ### Scenario 2.1: Standard Extensiv Fulfillment
 
-**Description:** Extensiv ships complete order, notifies spock-store.
+**Description:** Extensiv ships complete order, notifies battle-bus.
 
 #### Step 1: Setup - Create and Process Order
 
@@ -97,10 +97,10 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 
 #### Step 2: Simulate Extensiv Shipment Webhook
 
-Since the simulator doesn't have full Extensiv integration, simulate the webhook payload that spock-store would receive:
+Since the simulator doesn't have full Extensiv integration, simulate the webhook payload that battle-bus would receive:
 
 ```bash
-# This would be sent by Extensiv to spock-store
+# This would be sent by Extensiv to battle-bus
 # Simulating the payload structure:
 curl -X POST http://localhost:8080/v1.0/extensiv/webhook \
   -H "Content-Type: application/json" \
@@ -122,9 +122,9 @@ curl -X POST http://localhost:8080/v1.0/extensiv/webhook \
   }'
 ```
 
-#### Step 3: Expected spock-store Processing
+#### Step 3: Expected battle-bus Processing
 
-**What spock-store should do:**
+**What battle-bus should do:**
 
 1. **Parse Extensiv webhook** - Create `Task` of type `extensiv`
 2. **Find SalesOrder** - Match by `referenceNumber` (Shopify order name)
@@ -286,12 +286,12 @@ curl -X POST http://localhost:3100/state/orders \
 
 | Step | Check | Method |
 |------|-------|--------|
-| 1 | Extensiv webhook received | Check spock-store logs |
+| 1 | Extensiv webhook received | Check battle-bus logs |
 | 2 | SalesOrder found | Check internal DB |
 | 3 | Shopify fulfillment_orders fetched | Check Shopify API logs |
 | 4 | Shopify fulfillment created | Check `shopifyFulfilmentId` |
 | 5 | Dynamics fulfillment notification sent | Check Dynamics API logs |
-| 6 | Internal Fulfilment entity created | Check spock-store DB |
+| 6 | Internal Fulfilment entity created | Check battle-bus DB |
 | 7 | Order status updated | `GET /state/orders/:id` |
 
 ---

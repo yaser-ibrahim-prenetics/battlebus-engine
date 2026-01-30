@@ -1,15 +1,15 @@
 # Flow 6: Cancellations
 
 > **Journey Name:** Cancelled Shopify orders marked with dummy fulfilment to stop reprocessing  
-> **Direction:** Shopify → spock-store → Internal DB (GPS polling exclusion)
+> **Direction:** Shopify → battle-bus → Internal DB (GPS polling exclusion)
 
 ## Overview
 
-This flow tests how cancelled Shopify orders are handled by spock-store. The key behavior is creating a **dummy fulfillment record** to prevent the order from being re-polled by GPS scheduled tasks. This ensures cancelled orders don't get accidentally shipped.
+This flow tests how cancelled Shopify orders are handled by battle-bus. The key behavior is creating a **dummy fulfillment record** to prevent the order from being re-polled by GPS scheduled tasks. This ensures cancelled orders don't get accidentally shipped.
 
 ```
 ┌─────────────┐   orders/cancelled    ┌─────────────┐   Create dummy fulfillment   ┌─────────────┐
-│   Shopify   │ ────────────────────► │ spock-store │ ────────────────────────────► │ Internal DB │
+│   Shopify   │ ────────────────────► │ battle-bus │ ────────────────────────────► │ Internal DB │
 └─────────────┘     webhook           └─────────────┘                               └─────────────┘
                                              │
                                              │  shopifyFulfilmentId = '00000000000000'
@@ -34,7 +34,7 @@ This flow tests how cancelled Shopify orders are handled by spock-store. The key
 
 | System | Direction | Endpoint | Description |
 |--------|-----------|----------|-------------|
-| Shopify → spock-store | Inbound | `POST /v1.0/shopify/webhook` | Receives cancellation webhook |
+| Shopify → battle-bus | Inbound | `POST /v1.0/shopify/webhook` | Receives cancellation webhook |
 
 ---
 
@@ -61,7 +61,7 @@ const CANCELLED_ORDER_FULFILMENT_ID = '00000000000000';
 ```
 
 When an order is cancelled:
-1. spock-store creates a `Fulfilment` entity
+1. battle-bus creates a `Fulfilment` entity
 2. Sets `shopifyFulfilmentId = '00000000000000'`
 3. This special ID is recognized by GPS polling queries
 
@@ -314,12 +314,12 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/cancelled \
 
 #### Step 2: Simulate GPS Polling Query
 
-The spock-store GPS polling query should:
+The battle-bus GPS polling query should:
 - **Include:** IM8-1002 (not cancelled)
 - **Exclude:** IM8-1001 (cancelled with dummy fulfillment ID)
 
 ```sql
--- What spock-store queries
+-- What battle-bus queries
 SELECT * FROM SalesOrder so
 JOIN Fulfilment f ON f.salesOrderId = so.id
 WHERE so.gpsOrderId IS NOT NULL
@@ -358,7 +358,7 @@ Same structure as above, but topic is `orders/updated` instead of `orders/cancel
 
 ---
 
-## spock-store Processing Logic
+## battle-bus Processing Logic
 
 ### handleCancellation Flow
 
@@ -399,7 +399,7 @@ async function handleCancellation(shopifyOrder) {
 
 | Step | Check | Method |
 |------|-------|--------|
-| 1 | Cancellation webhook received | Check spock-store logs |
+| 1 | Cancellation webhook received | Check battle-bus logs |
 | 2 | SalesOrder status = cancelled | Query internal DB |
 | 3 | `cancelledAt` populated | Check field |
 | 4 | `cancelReason` populated | Check field |
