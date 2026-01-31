@@ -41,60 +41,79 @@ export const syncGpsFulfillments = inngest.createFunction(
       return { status: "skipped", reason: "GPS sync disabled" };
     }
 
-    // 1. Get Unfulfilled Orders with GPS metafields from Shopify
-    // Only orders that have been sent to GPS will have the metafield
-    // Use default parameters (limit=250, daysBack=30) to catch older orders
-    const gpsOrders = await step.run("get-unfulfilled-gps-orders", async () => {
-      return shopify.getUnfulfilledGpsOrders();
+    // STEP 1: Get GPS order IDs from all orders with GPS metafields (not just unfulfilled)
+    // We need GPS order IDs to query GPS API
+    const gpsOrderData = await step.run("get-gps-order-ids", async () => {
+      return getAllGpsOrderIds();
     });
 
-    if (gpsOrders.length === 0) {
-      return { status: "success", message: "No unfulfilled GPS orders found" };
+    if (gpsOrderData.length === 0) {
+      return { status: "success", message: "No GPS orders found" };
     }
 
-    console.log(`[GPS Sync] Found ${gpsOrders.length} unfulfilled orders with GPS metafields`);
+    console.log(`[GPS Sync] Found ${gpsOrderData.length} GPS order IDs to check`);
+
+    // STEP 2: Query GPS API for all orders (grouped by warehouse)
+    const warehouseGroups: Record<GpsWarehouseName, string[]> = {
+      "GPS Warehouse": [],
+      "GPS UK Warehouse": [],
+    };
+
+    for (const item of gpsOrderData) {
+      const warehouse = item.warehouse as GpsWarehouseName;
+      if (warehouse === "GPS Warehouse" || warehouse === "GPS UK Warehouse") {
+        warehouseGroups[warehouse].push(item.gpsOrderId);
+      }
+    }
 
     const processedBatches = [];
-    const orderChunks = [];
-    for (let i = 0; i < gpsOrders.length; i += BATCH_SIZE) {
-      orderChunks.push(gpsOrders.slice(i, i + BATCH_SIZE));
-    }
+    
+    // STEP 3: Query GPS for each warehouse and process fulfilled orders
+    for (const warehouse of ["GPS Warehouse", "GPS UK Warehouse"] as GpsWarehouseName[]) {
+      const gpsOrderIds = warehouseGroups[warehouse];
+      if (gpsOrderIds.length === 0) continue;
 
-    // 2. Process each chunk as a separate step
-    for (let i = 0; i < orderChunks.length; i++) {
-      const chunk = orderChunks[i];
-      const batchResult = await step.run(`process-batch-${i + 1}`, async () => {
-        return processOrderBatch(chunk);
-      });
-      processedBatches.push(batchResult);
+      // Split into batches for GPS API calls
+      const gpsIdChunks = [];
+      for (let i = 0; i < gpsOrderIds.length; i += BATCH_SIZE) {
+        gpsIdChunks.push(gpsOrderIds.slice(i, i + BATCH_SIZE));
+      }
+
+      for (let i = 0; i < gpsIdChunks.length; i++) {
+        const chunk = gpsIdChunks[i];
+        const batchResult = await step.run(`query-gps-${warehouse}-batch-${i + 1}`, async () => {
+          return queryGpsAndProcessFulfilled(chunk, warehouse);
+        });
+        processedBatches.push(batchResult);
+      }
     }
 
     const totalFulfilled = processedBatches.reduce((sum, b) => sum + b.fulfilled.length, 0);
     const totalErrors = processedBatches.reduce((sum, b) => sum + b.errors.length, 0);
     const allFulfilledOrderIds = processedBatches.flatMap((b) => b.fulfilled);
 
-    // Log summary of GPS orders with status 3
+    // Log summary
     if (totalFulfilled > 0) {
       console.log(
-        `[GPS Sync] Summary: Found ${totalFulfilled} GPS orders with status 3 (FULFILLED) across all batches`
+        `[GPS Sync] Summary: Found ${totalFulfilled} GPS orders fulfilled in last 6 hours`
       );
       console.log(
-        `[GPS Sync] All fulfilled order IDs: ${allFulfilledOrderIds.join(", ")}`
+        `[GPS Sync] All fulfilled order IDs (platformOrderNo): ${allFulfilledOrderIds.join(", ")}`
       );
     } else {
-      console.log(`[GPS Sync] Summary: No GPS orders with status 3 (FULFILLED) found`);
+      console.log(`[GPS Sync] Summary: No GPS orders fulfilled in last 6 hours`);
     }
 
     if (totalFulfilled > 0 || totalErrors > 0) {
       await slack.sendInfoMessage(
         "gps",
-        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${gpsOrders.length} checked.`
+        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${gpsOrderData.length} GPS orders checked.`
       );
     }
 
     return {
       status: "completed",
-      checked: gpsOrders.length,
+      checked: gpsOrderData.length,
       fulfilled: totalFulfilled,
       fulfilledOrderIds: allFulfilledOrderIds,
       batches: processedBatches,
@@ -102,147 +121,123 @@ export const syncGpsFulfillments = inngest.createFunction(
   }
 );
 
-// Order type with GPS metafield data attached
-type GpsTrackedOrder = shopify.ShopifyOrder & { gpsData: GpsOrderMetafield };
+// Helper: Get all GPS order IDs from Shopify metafields
+async function getAllGpsOrderIds(): Promise<Array<{ gpsOrderId: string; warehouse: string }>> {
+  // Get all orders (not just unfulfilled) from last 30 days that might have GPS metafields
+  const orders = await shopify.getUnfulfilledOrders(500, 30);
+  
+  console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
+  
+  const gpsOrderIds: Array<{ gpsOrderId: string; warehouse: string }> = [];
+  
+  for (const order of orders) {
+    try {
+      const gpsData = await shopify.getGpsOrderMetafield(order.id);
+      if (gpsData) {
+        gpsOrderIds.push({
+          gpsOrderId: gpsData.gpsOrderId,
+          warehouse: gpsData.warehouse,
+        });
+      }
+    } catch (error) {
+      // Skip orders where we can't fetch metafields
+      console.warn(`[GPS Sync] Failed to get GPS metafield for order ${order.id}: ${error}`);
+    }
+  }
+  
+  console.log(`[GPS Sync] Found ${gpsOrderIds.length} GPS order IDs`);
+  return gpsOrderIds;
+}
 
-async function processOrderBatch(orders: GpsTrackedOrder[]) {
+// Query GPS API and process fulfilled orders
+async function queryGpsAndProcessFulfilled(
+  gpsOrderIds: string[],
+  warehouse: GpsWarehouseName
+) {
   const fulfilled: string[] = [];
   const errors: string[] = [];
 
-  // Group orders by warehouse using the metafield data (no need to check location IDs)
-  const warehouseMap: Record<GpsWarehouseName, Array<{
-    shopifyOrder: shopify.ShopifyOrder;
-    gpsData: GpsOrderMetafield;
-  }>> = {
-    "GPS Warehouse": [],
-    "GPS UK Warehouse": [],
-  };
+  console.log(`[GPS Sync] [${warehouse}] Querying GPS for ${gpsOrderIds.length} orders: ${gpsOrderIds.join(", ")}`);
 
-  // 1. Group orders by warehouse from metafield data
-  for (const order of orders) {
-    const warehouse = order.gpsData.warehouse as GpsWarehouseName;
-    if (warehouse === "GPS Warehouse" || warehouse === "GPS UK Warehouse") {
-      warehouseMap[warehouse].push({
-        shopifyOrder: order,
-        gpsData: order.gpsData,
-      });
-      console.log(`[GPS Sync] Order ${order.name} -> ${warehouse} (GPS ID: ${order.gpsData.gpsOrderId})`);
-    } else {
-      errors.push(`${order.name}: Unknown warehouse "${warehouse}" in metafield`);
+  try {
+    // Query GPS API directly
+    const { response } = await gps.getOutboundOrdersDetails(gpsOrderIds, warehouse);
+
+    if (!response.data || response.code !== 200) {
+      errors.push(`${warehouse}: API error - ${response.msg}`);
+      return { fulfilled, errors, skippedCount: 0 };
     }
-  }
 
-  // 2. Check GPS Status for each warehouse group
-  for (const warehouse of ["GPS Warehouse", "GPS UK Warehouse"] as GpsWarehouseName[]) {
-    const warehouseOrders = warehouseMap[warehouse];
-    if (warehouseOrders.length === 0) continue;
+    console.log(`[GPS Sync] [${warehouse}] GPS returned ${response.data.length} orders`);
 
-    // Use GPS order IDs (from metafield) to query GPS API
-    const gpsOrderIds = warehouseOrders.map(o => o.gpsData.gpsOrderId);
-    
-    console.log(`[GPS Sync] [${warehouse}] Querying GPS for ${gpsOrderIds.length} orders: ${gpsOrderIds.join(", ")}`);
-    
-    try {
-      // Query GPS using the actual GPS order IDs (outboundOrderNoList)
-      const { response } = await gps.getOutboundOrdersDetails(gpsOrderIds, warehouse);
+    // Filter for fulfilled orders (status 3) in the last 6 hours
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const fulfilledGpsOrders = response.data.filter((gpsOrder) => {
+      if (gpsOrder.status !== GPS_STATUS.FULFILLED) return false;
+      
+      // Check if outboundTime is within last 6 hours
+      if (!gpsOrder.outboundTime) return false;
+      
+      const outboundDate = new Date(gpsOrder.outboundTime);
+      const isWithinLast6Hours = outboundDate >= sixHoursAgo;
+      
+      return isWithinLast6Hours;
+    });
 
-      if (!response.data || response.code !== 200) {
-        errors.push(`${warehouse}: API error - ${response.msg}`);
+    if (fulfilledGpsOrders.length > 0) {
+      console.log(
+        `[GPS Sync] [${warehouse}] Found ${fulfilledGpsOrders.length} fulfilled orders in last 6 hours`
+      );
+      const fulfilledOrderIds = fulfilledGpsOrders.map((order) => order.platformOrderNo);
+      console.log(
+        `[GPS Sync] [${warehouse}] Fulfilled order IDs (platformOrderNo): ${fulfilledOrderIds.join(", ")}`
+      );
+    }
+
+    // Process each fulfilled GPS order using platformOrderNo
+    for (const gpsOrder of fulfilledGpsOrders) {
+      const platformOrderNo = gpsOrder.platformOrderNo;
+      
+      if (!platformOrderNo) {
+        errors.push(`GPS order ${gpsOrder.outboundOrderNo}: Missing platformOrderNo`);
         continue;
       }
 
-      console.log(`[GPS Sync] [${warehouse}] GPS returned ${response.data.length} orders`);
-
-      // 3. Filter for fulfilled orders (status 3) fulfilled in the last 6 hours
-      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
-      const fulfilledGpsOrders = response.data.filter((gpsOrder) => {
-        if (gpsOrder.status !== GPS_STATUS.FULFILLED) return false;
-        
-        // Check if outboundTime is within last 6 hours
-        if (!gpsOrder.outboundTime) return false;
-        
-        const outboundDate = new Date(gpsOrder.outboundTime);
-        const isWithinLast6Hours = outboundDate >= sixHoursAgo;
-        
-        return isWithinLast6Hours;
-      });
-
-      if (fulfilledGpsOrders.length > 0) {
-        console.log(
-          `[GPS Sync] [${warehouse}] Found ${fulfilledGpsOrders.length} fulfilled orders in last 6 hours`
-        );
-        const fulfilledOrderIds = fulfilledGpsOrders.map((order) => order.platformOrderNo);
-        console.log(
-          `[GPS Sync] [${warehouse}] Fulfilled order IDs (platformOrderNo): ${fulfilledOrderIds.join(", ")}`
-        );
-      }
-
-      // 4. Process Fulfilled Orders using platformOrderNo from GPS
-      for (const gpsOrder of fulfilledGpsOrders) {
-        // Use platformOrderNo from GPS response to find Shopify order
-        // platformOrderNo should match the Shopify order name (e.g., "IM8-15116")
-        const platformOrderNo = gpsOrder.platformOrderNo;
-        
-        if (!platformOrderNo) {
-          errors.push(`GPS order ${gpsOrder.outboundOrderNo}: Missing platformOrderNo`);
-          continue;
-        }
-
-        // Try to find Shopify order by name (platformOrderNo)
-        let shopifyOrder: shopify.ShopifyOrder | null = null;
-        let gpsData: GpsOrderMetafield | null = null;
-        
-        // First, try to find in the current batch
-        const matchedOrder = warehouseOrders.find(
-          o => o.shopifyOrder.name === platformOrderNo
-        );
-        
-        if (matchedOrder) {
-          shopifyOrder = matchedOrder.shopifyOrder;
-          gpsData = matchedOrder.gpsData;
-        } else {
-          // If not in batch, fetch from Shopify by order name (platformOrderNo)
-          try {
-            // Search for order by name (platformOrderNo)
-            const orders = await shopify.searchOrdersByName(platformOrderNo);
-            if (orders.length > 0) {
-              // Cast IShopifyOrder to ShopifyOrder (they're compatible)
-              shopifyOrder = orders[0] as unknown as shopify.ShopifyOrder;
-              // Try to get GPS metafield if available
-              const metafield = await shopify.getGpsOrderMetafield(shopifyOrder.id);
-              if (metafield) {
-                gpsData = metafield;
-              }
-            }
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            errors.push(`GPS order ${gpsOrder.outboundOrderNo} (${platformOrderNo}): Failed to fetch from Shopify - ${msg}`);
-            continue;
-          }
-        }
-        
-        if (!shopifyOrder) {
+      try {
+        // Find Shopify order by platformOrderNo (order name)
+        const orders = await shopify.searchOrdersByName(platformOrderNo);
+        if (orders.length === 0) {
           errors.push(`GPS order ${gpsOrder.outboundOrderNo} (${platformOrderNo}): No matching Shopify order found`);
           continue;
         }
 
+        const shopifyOrder = orders[0] as unknown as shopify.ShopifyOrder;
+        
+        // Get GPS metafield if available (optional)
+        let gpsData: GpsOrderMetafield | null = null;
         try {
-          await processFulfilledGpsOrder(
-            gpsOrder,
-            warehouse,
-            shopifyOrder,
-            gpsData // May be null if not found, but that's okay
-          );
-          fulfilled.push(shopifyOrder.name);
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          errors.push(`${shopifyOrder.name}: ${msg}`);
+          gpsData = await shopify.getGpsOrderMetafield(shopifyOrder.id);
+        } catch {
+          // Metafield not found is okay, we can still process
         }
+
+        // Process fulfillment
+        await processFulfilledGpsOrder(
+          gpsOrder,
+          warehouse,
+          shopifyOrder,
+          gpsData
+        );
+        
+        fulfilled.push(shopifyOrder.name);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push(`GPS order ${gpsOrder.outboundOrderNo} (${platformOrderNo}): ${msg}`);
       }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      errors.push(`${warehouse}: ${msg}`);
     }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    errors.push(`${warehouse}: ${msg}`);
   }
 
   return { fulfilled, errors, skippedCount: 0 };
