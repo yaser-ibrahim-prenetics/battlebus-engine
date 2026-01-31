@@ -27,7 +27,7 @@ export const config = {
     batchSize: parseInt(process.env.GPS_BATCH_SIZE || "50", 10),
     gpsFulfilledStatus: 3,
     // Fulfillment sync settings
-    fulfillmentHoursBack: parseInt(process.env.GPS_FULFILLMENT_HOURS_BACK || "6", 10),
+    fulfillmentHoursBack: parseInt(process.env.GPS_FULFILLMENT_HOURS_BACK || "60", 10),
   },
 
   // GPS UK Warehouse Configuration
