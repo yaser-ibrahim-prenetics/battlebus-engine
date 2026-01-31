@@ -9,7 +9,7 @@
 //   in a Shopify metafield (namespace: battle_bus, key: gps_order)
 // - This cron job fetches unfulfilled orders with GPS metafields and queries GPS
 //   using the actual GPS order ID (not Shopify order name)
-// - Filters for orders fulfilled in the last 6 hours (based on outboundTime)
+// - Filters for orders fulfilled in the configured time window (based on outboundTime, default 6 hours)
 // - Uses platformOrderNo from GPS response to match Shopify orders
 // - This is more reliable than spock-store's database approach since we're stateless
 

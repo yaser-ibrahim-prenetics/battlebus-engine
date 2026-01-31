@@ -26,6 +26,8 @@ export const config = {
     queryDaysBack: parseInt(process.env.GPS_QUERY_DAYS_BACK || "7", 10),
     batchSize: parseInt(process.env.GPS_BATCH_SIZE || "50", 10),
     gpsFulfilledStatus: 3,
+    // Fulfillment sync settings
+    fulfillmentHoursBack: parseInt(process.env.GPS_FULFILLMENT_HOURS_BACK || "6", 10),
   },
 
   // GPS UK Warehouse Configuration
