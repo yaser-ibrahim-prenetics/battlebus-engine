@@ -102,7 +102,7 @@ export function getOrderingCustomerAccountNumber(warehouseName: string): string 
   
   // If explicitly set in config, use it
   if (config.orderingCustomerAccountNumber) {
-    return config.orderingCustomerAccountNumber;
+  return config.orderingCustomerAccountNumber;
   }
   
   // Otherwise, derive from dataAreaId

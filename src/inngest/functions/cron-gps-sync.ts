@@ -38,13 +38,21 @@ export const syncGpsFulfillments = inngest.createFunction(
     }
 
     // STEP 1: Get GPS order IDs from Shopify metafields, query GPS in batches, filter for status 3
-    // Returns fulfilled orders with platformOrderNo and shipment details
-    const fulfilledOrders = await step.run("get-gps-order-ids", async () => {
+    // Returns fulfilled orders AND all order statuses for visibility
+    const gpsResult = await step.run("get-gps-order-ids", async () => {
       return getAllFulfilledGpsOrders();
     });
 
+    const { fulfilledOrders, allOrderStatuses } = gpsResult;
+
+    // If no fulfilled orders, return with all statuses for visibility
     if (fulfilledOrders.length === 0) {
-      return { status: "success", message: "No fulfilled GPS orders found in configured time window" };
+      return { 
+        status: "success", 
+        message: "No fulfilled GPS orders found in configured time window",
+        totalOrdersChecked: allOrderStatuses.length,
+        allOrderStatuses, // Show all orders and their GPS statuses
+      };
     }
 
     console.log(`[GPS Sync] Found ${fulfilledOrders.length} fulfilled GPS orders to process`);
@@ -93,9 +101,11 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     return {
       status: "completed",
-      checked: fulfilledOrders.length,
-      fulfilled: totalFulfilled,
+      totalOrdersChecked: allOrderStatuses.length,
+      fulfilledCount: totalFulfilled,
       fulfilledOrderIds: allFulfilledOrderIds,
+      errors: totalErrors,
+      allOrderStatuses, // Show all orders and their GPS statuses
       batches: processedBatches,
     };
   }
@@ -112,8 +122,37 @@ type FulfilledGpsOrder = {
   warehouse: GpsWarehouseName;
 };
 
+// Type for GPS order status summary (for logging all orders)
+type GpsOrderStatusSummary = {
+  shopifyOrderName: string;
+  shopifyOrderId: string;
+  gpsOrderId: string;
+  gpsStatus: number;
+  gpsStatusText: string;
+  warehouse: string;
+  trackingNumber?: string;
+  carrier?: string;
+  outboundTime?: string;
+};
+
+// GPS status codes
+const GPS_STATUS_TEXT: Record<number, string> = {
+  0: "Created",
+  1: "Processing",
+  2: "Ready to Ship",
+  3: "Fulfilled/Shipped",
+  4: "Delivered",
+  5: "Exception",
+};
+
+// Result type including all order statuses for visibility
+type GpsSyncResult = {
+  fulfilledOrders: FulfilledGpsOrder[];
+  allOrderStatuses: GpsOrderStatusSummary[];
+};
+
 // Get GPS order IDs from Shopify metafields, query GPS in batches, filter for status 3 within configured hours
-async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
+async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   // Step 1: Get GPS order IDs from Shopify metafields (with order names for tracking)
   const orders = await shopify.getUnfulfilledOrders(250, 30);
   console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
@@ -149,7 +188,7 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
   }
   
   if (gpsOrderData.length === 0) {
-    return [];
+    return { fulfilledOrders: [], allOrderStatuses: [] };
   }
 
   // Step 2: Create mapping from GPS order ID to Shopify order data
@@ -185,6 +224,7 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
 
   // Step 3: Query GPS in batches for each warehouse and filter for status 3 within configured hours
   const allFulfilledOrders: FulfilledGpsOrder[] = [];
+  const allOrderStatuses: GpsOrderStatusSummary[] = [];
   const hoursBack = config.gps.fulfillmentHoursBack;
   const timeWindowAgo = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
 
@@ -253,6 +293,22 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
           });
         }
 
+        // Collect ALL order statuses for visibility
+        for (const gpsOrder of gpsData) {
+          const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
+          allOrderStatuses.push({
+            shopifyOrderName: shopifyData?.shopifyOrderName || gpsOrder.platformOrderNo || "Unknown",
+            shopifyOrderId: shopifyData?.shopifyOrderId || "",
+            gpsOrderId: gpsOrder.outboundOrderNo,
+            gpsStatus: gpsOrder.status,
+            gpsStatusText: GPS_STATUS_TEXT[gpsOrder.status] || `Unknown (${gpsOrder.status})`,
+            warehouse,
+            trackingNumber: gpsOrder.logisticsTrackNo || undefined,
+            carrier: gpsOrder.logisticsCarrier || undefined,
+            outboundTime: gpsOrder.outboundTime || undefined,
+          });
+        }
+
         // Filter for fulfilled orders (status 3) within configured time window
         const fulfilledOrders = gpsData.filter((gpsOrder) => {
           if (gpsOrder.status !== GPS_STATUS.FULFILLED) return false;
@@ -306,13 +362,13 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
     }
   }
 
-  console.log(`[GPS Sync] Total fulfilled orders collected: ${allFulfilledOrders.length}`);
-  if (allFulfilledOrders.length > 0) {
-    const orderIds = allFulfilledOrders.map(o => o.platformOrderNo);
-    console.log(`[GPS Sync] Fulfilled order IDs (platformOrderNo): ${orderIds.join(", ")}`);
-  }
-
-  return allFulfilledOrders;
+  console.log(`[GPS Sync] Total orders checked: ${allOrderStatuses.length}`);
+  console.log(`[GPS Sync] Total fulfilled orders: ${allFulfilledOrders.length}`);
+  
+  return {
+    fulfilledOrders: allFulfilledOrders,
+    allOrderStatuses,
+  };
 }
 
 // Process a batch of fulfilled GPS orders - create Shopify fulfillment and trigger D365 sync
