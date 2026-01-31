@@ -124,7 +124,8 @@ export const syncGpsFulfillments = inngest.createFunction(
 // Helper: Get all GPS order IDs from Shopify metafields
 async function getAllGpsOrderIds(): Promise<Array<{ gpsOrderId: string; warehouse: string }>> {
   // Get all orders (not just unfulfilled) from last 30 days that might have GPS metafields
-  const orders = await shopify.getUnfulfilledOrders(500, 30);
+  // Shopify has a max limit of 250 orders per request
+  const orders = await shopify.getUnfulfilledOrders(250, 30);
   
   console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
   
