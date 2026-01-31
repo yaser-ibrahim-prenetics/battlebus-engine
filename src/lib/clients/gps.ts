@@ -353,36 +353,7 @@ export async function getOutboundOrdersDetails(
     }
   );
 
-  let result: GpsGetOrdersDetailResponse = await response.json();
-
-  // If simulation is enabled, check for simulated fulfillments and override response
-  if (config.features.enableGpsFulfillmentSimulation && result.data) {
-    const simulatedData = result.data.map((order) => {
-      // Check if this order has a simulated fulfillment (by platformOrderNo)
-      if (order.platformOrderNo) {
-        const simulated = gpsSimulationStore.getFulfillment(order.platformOrderNo);
-        if (simulated) {
-          console.log(`[GPS] 🧪 SIMULATION: Overriding order ${order.platformOrderNo} with simulated fulfillment`);
-          return {
-            ...order,
-            status: GPS_STATUS.FULFILLED,
-            logisticsTrackNo: simulated.trackingNumber,
-            logisticsCarrier: simulated.carrier,
-            outboundTime: simulated.outboundTime,
-          };
-        }
-      }
-      return order;
-    });
-    
-    result = {
-      ...result,
-      data: simulatedData,
-    };
-  }
-
-  console.log(`[GPS] Order details response: ${JSON.stringify(result)}`);
-
+  const result: GpsGetOrdersDetailResponse = await response.json();
   return { response: result };
 }
 

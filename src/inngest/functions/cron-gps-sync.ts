@@ -224,16 +224,45 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
         
         const { response } = await gps.getOutboundOrdersDetails(batch, warehouse);
 
-        if (!response.data || response.code !== 200) {
+      if (!response.data || response.code !== 200) {
           console.error(`[GPS Sync] [${warehouse}] Batch ${batchNumber} API error: ${response.msg}`);
           continue;
         }
 
+        // Apply simulation: override GPS response with simulated fulfillment data
+        // We use our mapping since GPS response might have empty platformOrderNo
+        let gpsData = response.data;
+        if (config.features.enableGpsFulfillmentSimulation) {
+          gpsData = response.data.map((gpsOrder) => {
+            // Get Shopify order name from our mapping
+            const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
+            if (shopifyData) {
+              const simulated = gpsSimulationStore.getFulfillment(shopifyData.shopifyOrderName);
+              if (simulated) {
+                return {
+                  ...gpsOrder,
+                  status: GPS_STATUS.FULFILLED,
+                  platformOrderNo: simulated.platformOrderNo,
+                  logisticsTrackNo: simulated.trackingNumber,
+                  logisticsCarrier: simulated.carrier,
+                  outboundTime: simulated.outboundTime,
+                };
+              }
+            }
+            return gpsOrder;
+          });
+        }
+
         // Filter for fulfilled orders (status 3) within configured time window
-        const fulfilledOrders = response.data.filter((gpsOrder) => {
+        const fulfilledOrders = gpsData.filter((gpsOrder) => {
           if (gpsOrder.status !== GPS_STATUS.FULFILLED) return false;
+          
+          // Get platformOrderNo from our mapping if GPS didn't return it
+          const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
+          const platformOrderNo = gpsOrder.platformOrderNo || shopifyData?.shopifyOrderName;
+          
+          if (!platformOrderNo) return false;
           if (!gpsOrder.outboundTime) return false;
-          if (!gpsOrder.platformOrderNo) return false;
           
           const outboundDate = new Date(gpsOrder.outboundTime);
           const isWithinTimeWindow = outboundDate >= timeWindowAgo;
@@ -256,8 +285,8 @@ async function getAllFulfilledGpsOrders(): Promise<FulfilledGpsOrder[]> {
 
             if (!shopifyData) {
               console.warn(`[GPS Sync] No Shopify data found for GPS order ${gpsOrder.outboundOrderNo} (${gpsOrder.platformOrderNo})`);
-              continue;
-            }
+        continue;
+      }
 
             allFulfilledOrders.push({
               platformOrderNo: gpsOrder.platformOrderNo || shopifyData.shopifyOrderName,
@@ -305,9 +334,9 @@ async function processFulfilledOrdersBatch(
 
       // Get fulfillment orders from Shopify using the order ID
       const fulfillmentOrders = await shopify.getFulfillmentOrders(parseInt(shopifyOrderId));
-      const openFulfillment = fulfillmentOrders.find(
-        (fo) => fo.status === "open" || fo.status === "in_progress"
-      );
+  const openFulfillment = fulfillmentOrders.find(
+    (fo) => fo.status === "open" || fo.status === "in_progress"
+  );
 
       if (!openFulfillment) {
         console.log(`[GPS Sync] No open fulfillment found for ${platformOrderNo} (ID: ${shopifyOrderId}), skipping`);
@@ -316,21 +345,21 @@ async function processFulfilledOrdersBatch(
 
       // Create Shopify fulfillment with tracking info
       const trackingUrl = getTrackingUrl(logisticsCarrier, logisticsTrackNo);
-      
-      const lineItems = openFulfillment.line_items.map((item) => ({
-        id: item.id,
-        quantity: item.fulfillable_quantity,
-      }));
+  
+  const lineItems = openFulfillment.line_items.map((item) => ({
+    id: item.id,
+    quantity: item.fulfillable_quantity,
+  }));
 
       const fulfillment = await shopify.createFulfillment(
-        openFulfillment.id,
-        {
+    openFulfillment.id,
+    {
           number: logisticsTrackNo,
           company: mapGpsCarrierToShopify(logisticsCarrier),
-          url: trackingUrl,
-        },
-        lineItems
-      );
+      url: trackingUrl,
+    },
+    lineItems
+  );
 
       // Get the full Shopify order to build fulfillment event
       const shopifyOrder = await shopify.getOrder(parseInt(shopifyOrderId));
