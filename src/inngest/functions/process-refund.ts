@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
 import * as warehouseHelper from "@/lib/helpers/warehouse";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyRefundPayload } from "../events";
 import {
   THROTTLE_CONFIGS,
@@ -160,7 +161,7 @@ export const processRefund = inngest.createFunction(
       return { status: "success" };
     });
 
-    return {
+    const result = {
       status: "success",
       refundId,
       shopifyOrderId,
@@ -170,5 +171,15 @@ export const processRefund = inngest.createFunction(
       lotId: refundLine.InventoryLotId,
       processedAt: new Date().toISOString(),
     };
+
+    // Send refund event to CS platform
+    await csPlatform.sendOrderRefunded({
+      orderId: shopifyOrderId,
+      shopifyOrderName: refund.order_name || shopifyOrderId,
+      amount: refundAmount.toString(),
+      reason: refund.note || "Refund processed",
+    });
+
+    return result;
   }
 );

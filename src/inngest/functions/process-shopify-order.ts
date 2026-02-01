@@ -12,6 +12,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import { setGpsOrderMetafield } from "@/lib/clients/shopify";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
@@ -281,7 +282,7 @@ export const processShopifyOrder = inngest.createFunction(
         `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNumber}`
       );
 
-      return {
+      const result = {
         status: "success",
         shopifyOrderId,
         shopifyOrderName,
@@ -290,6 +291,28 @@ export const processShopifyOrder = inngest.createFunction(
         gpsResult,
         processedAt: new Date().toISOString(),
       };
+
+      // Send order created event to CS platform
+      let gpsOrderId: string | undefined;
+      if (gpsResult?.type === "real" && "result" in gpsResult) {
+        const gpsData = gpsResult.result?.response?.data;
+        if (Array.isArray(gpsData) && gpsData.length > 0) {
+          gpsOrderId = (gpsData[0] as any)?.outboundOrderNo || (gpsData[0] as any)?.orderNo;
+        }
+      }
+      
+      await csPlatform.sendOrderCreated({
+        id: shopifyOrderId,
+        name: shopifyOrderName,
+        shopifyOrderId,
+        shopifyOrderName,
+        d365OrderNumber: salesOrderNumber,
+        warehouse: warehouseName,
+        gpsOrderId,
+        orderJson: order,
+      });
+
+      return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const channel = slack.determineErrorChannel(errorMsg);

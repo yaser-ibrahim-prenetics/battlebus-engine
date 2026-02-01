@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyOrderPayload } from "../events";
 
 export const processOrderUpdate = inngest.createFunction(
@@ -81,7 +82,7 @@ export const processOrderUpdate = inngest.createFunction(
       });
     }
 
-    return {
+    const result = {
       status: "success",
       shopifyOrderId,
       shopifyOrderName,
@@ -89,5 +90,10 @@ export const processOrderUpdate = inngest.createFunction(
       updateActions,
       processedAt: new Date().toISOString(),
     };
+
+    // Send order updated event to CS platform
+    await csPlatform.sendOrderUpdated(order, changedFields);
+
+    return result;
   }
 );

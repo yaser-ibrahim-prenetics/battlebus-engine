@@ -4,6 +4,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
 import * as warehouseHelper from "@/lib/helpers/warehouse";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -170,7 +171,7 @@ export const processOrderCancellation = inngest.createFunction(
       }
     });
 
-    return {
+    const result = {
       status: d365Cancellation.status === "success" || d365Cancellation.status === "not_implemented" ? "success" : "partial",
       shopifyOrderId,
       shopifyOrderName,
@@ -180,5 +181,16 @@ export const processOrderCancellation = inngest.createFunction(
       d365Cancellation,
       processedAt: new Date().toISOString(),
     };
+
+    // Send cancellation event to CS platform
+    if (result.status === "success" || result.status === "partial") {
+      await csPlatform.sendOrderCancelled({
+        orderId: shopifyOrderId,
+        shopifyOrderName,
+        reason: cancelReason,
+      });
+    }
+
+    return result;
   }
 );

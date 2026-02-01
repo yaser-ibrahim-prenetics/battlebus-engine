@@ -9,6 +9,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyOrderPayload, ShopifyFulfillment, ShopifyFulfillmentLineItem } from "../events";
 import {
   isDummyFulfillment,
@@ -214,6 +215,19 @@ export const processShopifyFulfillment = inngest.createFunction(
         "stord",
         `STORD Fulfillment synced: ${shopifyOrderName} - ${stordFulfillments.length} fulfillment(s)`
       );
+    }
+
+    // Send fulfillment events to CS platform
+    for (const fulfillmentResult of fulfillmentResults) {
+      if (fulfillmentResult.status === "success" && fulfillmentResult.trackingNumber) {
+        await csPlatform.sendOrderFulfilled({
+          orderId: shopifyOrderId,
+          shopifyOrderName,
+          trackingNumber: fulfillmentResult.trackingNumber,
+          carrier: fulfillmentResult.carrier || "",
+          fulfillmentId: fulfillmentResult.fulfillmentId,
+        });
+      }
     }
 
     return {

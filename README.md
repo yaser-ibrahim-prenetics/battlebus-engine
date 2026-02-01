@@ -106,6 +106,11 @@ STORD_BASE_URL=https://api.stord.com
 STORD_API_KEY=your_stord_api_key
 STORD_WEBHOOK_SECRET=your_stord_webhook_secret
 
+# CS Platform (Battle Hub) Configuration
+CS_PLATFORM_URL=https://battle-hub-three.vercel.app
+CS_PLATFORM_WEBHOOK_SECRET=e3221dc7cc4dd5aac7053df6bd8d094b9c148053cae5696a64d351bf35b1ab5b
+# Note: This secret must match BATTLE_BUS_WEBHOOK_SECRET in battle-cs platform
+
 # Feature Flags
 DRY_RUN_MODE=true
 ENABLE_DYNAMICS_SYNC=false

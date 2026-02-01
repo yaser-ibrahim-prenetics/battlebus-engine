@@ -81,6 +81,15 @@ export const config = {
     enabledRiskCheck: true,
   },
 
+  // CS Platform (Battle Hub) Configuration
+  csPlatform: {
+    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_CS_URL || "https://battle-hub-three.vercel.app",
+    // HMAC secret for webhook signature verification
+    // Must match BATTLE_BUS_WEBHOOK_SECRET in battle-cs platform
+    webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "e3221dc7cc4dd5aac7053df6bd8d094b9c148053cae5696a64d351bf35b1ab5b",
+    enabled: process.env.CS_PLATFORM_ENABLED !== "false", // Default to true, set to "false" to disable
+  },
+
   // Slack Notification Channels
    slack: {
     applicationName: 'store',
@@ -186,6 +195,15 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
 
   if (!config.shopify.im8.accessToken) {
     errors.push("SHOPIFY_IM8_ACCESS_TOKEN is required");
+  }
+
+  if (config.csPlatform.enabled) {
+    if (!config.csPlatform.baseUrl) {
+      errors.push("CS_PLATFORM_URL or BATTLE_CS_URL is required when CS Platform is enabled");
+    }
+    if (!config.csPlatform.webhookSecret) {
+      console.warn("CS_PLATFORM_WEBHOOK_SECRET is not set - webhooks will be sent without signature verification");
+    }
   }
 
   return { valid: errors.length === 0, errors };
