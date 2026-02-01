@@ -1,137 +1,280 @@
-# IM8 Battle Bus 🚌⚡
+# Battle Bus + Battle Hub 🚌⚡
 
-> Operation Battle-Bus: Replacing spock-store's fragile polling system with durable, event-driven execution.
+> **"Battle Bus is the engine. Battle Hub is the cockpit."**
+>
+> Together, they replace Spock Store with a system that's **69x faster**, **self-healing**, and **self-service**.
 
-## Overview
+---
 
-The Battle Bus is a modern order orchestration engine that replaces the legacy spock-store Task Table polling system. It uses **Inngest** for durable execution and **Vercel** for serverless deployment.
+## The Problem We're Solving
 
-### Key Benefits
+Every week, our Slack channels are filled with messages like:
 
-| Metric | Old System (spock-store) | Battle Bus |
-|--------|-------------------------|------------|
-| Recovery Mode | Manual Reruns / SQL Scripts | Autonomous (Self-Healing) |
-| Manual Effort | ~15-20 Engineering Hours/Week | < 1 Engineering Hour/Week |
-| Task State | Binary (Processed/Error) | Stateful (Sleeping/Retrying) |
-| System Load | High (Constant DB Polling) | Low (Push-on-Demand) |
+| Message | Impact |
+|---------|--------|
+| *"Can we rerun the sync?"* | Engineering time wasted |
+| *"4000 orders still not fulfilled"* | 17-day backlog |
+| *"Order created Dec 18 just synced Jan 2"* | 15-day delay |
+| *"Please investigate this order"* | Manual investigation |
 
-## Architecture
+**The root cause:** Spock Store processes orders **one at a time** with a 10-second polling interval.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         VERCEL EDGE                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  /api/webhooks/shopify  →  shopify/order.created                    │
-│  /api/webhooks/shopify  →  shopify/refund.created                   │
-│  /api/webhooks/gps      →  gps/fulfilment.received                  │
-│  /api/webhooks/stord    →  stord/fulfilment.received                │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         INNGEST                                      │
-├─────────────────────────────────────────────────────────────────────┤
-│  processShopifyOrder     │ D365 Header → Lines → Confirm → GPS      │
-│  processRefund           │ D365 Credit Note                         │
-│  processGpsFulfilment    │ Shopify Fulfillment → D365 Packing Slip  │
-│  processStordFulfilment  │ Shopify Fulfillment → D365 Packing Slip  │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    DOWNSTREAM SYSTEMS                                │
-├─────────────────────────────────────────────────────────────────────┤
-│  Dynamics 365  │  GPS Warehouse  │  STORD  │  Shopify Admin          │
-└─────────────────────────────────────────────────────────────────────┘
+Spock Store: 1,000 orders = 2+ hours (sequential)
+Battle Bus:  1,000 orders = 2 minutes (concurrent)
 ```
 
-## Functions
+---
+
+## The Solution
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│                         IM8 BACKEND SYSTEM                                  │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                       │  │
+│  │                         BATTLE HUB                                    │  │
+│  │                      (The Cockpit)                                    │  │
+│  │                                                                       │  │
+│  │   👁️ Visibility    🔄 Operations    📊 Reports    🔔 Alerts          │  │
+│  │                                                                       │  │
+│  │   • Order Lookup   • Bulk Retry     • Reconciliation  • Slack        │  │
+│  │   • Lifecycle      • Manual Sync    • Daily Summary   • Email        │  │
+│  │   • Inventory      • OOS Queue      • CSV Export      • In-App       │  │
+│  │   • System Health  • Demo Replay    • Snapshots                      │  │
+│  │                                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                                    │ Triggers Events / Reads Status         │
+│                                    ▼                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                       │  │
+│  │                         BATTLE BUS                                    │  │
+│  │                       (The Engine)                                    │  │
+│  │                                                                       │  │
+│  │   ⚡ Event-Driven    🔁 Auto-Retry    🚀 Concurrent    📝 Durable    │  │
+│  │                                                                       │  │
+│  │   • 10 orders/second (vs 1 order/10 seconds)                         │  │
+│  │   • Automatic OOS retry (no manual replay)                           │  │
+│  │   • Built-in idempotency (no duplicates)                             │  │
+│  │   • Step-by-step checkpointing (resume on failure)                   │  │
+│  │                                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                                    │ API Calls                              │
+│                                    ▼                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                       │  │
+│  │                      EXTERNAL SYSTEMS                                 │  │
+│  │                                                                       │  │
+│  │   🛒 Shopify    📦 D365    🏭 GPS    📦 Stord    📦 Extensiv         │  │
+│  │                                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Why Battle Bus + Hub?
+
+### For Ops Team
+| Before (Spock Store) | After (Battle Bus + Hub) |
+|----------------------|--------------------------|
+| "Can we rerun the sync?" | One-click bulk retry in Hub |
+| Manual order investigation | Order Lifecycle Tracker |
+| No warning before stockout | Proactive inventory alerts |
+| OOS orders need manual replay | Automatic OOS retry queue |
+
+### For CS Team
+| Before | After |
+|--------|-------|
+| Ask Engineering for order status | Self-service Order Lookup |
+| Can't see where order is stuck | Visual lifecycle pipeline |
+
+### For Finance Team
+| Before | After |
+|--------|-------|
+| Manual reconciliation | Automated daily reports |
+| Order count discrepancies | Automatic discrepancy detection |
+
+### For Management
+| Before | After |
+|--------|-------|
+| Find out about problems from Slack | Proactive alerts before crises |
+| No visibility into system health | Real-time dashboard |
+
+---
+
+## Performance Comparison
+
+### The Math
+
+| Scenario | Spock Store | Battle Bus | Improvement |
+|----------|-------------|------------|-------------|
+| Daily Skio burst (1,375 orders) | ~80 minutes | ~2.5 minutes | **32x faster** |
+| January 8th resync (1,847 orders) | 3h 35m | ~3 minutes | **69x faster** |
+| 7,000 order OOS backlog | 6h 48m | ~12 minutes | **34x faster** |
+| December backlog (4,000 orders) | 17 days | ~7 minutes | **3,500x faster** |
+
+### Why?
+
+```
+SPOCK STORE                          BATTLE BUS
+─────────────────────────────────    ─────────────────────────────────
+Poll DB (10s wait)                   Webhook arrives (instant)
+    ↓                                    ↓
+Process 1 order                      Process 10 orders simultaneously
+    ↓                                    ↓
+Poll DB (10s wait)                   Process next 10 orders
+    ↓                                    ↓
+Process 1 order                      ... (concurrent processing)
+    ↓
+... (sequential, one at a time)
+
+Rate: ~6 orders/minute               Rate: ~600 orders/minute
+```
+
+---
+
+## Key Features
+
+### 1. Concurrent Processing
+```typescript
+// Battle Bus processes multiple orders simultaneously
+concurrency: [{ 
+  limit: 3,  // 3 orders per country at once
+  key: "event.data.orderJson.shipping_address.country_code" 
+}]
+```
+
+### 2. Automatic OOS Retry
+```typescript
+// No more manual replays - system handles it
+if (error instanceof OutOfStockError) {
+  await step.sleep("wait-for-stock", "4h");  // Wait 4 hours
+  await step.run("retry-gps-after-oos", ...); // Auto-retry
+}
+```
+
+### 3. Built-in Idempotency
+```typescript
+// Duplicate webhooks? No problem.
+idempotency: "event.data.shopifyOrderId"
+```
+
+### 4. Durable Execution
+```typescript
+// Each step is checkpointed - resume from failure
+const d365Header = await step.run("create-d365-header", ...);
+const d365Lines = await step.run("create-d365-lines", ...);
+// If step 2 fails, step 1 won't re-run on retry
+```
+
+### 5. Visual Observability
+- See every order's journey through the pipeline
+- Click to see exact step that failed
+- One-click retry from Inngest dashboard
+
+---
+
+## The Stack
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Battle Hub** | Next.js + Shadcn/ui | Operations dashboard |
+| **Battle Bus** | Inngest + Vercel | Event processing engine |
+| **Auth** | Firebase | User management |
+| **Database** | PostgreSQL | Order state & lifecycle |
+| **Notifications** | Slack API | Proactive alerts |
+
+### Why Vercel + Inngest?
+
+Used by industry leaders:
+- **Vercel**: The Washington Post, eBay, GitHub, Notion
+- **Inngest**: SoundCloud, Resend, Clerk
+
+---
+
+## Order Flow
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Shopify   │────▶│  Webhooks   │────▶│   Inngest   │────▶│  D365/GPS   │
+│   (Store)   │     │  (Instant)  │     │ (Concurrent)│     │  (Fulfil)   │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+       │                                       │
+       │                                       │
+       ▼                                       ▼
+┌─────────────┐                         ┌─────────────┐
+│ Battle Hub  │◀────────────────────────│  Lifecycle  │
+│ (Dashboard) │                         │  (Tracked)  │
+└─────────────┘                         └─────────────┘
+```
+
+### Happy Path
+1. Customer orders on Shopify
+2. Webhook triggers Battle Bus instantly
+3. D365 sales order created (with checkpointing)
+4. Order sent to GPS/Stord warehouse
+5. Warehouse ships, sends fulfillment webhook
+6. Battle Bus updates Shopify + D365
+7. Customer gets tracking email
+
+### Error Recovery
+1. Step fails (network error, timeout, etc.)
+2. Inngest auto-retries (up to 5 times)
+3. If still failing, visible in dashboard
+4. One-click retry from Hub or Inngest UI
+5. Resumes from failed step (not from beginning)
+
+---
+
+## Inngest Functions
 
 | Function | Trigger | Description |
 |----------|---------|-------------|
-| `process-shopify-order` | `shopify/order.created` | Creates D365 sales order, sends to warehouse |
-| `process-shopify-refund` | `shopify/refund.created` | Processes refunds, creates credit notes |
-| `process-gps-fulfilment` | `gps/fulfilment.received` | Updates Shopify & D365 on GPS shipment |
-| `process-stord-fulfilment` | `stord/fulfilment.received` | Updates Shopify & D365 on STORD shipment |
+| `process-shopify-order` | `shopify/order.created` | Creates D365 SO, sends to warehouse |
+| `process-refund` | `shopify/refund.created` | Creates D365 credit note |
+| `process-gps-fulfilment` | `gps/fulfilment.received` | Updates Shopify + D365 |
+| `process-stord-fulfilment` | `stord/fulfilment.received` | Updates Shopify + D365 |
+| `process-cancellation` | `shopify/order.cancelled` | Cancels in GPS + D365 |
+
+---
 
 ## Getting Started
 
 ### Prerequisites
-
 - Node.js 18+
-- npm or yarn
-- Vercel account (for deployment)
-- Inngest account (for production)
+- Vercel account
+- Inngest account
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd im8-battle-bus
+git clone git@github.com:Prenetics/battle-bus.git
+cd battle-bus
 
 # Install dependencies
 npm install
 
 # Create environment file
-touch .env.local
-```
-
-### Environment Variables
-
-Create a `.env.local` file with:
-
-```env
-# Shopify Configuration
-SHOPIFY_IM8_SHOP_DOMAIN=your-store.myshopify.com
-SHOPIFY_IM8_ACCESS_TOKEN=shpat_xxxxxxxxxxxxx
-SHOPIFY_API_VERSION=2024-07
-SHOPIFY_IM8_WEBHOOK_SECRET=your_webhook_secret
-
-# Dynamics 365 Configuration
-D365_BASE_URL=https://your-instance.operations.dynamics.com
-D365_TENANT_ID=your-azure-tenant-id
-D365_CLIENT_ID=your-azure-app-client-id
-D365_CLIENT_SECRET=your-azure-app-client-secret
-D365_RESOURCE=https://your-instance.operations.dynamics.com
-D365_DATA_AREA_ID=U001
-
-# GPS Warehouse Configuration
-GPS_BASE_URL=https://api.gpswarehouse.com
-GPS_API_KEY=your_gps_api_key
-GPS_API_SECRET=your_gps_api_secret
-
-# STORD Warehouse Configuration
-STORD_BASE_URL=https://api.stord.com
-STORD_API_KEY=your_stord_api_key
-STORD_WEBHOOK_SECRET=your_stord_webhook_secret
-
-# CS Platform (Battle Hub) Configuration
-CS_PLATFORM_URL=https://battle-hub-three.vercel.app
-CS_PLATFORM_WEBHOOK_SECRET=e3221dc7cc4dd5aac7053df6bd8d094b9c148053cae5696a64d351bf35b1ab5b
-# Note: This secret must match BATTLE_BUS_WEBHOOK_SECRET in battle-cs platform
-
-# Feature Flags
-DRY_RUN_MODE=true
-ENABLE_DYNAMICS_SYNC=false
-ENABLE_GPS_SYNC=false
-ENABLE_STORD_SYNC=false
+cp .env.example .env.local
 ```
 
 ### Local Development
 
-**Terminal 1 - Next.js Server:**
 ```bash
+# Terminal 1: Next.js server
 npm run dev
-```
 
-**Terminal 2 - Inngest Dev Server:**
-```bash
+# Terminal 2: Inngest dev server
 npx inngest-cli@latest dev
-```
 
-**Terminal 3 - Tunnel (for Shopify webhooks):**
-```bash
+# Terminal 3: Tunnel for webhooks (optional)
 npx cloudflared tunnel --url http://localhost:3000
 ```
 
@@ -139,133 +282,51 @@ Visit:
 - App: http://localhost:3000
 - Inngest Dev UI: http://localhost:8288
 
-### Testing Locally
-
-Test the webhook endpoint without Shopify:
+### Testing
 
 ```bash
+# Test webhook endpoint
 ./scripts/test-webhook.sh
-```
 
-Or with curl:
-
-```bash
+# Or with curl
 curl -X POST http://localhost:3000/api/webhooks/shopify \
   -H "Content-Type: application/json" \
   -H "x-shopify-topic: orders/create" \
-  -H "x-shopify-shop-domain: test-store.myshopify.com" \
-  -d '{"id": 123, "name": "#TEST-1001", "email": "test@example.com", ...}'
+  -d '{"id": 123, "name": "#TEST-1001"}'
 ```
 
-### Connecting to Shopify
+---
 
-1. Start the tunnel: `npx cloudflared tunnel --url http://localhost:3000`
-2. Copy the tunnel URL (e.g., `https://random-words.trycloudflare.com`)
-3. In Shopify Admin → Settings → Notifications → Webhooks:
-   - Create webhook for `Order creation`
-   - URL: `https://YOUR-TUNNEL.trycloudflare.com/api/webhooks/shopify`
+## Environment Variables
 
-### Deployment
+```env
+# Shopify
+SHOPIFY_IM8_SHOP_DOMAIN=your-store.myshopify.com
+SHOPIFY_IM8_ACCESS_TOKEN=shpat_xxxxx
+SHOPIFY_IM8_WEBHOOK_SECRET=your_secret
 
-```bash
-# Deploy to Vercel
-vercel
+# Dynamics 365
+D365_BASE_URL=https://your-instance.operations.dynamics.com
+D365_TENANT_ID=your-tenant-id
+D365_CLIENT_ID=your-client-id
+D365_CLIENT_SECRET=your-client-secret
 
-# Or link and deploy to production
-vercel link
-vercel --prod
+# GPS Warehouse
+GPS_BASE_URL=https://api.gpswarehouse.com
+GPS_API_KEY=your_api_key
+GPS_API_SECRET=your_api_secret
+
+# STORD Warehouse
+STORD_BASE_URL=https://api.stord.com
+STORD_API_KEY=your_api_key
+
+# Feature Flags
+DRY_RUN_MODE=false
+ENABLE_DYNAMICS_SYNC=true
+ENABLE_GPS_SYNC=true
 ```
 
-## Webhook Endpoints
-
-Configure these endpoints in your external systems:
-
-| System | Endpoint | Topics |
-|--------|----------|--------|
-| Shopify | `/api/webhooks/shopify` | `orders/create`, `orders/updated`, `refunds/create` |
-| GPS | `/api/webhooks/gps` | Fulfilment notifications |
-| STORD | `/api/webhooks/stord` | Fulfilment notifications |
-
-## Self-Healing Features
-
-### Out-of-Stock Retry
-
-When GPS returns an out-of-stock error, the Battle Bus automatically:
-
-1. Catches the `OutOfStockError`
-2. Sleeps for 4 hours (configurable via `OOS_RETRY_HOURS`)
-3. Retries the warehouse submission
-4. Repeats until successful or max retries reached
-
-```typescript
-if (error instanceof OutOfStockError) {
-  await step.sleep("wait-for-stock", "4h");
-  await step.run("retry-gps-after-oos", async () => {
-    return gps.createOutboundOrder(order);
-  });
-}
-```
-
-### Idempotency
-
-All functions use idempotency keys to prevent duplicate processing:
-
-- Orders: `shopifyOrderId`
-- Refunds: `refundId`
-- Fulfilments: `orderId + trackingNumber`
-
-### Checkpointing
-
-Each step is wrapped in `step.run()` for durable execution. If a function fails mid-way, it resumes from the last successful step:
-
-```typescript
-// Step 1: Create D365 header (checkpointed)
-const d365Header = await step.run("create-d365-header", async () => {
-  return dynamics.createSalesOrderHeader(header);
-});
-
-// Step 2: Create D365 lines (checkpointed)
-await step.run("create-d365-lines", async () => {
-  for (const line of lines) {
-    await dynamics.createSalesOrderLine(line);
-  }
-});
-
-// If Step 2 fails, Step 1 won't be re-executed on retry
-```
-
-## Feature Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `ENABLE_DYNAMICS_SYNC` | `true` | Enable D365 integration |
-| `ENABLE_GPS_SYNC` | `true` | Enable GPS warehouse |
-| `ENABLE_STORD_SYNC` | `true` | Enable STORD warehouse |
-| `DRY_RUN_MODE` | `false` | Log actions without executing |
-
-## Migration from spock-store
-
-### Phase 1: Shadow Pilot
-- Deploy Battle Bus with `DRY_RUN_MODE=true`
-- Configure Shopify to send duplicate webhooks
-- Verify event capture and logging
-
-### Phase 2: Integrity & Idempotency
-- Enable `DRY_RUN_MODE=false` for non-critical functions
-- Monitor for duplicate detection
-- Verify idempotency keys working
-
-### Phase 3: Self-Healing Cutover
-- Point primary webhooks to Battle Bus
-- Disable spock-store polling pods
-- Monitor Inngest dashboard for issues
-
-## Monitoring
-
-- **Inngest Dashboard**: View function runs, retries, and errors at https://app.inngest.com
-- **Inngest Dev UI**: Local debugging at http://localhost:8288
-- **Vercel Logs**: View API route logs and errors
-- **Vercel Analytics**: Monitor performance and usage
+---
 
 ## Project Structure
 
@@ -273,72 +334,102 @@ await step.run("create-d365-lines", async () => {
 src/
 ├── app/
 │   └── api/
-│       ├── inngest/route.ts      # Inngest handler
+│       ├── inngest/route.ts           # Inngest handler
 │       └── webhooks/
-│           ├── shopify/route.ts  # Shopify webhook
-│           ├── gps/route.ts      # GPS webhook
-│           └── stord/route.ts    # STORD webhook
+│           ├── shopify/route.ts       # Shopify webhooks
+│           ├── gps/route.ts           # GPS webhooks
+│           └── stord/route.ts         # STORD webhooks
 ├── inngest/
-│   ├── client.ts                 # Inngest client
-│   ├── events.ts                 # Event type definitions
-│   └── functions/
-│       ├── index.ts
+│   ├── client.ts                      # Inngest client
+│   ├── events.ts                      # Event definitions
+│   └── functions/                     # Processing functions
 │       ├── process-shopify-order.ts
 │       ├── process-refund.ts
 │       ├── process-gps-fulfilment.ts
 │       └── process-stord-fulfilment.ts
 └── lib/
-    ├── config.ts                 # Environment config
-    ├── clients/
-    │   ├── dynamics.ts           # D365 API client
-    │   ├── gps.ts                # GPS API client
-    │   └── shopify.ts            # Shopify API client
-    ├── transformers/
-    │   └── order.ts              # Order transformation logic
-    └── types/
-        ├── dynamics.ts           # D365 types
-        └── gps.ts                # GPS types
+    ├── clients/                       # API clients
+    │   ├── dynamics.ts
+    │   ├── gps.ts
+    │   └── shopify.ts
+    ├── transformers/                  # Data transformers
+    │   ├── order.ts
+    │   ├── address.ts
+    │   └── sku.ts
+    └── mappings/                      # Configuration
+        ├── warehouse-config.json
+        └── dynamics-sku.json
 ```
 
-## Development Status
+---
 
-See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for detailed completion checklist.
+## Documentation
 
-### What's Built
-- [x] Inngest infrastructure (client, events, functions)
-- [x] Webhook endpoints (Shopify, GPS, STORD)
-- [x] Basic API clients (D365, GPS, Shopify)
-- [x] Order transformer (basic)
-- [x] Configuration & feature flags
-- [x] Self-healing OOS retry logic
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE_EXPLAINED.md](docs/ARCHITECTURE_EXPLAINED.md) | Deep dive into system architecture |
+| [BATTLE_HUB_POC_ROADMAP.md](docs/BATTLE_HUB_POC_ROADMAP.md) | Complete feature specifications |
+| [BATTLE_HUB_SIMPLE_OVERVIEW.md](docs/BATTLE_HUB_SIMPLE_OVERVIEW.md) | Non-technical overview |
+| [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md) | Detailed performance comparison |
+| [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md) | Demo presentation script |
+| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Development progress |
 
-### What's Missing (from spock-store)
-- [ ] SKU mappings (`dynamics/sku.json`, `extensiv/sku.json`)
-- [ ] THK API endpoints for D365 (confirm, prepayment, fulfilment)
-- [ ] GPS auth code generation (sorted key HMAC)
-- [ ] Address transformer (UAE/SA postal code handling)
-- [ ] Shipping/tax line creation
-- [ ] Gift card & discount handling
-- [ ] Warehouse routing (GPS vs GPS UK)
+---
 
-### Quick Start for Development
-```bash
-# 1. Fix npm permissions (if needed)
-sudo chown -R $(whoami) ~/.npm
+## The Bottom Line
 
-# 2. Terminal 1: Next.js
-npm run dev
+**No more:**
+- ❌ "Can we rerun the sync?"
+- ❌ "Please investigate this order"
+- ❌ "4000 orders still not fulfilled"
+- ❌ "Order created Dec 18 just synced Jan 2"
 
-# 3. Terminal 2: Inngest Dev Server
-npx inngest-cli@latest dev
+**Instead:**
+- ✅ Self-service bulk operations
+- ✅ Visual order lifecycle tracking
+- ✅ Automatic OOS retry
+- ✅ Proactive alerts before problems
 
-# 4. Terminal 3: Test webhook
-./scripts/test-webhook.sh
+---
 
-# 5. View Inngest UI
-open http://localhost:8288
-```
+## Migration from Spock Store
+
+### Phase 1: Shadow Mode
+- Deploy Battle Bus with `DRY_RUN_MODE=true`
+- Capture same webhooks as Spock Store
+- Compare processing times
+
+### Phase 2: Parallel Run
+- Enable Battle Bus for non-critical flows
+- Monitor for issues
+- Validate idempotency
+
+### Phase 3: Cutover
+- Point primary webhooks to Battle Bus
+- Disable Spock Store polling
+- Monitor via Battle Hub dashboard
+
+---
+
+## Success Metrics
+
+| Metric | Spock Store | Battle Bus Target |
+|--------|-------------|-------------------|
+| Order processing time | ~10s per order | <1s per order |
+| Daily Skio burst | ~80 minutes | <3 minutes |
+| Manual retries/week | 15-20 hours | <1 hour |
+| OOS resolution | Manual next-day | Automatic 4-hour |
+| Visibility | Check database | Real-time dashboard |
+
+---
 
 ## License
 
-Proprietary - IM8
+Proprietary - Prenetics / IM8
+
+---
+
+<p align="center">
+  <strong>Battle Bus is the engine. Battle Hub is the cockpit.</strong><br>
+  <em>Together, they're the future of IM8 order processing.</em>
+</p>
