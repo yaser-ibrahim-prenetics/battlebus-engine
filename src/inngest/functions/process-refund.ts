@@ -175,9 +175,9 @@ export const processRefund = inngest.createFunction(
     // Send refund event to CS platform
     await csPlatform.sendOrderRefunded({
       orderId: shopifyOrderId,
-      shopifyOrderName: refund.order_name || shopifyOrderId,
+      shopifyOrderName: shopifyOrder.name || shopifyOrderId,
       amount: refundAmount.toString(),
-      reason: refund.note || "Refund processed",
+      reason: "Refund processed",
     });
 
     return result;
