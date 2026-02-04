@@ -7,15 +7,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import * as shopify from "@/lib/clients/shopify";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { orderId, reason, email, refund } = body ?? {};
+    const { orderId, orderName, reason, email, refund } = body ?? {};
 
-    if (!orderId) {
+    if (!orderId && !orderName) {
       return NextResponse.json(
-        { error: "orderId is required" },
+        { error: "orderId or orderName is required" },
         { status: 400 }
       );
     }
@@ -31,41 +32,104 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(
-      `https://${shopDomain}/admin/api/${apiVersion}/orders/${orderId}/cancel.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({
-          reason: reason || "other",
-          email: email !== false,
-          refund: refund || false,
-        }),
+    // Helper to actually call Shopify cancel for a numeric order ID
+    const cancelByNumericId = async (
+      numericOrderId: number
+    ): Promise<Response> => {
+      return fetch(
+        `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/cancel.json`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": accessToken,
+          },
+          body: JSON.stringify({
+            reason: reason || "other",
+            email: email !== false,
+            refund: refund || false,
+          }),
+        }
+      );
+    };
+
+    let response: Response | null = null;
+    let result: any = null;
+
+    // 1. If we have a numeric orderId, try cancelling directly first.
+    const numericIdFromOrderId =
+      orderId != null && Number.isFinite(Number(orderId))
+        ? Number(orderId)
+        : null;
+
+    if (numericIdFromOrderId != null) {
+      response = await cancelByNumericId(numericIdFromOrderId);
+      result = await response.json().catch(() => ({}));
+
+      // If success, return immediately
+      if (response.ok) {
+        return NextResponse.json(
+          {
+            success: true,
+            message: "Order cancelled via Battle Bus",
+            data: result.order ?? result,
+          },
+          { status: 200 }
+        );
       }
-    );
+    }
 
-    const result = await response.json();
+    // 2. If cancel by numeric ID failed with 404 (or there was no valid numeric ID)
+    // and we have an orderName, fall back to resolving by name.
+    if (orderName) {
+      const orders = await shopify.searchOrdersByName(orderName);
+      if (!orders || orders.length === 0) {
+        // If we already have a response from the numeric attempt, surface that,
+        // otherwise return not-found for the name as well.
+        if (response) {
+          return NextResponse.json(
+            {
+              error: "Failed to cancel order in Shopify",
+              details: result,
+            },
+            { status: response.status }
+          );
+        }
 
-    if (!response.ok) {
+        return NextResponse.json(
+          { error: `Order ${orderName} not found` },
+          { status: 404 }
+        );
+      }
+
+      const numericFromName = orders[0].id;
+      response = await cancelByNumericId(numericFromName);
+      result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error: "Failed to cancel order in Shopify",
+            details: result,
+          },
+          { status: response.status }
+        );
+      }
+
       return NextResponse.json(
         {
-          error: "Failed to cancel order in Shopify",
-          details: result,
+          success: true,
+          message: "Order cancelled via Battle Bus",
+          data: result.order ?? result,
         },
-        { status: response.status }
+        { status: 200 }
       );
     }
 
+    // 3. If we got here, we only had a non-numeric orderId and no orderName.
     return NextResponse.json(
-      {
-        success: true,
-        message: "Order cancelled via Battle Bus",
-        data: result.order,
-      },
-      { status: 200 }
+      { error: "Invalid orderId and no orderName provided" },
+      { status: 400 }
     );
   } catch (error) {
     console.error("[Actions] Error cancelling order:", error);

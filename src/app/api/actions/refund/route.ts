@@ -7,16 +7,25 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import * as shopify from "@/lib/clients/shopify";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { orderId, amount, reason, note, refundLineItems, restock, notify } =
-      body ?? {};
+    const {
+      orderId,
+      orderName,
+      amount,
+      reason,
+      note,
+      refundLineItems,
+      restock,
+      notify,
+    } = body ?? {};
 
-    if (!orderId) {
+    if (!orderId && !orderName) {
       return NextResponse.json(
-        { error: "orderId is required" },
+        { error: "orderName or orderId is required" },
         { status: 400 }
       );
     }
@@ -32,55 +41,119 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const refund: any = {
-      note: note || reason || "Refund processed by support",
-      notify: notify !== false,
-      ...(restock !== undefined && { restock }),
+    const buildRefundPayload = (): any => {
+      const refund: any = {
+        note: note || reason || "Refund processed by support",
+        notify: notify !== false,
+        ...(restock !== undefined && { restock }),
+      };
+
+      if (Array.isArray(refundLineItems) && refundLineItems.length > 0) {
+        refund.refund_line_items = refundLineItems.map((item: any) => ({
+          line_item_id: item.lineItemId,
+          quantity: item.quantity,
+          restock_type: item.restockType || "cancel",
+        }));
+      } else if (amount) {
+        refund.amount = String(amount);
+      } else {
+        refund.full_refund = true;
+      }
+
+      return refund;
     };
 
-    if (Array.isArray(refundLineItems) && refundLineItems.length > 0) {
-      refund.refund_line_items = refundLineItems.map((item: any) => ({
-        line_item_id: item.lineItemId,
-        quantity: item.quantity,
-        restock_type: item.restockType || "cancel",
-      }));
-    } else if (amount) {
-      refund.amount = String(amount);
-    } else {
-      refund.full_refund = true;
+    const createRefundByNumericId = async (
+      numericOrderId: number
+    ): Promise<Response> => {
+      const refund = buildRefundPayload();
+
+      return fetch(
+        `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds.json`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": accessToken,
+          },
+          body: JSON.stringify({ refund }),
+        }
+      );
+    };
+
+    let response: Response | null = null;
+    let result: any = null;
+
+    // 1. If we have a numeric orderId, try refunding directly first.
+    const numericIdFromOrderId =
+      orderId != null && Number.isFinite(Number(orderId))
+        ? Number(orderId)
+        : null;
+
+    if (numericIdFromOrderId != null) {
+      response = await createRefundByNumericId(numericIdFromOrderId);
+      result = await response.json().catch(() => ({}));
+
+      if (response.ok) {
+        return NextResponse.json(
+          {
+            success: true,
+            message: "Refund created via Battle Bus",
+            data: result.refund ?? result,
+          },
+          { status: 200 }
+        );
+      }
     }
 
-    const response = await fetch(
-      `https://${shopDomain}/admin/api/${apiVersion}/orders/${orderId}/refunds.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({ refund }),
+    // 2. If refund by numeric ID failed and we have an orderName, fall back to resolving by name.
+    if (orderName) {
+      const orders = await shopify.searchOrdersByName(orderName);
+      if (!orders || orders.length === 0) {
+        if (response) {
+          return NextResponse.json(
+            {
+              error: "Failed to create refund in Shopify",
+              details: result,
+            },
+            { status: response.status }
+          );
+        }
+
+        return NextResponse.json(
+          { error: `Order ${orderName} not found` },
+          { status: 404 }
+        );
       }
-    );
 
-    const result = await response.json();
+      const numericFromName = orders[0].id;
+      response = await createRefundByNumericId(numericFromName);
+      result = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error: "Failed to create refund in Shopify",
+            details: result,
+          },
+          { status: response.status }
+        );
+      }
+
       return NextResponse.json(
         {
-          error: "Failed to create refund in Shopify",
-          details: result,
+          success: true,
+          message: "Refund created via Battle Bus",
+          data: result.refund ?? result,
         },
-        { status: response.status }
+        { status: 200 }
       );
     }
 
+    // 3. If we got here, we only had a non-numeric orderId and no orderName.
     return NextResponse.json(
-      {
-        success: true,
-        message: "Refund created via Battle Bus",
-        data: result.refund,
-      },
-      { status: 200 }
+      { error: "Invalid orderId and no orderName provided" },
+      { status: 400 }
     );
   } catch (error) {
     console.error("[Actions] Error creating refund:", error);

@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       orderId,
+      orderName,
       fulfillmentOrderId,
       trackingNumber,
       carrier,
@@ -28,11 +29,32 @@ export async function POST(request: NextRequest) {
       notifyCustomer,
     } = body ?? {};
 
-    if (!orderId || !fulfillmentOrderId) {
+    // Support both orderName and orderId for backward compatibility
+    const identifier = orderName || orderId;
+
+    if (!identifier || !fulfillmentOrderId) {
       return NextResponse.json(
-        { error: "orderId and fulfillmentOrderId are required" },
+        { error: "orderName (or orderId) and fulfillmentOrderId are required" },
         { status: 400 }
       );
+    }
+
+    // Resolve order name to numeric ID if needed (for GPS metafield lookup)
+    let numericOrderId: number | undefined;
+    const numericId = Number(identifier);
+    
+    if (Number.isFinite(numericId)) {
+      numericOrderId = numericId;
+    } else {
+      // It's an order name, search for it to get the ID
+      const orders = await shopify.searchOrdersByName(identifier);
+      if (!orders || orders.length === 0) {
+        return NextResponse.json(
+          { error: `Order ${identifier} not found` },
+          { status: 404 }
+        );
+      }
+      numericOrderId = orders[0].id;
     }
 
     if (!trackingNumber) {
