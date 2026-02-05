@@ -14,6 +14,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
+import * as gps from "@/lib/clients/gps";
+import { mapGpsCarrierToShopify, getTrackingUrl } from "@/lib/helpers/tracking";
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,19 +72,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // If fulfillmentOrderId not provided but we have lineItems, try to get it from the order
-    if (!resolvedFulfillmentOrderId && lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
-      try {
-        const fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
-        const openFulfillmentOrder = fulfillmentOrders.find(
-          (fo: any) => fo.status === "open" || fo.status === "in_progress"
-        );
-        if (openFulfillmentOrder) {
-          resolvedFulfillmentOrderId = openFulfillmentOrder.id;
-        }
-      } catch (err) {
-        console.warn("[Actions] Failed to fetch fulfillment orders:", err);
+    // Fetch fulfillment orders to resolve fulfillmentOrderId and map line items
+    let fulfillmentOrders: any[] = [];
+    let openFulfillmentOrder: any = null;
+    
+    try {
+      fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
+      openFulfillmentOrder = fulfillmentOrders.find(
+        (fo: any) => fo.status === "open" || fo.status === "in_progress"
+      );
+      
+      // If fulfillmentOrderId not provided but we have an open fulfillment order, use it
+      if (!resolvedFulfillmentOrderId && openFulfillmentOrder) {
+        resolvedFulfillmentOrderId = openFulfillmentOrder.id;
       }
+    } catch (err) {
+      console.warn("[Actions] Failed to fetch fulfillment orders:", err);
     }
 
     if (!resolvedFulfillmentOrderId) {
@@ -92,45 +97,156 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // For manual fulfillment, tracking number is required
-    if (fulfillmentType === 'manual' && !trackingNumber) {
+    // Find the specific fulfillment order we're using
+    const targetFulfillmentOrder = fulfillmentOrders.find(
+      (fo: any) => fo.id === resolvedFulfillmentOrderId
+    ) || openFulfillmentOrder;
+
+    if (!targetFulfillmentOrder) {
       return NextResponse.json(
-        { error: "trackingNumber is required for manual fulfillment" },
-        { status: 400 }
+        { error: `Fulfillment order ${resolvedFulfillmentOrderId} not found` },
+        { status: 404 }
       );
     }
 
-    // For GPS fulfillment, tracking might come later, so it's optional
-    if (!trackingNumber && fulfillmentType !== 'gps') {
-      return NextResponse.json(
-        { error: "trackingNumber is required" },
-        { status: 400 }
-      );
+    // Build tracking info based on fulfillment type
+    let trackingInfo: { number: string; company: string; url?: string };
+    
+    if (fulfillmentType === 'gps') {
+      // For GPS fulfillment, fetch tracking info from GPS API
+      try {
+        // Get GPS order metafield from Shopify order
+        const gpsMetafield = await shopify.getGpsOrderMetafield(numericOrderId);
+        
+        if (!gpsMetafield) {
+          return NextResponse.json(
+            { error: "GPS order metafield not found. Order may not be a GPS order." },
+            { status: 400 }
+          );
+        }
+
+        // Get GPS order details to fetch tracking info
+        const { response: gpsResponse } = await gps.getOutboundOrdersDetails(
+          [gpsMetafield.gpsOrderId],
+          gpsMetafield.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+        );
+
+        if (!gpsResponse.data || gpsResponse.code !== 200 || !gpsResponse.data[0]) {
+          return NextResponse.json(
+            { error: `Failed to get GPS order details: ${gpsResponse.msg || "Unknown error"}` },
+            { status: 500 }
+          );
+        }
+
+        const gpsOrder = gpsResponse.data[0];
+        
+        // Check if GPS order is fulfilled (status 3)
+        if (gpsOrder.status !== 3) {
+          return NextResponse.json(
+            { error: `GPS order ${gpsMetafield.gpsOrderId} is not fulfilled yet (status: ${gpsOrder.status})` },
+            { status: 400 }
+          );
+        }
+
+        // Use tracking info from GPS
+        const gpsTrackingNumber = gpsOrder.logisticsTrackNo || "";
+        const gpsCarrier = gpsOrder.logisticsCarrier || "Other";
+        
+        if (!gpsTrackingNumber) {
+          return NextResponse.json(
+            { error: "GPS order is fulfilled but tracking number is not available yet" },
+            { status: 400 }
+          );
+        }
+
+        trackingInfo = {
+          number: gpsTrackingNumber,
+          company: mapGpsCarrierToShopify(gpsCarrier),
+          url: getTrackingUrl(gpsCarrier, gpsTrackingNumber),
+        };
+
+        console.log(`[Actions] Fetched GPS tracking info: ${gpsTrackingNumber} (${gpsCarrier}) for order ${numericOrderId}`);
+      } catch (error) {
+        console.error("[Actions] Error fetching GPS tracking info:", error);
+        return NextResponse.json(
+          { error: "Failed to fetch GPS tracking information", message: error instanceof Error ? error.message : String(error) },
+          { status: 500 }
+        );
+      }
+    } else {
+      // For manual fulfillment, use tracking info from API payload
+      if (!trackingNumber) {
+        return NextResponse.json(
+          { error: "trackingNumber is required for manual fulfillment" },
+          { status: 400 }
+        );
+      }
+      
+      trackingInfo = {
+        number: trackingNumber as string,
+        company: carrier || "Other",
+        url: getTrackingUrl(carrier || "", trackingNumber as string),
+      };
     }
 
-    // Build tracking info compatible with Shopify client (only for manual fulfillment)
-    const trackingInfo = trackingNumber ? {
-      number: trackingNumber as string,
-      company: carrier || "Other",
-      url: getTrackingUrl(carrier || "", trackingNumber as string),
-    } : undefined;
+    // Map order line items to fulfillment order line items
+    // The lineItems from battle-cs contain order line item IDs, but we need fulfillment order line item IDs
+    // Following spock-store pattern: if we can't map correctly, omit line items and let Shopify fulfill all
+    let fulfillmentLineItems: Array<{ id: number; quantity: number }> | undefined;
+    
+    if (Array.isArray(lineItems) && lineItems.length > 0 && targetFulfillmentOrder?.line_items) {
+      fulfillmentLineItems = [];
+      
+      for (const requestedItem of lineItems) {
+        // Find the fulfillment order line item that matches this order line item
+        // Match by line_item_id (which is the order line item ID)
+        const fulfillmentLineItem = targetFulfillmentOrder.line_items.find(
+          (foItem: any) => foItem.line_item_id === requestedItem.id
+        );
+        
+        if (fulfillmentLineItem) {
+          fulfillmentLineItems.push({
+            id: fulfillmentLineItem.id, // Use fulfillment order line item ID
+            quantity: Math.min(requestedItem.quantity, fulfillmentLineItem.fulfillable_quantity || fulfillmentLineItem.quantity),
+          });
+        } else {
+          console.warn(`[Actions] Order line item ${requestedItem.id} not found in fulfillment order ${resolvedFulfillmentOrderId}`);
+        }
+      }
+      
+      // If we couldn't map all requested items correctly, omit line items entirely
+      // This follows spock-store pattern: let Shopify fulfill all items in the fulfillment order
+      if (fulfillmentLineItems.length !== lineItems.length) {
+        console.warn(`[Actions] Could not map all line items (${fulfillmentLineItems.length}/${lineItems.length}), omitting line items to fulfill all items in fulfillment order`);
+        fulfillmentLineItems = undefined; // Let Shopify fulfill all items
+      }
+    }
+    // If no line items specified, don't provide any - Shopify will fulfill all fulfillable items
 
-    // If lineItems provided, map to expected shape for createFulfillment
-    const fulfillmentLineItems =
-      Array.isArray(lineItems) && lineItems.length > 0
-        ? lineItems.map((item: any) => ({
-            id: item.id,
-            quantity: item.quantity,
-          }))
-        : undefined;
-
-    // For GPS fulfillment without tracking, we might need different handling
-    // For now, if no tracking info, we'll still create fulfillment but without tracking
+    // Create fulfillment with tracking info, fulfillmentType, and platform
+    // Always send tracking info (even if empty for GPS - can be updated later)
     const fulfillment = await shopify.createFulfillment(
       resolvedFulfillmentOrderId,
-      trackingInfo || { number: "", company: "Other" }, // Provide minimal tracking if none
-      fulfillmentLineItems
+      trackingInfo,
+      fulfillmentLineItems,
+      fulfillmentType || "manual",
+      platform || "shopify"
     );
+
+    // Store fulfillmentType and platform as order metafields for tracking
+    try {
+      if (fulfillmentType || platform) {
+        await shopify.setFulfillmentMetadata(
+          numericOrderId,
+          fulfillment.id,
+          fulfillmentType || "manual",
+          platform || "shopify"
+        );
+      }
+    } catch (err) {
+      console.warn("[Actions] Failed to set fulfillment metadata:", err);
+      // Don't fail the request if metadata setting fails
+    }
 
     // Note: Inngest + webhooks will take care of syncing to D365, GPS, etc.
 
@@ -152,26 +268,6 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-function getTrackingUrl(carrier: string, trackingNumber: string): string {
-  const carrierLower = carrier.toLowerCase();
-  if (carrierLower.includes("fedex")) {
-    return `https://www.fedex.com/apps/fedextrack/?tracknumbers=${trackingNumber}`;
-  }
-  if (carrierLower.includes("ups")) {
-    return `https://www.ups.com/track?tracknum=${trackingNumber}`;
-  }
-  if (carrierLower.includes("usps")) {
-    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`;
-  }
-  if (carrierLower.includes("dhl")) {
-    return `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
-  }
-  if (carrierLower.includes("sf")) {
-    return `https://www.sf-express.com/en/dynamic_function/waybill/#search/bill-number/${trackingNumber}`;
-  }
-  return `https://track.aftership.com/${trackingNumber}`;
 }
 
 

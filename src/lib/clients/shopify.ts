@@ -85,7 +85,9 @@ export async function createFulfillment(
     company: string;
     url?: string;
   },
-  lineItems?: { id: number; quantity: number }[]
+  lineItems?: { id: number; quantity: number }[],
+  fulfillmentType?: string,
+  platform?: string
 ): Promise<ShopifyFulfillment> {
   if (config.features.enabledShopifyCreateFulfillmentMock) {
     const mockData = await import('../mocks/shopify/fulfillmentsCreate.json');
@@ -95,20 +97,37 @@ export async function createFulfillment(
 
   const url = buildUrl("/fulfillments.json");
 
-  const body = {
+  // Build fulfillment order entry - only include line items if provided
+  // Following spock-store pattern: if line items not specified, Shopify fulfills all items
+  const fulfillmentOrderEntry: any = {
+    fulfillment_order_id: fulfillmentOrderId,
+  };
+  
+  // Only include fulfillment_order_line_items if lineItems is provided and not empty
+  if (lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
+    fulfillmentOrderEntry.fulfillment_order_line_items = lineItems;
+  }
+
+  // Build note with fulfillment metadata
+  const noteParts: string[] = [];
+  if (fulfillmentType) {
+    noteParts.push(`FulfillmentType: ${fulfillmentType}`);
+  }
+  if (platform) {
+    noteParts.push(`Platform: ${platform}`);
+  }
+  const note = noteParts.length > 0 ? noteParts.join(" | ") : undefined;
+
+  const body: any = {
     fulfillment: {
-      line_items_by_fulfillment_order: [
-        {
-          fulfillment_order_id: fulfillmentOrderId,
-          fulfillment_order_line_items: lineItems,
-        },
-      ],
+      line_items_by_fulfillment_order: [fulfillmentOrderEntry],
       tracking_info: {
-        number: trackingInfo.number,
-        company: trackingInfo.company,
-        url: trackingInfo.url,
+        number: trackingInfo.number || "",
+        company: trackingInfo.company || "Other",
+        ...(trackingInfo.url && { url: trackingInfo.url }),
       },
       notify_customer: true,
+      ...(note && { note }),
     },
   };
 
@@ -323,6 +342,49 @@ export async function getGpsOrderMetafield(
   } catch {
     console.warn(`[Shopify] Failed to parse GPS metafield for order ${orderId}`);
     return null;
+  }
+}
+
+/**
+ * Set fulfillment metadata on order (fulfillmentType and platform)
+ * Stores as order metafields for tracking
+ */
+export async function setFulfillmentMetadata(
+  orderId: string | number,
+  fulfillmentId: string | number,
+  fulfillmentType: string,
+  platform: string
+): Promise<void> {
+  const url = buildUrl(`/orders/${orderId}/metafields.json`);
+  
+  const metadata = {
+    fulfillmentId: fulfillmentId.toString(),
+    fulfillmentType,
+    platform,
+    createdAt: new Date().toISOString(),
+  };
+
+  const body = {
+    metafield: {
+      namespace: GPS_METAFIELD_NAMESPACE,
+      key: `fulfillment_${fulfillmentId}`,
+      value: JSON.stringify(metadata),
+      type: "json",
+    },
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.warn(`[Shopify] Failed to set fulfillment metadata: ${response.status} - ${error}`);
+    // Don't throw - this is optional metadata
+  } else {
+    console.log(`[Shopify] Set fulfillment metadata on order ${orderId} for fulfillment ${fulfillmentId}`);
   }
 }
 
