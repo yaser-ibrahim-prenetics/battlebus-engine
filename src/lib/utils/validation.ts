@@ -16,11 +16,14 @@ import * as shopify from "@/lib/clients/shopify";
  * Ported from spock-store isTestOrder
  */
 export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tags" | "name">): boolean {
-  const liveDate = new Date(config.orders.liveDateTime);
-  const orderDate = new Date(order.created_at);
+  // Check if created_at exists before comparing dates
+  if (order.created_at) {
+    const liveDate = new Date(config.orders.liveDateTime);
+    const orderDate = new Date(order.created_at);
 
-  if (orderDate < liveDate) {
-    return true;
+    if (orderDate < liveDate) {
+      return true;
+    }
   }
 
   const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
