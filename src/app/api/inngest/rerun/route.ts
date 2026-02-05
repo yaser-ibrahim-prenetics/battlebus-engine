@@ -34,16 +34,24 @@ export async function POST(request: NextRequest) {
 
       // Build event payload - DO NOT spread eventData as it may contain
       // conflicting fields like orderId that would overwrite shopifyOrderId
+      // IMPORTANT: Append timestamp to shopifyOrderId to bypass idempotency for reruns
+      // The function uses idempotency: "event.data.shopifyOrderId" which would
+      // otherwise deduplicate and skip the rerun
+      const rerunTimestamp = Date.now();
       const eventPayload = {
         name: eventName || "shopify/order.paid",
         data: {
-          shopifyOrderId: String(shopifyOrder.id),
+          // Append rerun timestamp to make idempotency key unique
+          shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
+          // Keep original ID for reference
+          originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
           receivedAt: new Date().toISOString(),
+          isRerun: true,
           // Only include safe fields from eventData
           ...(eventData?.fromStart !== undefined && { fromStart: eventData.fromStart }),
         },
@@ -77,16 +85,20 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Append timestamp to bypass idempotency for reruns
+      const rerunTimestamp = Date.now();
       const eventPayload = {
         name: eventName || "shopify/order.paid",
         data: {
-          shopifyOrderId: String(shopifyOrder.id),
+          shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
+          originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
           receivedAt: new Date().toISOString(),
+          isRerun: true,
         },
       };
 
