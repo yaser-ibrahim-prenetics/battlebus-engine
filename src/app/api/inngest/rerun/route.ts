@@ -16,10 +16,13 @@ export async function POST(request: NextRequest) {
 
     // If orderName is provided, fetch the order from Shopify and trigger reprocess
     if (orderName) {
-      console.log(`[Inngest Rerun] Fetching order ${orderName} from Shopify for reprocess`);
+      // Shopify order names include the # prefix (e.g., #IM8-14931)
+      // Ensure we search with the correct format
+      const searchName = orderName.startsWith('#') ? orderName : `#${orderName}`;
+      console.log(`[Inngest Rerun] Fetching order ${searchName} from Shopify for reprocess`);
       
       // Fetch the full order from Shopify
-      const orders = await searchOrdersByName(orderName);
+      const orders = await searchOrdersByName(searchName);
       const shopifyOrder = orders?.[0];
       
       if (!shopifyOrder) {
@@ -56,7 +59,9 @@ export async function POST(request: NextRequest) {
     // If eventId is provided (Firestore order ID), we need to look up the order name first
     if (eventId && eventData?.orderName) {
       // If orderName is in eventData, use that to fetch from Shopify
-      const shopifyOrderName = eventData.orderName;
+      // Shopify order names include the # prefix (e.g., #IM8-14931)
+      const rawOrderName = eventData.orderName;
+      const shopifyOrderName = rawOrderName.startsWith('#') ? rawOrderName : `#${rawOrderName}`;
       console.log(`[Inngest Rerun] Fetching order ${shopifyOrderName} from Shopify`);
       
       const orders = await searchOrdersByName(shopifyOrderName);
