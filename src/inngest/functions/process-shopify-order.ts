@@ -7,7 +7,7 @@
 // 3. Creates GPS Outbound Order (if applicable)
 // 4. Handles Out of Stock retries
 
-import { inngest, orderChannel } from "../client";
+import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
@@ -62,18 +62,18 @@ export const processShopifyOrder = inngest.createFunction(
 
     // Helper to publish status updates via Inngest Realtime
     const publishStatus = async (
-      step: string,
+      stepName: string,
       status: "running" | "completed" | "failed" | "skipped",
       message?: string,
       data?: Record<string, unknown>
     ) => {
       try {
-        await publish(orderChannel, {
+        await publish({
           channel: `order:${shopifyOrderName}`,
           topic: "status",
           data: {
             orderName: shopifyOrderName,
-            step,
+            step: stepName,
             status,
             message,
             data,
@@ -89,16 +89,16 @@ export const processShopifyOrder = inngest.createFunction(
     // Helper to publish final result
     const publishResult = async (
       status: "success" | "failed" | "skipped",
-      data?: { d365OrderNumber?: string; warehouse?: string; error?: string }
+      resultData?: { d365OrderNumber?: string; warehouse?: string; error?: string }
     ) => {
       try {
-        await publish(orderChannel, {
+        await publish({
           channel: `order:${shopifyOrderName}`,
           topic: "result",
           data: {
             orderName: shopifyOrderName,
             status,
-            ...data,
+            ...resultData,
             timestamp: new Date().toISOString(),
           },
         });
