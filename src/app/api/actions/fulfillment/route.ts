@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the specific fulfillment order we're using
-    const targetFulfillmentOrder = fulfillmentOrders.find(
+    let targetFulfillmentOrder = fulfillmentOrders.find(
       (fo: any) => fo.id === resolvedFulfillmentOrderId
     ) || openFulfillmentOrder;
 
@@ -107,6 +107,22 @@ export async function POST(request: NextRequest) {
         { error: `Fulfillment order ${resolvedFulfillmentOrderId} not found` },
         { status: 404 }
       );
+    }
+
+    // Re-fetch fulfillment orders if we need to map line items (to ensure we have latest data)
+    if (Array.isArray(lineItems) && lineItems.length > 0) {
+      try {
+        const freshFulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
+        const freshTargetFulfillmentOrder = freshFulfillmentOrders.find(
+          (fo: any) => fo.id === resolvedFulfillmentOrderId
+        );
+        if (freshTargetFulfillmentOrder) {
+          targetFulfillmentOrder = freshTargetFulfillmentOrder;
+          console.log(`[Actions] Re-fetched fulfillment order ${resolvedFulfillmentOrderId} for line item mapping`);
+        }
+      } catch (err) {
+        console.warn("[Actions] Failed to re-fetch fulfillment orders for line item mapping, using cached data:", err);
+      }
     }
 
     // Build tracking info based on fulfillment type
@@ -194,41 +210,66 @@ export async function POST(request: NextRequest) {
     // Following spock-store pattern: if we can't map correctly, omit line items and let Shopify fulfill all
     let fulfillmentLineItems: Array<{ id: number; quantity: number }> | undefined;
     
-    if (Array.isArray(lineItems) && lineItems.length > 0 && targetFulfillmentOrder?.line_items) {
-      fulfillmentLineItems = [];
-      
-      for (const requestedItem of lineItems) {
-        // Find the fulfillment order line item that matches this order line item
-        // Match by line_item_id (which is the order line item ID)
-        const fulfillmentLineItem = targetFulfillmentOrder.line_items.find(
-          (foItem: any) => foItem.line_item_id === requestedItem.id
-        );
+    if (Array.isArray(lineItems) && lineItems.length > 0) {
+      if (!targetFulfillmentOrder?.line_items || targetFulfillmentOrder.line_items.length === 0) {
+        console.warn(`[Actions] Fulfillment order ${resolvedFulfillmentOrderId} has no line items, will fulfill all items`);
+        fulfillmentLineItems = undefined;
+      } else {
+        fulfillmentLineItems = [];
         
-        if (fulfillmentLineItem) {
-          fulfillmentLineItems.push({
-            id: fulfillmentLineItem.id, // Use fulfillment order line item ID
-            quantity: Math.min(requestedItem.quantity, fulfillmentLineItem.fulfillable_quantity || fulfillmentLineItem.quantity),
-          });
-        } else {
-          console.warn(`[Actions] Order line item ${requestedItem.id} not found in fulfillment order ${resolvedFulfillmentOrderId}`);
+        console.log(`[Actions] Mapping ${lineItems.length} requested line items to fulfillment order line items`);
+        console.log(`[Actions] Requested line items:`, JSON.stringify(lineItems));
+        console.log(`[Actions] Fulfillment order has ${targetFulfillmentOrder.line_items.length} line items`);
+        console.log(`[Actions] Fulfillment order line items:`, JSON.stringify(targetFulfillmentOrder.line_items.map((li: any) => ({ id: li.id, line_item_id: li.line_item_id, fulfillable_quantity: li.fulfillable_quantity }))));
+        
+        for (const requestedItem of lineItems) {
+          // Convert to numbers for comparison (handle string/number mismatches)
+          const requestedId = Number(requestedItem.id);
+          
+          // Find the fulfillment order line item that matches this order line item
+          // Match by line_item_id (which is the order line item ID)
+          const fulfillmentLineItem = targetFulfillmentOrder.line_items.find(
+            (foItem: any) => Number(foItem.line_item_id) === requestedId
+          );
+          
+          if (fulfillmentLineItem) {
+            const fulfillableQty = fulfillmentLineItem.fulfillable_quantity || fulfillmentLineItem.quantity || 0;
+            const requestedQty = Number(requestedItem.quantity) || 1;
+            const finalQty = Math.min(requestedQty, fulfillableQty);
+            
+            fulfillmentLineItems.push({
+              id: Number(fulfillmentLineItem.id), // Use fulfillment order line item ID (must be numeric)
+              quantity: finalQty,
+            });
+            
+            console.log(`[Actions] Mapped order line item ${requestedId} to fulfillment line item ${fulfillmentLineItem.id} (qty: ${finalQty})`);
+          } else {
+            console.warn(`[Actions] Order line item ${requestedId} not found in fulfillment order ${resolvedFulfillmentOrderId}`);
+            console.warn(`[Actions] Available line_item_ids in fulfillment order:`, targetFulfillmentOrder.line_items.map((li: any) => li.line_item_id));
+          }
         }
-      }
-      
-      // If we couldn't map all requested items correctly, omit line items entirely
-      // This follows spock-store pattern: let Shopify fulfill all items in the fulfillment order
-      if (fulfillmentLineItems.length !== lineItems.length) {
-        console.warn(`[Actions] Could not map all line items (${fulfillmentLineItems.length}/${lineItems.length}), omitting line items to fulfill all items in fulfillment order`);
-        fulfillmentLineItems = undefined; // Let Shopify fulfill all items
+        
+        // If we couldn't map all requested items correctly, omit line items entirely
+        // This follows spock-store pattern: let Shopify fulfill all items in the fulfillment order
+        if (fulfillmentLineItems.length !== lineItems.length) {
+          console.warn(`[Actions] Could not map all line items (${fulfillmentLineItems.length}/${lineItems.length}), omitting line items to fulfill all items in fulfillment order`);
+          fulfillmentLineItems = undefined; // Let Shopify fulfill all items
+        } else {
+          console.log(`[Actions] Successfully mapped all ${fulfillmentLineItems.length} line items`);
+        }
       }
     }
     // If no line items specified, don't provide any - Shopify will fulfill all fulfillable items
 
     // Create fulfillment with tracking info, fulfillmentType, and platform
     // Always send tracking info (even if empty for GPS - can be updated later)
+    // Only send line items if we successfully mapped them all
+    console.log(`[Actions] Creating fulfillment with ${fulfillmentLineItems ? fulfillmentLineItems.length : 'all'} line items`);
+    
     const fulfillment = await shopify.createFulfillment(
       resolvedFulfillmentOrderId,
       trackingInfo,
-      fulfillmentLineItems,
+      fulfillmentLineItems, // undefined if mapping failed - will fulfill all items
       fulfillmentType || "manual",
       platform || "shopify"
     );
