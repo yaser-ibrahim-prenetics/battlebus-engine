@@ -22,54 +22,98 @@ export async function POST(request: NextRequest) {
       orderId,
       orderName,
       fulfillmentOrderId,
+      fulfillmentType,
       trackingNumber,
       carrier,
       locationId,
       lineItems,
       notifyCustomer,
+      platform,
     } = body ?? {};
 
     // Support both orderName and orderId for backward compatibility
-    const identifier = orderName || orderId;
+    // If platform is 'shopify', try orderId first, then fallback to orderName
+    let numericOrderId: number | undefined;
+    let resolvedFulfillmentOrderId: number | undefined = fulfillmentOrderId ? Number(fulfillmentOrderId) : undefined;
 
-    if (!identifier || !fulfillmentOrderId) {
-      return NextResponse.json(
-        { error: "orderName (or orderId) and fulfillmentOrderId are required" },
-        { status: 400 }
-      );
+    // Try to resolve order ID with fallback logic (same as cancel/refund)
+    if (orderId) {
+      const numericId = Number(orderId);
+      if (Number.isFinite(numericId) && !isNaN(numericId)) {
+        // It's a valid numeric ID, try to use it
+        numericOrderId = numericId;
+      } else if (platform === 'shopify' && orderName) {
+        // orderId is not numeric (e.g., "shopify-12346"), try orderName instead
+        const orders = await shopify.searchOrdersByName(orderName);
+        if (orders && orders.length > 0) {
+          numericOrderId = orders[0].id;
+        }
+      }
     }
 
-    // Resolve order name to numeric ID if needed (for GPS metafield lookup)
-    let numericOrderId: number | undefined;
-    const numericId = Number(identifier);
-    
-    if (Number.isFinite(numericId)) {
-      numericOrderId = numericId;
-    } else {
-      // It's an order name, search for it to get the ID
-      const orders = await shopify.searchOrdersByName(identifier);
+    // If we still don't have a numeric ID, try orderName
+    if (!numericOrderId && orderName) {
+      const orders = await shopify.searchOrdersByName(orderName);
       if (!orders || orders.length === 0) {
         return NextResponse.json(
-          { error: `Order ${identifier} not found` },
+          { error: `Order ${orderName} not found` },
           { status: 404 }
         );
       }
       numericOrderId = orders[0].id;
     }
 
-    if (!trackingNumber) {
+    if (!numericOrderId) {
+      return NextResponse.json(
+        { error: "Could not resolve order ID from orderId or orderName" },
+        { status: 400 }
+      );
+    }
+
+    // If fulfillmentOrderId not provided but we have lineItems, try to get it from the order
+    if (!resolvedFulfillmentOrderId && lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
+      try {
+        const fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
+        const openFulfillmentOrder = fulfillmentOrders.find(
+          (fo: any) => fo.status === "open" || fo.status === "in_progress"
+        );
+        if (openFulfillmentOrder) {
+          resolvedFulfillmentOrderId = openFulfillmentOrder.id;
+        }
+      } catch (err) {
+        console.warn("[Actions] Failed to fetch fulfillment orders:", err);
+      }
+    }
+
+    if (!resolvedFulfillmentOrderId) {
+      return NextResponse.json(
+        { error: "fulfillmentOrderId is required or could not be resolved from order" },
+        { status: 400 }
+      );
+    }
+
+    // For manual fulfillment, tracking number is required
+    if (fulfillmentType === 'manual' && !trackingNumber) {
+      return NextResponse.json(
+        { error: "trackingNumber is required for manual fulfillment" },
+        { status: 400 }
+      );
+    }
+
+    // For GPS fulfillment, tracking might come later, so it's optional
+    if (!trackingNumber && fulfillmentType !== 'gps') {
       return NextResponse.json(
         { error: "trackingNumber is required" },
         { status: 400 }
       );
     }
 
-    // Build tracking info compatible with Shopify client
-    const trackingInfo = {
+    // Build tracking info compatible with Shopify client (only for manual fulfillment)
+    const trackingInfo = trackingNumber ? {
       number: trackingNumber as string,
       company: carrier || "Other",
       url: getTrackingUrl(carrier || "", trackingNumber as string),
-    };
+    } : undefined;
 
     // If lineItems provided, map to expected shape for createFulfillment
     const fulfillmentLineItems =
@@ -80,9 +124,11 @@ export async function POST(request: NextRequest) {
           }))
         : undefined;
 
+    // For GPS fulfillment without tracking, we might need different handling
+    // For now, if no tracking info, we'll still create fulfillment but without tracking
     const fulfillment = await shopify.createFulfillment(
-      Number(fulfillmentOrderId),
-      trackingInfo,
+      resolvedFulfillmentOrderId,
+      trackingInfo || { number: "", company: "Other" }, // Provide minimal tracking if none
       fulfillmentLineItems
     );
 
