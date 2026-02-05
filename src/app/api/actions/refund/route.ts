@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
       refundLineItems,
       restock,
       notify,
+      location_id, // location_id from battle-cs (extracted from order details)
     } = body ?? {};
 
     if (!orderId && !orderName) {
@@ -48,35 +49,41 @@ export async function POST(request: NextRequest) {
         // Note: restock field is deprecated - use restock_type on refund_line_items instead
       };
 
-      // Get location_id from order fulfillments (required for restock)
-      let locationId: number | null = null;
-      try {
-        const order = await shopify.getOrder(numericOrderId);
-        // Get location from first fulfillment (order may have fulfillments in API response)
-        const orderWithFulfillments = order as any;
-        if (orderWithFulfillments.fulfillments && orderWithFulfillments.fulfillments.length > 0) {
-          locationId = orderWithFulfillments.fulfillments[0].location_id || null;
-        }
-        
-        // If no fulfillment location, try to get from fulfillment orders
-        if (!locationId) {
-          try {
-            const fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
-            if (fulfillmentOrders.length > 0 && fulfillmentOrders[0].assigned_location_id) {
-              locationId = fulfillmentOrders[0].assigned_location_id;
-            }
-          } catch (err) {
-            console.warn("[Actions] Failed to get location from fulfillment orders:", err);
+      // Use location_id from request payload (sent by battle-cs), or fetch it as fallback
+      let locationId: number | null = location_id ? Number(location_id) : null;
+      
+      // If location_id not provided in payload, try to fetch it from order
+      if (!locationId) {
+        try {
+          const order = await shopify.getOrder(numericOrderId);
+          // Get location from first fulfillment (order may have fulfillments in API response)
+          const orderWithFulfillments = order as any;
+          if (orderWithFulfillments.fulfillments && orderWithFulfillments.fulfillments.length > 0) {
+            locationId = orderWithFulfillments.fulfillments[0].location_id || null;
           }
-        }
+          
+          // If no fulfillment location, try to get from fulfillment orders
+          if (!locationId) {
+            try {
+              const fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
+              if (fulfillmentOrders.length > 0 && fulfillmentOrders[0].assigned_location_id) {
+                locationId = fulfillmentOrders[0].assigned_location_id;
+              }
+            } catch (err) {
+              console.warn("[Actions] Failed to get location from fulfillment orders:", err);
+            }
+          }
 
-        // If still no location, use GPS location as fallback (most common)
-        if (!locationId && config.shopify.im8.locations?.gps) {
-          locationId = Number(config.shopify.im8.locations.gps);
-          console.warn(`[Actions] Using fallback GPS location ${locationId} for refund restock`);
+          // If still no location, use GPS location as fallback (most common)
+          if (!locationId && config.shopify.im8.locations?.gps) {
+            locationId = Number(config.shopify.im8.locations.gps);
+            console.warn(`[Actions] Using fallback GPS location ${locationId} for refund restock`);
+          }
+        } catch (err) {
+          console.warn("[Actions] Failed to fetch order for location, proceeding without location:", err);
         }
-      } catch (err) {
-        console.warn("[Actions] Failed to fetch order for location, proceeding without location:", err);
+      } else {
+        console.log(`[Actions] Using location_id ${locationId} from request payload`);
       }
 
       if (Array.isArray(refundLineItems) && refundLineItems.length > 0) {
@@ -93,16 +100,16 @@ export async function POST(request: NextRequest) {
           };
           
           // Add location_id if restocking (required by Shopify)
+          // Priority: item.location_id (from payload) > locationId (from order/fallback)
           if (needsLocation) {
-            if (locationId) {
+            if (item.location_id || item.locationId) {
+              // Use location_id from the line item itself (highest priority)
+              refundLineItem.location_id = item.location_id || item.locationId;
+            } else if (locationId) {
+              // Use location_id from order or fallback
               refundLineItem.location_id = locationId;
             } else {
-              // If restocking but no location found, use item's location_id if provided
-              if (item.locationId) {
-                refundLineItem.location_id = item.locationId;
-              } else {
-                console.warn(`[Actions] No location_id found for restock refund line item ${item.lineItemId || item.id}`);
-              }
+              console.warn(`[Actions] No location_id found for restock refund line item ${item.lineItemId || item.id}`);
             }
           }
           
