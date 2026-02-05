@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Build event payload - DO NOT spread eventData as it may contain
+      // conflicting fields like orderId that would overwrite shopifyOrderId
       const eventPayload = {
         name: eventName || "shopify/order.paid",
         data: {
@@ -42,7 +44,8 @@ export async function POST(request: NextRequest) {
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
           receivedAt: new Date().toISOString(),
-          ...eventData,
+          // Only include safe fields from eventData
+          ...(eventData?.fromStart !== undefined && { fromStart: eventData.fromStart }),
         },
       };
 
