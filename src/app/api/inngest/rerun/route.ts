@@ -2,24 +2,43 @@
 // INNGEST RERUN API (Battle Bus)
 // ============================================================================
 // Allows battle-hub to trigger event reruns via the Inngest client
-// This endpoint uses the configured Inngest client to send events
+// This endpoint fetches the order from Shopify and sends a new event
+// Inngest's durable execution will skip already-completed steps
 
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { searchOrdersByName } from "@/lib/clients/shopify";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { runId, eventId, functionId, eventName, eventData, orderName } = body;
 
-    // If orderName is provided, trigger an order reprocess event
+    // If orderName is provided, fetch the order from Shopify and trigger reprocess
     if (orderName) {
+      console.log(`[Inngest Rerun] Fetching order ${orderName} from Shopify for reprocess`);
+      
+      // Fetch the full order from Shopify
+      const orders = await searchOrdersByName(orderName);
+      const shopifyOrder = orders?.[0];
+      
+      if (!shopifyOrder) {
+        return NextResponse.json(
+          { error: `Order ${orderName} not found in Shopify` },
+          { status: 404 }
+        );
+      }
+
       const eventPayload = {
-        name: eventName || "order/reprocess",
+        name: eventName || "shopify/order.paid",
         data: {
-          orderName,
+          shopifyOrderId: String(shopifyOrder.id),
+          shopifyOrderName: shopifyOrder.name,
+          shopifyStore: "im8-battle-bus",
+          orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
+          receivedAt: new Date().toISOString(),
           ...eventData,
         },
       };
@@ -34,8 +53,47 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // If eventId is provided, send a support/rerun event
+    // If eventId is provided (Firestore order ID), we need to look up the order name first
+    if (eventId && eventData?.orderName) {
+      // If orderName is in eventData, use that to fetch from Shopify
+      const shopifyOrderName = eventData.orderName;
+      console.log(`[Inngest Rerun] Fetching order ${shopifyOrderName} from Shopify`);
+      
+      const orders = await searchOrdersByName(shopifyOrderName);
+      const shopifyOrder = orders?.[0];
+      
+      if (!shopifyOrder) {
+        return NextResponse.json(
+          { error: `Order ${shopifyOrderName} not found in Shopify` },
+          { status: 404 }
+        );
+      }
+
+      const eventPayload = {
+        name: eventName || "shopify/order.paid",
+        data: {
+          shopifyOrderId: String(shopifyOrder.id),
+          shopifyOrderName: shopifyOrder.name,
+          shopifyStore: "im8-battle-bus",
+          orderJson: shopifyOrder,
+          reprocessedAt: new Date().toISOString(),
+          source: "battle-hub",
+          receivedAt: new Date().toISOString(),
+        },
+      };
+
+      const result = await inngest.send(eventPayload);
+
+      return NextResponse.json({
+        success: true,
+        message: `Rerun event sent for order ${shopifyOrderName}`,
+        eventId: result.ids?.[0],
+      });
+    }
+
+    // Legacy: If only eventId is provided without orderName, send a generic rerun event
     if (eventId) {
+      console.warn(`[Inngest Rerun] eventId provided without orderName - this may fail validation`);
       const eventPayload = {
         name: eventName || "support/rerun",
         data: {

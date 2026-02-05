@@ -16,6 +16,12 @@ import * as shopify from "@/lib/clients/shopify";
  * Ported from spock-store isTestOrder
  */
 export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tags" | "name">): boolean {
+  // Guard against undefined/null order
+  if (!order) {
+    console.warn("[Validation] isTestOrder called with undefined order");
+    return false;
+  }
+
   // Check if created_at exists before comparing dates
   if (order.created_at) {
     const liveDate = new Date(config.orders.liveDateTime);
@@ -26,7 +32,7 @@ export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tag
     }
   }
 
-  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  const tags = (order?.tags || "").toLowerCase().split(",").map((t) => t.trim());
   return config.orders.testTags.some((testTag) => tags.includes(testTag.toLowerCase()));
 }
 
@@ -276,6 +282,11 @@ export async function checkShopifyOrderRisks(
 export function validateOrderForProcessing(
   order: ShopifyOrderPayload
 ): { valid: boolean; skip: boolean; reason?: string } {
+  // Guard against undefined/null order
+  if (!order) {
+    return { valid: false, skip: false, reason: "Order data is missing" };
+  }
+
   // Skip test orders
   if (config.features.skipTestOrders && isTestOrder(order)) {
     return { valid: true, skip: true, reason: "Test order" };
@@ -311,6 +322,16 @@ export async function validateOrderCompletely(
   skus?: string[];
   cancelReason?: string;
 }> {
+  // Check if order object is valid
+  if (!order) {
+    return {
+      valid: false,
+      skip: false,
+      status: "failed_validation",
+      reason: "Order data is missing or undefined",
+    };
+  }
+
   // 1. Basic order validation (test orders, high-risk, dummy SKUs)
   const basicValidation = validateOrderForProcessing(order);
   if (!basicValidation.valid) {
