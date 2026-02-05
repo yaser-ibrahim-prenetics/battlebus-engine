@@ -41,23 +41,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const buildRefundPayload = (): any => {
+    const buildRefundPayload = async (numericOrderId: number): Promise<any> => {
       const refund: any = {
         note: note || reason || "Refund processed by support",
         notify: notify !== false,
-        ...(restock !== undefined && { restock }),
+        // Note: restock field is deprecated - use restock_type on refund_line_items instead
       };
 
       if (Array.isArray(refundLineItems) && refundLineItems.length > 0) {
+        // Line item refund - set restock_type on each line item
         refund.refund_line_items = refundLineItems.map((item: any) => ({
-          line_item_id: item.lineItemId,
+          line_item_id: item.lineItemId || item.id, // Support both field names
           quantity: item.quantity,
-          restock_type: item.restockType || "cancel",
+          // restock_type: 'no_restock' | 'cancel' | 'return' | 'legacy_restock'
+          // If restock was requested, use 'return', otherwise 'cancel' (default)
+          restock_type: item.restockType || (restock === true ? "return" : restock === false ? "no_restock" : "cancel"),
         }));
-      } else if (amount) {
-        refund.amount = String(amount);
       } else {
-        refund.full_refund = true;
+        // For full refund or amount refund, if restock is specified, we need to fetch order line items
+        // and create refund_line_items with restock_type
+        if (restock !== undefined) {
+          try {
+            const order = await shopify.getOrder(numericOrderId);
+            if (order.line_items && order.line_items.length > 0) {
+              refund.refund_line_items = order.line_items.map((item: any) => ({
+                line_item_id: item.id,
+                quantity: item.quantity,
+                restock_type: restock === true ? "return" : restock === false ? "no_restock" : "cancel",
+              }));
+            }
+          } catch (err) {
+            console.warn("[Actions] Failed to fetch order for restock refund, proceeding without restock control:", err);
+          }
+        }
+
+        if (amount) {
+          // Amount-based refund (partial refund)
+          refund.amount = String(amount);
+        } else {
+          // Full refund
+          refund.full_refund = true;
+        }
       }
 
       return refund;
@@ -66,7 +90,7 @@ export async function POST(request: NextRequest) {
     const createRefundByNumericId = async (
       numericOrderId: number
     ): Promise<Response> => {
-      const refund = buildRefundPayload();
+      const refund = await buildRefundPayload(numericOrderId);
 
       return fetch(
         `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds.json`,
