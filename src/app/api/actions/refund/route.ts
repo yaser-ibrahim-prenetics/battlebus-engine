@@ -48,15 +48,66 @@ export async function POST(request: NextRequest) {
         // Note: restock field is deprecated - use restock_type on refund_line_items instead
       };
 
+      // Get location_id from order fulfillments (required for restock)
+      let locationId: number | null = null;
+      try {
+        const order = await shopify.getOrder(numericOrderId);
+        // Get location from first fulfillment (order may have fulfillments in API response)
+        const orderWithFulfillments = order as any;
+        if (orderWithFulfillments.fulfillments && orderWithFulfillments.fulfillments.length > 0) {
+          locationId = orderWithFulfillments.fulfillments[0].location_id || null;
+        }
+        
+        // If no fulfillment location, try to get from fulfillment orders
+        if (!locationId) {
+          try {
+            const fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
+            if (fulfillmentOrders.length > 0 && fulfillmentOrders[0].assigned_location_id) {
+              locationId = fulfillmentOrders[0].assigned_location_id;
+            }
+          } catch (err) {
+            console.warn("[Actions] Failed to get location from fulfillment orders:", err);
+          }
+        }
+
+        // If still no location, use GPS location as fallback (most common)
+        if (!locationId && config.shopify.im8.locations?.gps) {
+          locationId = Number(config.shopify.im8.locations.gps);
+          console.warn(`[Actions] Using fallback GPS location ${locationId} for refund restock`);
+        }
+      } catch (err) {
+        console.warn("[Actions] Failed to fetch order for location, proceeding without location:", err);
+      }
+
       if (Array.isArray(refundLineItems) && refundLineItems.length > 0) {
         // Line item refund - set restock_type on each line item
-        refund.refund_line_items = refundLineItems.map((item: any) => ({
-          line_item_id: item.lineItemId || item.id, // Support both field names
-          quantity: item.quantity,
-          // restock_type: 'no_restock' | 'cancel' | 'return' | 'legacy_restock'
-          // If restock was requested, use 'return', otherwise 'cancel' (default)
-          restock_type: item.restockType || (restock === true ? "return" : restock === false ? "no_restock" : "cancel"),
-        }));
+        const restockType = refundLineItems[0]?.restockType || (restock === true ? "return" : restock === false ? "no_restock" : "cancel");
+        const needsLocation = restockType !== "no_restock";
+        
+        refund.refund_line_items = refundLineItems.map((item: any) => {
+          const itemRestockType = item.restockType || restockType;
+          const refundLineItem: any = {
+            line_item_id: item.lineItemId || item.id, // Support both field names
+            quantity: item.quantity,
+            restock_type: itemRestockType,
+          };
+          
+          // Add location_id if restocking (required by Shopify)
+          if (needsLocation) {
+            if (locationId) {
+              refundLineItem.location_id = locationId;
+            } else {
+              // If restocking but no location found, use item's location_id if provided
+              if (item.locationId) {
+                refundLineItem.location_id = item.locationId;
+              } else {
+                console.warn(`[Actions] No location_id found for restock refund line item ${item.lineItemId || item.id}`);
+              }
+            }
+          }
+          
+          return refundLineItem;
+        });
       } else {
         // For full refund or amount refund, if restock is specified, we need to fetch order line items
         // and create refund_line_items with restock_type
@@ -64,11 +115,21 @@ export async function POST(request: NextRequest) {
           try {
             const order = await shopify.getOrder(numericOrderId);
             if (order.line_items && order.line_items.length > 0) {
-              refund.refund_line_items = order.line_items.map((item: any) => ({
-                line_item_id: item.id,
-                quantity: item.quantity,
-                restock_type: restock === true ? "return" : restock === false ? "no_restock" : "cancel",
-              }));
+              const restockType = restock === true ? "return" : restock === false ? "no_restock" : "cancel";
+              refund.refund_line_items = order.line_items.map((item: any) => {
+                const refundLineItem: any = {
+                  line_item_id: item.id,
+                  quantity: item.quantity,
+                  restock_type: restockType,
+                };
+                
+                // Add location_id if restocking (required by Shopify)
+                if (restockType !== "no_restock" && locationId) {
+                  refundLineItem.location_id = locationId;
+                }
+                
+                return refundLineItem;
+              });
             }
           } catch (err) {
             console.warn("[Actions] Failed to fetch order for restock refund, proceeding without restock control:", err);
