@@ -258,10 +258,12 @@ export async function createOutboundOrder(
   console.log(`[GPS] Response: ${JSON.stringify(result)}`);
 
   // Check for out of stock error
+  // Note: GPS API returns Chinese error messages - 库存不足 means "insufficient inventory"
   if (result.code !== 200) {
     if (
       result.msg?.toLowerCase().includes("out of stock") ||
-      result.msg?.toLowerCase().includes("insufficient")
+      result.msg?.toLowerCase().includes("insufficient") ||
+      result.msg?.includes("库存不足")
     ) {
       throw new OutOfStockError(`GPS out of stock: ${result.msg}`);
     }
@@ -273,7 +275,8 @@ export async function createOutboundOrder(
     const orderResult = result.data[0];
     if (
       orderResult.msg?.toLowerCase().includes("out of stock") ||
-      orderResult.msg?.toLowerCase().includes("insufficient")
+      orderResult.msg?.toLowerCase().includes("insufficient") ||
+      orderResult.msg?.includes("库存不足")
     ) {
       throw new OutOfStockError(
         `GPS out of stock for ${orderData.platformOrderNo}: ${orderResult.msg}`
