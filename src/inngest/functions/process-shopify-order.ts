@@ -7,7 +7,7 @@
 // 3. Creates GPS Outbound Order (if applicable)
 // 4. Handles Out of Stock retries
 
-import { inngest } from "../client";
+import { inngest, orderChannel } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
@@ -56,11 +56,62 @@ export const processShopifyOrder = inngest.createFunction(
     },
   },
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
-  async ({ event, step }) => {
+  async ({ event, step, publish }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 
+    // Helper to publish status updates via Inngest Realtime
+    const publishStatus = async (
+      step: string,
+      status: "running" | "completed" | "failed" | "skipped",
+      message?: string,
+      data?: Record<string, unknown>
+    ) => {
+      try {
+        await publish(orderChannel, {
+          channel: `order:${shopifyOrderName}`,
+          topic: "status",
+          data: {
+            orderName: shopifyOrderName,
+            step,
+            status,
+            message,
+            data,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        // Don't fail the function if realtime publish fails
+        console.warn(`[Realtime] Failed to publish status: ${err}`);
+      }
+    };
+
+    // Helper to publish final result
+    const publishResult = async (
+      status: "success" | "failed" | "skipped",
+      data?: { d365OrderNumber?: string; warehouse?: string; error?: string }
+    ) => {
+      try {
+        await publish(orderChannel, {
+          channel: `order:${shopifyOrderName}`,
+          topic: "result",
+          data: {
+            orderName: shopifyOrderName,
+            status,
+            ...data,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch (err) {
+        console.warn(`[Realtime] Failed to publish result: ${err}`);
+      }
+    };
+
+    // Publish initial status
+    await publishStatus("started", "running", "Order processing started");
+
     if (config.features.dryRunMode) {
+      await publishResult("skipped", { error: "Dry run mode enabled" });
       return {
         status: "dry_run",
         shopifyOrderId,
@@ -69,12 +120,16 @@ export const processShopifyOrder = inngest.createFunction(
     }
 
     // Comprehensive order validation - all checks in one place
+    await publishStatus("validate-order", "running", "Validating order");
     const validation = await step.run("validate-order-completely", async () => {
       return validateOrderCompletely(order, shopifyOrderId, shopifyOrderName);
     });
 
     // Handle validation failures
     if (!validation.valid || validation.skip) {
+      await publishStatus("validate-order", "skipped", validation.reason);
+      await publishResult("skipped", { error: validation.reason });
+
       if (validation.status === "failed_validation") {
         await slack.sendErrorMessage(
           SlackChannelEnum.SHOPIFY,
@@ -115,6 +170,8 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
+    await publishStatus("validate-order", "completed", "Order validation passed");
+
     const warehouseName = determineWarehouse(
       order.shipping_address?.country_code || order.billing_address?.country_code || "US"
     );
@@ -142,6 +199,7 @@ export const processShopifyOrder = inngest.createFunction(
         };
       }
 
+      await publishStatus("create-d365-order", "running", "Creating D365 sales order");
       const d365Header = await step.run("create-d365-header", async () => {
         const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
         if (skipD365) {
@@ -151,6 +209,7 @@ export const processShopifyOrder = inngest.createFunction(
       });
 
       const salesOrderNumber = d365Header.SalesOrderNumber;
+      await publishStatus("create-d365-order", "completed", `D365 order created: ${salesOrderNumber}`, { d365OrderNumber: salesOrderNumber });
 
       await step.run("create-d365-lines", async () => {
         const lines = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
@@ -205,6 +264,7 @@ export const processShopifyOrder = inngest.createFunction(
       });
 
       // 4. Send to GPS (if applicable)
+      await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
       const gpsOrderPayload = await step.run("build-gps-payload", async () => {
         try {
           return toGpsOutboundOrder(order, salesOrderNumber, warehouseName);
@@ -277,6 +337,8 @@ export const processShopifyOrder = inngest.createFunction(
         });
       }
 
+      await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", { gpsResult });
+
       await slack.sendOrderMessage(
         SlackChannelEnum.SHOPIFY,
         `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNumber}`
@@ -291,6 +353,9 @@ export const processShopifyOrder = inngest.createFunction(
         gpsResult,
         processedAt: new Date().toISOString(),
       };
+
+      // Publish final success result
+      await publishResult("success", { d365OrderNumber: salesOrderNumber, warehouse: warehouseName });
 
       // Send order created event to CS platform
       let gpsOrderId: string | undefined;
@@ -315,6 +380,10 @@ export const processShopifyOrder = inngest.createFunction(
       return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      
+      // Publish failure result
+      await publishResult("failed", { error: errorMsg });
+      
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(
         channel,
