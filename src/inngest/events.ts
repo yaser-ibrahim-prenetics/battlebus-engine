@@ -124,6 +124,54 @@ export type ExtensivReceiverConfirmEvent = {
   };
 };
 
+// ============================================================================
+// ACTION EVENTS (Triggered by Battle Hub direct actions)
+// ============================================================================
+// These events are sent when CS/Ops users trigger actions from Battle Hub.
+// They enable real-time tracking in the Live Runs panel.
+
+export type ActionOrderCancelEvent = {
+  name: "action/order.cancel";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    reason: string;
+    email: boolean;
+    refund: boolean;
+    cancelledAt: string;
+    source: "battle-hub";
+  };
+};
+
+export type ActionOrderRefundEvent = {
+  name: "action/order.refund";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    refundId?: string;
+    amount: string | number;
+    reason: string;
+    restock: boolean;
+    refundedAt: string;
+    source: "battle-hub";
+  };
+};
+
+export type ActionOrderFulfillEvent = {
+  name: "action/order.fulfill";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    fulfillmentId?: string;
+    fulfillmentType: string;
+    platform: string;
+    trackingNumber: string;
+    carrier: string;
+    fulfilledAt: string;
+    source: "battle-hub";
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -135,7 +183,10 @@ export type BattleBusEvents =
   | GpsFulfilmentReceivedEvent
   | StordFulfilmentReceivedEvent
   | ExtensivOrderConfirmEvent
-  | ExtensivReceiverConfirmEvent;
+  | ExtensivReceiverConfirmEvent
+  | ActionOrderCancelEvent
+  | ActionOrderRefundEvent
+  | ActionOrderFulfillEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)

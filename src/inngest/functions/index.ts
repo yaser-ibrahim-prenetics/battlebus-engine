@@ -14,6 +14,11 @@ export {
   processExtensivReceiverConfirm,
 } from "./process-extensiv-fulfillment";
 export { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
+export {
+  processActionCancel,
+  processActionRefund,
+  processActionFulfill,
+} from "./process-hub-actions";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -29,6 +34,11 @@ import {
 import { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
 import { processGpsBatch } from "./process-gps-batch";
 import { processGpsIndividual } from "./process-gps-individual";
+import {
+  processActionCancel,
+  processActionRefund,
+  processActionFulfill,
+} from "./process-hub-actions";
 
 export const functions = [
   processShopifyOrder,
@@ -42,4 +52,8 @@ export const functions = [
   simulateGpsFulfillment,
   processGpsBatch,
   processGpsIndividual,
+  // Battle Hub Actions
+  processActionCancel,
+  processActionRefund,
+  processActionFulfill,
 ];

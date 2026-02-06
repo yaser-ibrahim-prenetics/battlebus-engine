@@ -2,20 +2,19 @@
 // ORDER FULFILLMENT ACTION API (Battle Bus)
 // ============================================================================
 // Creates a Shopify fulfillment using existing Shopify client utilities.
-// Intended to be called from battle-cs instead of talking to Shopify directly.
+// Sends an Inngest event for real-time tracking and downstream processing.
 //
 // Flow:
-//   battle-cs → /api/actions/fulfillment → Shopify
-//   → Shopify webhooks → Inngest functions (D365, GPS, etc.)
-//
-// This keeps Battle Bus as the integration mesh while allowing CS to trigger
-// operational actions.
+//   battle-hub → /api/actions/fulfillment → Shopify
+//   → Inngest event for real-time tracking
+//   → Shopify webhooks → additional Inngest functions (D365, GPS, etc.)
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
 import * as gps from "@/lib/clients/gps";
 import { mapGpsCarrierToShopify, getTrackingUrl } from "@/lib/helpers/tracking";
+import { inngest } from "@/inngest/client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -289,13 +288,33 @@ export async function POST(request: NextRequest) {
       // Don't fail the request if metadata setting fails
     }
 
-    // Note: Inngest + webhooks will take care of syncing to D365, GPS, etc.
+    // Send Inngest event for real-time tracking
+    const eventId = `action-fulfill-${numericOrderId}-${Date.now()}`;
+    
+    await inngest.send({
+      id: eventId,
+      name: "action/order.fulfill",
+      data: {
+        shopifyOrderId: String(numericOrderId),
+        shopifyOrderName: orderName || `#${numericOrderId}`,
+        fulfillmentId: fulfillment.id ? String(fulfillment.id) : undefined,
+        fulfillmentType: fulfillmentType || "manual",
+        platform: platform || "shopify",
+        trackingNumber: trackingInfo.number,
+        carrier: trackingInfo.company,
+        fulfilledAt: new Date().toISOString(),
+        source: "battle-hub",
+      },
+    });
+
+    // Note: Additional Inngest + webhooks will take care of syncing to D365, GPS, etc.
 
     return NextResponse.json(
       {
         success: true,
         message: "Fulfillment created via Battle Bus",
         data: fulfillment,
+        eventId,
       },
       { status: 200 }
     );

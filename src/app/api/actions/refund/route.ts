@@ -2,12 +2,12 @@
 // ORDER REFUND ACTION API (Battle Bus)
 // ============================================================================
 // Creates a Shopify refund (full, partial amount, or per-line) using Battle Bus
-// Shopify configuration. Called from battle-cs; downstream D365 credit note,
-// etc. are handled by Battle Bus via Shopify webhooks and Inngest.
+// Shopify configuration. Sends an Inngest event for real-time tracking.
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
+import { inngest } from "@/inngest/client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -187,11 +187,31 @@ export async function POST(request: NextRequest) {
       result = await response.json().catch(() => ({}));
 
       if (response.ok) {
+        const refundData = result.refund ?? result;
+        const eventId = `action-refund-${numericIdFromOrderId}-${Date.now()}`;
+        
+        // Send Inngest event for real-time tracking
+        await inngest.send({
+          id: eventId,
+          name: "action/order.refund",
+          data: {
+            shopifyOrderId: String(numericIdFromOrderId),
+            shopifyOrderName: orderName || `#${numericIdFromOrderId}`,
+            refundId: refundData.id ? String(refundData.id) : undefined,
+            amount: amount || "full",
+            reason: reason || note || "Refund processed by support",
+            restock: restock || false,
+            refundedAt: new Date().toISOString(),
+            source: "battle-hub",
+          },
+        });
+
         return NextResponse.json(
           {
             success: true,
             message: "Refund created via Battle Bus",
-            data: result.refund ?? result,
+            data: refundData,
+            eventId,
           },
           { status: 200 }
         );
@@ -232,11 +252,31 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const refundData = result.refund ?? result;
+      const eventId = `action-refund-${numericFromName}-${Date.now()}`;
+      
+      // Send Inngest event for real-time tracking
+      await inngest.send({
+        id: eventId,
+        name: "action/order.refund",
+        data: {
+          shopifyOrderId: String(numericFromName),
+          shopifyOrderName: orderName || `#${numericFromName}`,
+          refundId: refundData.id ? String(refundData.id) : undefined,
+          amount: amount || "full",
+          reason: reason || note || "Refund processed by support",
+          restock: restock || false,
+          refundedAt: new Date().toISOString(),
+          source: "battle-hub",
+        },
+      });
+
       return NextResponse.json(
         {
           success: true,
           message: "Refund created via Battle Bus",
-          data: result.refund ?? result,
+          data: refundData,
+          eventId,
         },
         { status: 200 }
       );

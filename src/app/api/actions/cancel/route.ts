@@ -2,12 +2,12 @@
 // ORDER CANCELLATION ACTION API (Battle Bus)
 // ============================================================================
 // Cancels a Shopify order using Battle Bus Shopify configuration.
-// Intended to be called from battle-cs; downstream systems are updated
-// via Shopify webhooks and Inngest functions.
+// Sends an Inngest event for real-time tracking and downstream processing.
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
+import { inngest } from "@/inngest/client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,13 +66,32 @@ export async function POST(request: NextRequest) {
       response = await cancelByNumericId(numericIdFromOrderId);
       result = await response.json().catch(() => ({}));
 
-      // If success, return immediately
+      // If success, send Inngest event and return with eventId
       if (response.ok) {
+        const orderData = result.order ?? result;
+        const eventId = `action-cancel-${numericIdFromOrderId}-${Date.now()}`;
+        
+        // Send Inngest event for real-time tracking
+        await inngest.send({
+          id: eventId,
+          name: "action/order.cancel",
+          data: {
+            shopifyOrderId: String(numericIdFromOrderId),
+            shopifyOrderName: orderName || orderData.name || `#${numericIdFromOrderId}`,
+            reason: reason || "other",
+            email: email !== false,
+            refund: refund || false,
+            cancelledAt: new Date().toISOString(),
+            source: "battle-hub",
+          },
+        });
+
         return NextResponse.json(
           {
             success: true,
             message: "Order cancelled via Battle Bus",
-            data: result.order ?? result,
+            data: orderData,
+            eventId,
           },
           { status: 200 }
         );
@@ -116,11 +135,30 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const orderData = result.order ?? result;
+      const eventId = `action-cancel-${numericFromName}-${Date.now()}`;
+      
+      // Send Inngest event for real-time tracking
+      await inngest.send({
+        id: eventId,
+        name: "action/order.cancel",
+        data: {
+          shopifyOrderId: String(numericFromName),
+          shopifyOrderName: orderName || orderData.name || `#${numericFromName}`,
+          reason: reason || "other",
+          email: email !== false,
+          refund: refund || false,
+          cancelledAt: new Date().toISOString(),
+          source: "battle-hub",
+        },
+      });
+
       return NextResponse.json(
         {
           success: true,
           message: "Order cancelled via Battle Bus",
-          data: result.order ?? result,
+          data: orderData,
+          eventId,
         },
         { status: 200 }
       );
