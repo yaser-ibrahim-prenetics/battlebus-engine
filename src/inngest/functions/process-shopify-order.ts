@@ -328,18 +328,62 @@ export const processShopifyOrder = inngest.createFunction(
       // Handle out of stock retry
       if (gpsResult.type === "out_of_stock" && gpsOrderPayload) {
         const oosError = "error" in gpsResult ? gpsResult.error : "Unknown";
+        
+        // Publish out of stock status to Battle Hub
+        await publishStatus(
+          "send-to-gps-warehouse",
+          "failed",
+          `GPS out of stock: ${oosError}`,
+          { 
+            errorType: "out_of_stock", 
+            error: oosError,
+            retryIn: `${config.delays.outOfStockRetryHours} hours`
+          }
+        );
+        
         await slack.sendWarningMessage(
           "gpslow",
           `GPS Out of Stock for ${shopifyOrderName}: ${oosError}`
         );
         
+        // Also send to CS Platform so Battle Hub can display the error
+        await csPlatform.sendOrderUpdate({
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: salesOrderNumber,
+          warehouse: warehouseName,
+          status: "waiting_stock",
+          error: oosError,
+          errorType: "out_of_stock",
+          retryAt: new Date(Date.now() + config.delays.outOfStockRetryHours * 60 * 60 * 1000).toISOString(),
+        }, inngestEventId);
+        
         await step.sleep("wait-for-stock", `${config.delays.outOfStockRetryHours}h`);
-        await step.run("retry-gps-after-oos", async () => {
+        
+        // Publish retry status
+        await publishStatus(
+          "retry-gps-after-oos",
+          "running",
+          "Retrying GPS order after stock wait"
+        );
+        
+        const retryResult = await step.run("retry-gps-after-oos", async () => {
           return gps.createOutboundOrder(
             gpsOrderPayload,
             warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
           );
         });
+        
+        // Update CS Platform with retry result
+        if (retryResult) {
+          await publishStatus(
+            "retry-gps-after-oos",
+            "completed",
+            "GPS order created after retry"
+          );
+        }
       }
 
       await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", { gpsResult });

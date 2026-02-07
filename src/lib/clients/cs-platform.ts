@@ -108,6 +108,33 @@ export async function sendOrderUpdated(orderData: any, changes?: string[], innge
   });
 }
 
+// Send order status update (for intermediate states like out_of_stock, waiting, etc.)
+export async function sendOrderUpdate(orderData: {
+  id?: string;
+  name?: string;
+  shopifyOrderId?: string;
+  shopifyOrderName?: string;
+  d365OrderNumber?: string;
+  warehouse?: string;
+  status?: string;
+  error?: string;
+  errorType?: string;
+  retryAt?: string;
+  [key: string]: any;
+}, inngestEventId?: string): Promise<void> {
+  await sendOrderEvent({
+    event: "order.status_update",
+    data: {
+      orderId: orderData.id || orderData.shopifyOrderId,
+      shopifyOrderName: orderData.name || orderData.shopifyOrderName,
+      shopifyOrderId: orderData.id || orderData.shopifyOrderId,
+      ...orderData,
+      inngestEventId,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
+
 export async function sendOrderFulfilled(orderData: {
   orderId?: string;
   shopifyOrderName: string;
