@@ -2,8 +2,13 @@
 // INNGEST RUNS API (Battle Bus)
 // ============================================================================
 // Fetches run status and details from Inngest API for monitoring in Battle Hub
-// NOTE: Inngest REST API requires an eventId to list runs - there's no endpoint
-// to list all recent runs. Use eventId from inngest.send() response.
+// 
+// Response format includes:
+// - run_id (or id): The unique run identifier for /runs/ URLs
+// - event_id: The internal event ID for /events/ URLs (NOT the idempotency key)
+//
+// NOTE: The idempotency key (e.g., "shopify-order-paid-xxx") is NOT the same as
+// the internal event_id (e.g., "01KGWYGF2KP7NBD9F7M2A51J65")
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -24,7 +29,8 @@ export async function GET(request: NextRequest) {
     }
 
     // If eventId provided, fetch runs for that event
-    // This is the primary way to list runs - Inngest API requires an eventId
+    // NOTE: eventId must be the INTERNAL event ID (e.g., "01KGWYGF2KP7NBD9F7M2A51J65")
+    // NOT the idempotency key (e.g., "shopify-order-paid-xxx")
     if (eventId) {
       const response = await fetch(
         `${INNGEST_API_URL}/v1/events/${eventId}/runs`,
@@ -51,6 +57,7 @@ export async function GET(request: NextRequest) {
     }
 
     // If runId provided, fetch specific run details
+    // The response includes event_id which is the internal event ID for /events/ URLs
     if (runId) {
       const response = await fetch(`${INNGEST_API_URL}/v1/runs/${runId}`, {
         method: "GET",
@@ -70,7 +77,14 @@ export async function GET(request: NextRequest) {
       }
 
       const data = await response.json();
-      return NextResponse.json({ data: [data] });
+      // Normalize the response - ensure both id/run_id and event_id are present
+      const normalizedRun = {
+        ...data,
+        id: data.id || data.run_id,
+        run_id: data.run_id || data.id,
+        event_id: data.event_id,
+      };
+      return NextResponse.json({ data: [normalizedRun] });
     }
 
     // No eventId or runId - return empty array with explanation

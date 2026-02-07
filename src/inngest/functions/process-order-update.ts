@@ -27,8 +27,10 @@ export const processOrderUpdate = inngest.createFunction(
     retries: 3,
   },
   { event: "shopify/order.updated" },
-  async ({ event, step }) => {
+  async ({ event, step, runId }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, changedFields } = event.data;
+    const inngestIdempotencyKey = event.id;
+    const inngestRunId = runId;
     const order = orderJson as ShopifyOrderPayload;
 
     if (config.features.dryRunMode) {
@@ -92,7 +94,7 @@ export const processOrderUpdate = inngest.createFunction(
     };
 
     // Send order updated event to CS platform
-    await csPlatform.sendOrderUpdated(order, changedFields);
+    await csPlatform.sendOrderUpdated(order, changedFields, { inngestIdempotencyKey, inngestRunId });
 
     return result;
   }

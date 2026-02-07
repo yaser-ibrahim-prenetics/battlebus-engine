@@ -141,10 +141,11 @@ export async function POST(request: NextRequest) {
         break;
 
       // Order paid - triggers order processing (alternative to orders/create)
-      case "orders/paid":
+      case "orders/paid": {
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.paid`);
-        await inngest.send({
-          id: `shopify-order-paid-${payload.id}`, // Event-level idempotency key
+        const idempotencyKey = `shopify-order-paid-${payload.id}`;
+        const sendResult = await inngest.send({
+          id: idempotencyKey, // Event-level idempotency key
           name: "shopify/order.paid",
           data: {
             shopifyOrderId: String(payload.id),
@@ -152,10 +153,16 @@ export async function POST(request: NextRequest) {
             shopifyStore: shopDomain || "im8",
             orderJson: payload,
             receivedAt: new Date().toISOString(),
+            // Pass the idempotency key so the function knows it
+            inngestIdempotencyKey: idempotencyKey,
           },
         });
+        // The internal event ID is in the response - this is what we need for /events/ URLs
+        const internalEventId = sendResult.ids?.[0];
         console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
+        console.log(`[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`);
         break;
+      }
 
       // Order updated - may need to sync changes to D365
       case "orders/updated":

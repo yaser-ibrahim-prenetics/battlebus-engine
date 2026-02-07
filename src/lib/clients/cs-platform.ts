@@ -61,7 +61,10 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
   }
 }
 
-export async function sendOrderCreated(orderData: any, inngestEventId?: string): Promise<void> {
+export async function sendOrderCreated(
+  orderData: any, 
+  inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
+): Promise<void> {
   // Extract sync statuses - these are derived from what processing has completed
   const syncStatuses: Record<string, string> = {};
   
@@ -87,13 +90,23 @@ export async function sendOrderCreated(orderData: any, inngestEventId?: string):
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
       ...syncStatuses,
-      inngestEventId, // Include Inngest event ID for linking to dashboard
+      // Include Inngest IDs for linking to dashboard:
+      // - inngestIdempotencyKey: the event-level idempotency key (e.g., "shopify-order-paid-xxx")
+      // - inngestRunId: the run ID for /runs/ URLs (e.g., "01KGWWR0AKZMSTNYJ6VWJMR7DD")
+      inngestIdempotencyKey: inngestIds?.inngestIdempotencyKey,
+      inngestRunId: inngestIds?.inngestRunId,
+      // Keep inngestEventId for backwards compatibility (same as idempotency key)
+      inngestEventId: inngestIds?.inngestIdempotencyKey,
       createdAt: new Date().toISOString(),
     },
   });
 }
 
-export async function sendOrderUpdated(orderData: any, changes?: string[], inngestEventId?: string): Promise<void> {
+export async function sendOrderUpdated(
+  orderData: any, 
+  changes?: string[], 
+  inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
+): Promise<void> {
   await sendOrderEvent({
     event: "order.updated",
     data: {
@@ -102,26 +115,31 @@ export async function sendOrderUpdated(orderData: any, changes?: string[], innge
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
       changedFields: changes,
-      inngestEventId, // Include Inngest event ID for linking to dashboard
+      inngestIdempotencyKey: inngestIds?.inngestIdempotencyKey,
+      inngestRunId: inngestIds?.inngestRunId,
+      inngestEventId: inngestIds?.inngestIdempotencyKey,
       updatedAt: new Date().toISOString(),
     },
   });
 }
 
 // Send order status update (for intermediate states like out_of_stock, waiting, etc.)
-export async function sendOrderUpdate(orderData: {
-  id?: string;
-  name?: string;
-  shopifyOrderId?: string;
-  shopifyOrderName?: string;
-  d365OrderNumber?: string;
-  warehouse?: string;
-  status?: string;
-  error?: string;
-  errorType?: string;
-  retryAt?: string;
-  [key: string]: any;
-}, inngestEventId?: string): Promise<void> {
+export async function sendOrderUpdate(
+  orderData: {
+    id?: string;
+    name?: string;
+    shopifyOrderId?: string;
+    shopifyOrderName?: string;
+    d365OrderNumber?: string;
+    warehouse?: string;
+    status?: string;
+    error?: string;
+    errorType?: string;
+    retryAt?: string;
+    [key: string]: any;
+  }, 
+  inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
+): Promise<void> {
   await sendOrderEvent({
     event: "order.status_update",
     data: {
@@ -129,7 +147,9 @@ export async function sendOrderUpdate(orderData: {
       shopifyOrderName: orderData.name || orderData.shopifyOrderName,
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
-      inngestEventId,
+      inngestIdempotencyKey: inngestIds?.inngestIdempotencyKey,
+      inngestRunId: inngestIds?.inngestRunId,
+      inngestEventId: inngestIds?.inngestIdempotencyKey,
       updatedAt: new Date().toISOString(),
     },
   });

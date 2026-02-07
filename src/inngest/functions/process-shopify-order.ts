@@ -56,12 +56,15 @@ export const processShopifyOrder = inngest.createFunction(
     },
   },
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
-  async ({ event, step, publish }) => {
+  async ({ event, step, publish, runId }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 
-    // Inngest event ID for linking to dashboard
-    const inngestEventId = event.id;
+    // Inngest IDs for linking to dashboard:
+    // - event.id is the idempotency key we passed (e.g., "shopify-order-paid-xxx")
+    // - runId is the internal run ID for /runs/ URLs (e.g., "01KGWWR0AKZMSTNYJ6VWJMR7DD")
+    const inngestIdempotencyKey = event.id;
+    const inngestRunId = runId;
 
     // Helper to publish status updates via Inngest Realtime
     const publishStatus = async (
@@ -76,7 +79,8 @@ export const processShopifyOrder = inngest.createFunction(
           topic: "status",
           data: {
             orderName: shopifyOrderName,
-            inngestEventId,
+            inngestIdempotencyKey,
+            inngestRunId,
             step: stepName,
             status,
             message,
@@ -101,7 +105,8 @@ export const processShopifyOrder = inngest.createFunction(
           topic: "result",
           data: {
             orderName: shopifyOrderName,
-            inngestEventId,
+            inngestIdempotencyKey,
+            inngestRunId,
             status,
             ...resultData,
             timestamp: new Date().toISOString(),
@@ -358,7 +363,7 @@ export const processShopifyOrder = inngest.createFunction(
           error: oosError,
           errorType: "out_of_stock",
           retryAt: new Date(Date.now() + config.delays.outOfStockRetryHours * 60 * 60 * 1000).toISOString(),
-        }, inngestEventId);
+        }, { inngestIdempotencyKey, inngestRunId });
         
         await step.sleep("wait-for-stock", `${config.delays.outOfStockRetryHours}h`);
         
@@ -427,7 +432,7 @@ export const processShopifyOrder = inngest.createFunction(
         gpsOrderId,
         gpsSkipped, // Pass GPS skip status for sync tracking
         orderJson: order,
-      }, inngestEventId);
+      }, { inngestIdempotencyKey, inngestRunId });
 
       return result;
     } catch (error) {
