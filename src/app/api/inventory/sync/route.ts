@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
         } else {
           errors.push({
             destination: result.value.destination,
-            error: result.value.error,
+            error: result.value.error || "Unknown error",
           });
         }
       } else {
