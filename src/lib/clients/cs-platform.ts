@@ -62,6 +62,23 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
 }
 
 export async function sendOrderCreated(orderData: any): Promise<void> {
+  // Extract sync statuses - these are derived from what processing has completed
+  const syncStatuses: Record<string, string> = {};
+  
+  // If we have D365 order number, Shopify import and D365 sync succeeded
+  if (orderData.d365OrderNumber) {
+    syncStatuses.shopifySyncStatus = "synced";
+    syncStatuses.d365SyncStatus = "synced";
+  }
+  
+  // If we have GPS order ID, GPS sync succeeded
+  if (orderData.gpsOrderId) {
+    syncStatuses.gpsSyncStatus = "synced";
+  } else if (orderData.warehouse) {
+    // We have warehouse assignment but no GPS order yet - might be pending or skipped
+    syncStatuses.gpsSyncStatus = orderData.gpsSkipped ? "skipped" : "pending";
+  }
+
   await sendOrderEvent({
     event: "order.created",
     data: {
@@ -69,6 +86,7 @@ export async function sendOrderCreated(orderData: any): Promise<void> {
       shopifyOrderName: orderData.name || orderData.shopifyOrderName,
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
+      ...syncStatuses,
       createdAt: new Date().toISOString(),
     },
   });

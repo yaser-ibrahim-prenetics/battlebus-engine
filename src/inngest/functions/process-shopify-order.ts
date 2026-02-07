@@ -357,8 +357,10 @@ export const processShopifyOrder = inngest.createFunction(
       // Publish final success result
       await publishResult("success", { d365OrderNumber: salesOrderNumber, warehouse: warehouseName });
 
-      // Send order created event to CS platform
+      // Send order created event to CS platform (Battle Hub)
       let gpsOrderId: string | undefined;
+      const gpsSkipped = gpsResult?.type === "skipped";
+      
       if (gpsResult?.type === "real" && "result" in gpsResult) {
         const gpsData = gpsResult.result?.response?.data;
         if (Array.isArray(gpsData) && gpsData.length > 0) {
@@ -374,6 +376,7 @@ export const processShopifyOrder = inngest.createFunction(
         d365OrderNumber: salesOrderNumber,
         warehouse: warehouseName,
         gpsOrderId,
+        gpsSkipped, // Pass GPS skip status for sync tracking
         orderJson: order,
       });
 
