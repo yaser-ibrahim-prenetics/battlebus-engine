@@ -108,6 +108,15 @@ export async function POST(request: NextRequest) {
       console.log(`[Webhook] [${requestId}] Refund ID: ${payload.id}`);
       console.log(`[Webhook] [${requestId}] Order ID: ${payload.order_id}`);
       console.log(`[Webhook] [${requestId}] Refund Amount: ${payload.transactions?.[0]?.amount || "N/A"}`);
+    } else if (topic === "products/create" || topic === "products/update") {
+      console.log(`[Webhook] [${requestId}] Product ID: ${payload.id}`);
+      console.log(`[Webhook] [${requestId}] Product Title: ${payload.title}`);
+      console.log(`[Webhook] [${requestId}] Variants: ${payload.variants?.length || 0}`);
+      console.log(`[Webhook] [${requestId}] Status: ${payload.status}`);
+    } else if (topic === "inventory_levels/update") {
+      console.log(`[Webhook] [${requestId}] Inventory Item ID: ${payload.inventory_item_id}`);
+      console.log(`[Webhook] [${requestId}] Location ID: ${payload.location_id}`);
+      console.log(`[Webhook] [${requestId}] Available: ${payload.available}`);
     }
 
     // Route to appropriate event based on topic
@@ -224,6 +233,99 @@ export async function POST(request: NextRequest) {
           },
         });
         console.log(`[Webhook] [${requestId}] ✅ Sent shopify/refund.created for order ${payload.order_id}`);
+        break;
+
+      // Product created - sync to D365 & GPS
+      case "products/create":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.created`);
+        await inngest.send({
+          id: `shopify-product-created-${payload.id}`,
+          name: "shopify/product.created",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title,
+            shopifyStore: shopDomain || "im8",
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        });
+        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.created for ${payload.title}`);
+        break;
+
+      // Product updated - sync changes to D365 & GPS
+      case "products/update":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.updated`);
+        await inngest.send({
+          id: `shopify-product-updated-${payload.id}-${payload.updated_at}`,
+          name: "shopify/product.updated",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title,
+            shopifyStore: shopDomain || "im8",
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        });
+        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.updated for ${payload.title}`);
+        break;
+
+      // Product deleted - sync deletion to D365 & GPS
+      case "products/delete":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.deleted`);
+        await inngest.send({
+          id: `shopify-product-deleted-${payload.id}`,
+          name: "shopify/product.deleted",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title || "Unknown",
+            shopifyStore: shopDomain || "im8",
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        });
+        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.deleted for product ${payload.id}`);
+        break;
+
+      // Inventory level updated - sync stock levels to D365 & GPS via mesh
+      case "inventory_levels/update":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);
+        // Use the mesh API pattern - send to mesh which routes to destinations
+        await inngest.send({
+          id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+          name: "inventory/sync",
+          data: {
+            source: "shopify",
+            destination: "dynamics",
+            payload: {
+              inventoryItemId: String(payload.inventory_item_id),
+              locationId: String(payload.location_id),
+              available: payload.available,
+              quantity: payload.available,
+              action: "update",
+              source: "shopify",
+              timestamp: payload.updated_at || new Date().toISOString(),
+            },
+          },
+        });
+        // Also sync to GPS warehouse
+        await inngest.send({
+          id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+          name: "inventory/sync",
+          data: {
+            source: "shopify",
+            destination: "gps",
+            payload: {
+              inventoryItemId: String(payload.inventory_item_id),
+              locationId: String(payload.location_id),
+              available: payload.available,
+              quantity: payload.available,
+              action: "update",
+              source: "shopify",
+              timestamp: payload.updated_at || new Date().toISOString(),
+            },
+          },
+        });
+        console.log(`[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`);
         break;
 
       default:

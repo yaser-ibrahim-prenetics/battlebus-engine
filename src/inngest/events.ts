@@ -125,6 +125,54 @@ export type ExtensivReceiverConfirmEvent = {
 };
 
 // ============================================================================
+// PRODUCT & INVENTORY SYNC EVENTS
+// ============================================================================
+
+export type ShopifyProductCreatedEvent = {
+  name: "shopify/product.created";
+  data: {
+    productId: string;
+    productTitle: string;
+    shopifyStore: string;
+    productJson: ShopifyProductPayload;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyProductUpdatedEvent = {
+  name: "shopify/product.updated";
+  data: {
+    productId: string;
+    productTitle: string;
+    shopifyStore: string;
+    productJson: ShopifyProductPayload;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyProductDeletedEvent = {
+  name: "shopify/product.deleted";
+  data: {
+    productId: string;
+    productTitle: string;
+    shopifyStore: string;
+    productJson: ShopifyProductPayload;
+    receivedAt: string;
+  };
+};
+
+export type ShopifyInventoryUpdatedEvent = {
+  name: "shopify/inventory.updated";
+  data: {
+    inventoryItemId: string;
+    locationId: string;
+    shopifyStore: string;
+    inventoryJson: ShopifyInventoryLevelPayload;
+    receivedAt: string;
+  };
+};
+
+// ============================================================================
 // ACTION EVENTS (Triggered by Battle Hub direct actions)
 // ============================================================================
 // These events are sent when CS/Ops users trigger actions from Battle Hub.
@@ -172,6 +220,43 @@ export type ActionOrderFulfillEvent = {
   };
 };
 
+// ============================================================================
+// INVENTORY MESH EVENTS (Centralized inventory sync routing)
+// ============================================================================
+
+export type InventorySyncEvent = {
+  name: "inventory/sync";
+  data: {
+    source: string;
+    destination: string;
+    payload: {
+      sku?: string;
+      inventoryItemId?: string;
+      variantId?: string;
+      productId?: string;
+      quantity?: number;
+      available?: number;
+      reserved?: number;
+      committed?: number;
+      locationId?: string | number;
+      warehouseId?: string;
+      warehouseName?: string;
+      dataAreaId?: string;
+      productTitle?: string;
+      variantTitle?: string;
+      barcode?: string;
+      price?: string | number;
+      weight?: number;
+      weightUnit?: string;
+      action?: "create" | "update" | "delete" | "adjust";
+      source?: string;
+      destination?: string;
+      timestamp?: string;
+      reason?: string;
+    };
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -180,13 +265,18 @@ export type BattleBusEvents =
   | ShopifyOrderPaidEvent
   | ShopifyOrderUpdatedEvent
   | ShopifyOrderFulfilledEvent
+  | ShopifyProductCreatedEvent
+  | ShopifyProductUpdatedEvent
+  | ShopifyProductDeletedEvent
+  | ShopifyInventoryUpdatedEvent
   | GpsFulfilmentReceivedEvent
   | StordFulfilmentReceivedEvent
   | ExtensivOrderConfirmEvent
   | ExtensivReceiverConfirmEvent
   | ActionOrderCancelEvent
   | ActionOrderRefundEvent
-  | ActionOrderFulfillEvent;
+  | ActionOrderFulfillEvent
+  | InventorySyncEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
@@ -396,4 +486,47 @@ export enum CancelReasonEnum {
   inventory = 'Items in the order were not in inventory',
   declined = 'The payment was declined',
   other = 'Other reason',
+}
+
+// ============================================================================
+// PRODUCT & INVENTORY PAYLOAD TYPES
+// ============================================================================
+
+export interface ShopifyProductPayload {
+  id: number;
+  title: string;
+  body_html: string | null;
+  vendor: string;
+  product_type: string;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+  status: string;
+  tags: string;
+  handle: string;
+  variants: ShopifyVariantPayload[];
+  images: { id: number; src: string; position: number }[];
+}
+
+export interface ShopifyVariantPayload {
+  id: number;
+  product_id: number;
+  title: string;
+  price: string;
+  sku: string;
+  position: number;
+  inventory_item_id: number;
+  inventory_quantity: number;
+  weight: number;
+  weight_unit: string;
+  barcode: string | null;
+  requires_shipping: boolean;
+  taxable: boolean;
+}
+
+export interface ShopifyInventoryLevelPayload {
+  inventory_item_id: number;
+  location_id: number;
+  available: number | null;
+  updated_at: string;
 }

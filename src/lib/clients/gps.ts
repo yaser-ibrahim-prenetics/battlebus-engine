@@ -410,5 +410,77 @@ export class OutOfStockError extends Error {
   }
 }
 
+// ============================================================================
+// PRODUCT & INVENTORY SYNC (PLACEHOLDER)
+// ============================================================================
+
+/**
+ * Sync a Shopify product/SKU to GPS warehouse system
+ * TODO: Implement actual GPS product master sync (SKU registration)
+ */
+export async function syncProduct(product: {
+  productId: string;
+  title: string;
+  variants: { sku: string; barcode: string | null; weight: number; weight_unit: string }[];
+}): Promise<{ success: boolean; message: string }> {
+  console.log(`[GPS] 🔄 syncProduct called for "${product.title}" (${product.productId})`);
+  console.log(`[GPS]   Variants: ${product.variants.length}`);
+  for (const v of product.variants) {
+    console.log(`[GPS]   - SKU: ${v.sku}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`);
+  }
+
+  if (config.features.dryRunMode) {
+    console.log(`[GPS] DRY RUN - Would sync product ${product.title}`);
+    return { success: true, message: "DRY RUN - GPS product sync placeholder" };
+  }
+
+  // TODO: GPS product master / SKU registration API
+  // Steps:
+  //   1. Check if SKU already exists in GPS product master
+  //   2. If not, register new SKU with barcode, weight, dimensions
+  //   3. If yes, update product attributes
+  // May involve:
+  //   POST /openapi/v1/product/create or similar GPS endpoint
+  console.log(`[GPS] ⚠️  Product sync not yet implemented - placeholder only`);
+  return {
+    success: true,
+    message: "Placeholder - GPS product sync not yet implemented",
+  };
+}
+
+/**
+ * Sync inventory levels from Shopify to GPS warehouse
+ * TODO: Implement actual GPS inventory adjustment
+ */
+export async function syncInventoryLevel(inventory: {
+  inventoryItemId: string;
+  locationId: string;
+  available: number | null;
+  sku?: string;
+}): Promise<{ success: boolean; message: string }> {
+  console.log(`[GPS] 🔄 syncInventoryLevel called for item ${inventory.inventoryItemId}`);
+  console.log(`[GPS]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[GPS] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId}`);
+    return { success: true, message: "DRY RUN - GPS inventory sync placeholder" };
+  }
+
+  // TODO: GPS inventory adjustment API
+  // Steps:
+  //   1. Map Shopify inventory_item_id → GPS SKU
+  //   2. Map Shopify location_id → GPS warehouse code
+  //   3. Query current GPS stock level
+  //   4. Create adjustment if different
+  // May involve:
+  //   POST /openapi/v1/inventory/adjust (if GPS supports it)
+  //   or a manual stock count update via GPS API
+  console.log(`[GPS] ⚠️  Inventory sync not yet implemented - placeholder only`);
+  return {
+    success: true,
+    message: "Placeholder - GPS inventory sync not yet implemented",
+  };
+}
+
 // Re-export for backwards compatibility
 export { GpsOutboundOrder, GpsFulfilmentNotification };

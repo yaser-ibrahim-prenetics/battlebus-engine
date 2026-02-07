@@ -19,6 +19,9 @@ export {
   processActionRefund,
   processActionFulfill,
 } from "./process-hub-actions";
+export { processProductSync } from "./process-product-sync";
+export { processInventorySync } from "./process-inventory-sync";
+export { processInventoryMesh } from "./process-inventory-mesh";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -39,6 +42,9 @@ import {
   processActionRefund,
   processActionFulfill,
 } from "./process-hub-actions";
+import { processProductSync } from "./process-product-sync";
+import { processInventorySync } from "./process-inventory-sync";
+import { processInventoryMesh } from "./process-inventory-mesh";
 
 export const functions = [
   processShopifyOrder,
@@ -56,4 +62,8 @@ export const functions = [
   processActionCancel,
   processActionRefund,
   processActionFulfill,
+  // Product & Inventory Sync
+  processProductSync,
+  processInventorySync,
+  processInventoryMesh,
 ];

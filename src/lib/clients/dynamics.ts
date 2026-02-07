@@ -1096,6 +1096,87 @@ export async function getSalesOrderByShopifyId(
 }
 
 // ============================================================================
+// PRODUCT & INVENTORY SYNC (PLACEHOLDER)
+// ============================================================================
+
+/**
+ * Sync a Shopify product to D365 as a Released Product
+ * TODO: Implement actual D365 product/item sync via ReleasedProductsV2 or custom THK API
+ */
+export async function syncProduct(product: {
+  productId: string;
+  title: string;
+  variants: { sku: string; price: string; barcode: string | null; weight: number; weight_unit: string }[];
+  vendor: string;
+  productType: string;
+  tags: string;
+  status: string;
+}): Promise<{ success: boolean; message: string; d365ItemNumbers?: string[] }> {
+  console.log(`[D365] 🔄 syncProduct called for "${product.title}" (${product.productId})`);
+  console.log(`[D365]   Vendor: ${product.vendor}, Type: ${product.productType}, Status: ${product.status}`);
+  console.log(`[D365]   Variants: ${product.variants.length}`);
+  for (const v of product.variants) {
+    console.log(`[D365]   - SKU: ${v.sku}, Price: ${v.price}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`);
+  }
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would sync product ${product.title}`);
+    return { success: true, message: "DRY RUN - Product sync placeholder" };
+  }
+
+  // TODO: Map Shopify product → D365 Released Products / Item Numbers
+  // Example endpoints:
+  //   POST /data/ReleasedProductsV2
+  //   PATCH /data/ReleasedProductsV2(ItemNumber='...',dataAreaId='...')
+  // Steps:
+  //   1. Check if product/variant already exists in D365 by SKU (ItemNumber)
+  //   2. If not, create a new Released Product record
+  //   3. If yes, update price, weight, barcode, etc.
+  //   4. Return the D365 item numbers for tracking
+  console.log(`[D365] ⚠️  Product sync not yet implemented - placeholder only`);
+  return {
+    success: true,
+    message: "Placeholder - D365 product sync not yet implemented",
+    d365ItemNumbers: product.variants.map((v) => v.sku),
+  };
+}
+
+/**
+ * Sync inventory levels from Shopify to D365
+ * TODO: Implement actual D365 inventory adjustment via InventoryOnHandEntities or Adjustment Journals
+ */
+export async function syncInventoryLevel(inventory: {
+  inventoryItemId: string;
+  locationId: string;
+  available: number | null;
+  sku?: string;
+}): Promise<{ success: boolean; message: string }> {
+  console.log(`[D365] 🔄 syncInventoryLevel called for item ${inventory.inventoryItemId}`);
+  console.log(`[D365]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId}`);
+    return { success: true, message: "DRY RUN - Inventory sync placeholder" };
+  }
+
+  // TODO: Map Shopify inventory → D365 On-hand inventory
+  // Example approaches:
+  //   1. POST /data/InventoryOnHandEntities - direct on-hand update
+  //   2. Use D365 Inventory Adjustment Journals for auditable changes
+  //   3. Call THK custom API if one exists for inventory sync
+  // Steps:
+  //   1. Map Shopify inventory_item_id → D365 ItemNumber (via SKU lookup)
+  //   2. Map Shopify location_id → D365 Warehouse/Site
+  //   3. Compare current D365 on-hand vs Shopify available
+  //   4. Create adjustment if different
+  console.log(`[D365] ⚠️  Inventory sync not yet implemented - placeholder only`);
+  return {
+    success: true,
+    message: "Placeholder - D365 inventory sync not yet implemented",
+  };
+}
+
+// ============================================================================
 // LEGACY EXPORTS (for backwards compatibility)
 // ============================================================================
 
