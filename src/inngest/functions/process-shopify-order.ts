@@ -60,6 +60,9 @@ export const processShopifyOrder = inngest.createFunction(
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 
+    // Inngest event ID for linking to dashboard
+    const inngestEventId = event.id;
+
     // Helper to publish status updates via Inngest Realtime
     const publishStatus = async (
       stepName: string,
@@ -73,6 +76,7 @@ export const processShopifyOrder = inngest.createFunction(
           topic: "status",
           data: {
             orderName: shopifyOrderName,
+            inngestEventId,
             step: stepName,
             status,
             message,
@@ -97,6 +101,7 @@ export const processShopifyOrder = inngest.createFunction(
           topic: "result",
           data: {
             orderName: shopifyOrderName,
+            inngestEventId,
             status,
             ...resultData,
             timestamp: new Date().toISOString(),
@@ -378,7 +383,7 @@ export const processShopifyOrder = inngest.createFunction(
         gpsOrderId,
         gpsSkipped, // Pass GPS skip status for sync tracking
         orderJson: order,
-      });
+      }, inngestEventId);
 
       return result;
     } catch (error) {

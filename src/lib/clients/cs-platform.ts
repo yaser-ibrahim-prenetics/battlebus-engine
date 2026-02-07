@@ -61,7 +61,7 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
   }
 }
 
-export async function sendOrderCreated(orderData: any): Promise<void> {
+export async function sendOrderCreated(orderData: any, inngestEventId?: string): Promise<void> {
   // Extract sync statuses - these are derived from what processing has completed
   const syncStatuses: Record<string, string> = {};
   
@@ -87,12 +87,13 @@ export async function sendOrderCreated(orderData: any): Promise<void> {
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
       ...syncStatuses,
+      inngestEventId, // Include Inngest event ID for linking to dashboard
       createdAt: new Date().toISOString(),
     },
   });
 }
 
-export async function sendOrderUpdated(orderData: any, changes?: string[]): Promise<void> {
+export async function sendOrderUpdated(orderData: any, changes?: string[], inngestEventId?: string): Promise<void> {
   await sendOrderEvent({
     event: "order.updated",
     data: {
@@ -101,6 +102,7 @@ export async function sendOrderUpdated(orderData: any, changes?: string[]): Prom
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
       changedFields: changes,
+      inngestEventId, // Include Inngest event ID for linking to dashboard
       updatedAt: new Date().toISOString(),
     },
   });
