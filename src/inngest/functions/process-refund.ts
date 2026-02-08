@@ -172,12 +172,18 @@ export const processRefund = inngest.createFunction(
       processedAt: new Date().toISOString(),
     };
 
-    // Send refund event to CS platform
+    // Determine if this is a full or partial refund based on Shopify order total
+    const orderTotal = parseFloat(shopifyOrder.total_price || "0");
+    const refundType = refundAmount >= orderTotal ? "full" : "partial";
+    
+    // Send refund event to CS platform with financial status
     await csPlatform.sendOrderRefunded({
       orderId: shopifyOrderId,
       shopifyOrderName: shopifyOrder.name || shopifyOrderId,
       amount: refundAmount.toString(),
       reason: "Refund processed",
+      shopifyFinancialStatus: shopifyOrder.financial_status,
+      refundType,
     });
 
     return result;

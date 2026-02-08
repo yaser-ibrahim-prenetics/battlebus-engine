@@ -182,12 +182,14 @@ export const processOrderCancellation = inngest.createFunction(
       processedAt: new Date().toISOString(),
     };
 
-    // Send cancellation event to CS platform
+    // Send cancellation event to CS platform with Shopify status
     if (result.status === "success" || result.status === "partial") {
       await csPlatform.sendOrderCancelled({
         orderId: shopifyOrderId,
         shopifyOrderName,
         reason: cancelReason,
+        shopifyFinancialStatus: shopifyOrderPayload?.financial_status,
+        shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
       });
     }
 

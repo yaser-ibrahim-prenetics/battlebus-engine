@@ -217,7 +217,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       );
     }
 
-    // Send fulfillment events to CS platform
+    // Send fulfillment events to CS platform with Shopify status
     for (const fulfillmentResult of fulfillmentResults) {
       if (fulfillmentResult.status === "success" && fulfillmentResult.trackingNumber) {
         await csPlatform.sendOrderFulfilled({
@@ -226,6 +226,8 @@ export const processShopifyFulfillment = inngest.createFunction(
           trackingNumber: fulfillmentResult.trackingNumber,
           carrier: fulfillmentResult.carrier || "",
           fulfillmentId: fulfillmentResult.fulfillmentId,
+          shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
+          shopifyFinancialStatus: order.financial_status,
         });
       }
     }

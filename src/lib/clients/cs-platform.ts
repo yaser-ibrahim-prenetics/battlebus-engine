@@ -161,6 +161,8 @@ export async function sendOrderFulfilled(orderData: {
   trackingNumber: string;
   carrier: string;
   fulfillmentId?: string;
+  shopifyFulfillmentStatus?: string;
+  shopifyFinancialStatus?: string;
 }): Promise<void> {
   await sendOrderEvent({
     event: "order.fulfilled",
@@ -170,6 +172,8 @@ export async function sendOrderFulfilled(orderData: {
       trackingNumber: orderData.trackingNumber,
       carrier: orderData.carrier,
       fulfillmentId: orderData.fulfillmentId,
+      shopifyFulfillmentStatus: orderData.shopifyFulfillmentStatus || "fulfilled",
+      shopifyFinancialStatus: orderData.shopifyFinancialStatus,
       fulfilledAt: new Date().toISOString(),
     },
   });
@@ -179,6 +183,8 @@ export async function sendOrderCancelled(orderData: {
   orderId?: string;
   shopifyOrderName: string;
   reason?: string;
+  shopifyFinancialStatus?: string;
+  shopifyCancelledAt?: string;
 }): Promise<void> {
   await sendOrderEvent({
     event: "order.cancelled",
@@ -186,6 +192,8 @@ export async function sendOrderCancelled(orderData: {
       orderId: orderData.orderId,
       shopifyOrderName: orderData.shopifyOrderName,
       reason: orderData.reason,
+      shopifyFinancialStatus: orderData.shopifyFinancialStatus,
+      shopifyCancelledAt: orderData.shopifyCancelledAt,
       cancelledAt: new Date().toISOString(),
     },
   });
@@ -196,7 +204,13 @@ export async function sendOrderRefunded(orderData: {
   shopifyOrderName: string;
   amount?: string;
   reason?: string;
+  shopifyFinancialStatus?: string;
+  refundType?: "full" | "partial";
 }): Promise<void> {
+  // Determine financial status based on refund type
+  const financialStatus = orderData.shopifyFinancialStatus || 
+    (orderData.refundType === "partial" ? "partially_refunded" : "refunded");
+  
   await sendOrderEvent({
     event: "order.refunded",
     data: {
@@ -204,6 +218,8 @@ export async function sendOrderRefunded(orderData: {
       shopifyOrderName: orderData.shopifyOrderName,
       amount: orderData.amount,
       reason: orderData.reason,
+      shopifyFinancialStatus: financialStatus,
+      refundType: orderData.refundType,
       refundedAt: new Date().toISOString(),
     },
   });
