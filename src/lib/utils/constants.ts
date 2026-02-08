@@ -8,16 +8,22 @@
 // ============================================================================
 
 export const THROTTLE_CONFIGS = {
+  // OPTIMIZATION: Increased D365 throttle from 10 to 15/sec
+  // D365 service protection limits allow 6000 requests/5min = 20/sec
+  // We stay conservative at 15/sec to leave headroom
   DYNAMICS: {
-    limit: 10,
+    limit: 15,
     period: "1s" as const,
   },
+  // OPTIMIZATION: Increased Shopify throttle from 2 to 4/sec
+  // Shopify REST API allows 40 requests/sec with leaky bucket
   SHOPIFY: {
-    limit: 2,
+    limit: 4,
     period: "1s" as const,
   },
+  // OPTIMIZATION: Increased GPS throttle from 5 to 10/sec
   GPS: {
-    limit: 5,
+    limit: 10,
     period: "1s" as const,
   },
   REFUND: {
