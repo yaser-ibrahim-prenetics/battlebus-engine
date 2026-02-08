@@ -333,7 +333,7 @@ export const processShopifyOrder = inngest.createFunction(
       });
       
       if (gpsOrderPayload) {
-        const itemCount = gpsOrderPayload.orderDetails?.length || 0;
+        const itemCount = gpsOrderPayload.productList?.length || 0;
         await publishStatus("gps.build-payload", "completed", `Payload built with ${itemCount} items`, { 
           itemCount, 
           warehouse: warehouseName 
