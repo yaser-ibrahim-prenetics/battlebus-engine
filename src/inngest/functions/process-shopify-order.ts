@@ -372,7 +372,7 @@ export const processShopifyOrder = inngest.createFunction(
       });
       
       // Publish GPS result
-      if (gpsResult.type === "real") {
+      if (gpsResult.type === "real" && "result" in gpsResult) {
         const gpsOrderNo = gpsResult.result?.response?.data?.[0]?.orderNo;
         await publishStatus("gps.send-order", "completed", `GPS order created: ${gpsOrderNo || 'OK'}`, { 
           gpsOrderNo, 
