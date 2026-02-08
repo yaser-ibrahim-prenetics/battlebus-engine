@@ -77,13 +77,24 @@ export async function GET(request: NextRequest) {
       }
 
       const data = await response.json();
+      
+      // Log the raw response to debug what fields are available
+      console.log(`[Inngest Runs] Raw run response for ${runId}:`, JSON.stringify(data, null, 2));
+      
+      // The event_id might be nested in the event object or as a direct field
+      // Try multiple locations for the event ID
+      const eventId = data.event_id || data.event?.internal_id || data.event?.id || data.trigger?.event_id;
+      
       // Normalize the response - ensure both id/run_id and event_id are present
       const normalizedRun = {
         ...data,
         id: data.id || data.run_id,
         run_id: data.run_id || data.id,
-        event_id: data.event_id,
+        event_id: eventId,
       };
+      
+      console.log(`[Inngest Runs] Normalized run:`, { runId: normalizedRun.run_id, eventId: normalizedRun.event_id });
+      
       return NextResponse.json({ data: [normalizedRun] });
     }
 
