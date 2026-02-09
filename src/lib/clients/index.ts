@@ -16,6 +16,8 @@ export {
   createPrepayment,
   createFulfilment,
   getSalesOrderByShopifyId,
+  getInventory as getD365Inventory,
+  getAllInventory as getAllD365Inventory,
   DYNAMICS_THK_API_SUCCESS_STATUS,
 } from "./dynamics";
 

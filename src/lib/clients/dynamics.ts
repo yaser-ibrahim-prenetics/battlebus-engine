@@ -1141,6 +1141,111 @@ export async function syncProduct(product: {
   };
 }
 
+// ============================================================================
+// INVENTORY QUERY (READ ONLY)
+// ============================================================================
+
+export interface D365InventoryItem {
+  dataAreaId: string;
+  ItemNumber: string;
+  ProductName: string;
+  InventorySiteId: string;
+  OnHandQuantity: number;
+  AvailableOnHandQuantity: number;
+  TotalAvailableQuantity: number;
+  ReservedOnHandQuantity: number;
+  OrderedQuantity: number;
+  AvailableOrderedQuantity: number;
+}
+
+export interface D365GetInventoryOptions {
+  dataAreaId?: string; // Filter by company (e.g., 'u001')
+  itemNumber?: string; // Filter by specific item
+  top?: number; // Limit results
+  skip?: number; // Pagination offset
+}
+
+/**
+ * Fetch inventory levels from D365 InventorySitesOnHandV2 (READ ONLY)
+ * This is safe to call - it only reads data, no writes.
+ */
+export async function getInventory(
+  options: D365GetInventoryOptions = {}
+): Promise<{ items: D365InventoryItem[]; count: number }> {
+  const accessToken = await getAuthToken();
+  const { dataAreaId, itemNumber, top = 100, skip = 0 } = options;
+
+  // Build OData query
+  let url = `${config.dynamics.baseUrl}/data/InventorySitesOnHandV2?cross-company=true`;
+  
+  // Add filters
+  const filters: string[] = [];
+  if (dataAreaId) {
+    filters.push(`dataAreaId eq '${dataAreaId.toLowerCase()}'`);
+  }
+  if (itemNumber) {
+    filters.push(`ItemNumber eq '${itemNumber}'`);
+  }
+  if (filters.length > 0) {
+    url += `&$filter=${filters.join(' and ')}`;
+  }
+  
+  // Add pagination
+  url += `&$top=${top}&$skip=${skip}`;
+  
+  console.log(`[D365] Fetching inventory from: ${url}`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "OData-MaxVersion": "4.0",
+      "OData-Version": "4.0",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`D365 Inventory fetch failed: ${response.status} - ${error.substring(0, 500)}`);
+  }
+
+  const data = await response.json();
+  const items = data.value || [];
+  
+  console.log(`[D365] Fetched ${items.length} inventory items`);
+  
+  return { items, count: items.length };
+}
+
+/**
+ * Fetch ALL inventory from D365 (paginated, fetches all pages)
+ */
+export async function getAllInventory(
+  options: Omit<D365GetInventoryOptions, 'top' | 'skip'> = {}
+): Promise<D365InventoryItem[]> {
+  const allItems: D365InventoryItem[] = [];
+  let skip = 0;
+  const pageSize = 1000; // D365 max is typically 1000
+  let hasMore = true;
+  
+  console.log(`[D365] Fetching all inventory...`);
+  
+  while (hasMore) {
+    const { items } = await getInventory({ ...options, top: pageSize, skip });
+    allItems.push(...items);
+    
+    if (items.length < pageSize) {
+      hasMore = false;
+    } else {
+      skip += pageSize;
+    }
+  }
+  
+  console.log(`[D365] Total inventory fetched: ${allItems.length} items`);
+  return allItems;
+}
+
 /**
  * Sync inventory levels from Shopify to D365
  * TODO: Implement actual D365 inventory adjustment via InventoryOnHandEntities or Adjustment Journals
