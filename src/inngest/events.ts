@@ -257,6 +257,22 @@ export type InventorySyncEvent = {
   };
 };
 
+// ============================================================================
+// INVENTORY FULL SYNC (from Battle Hub)
+// ============================================================================
+
+export type InventoryFullSyncRequestedEvent = {
+  name: "inventory/sync.requested";
+  data: {
+    syncId: string;
+    steps: ("gps" | "d365" | "shopify")[];
+    skus?: string[];
+    dryRun?: boolean;
+    requestedAt: string;
+    requestedBy: string;
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -276,7 +292,8 @@ export type BattleBusEvents =
   | ActionOrderCancelEvent
   | ActionOrderRefundEvent
   | ActionOrderFulfillEvent
-  | InventorySyncEvent;
+  | InventorySyncEvent
+  | InventoryFullSyncRequestedEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
