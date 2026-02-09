@@ -65,21 +65,22 @@ export const processInventoryFullSync = inngest.createFunction(
     // STEP 1: GPS Warehouse Sync
     // ========================================================================
     if (steps.includes("gps")) {
+      // Publish "running" status BEFORE the step (side effects outside step.run)
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "gps",
+          status: "running",
+          message: "Pulling inventory from GPS warehouse...",
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Run the actual sync in a step (idempotent computation only)
       const gpsResult = await step.run("sync-gps", async () => {
         const startTime = Date.now();
-
-        // Publish status update
-        await publish({
-          channel,
-          topic: "status",
-          data: {
-            syncId,
-            step: "gps",
-            status: "running",
-            message: "Pulling inventory from GPS warehouse...",
-            timestamp: new Date().toISOString(),
-          },
-        });
 
         try {
           console.log("[InventoryFullSync] Querying GPS inventory...");
@@ -98,44 +99,29 @@ export const processInventoryFullSync = inngest.createFunction(
             skuMap.set(item.sku, current + (item.availableQty || 0));
           }
 
-          // Store for later steps
-          for (const [sku, qty] of skuMap) {
-            inventory.set(sku, { sku, gpsQty: qty });
-          }
+          // Return inventory data to store after step completes
+          const inventoryData = Array.from(skuMap.entries()).map(([sku, qty]) => ({
+            sku,
+            gpsQty: qty,
+          }));
 
-          const result: StepResult = {
-            step: "gps",
+          return {
+            step: "gps" as const,
             success: true,
             itemsProcessed: allItems.length,
             itemsSucceeded: skuMap.size,
             itemsFailed: 0,
             message: `Synced ${skuMap.size} SKUs from GPS`,
+            error: undefined as string | undefined,
             durationMs: Date.now() - startTime,
+            inventoryData,
           };
-
-          // Publish completion
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "gps",
-              status: "completed",
-              itemsProcessed: result.itemsProcessed,
-              itemsSucceeded: result.itemsSucceeded,
-              itemsFailed: result.itemsFailed,
-              message: result.message,
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return result;
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
           console.error("[InventoryFullSync] GPS sync failed:", errMsg);
 
-          const result: StepResult = {
-            step: "gps",
+          return {
+            step: "gps" as const,
             success: false,
             itemsProcessed: 0,
             itemsSucceeded: 0,
@@ -143,24 +129,32 @@ export const processInventoryFullSync = inngest.createFunction(
             message: "GPS sync failed",
             error: errMsg,
             durationMs: Date.now() - startTime,
+            inventoryData: [] as { sku: string; gpsQty: number }[],
           };
-
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "gps",
-              status: "failed",
-              error: errMsg,
-              message: "GPS sync failed",
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return result;
         }
       });
+
+      // Publish completion status AFTER the step (side effects outside step.run)
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "gps",
+          status: gpsResult.success ? "completed" : "failed",
+          itemsProcessed: gpsResult.itemsProcessed,
+          itemsSucceeded: gpsResult.itemsSucceeded,
+          itemsFailed: gpsResult.itemsFailed,
+          message: gpsResult.message,
+          error: gpsResult.error,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Store inventory data for later steps
+      for (const item of gpsResult.inventoryData) {
+        inventory.set(item.sku, item);
+      }
 
       results.push(gpsResult);
     }
@@ -169,20 +163,22 @@ export const processInventoryFullSync = inngest.createFunction(
     // STEP 2: Dynamics 365 Sync
     // ========================================================================
     if (steps.includes("d365")) {
+      // Publish "running" status BEFORE the step
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "d365",
+          status: "running",
+          message: "Syncing inventory to D365 sandbox...",
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Run the actual sync in a step (idempotent computation only)
       const d365Result = await step.run("sync-d365", async () => {
         const startTime = Date.now();
-
-        await publish({
-          channel,
-          topic: "status",
-          data: {
-            syncId,
-            step: "d365",
-            status: "running",
-            message: "Syncing inventory to D365 sandbox...",
-            timestamp: new Date().toISOString(),
-          },
-        });
 
         try {
           console.log("[InventoryFullSync] Fetching D365 inventory for comparison...");
@@ -201,7 +197,6 @@ export const processInventoryFullSync = inngest.createFunction(
 
           // Compare and identify drift
           let succeeded = 0;
-          let failed = 0;
           let driftCount = 0;
 
           for (const [sku, data] of inventory) {
@@ -212,44 +207,26 @@ export const processInventoryFullSync = inngest.createFunction(
               driftCount++;
               console.log(`[InventoryFullSync] Drift: ${sku} GPS=${gpsQty} D365=${d365Qty}`);
             }
-
-            // Note: Actual D365 inventory writes require journal creation via THK API
-            // For now, we just compare and report drift
             succeeded++;
           }
 
-          const result: StepResult = {
-            step: "d365",
+          return {
+            step: "d365" as const,
             success: true,
             itemsProcessed: inventory.size,
             itemsSucceeded: succeeded,
-            itemsFailed: failed,
+            itemsFailed: 0,
             message: `Compared ${succeeded} items, ${driftCount} with drift`,
+            error: undefined as string | undefined,
             durationMs: Date.now() - startTime,
+            driftCount,
           };
-
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "d365",
-              status: "completed",
-              itemsProcessed: result.itemsProcessed,
-              itemsSucceeded: result.itemsSucceeded,
-              itemsFailed: driftCount, // Report drift as "failed" for tracking
-              message: result.message,
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return { ...result, driftCount };
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
           console.error("[InventoryFullSync] D365 sync failed:", errMsg);
 
-          const result: StepResult = {
-            step: "d365",
+          return {
+            step: "d365" as const,
             success: false,
             itemsProcessed: 0,
             itemsSucceeded: 0,
@@ -257,23 +234,26 @@ export const processInventoryFullSync = inngest.createFunction(
             message: "D365 sync failed",
             error: errMsg,
             durationMs: Date.now() - startTime,
+            driftCount: 0,
           };
-
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "d365",
-              status: "failed",
-              error: errMsg,
-              message: "D365 sync failed",
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return { ...result, driftCount: 0 };
         }
+      });
+
+      // Publish completion status AFTER the step
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "d365",
+          status: d365Result.success ? "completed" : "failed",
+          itemsProcessed: d365Result.itemsProcessed,
+          itemsSucceeded: d365Result.itemsSucceeded,
+          itemsFailed: d365Result.driftCount, // Report drift as "failed" for tracking
+          message: d365Result.message,
+          error: d365Result.error,
+          timestamp: new Date().toISOString(),
+        },
       });
 
       results.push(d365Result);
@@ -283,20 +263,22 @@ export const processInventoryFullSync = inngest.createFunction(
     // STEP 3: Shopify Sync
     // ========================================================================
     if (steps.includes("shopify")) {
+      // Publish "running" status BEFORE the step
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "shopify",
+          status: "running",
+          message: "Syncing inventory to Shopify...",
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Run the actual sync in a step (idempotent computation only)
       const shopifyResult = await step.run("sync-shopify", async () => {
         const startTime = Date.now();
-
-        await publish({
-          channel,
-          topic: "status",
-          data: {
-            syncId,
-            step: "shopify",
-            status: "running",
-            message: "Syncing inventory to Shopify...",
-            timestamp: new Date().toISOString(),
-          },
-        });
 
         try {
           console.log("[InventoryFullSync] Shopify sync is de-emphasized");
@@ -304,38 +286,22 @@ export const processInventoryFullSync = inngest.createFunction(
 
           // Shopify sync is informational only - we don't actively push
           // because Shopify is not the source of truth for inventory
-          const result: StepResult = {
-            step: "shopify",
+          return {
+            step: "shopify" as const,
             success: true,
             itemsProcessed: inventory.size,
             itemsSucceeded: inventory.size,
             itemsFailed: 0,
             message: `Shopify sync skipped (de-emphasized)`,
+            error: undefined as string | undefined,
             durationMs: Date.now() - startTime,
           };
-
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "shopify",
-              status: "completed",
-              itemsProcessed: result.itemsProcessed,
-              itemsSucceeded: result.itemsSucceeded,
-              itemsFailed: result.itemsFailed,
-              message: result.message,
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return result;
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
           console.error("[InventoryFullSync] Shopify sync failed:", errMsg);
 
-          const result: StepResult = {
-            step: "shopify",
+          return {
+            step: "shopify" as const,
             success: false,
             itemsProcessed: 0,
             itemsSucceeded: 0,
@@ -344,22 +310,24 @@ export const processInventoryFullSync = inngest.createFunction(
             error: errMsg,
             durationMs: Date.now() - startTime,
           };
-
-          await publish({
-            channel,
-            topic: "status",
-            data: {
-              syncId,
-              step: "shopify",
-              status: "failed",
-              error: errMsg,
-              message: "Shopify sync failed",
-              timestamp: new Date().toISOString(),
-            },
-          });
-
-          return result;
         }
+      });
+
+      // Publish completion status AFTER the step
+      await publish({
+        channel,
+        topic: "status",
+        data: {
+          syncId,
+          step: "shopify",
+          status: shopifyResult.success ? "completed" : "failed",
+          itemsProcessed: shopifyResult.itemsProcessed,
+          itemsSucceeded: shopifyResult.itemsSucceeded,
+          itemsFailed: shopifyResult.itemsFailed,
+          message: shopifyResult.message,
+          error: shopifyResult.error,
+          timestamp: new Date().toISOString(),
+        },
       });
 
       results.push(shopifyResult);
@@ -391,19 +359,17 @@ export const processInventoryFullSync = inngest.createFunction(
       totalDriftDetected: d365Step?.driftCount || 0,
     };
 
-    // Publish final result
-    await step.run("publish-result", async () => {
-      await publish({
-        channel,
-        topic: "result",
-        data: {
-          syncId,
-          success: overallSuccess,
-          summary,
-          totalDurationMs,
-          timestamp: new Date().toISOString(),
-        },
-      });
+    // Publish final result (no step.run needed - publish is a side effect)
+    await publish({
+      channel,
+      topic: "result",
+      data: {
+        syncId,
+        success: overallSuccess,
+        summary,
+        totalDurationMs,
+        timestamp: new Date().toISOString(),
+      },
     });
 
     console.log(`[InventoryFullSync] ========================================`);
