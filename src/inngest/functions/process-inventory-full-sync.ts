@@ -66,17 +66,23 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("gps")) {
       // Publish "running" status BEFORE the step (side effects outside step.run)
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "gps",
-          status: "running",
-          message: "Pulling inventory from GPS warehouse...",
-          timestamp: new Date().toISOString(),
-        },
-      });
+      console.log(`[InventoryFullSync] Publishing GPS running status to channel: ${channel}`);
+      try {
+        await publish({
+          channel,
+          topic: "status",
+          data: {
+            syncId,
+            step: "gps",
+            status: "running",
+            message: "Pulling inventory from GPS warehouse...",
+            timestamp: new Date().toISOString(),
+          },
+        });
+        console.log(`[InventoryFullSync] GPS running status published successfully`);
+      } catch (publishError) {
+        console.error(`[InventoryFullSync] PUBLISH ERROR:`, publishError);
+      }
 
       // Run the actual sync in a step (idempotent computation only)
       const gpsResult = await step.run("sync-gps", async () => {
