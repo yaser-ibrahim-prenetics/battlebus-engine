@@ -28,7 +28,7 @@ export const processInventorySync = inngest.createFunction(
       period: "10s",
       key: "event.data.inventoryItemId + '-' + event.data.locationId",
     },
-    concurrency: [{ limit: 10 }],
+    concurrency: [{ limit: 5 }],
   },
   { event: "shopify/inventory.updated" },
   async ({ event, step }) => {
