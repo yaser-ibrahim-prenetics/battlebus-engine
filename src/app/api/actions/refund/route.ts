@@ -205,11 +205,13 @@ export async function POST(request: NextRequest) {
             if (parentTransaction) {
               // Calculate remaining refundable amount
               const totalPaid = parseFloat(order.total_price || "0");
-              const alreadyRefunded = parseFloat(order.total_refunded || order.refunds?.reduce(
+              const refundedFromField = order.total_refunded ? parseFloat(order.total_refunded) : 0;
+              const refundedFromRefunds = order.refunds?.reduce(
                 (sum: number, r: any) => sum + parseFloat(r.transactions?.reduce(
                   (tSum: number, t: any) => tSum + parseFloat(t.amount || "0"), 0
                 ) || "0"), 0
-              ) || "0");
+              ) || 0;
+              const alreadyRefunded = refundedFromField || refundedFromRefunds;
               const refundableAmount = totalPaid - alreadyRefunded;
               
               if (refundableAmount > 0) {
