@@ -123,32 +123,146 @@ export async function POST(request: NextRequest) {
             const order = await shopify.getOrder(numericOrderId);
             if (order.line_items && order.line_items.length > 0) {
               const restockType = restock === true ? "return" : restock === false ? "no_restock" : "cancel";
-              refund.refund_line_items = order.line_items.map((item: any) => {
-                const refundLineItem: any = {
-                  line_item_id: item.id,
-                  quantity: item.quantity,
-                  restock_type: restockType,
-                };
-                
-                // Add location_id if restocking (required by Shopify)
-                if (restockType !== "no_restock" && locationId) {
-                  refundLineItem.location_id = locationId;
-                }
-                
-                return refundLineItem;
+              // Only include line items that haven't been fully refunded
+              const refundableItems = order.line_items.filter((item: any) => {
+                const refundedQty = item.quantity - (item.fulfillable_quantity || 0);
+                return item.quantity > refundedQty;
               });
+              
+              if (refundableItems.length > 0) {
+                refund.refund_line_items = refundableItems.map((item: any) => {
+                  const refundLineItem: any = {
+                    line_item_id: item.id,
+                    quantity: item.quantity,
+                    restock_type: restockType,
+                  };
+                  
+                  // Add location_id if restocking (required by Shopify)
+                  if (restockType !== "no_restock" && locationId) {
+                    refundLineItem.location_id = locationId;
+                  }
+                  
+                  return refundLineItem;
+                });
+              }
             }
           } catch (err) {
             console.warn("[Actions] Failed to fetch order for restock refund, proceeding without restock control:", err);
           }
         }
 
-        if (amount) {
-          // Amount-based refund (partial refund)
-          refund.amount = String(amount);
-        } else {
-          // Full refund
-          refund.full_refund = true;
+        // For both amount-based and full refunds, we need transactions and line items
+        try {
+          const order = await shopify.getOrder(numericOrderId);
+          const transactions = await shopify.getOrderTransactions(numericOrderId);
+          
+          // Find a parent transaction (sale/capture) to refund against
+          const parentTransaction = transactions.find(
+            (t: any) => (t.kind === "sale" || t.kind === "capture") && t.status === "success"
+          );
+          
+          if (!parentTransaction) {
+            console.error("[Actions] No successful parent transaction found for refund");
+            // Still try to proceed - some orders might have different transaction structures
+          }
+          
+          if (amount) {
+            // Amount-based partial refund
+            if (parentTransaction) {
+              refund.transactions = [{
+                parent_id: parentTransaction.id,
+                amount: String(amount),
+                kind: "refund",
+                gateway: parentTransaction.gateway,
+              }];
+            }
+          } else {
+            // Full refund - need to include all refundable line items and transactions
+            // Build refund_line_items for all unfulfilled/unrefunded items
+            if (order.line_items && order.line_items.length > 0) {
+              const refundableLineItems = order.line_items
+                .filter((item: any) => {
+                  // Only include items that haven't been fully refunded
+                  const refundableQty = item.quantity - (item.refunded_quantity || 0);
+                  return refundableQty > 0;
+                })
+                .map((item: any) => {
+                  const refundableQty = item.quantity - (item.refunded_quantity || 0);
+                  const lineItem: any = {
+                    line_item_id: item.id,
+                    quantity: refundableQty,
+                    restock_type: "no_restock", // Default to no_restock for full refunds
+                  };
+                  return lineItem;
+                });
+              
+              if (refundableLineItems.length > 0) {
+                refund.refund_line_items = refundableLineItems;
+              }
+            }
+            
+            // Add transaction for the remaining amount
+            if (parentTransaction) {
+              // Calculate remaining refundable amount
+              const totalPaid = parseFloat(order.total_price || "0");
+              const alreadyRefunded = parseFloat(order.total_refunded || order.refunds?.reduce(
+                (sum: number, r: any) => sum + parseFloat(r.transactions?.reduce(
+                  (tSum: number, t: any) => tSum + parseFloat(t.amount || "0"), 0
+                ) || "0"), 0
+              ) || "0");
+              const refundableAmount = totalPaid - alreadyRefunded;
+              
+              if (refundableAmount > 0) {
+                refund.transactions = [{
+                  parent_id: parentTransaction.id,
+                  amount: refundableAmount.toFixed(2),
+                  kind: "refund",
+                  gateway: parentTransaction.gateway,
+                }];
+              } else {
+                console.warn("[Actions] No refundable amount remaining on order");
+              }
+            }
+          }
+          
+          // If we still don't have line items or transactions, try the calculate endpoint as last resort
+          if (!refund.refund_line_items && !refund.transactions) {
+            console.log("[Actions] No refund data built, trying calculate endpoint...");
+            const calcResponse = await fetch(
+              `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds/calculate.json`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Shopify-Access-Token": accessToken,
+                },
+                body: JSON.stringify({
+                  refund: {
+                    shipping: { full_refund: true },
+                  },
+                }),
+              }
+            );
+            
+            if (calcResponse.ok) {
+              const calcResult = await calcResponse.json();
+              console.log("[Actions] Calculate result:", JSON.stringify(calcResult, null, 2));
+              
+              if (calcResult.refund) {
+                if (calcResult.refund.transactions?.length > 0) {
+                  refund.transactions = calcResult.refund.transactions;
+                }
+                if (calcResult.refund.refund_line_items?.length > 0) {
+                  refund.refund_line_items = calcResult.refund.refund_line_items;
+                }
+                if (calcResult.refund.shipping) {
+                  refund.shipping = calcResult.refund.shipping;
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[Actions] Failed to build refund payload:", err);
         }
       }
 
@@ -160,7 +274,9 @@ export async function POST(request: NextRequest) {
     ): Promise<Response> => {
       const refund = await buildRefundPayload(numericOrderId);
 
-      return fetch(
+      console.log(`[Actions] Creating refund for order ${numericOrderId}:`, JSON.stringify(refund, null, 2));
+
+      const response = await fetch(
         `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds.json`,
         {
           method: "POST",
@@ -171,6 +287,15 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({ refund }),
         }
       );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[Actions] Shopify refund API error ${response.status} for order ${numericOrderId}:`, errorText);
+        // Return a new response with the same status but we've already consumed the body
+        return new Response(errorText, { status: response.status, headers: response.headers });
+      }
+
+      return response;
     };
 
     let response: Response | null = null;

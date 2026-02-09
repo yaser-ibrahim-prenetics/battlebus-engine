@@ -45,6 +45,49 @@ interface InventorySyncPayload {
   reason?: string;
 }
 
+// Battle Hub webhook URL for inventory sync results
+const BATTLE_HUB_URL = process.env.BATTLE_HUB_URL || "";
+
+/**
+ * Notify Battle Hub of inventory sync completion
+ * Updates Supabase with per-system quantities and sync timestamps
+ */
+async function notifyBattleHub(
+  sku: string,
+  system: "gps" | "shopify" | "d365",
+  quantity: number,
+  syncStatus: "synced" | "failed",
+  error?: string
+): Promise<void> {
+  if (!BATTLE_HUB_URL) {
+    console.log("[InventoryMesh] BATTLE_HUB_URL not configured, skipping callback");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BATTLE_HUB_URL}/api/webhooks/inventory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sku,
+        system,
+        quantity,
+        syncStatus,
+        timestamp: new Date().toISOString(),
+        ...(error && { error }),
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[InventoryMesh] Hub callback failed: ${response.status}`);
+    } else {
+      console.log(`[InventoryMesh] ✅ Notified Hub: ${sku} ${system}=${quantity}`);
+    }
+  } catch (err) {
+    console.error("[InventoryMesh] Hub callback error:", err);
+  }
+}
+
 export const processInventoryMesh = inngest.createFunction(
   {
     id: "process-inventory-mesh",
@@ -65,31 +108,60 @@ export const processInventoryMesh = inngest.createFunction(
     console.log(`[InventoryMesh] Quantity: ${inventory.quantity || inventory.available || "N/A"}`);
     console.log(`[InventoryMesh] Location: ${inventory.locationId || inventory.warehouseId || "N/A"}`);
 
+    let result: { success: boolean; message: string; data?: any };
+
     // Route to destination platform
     switch (destination) {
       case "shopify":
-        return await step.run("sync-to-shopify", async () => {
+        result = await step.run("sync-to-shopify", async () => {
           return syncToShopify(inventory, source);
         });
+        break;
 
       case "dynamics":
-        return await step.run("sync-to-dynamics", async () => {
+        result = await step.run("sync-to-dynamics", async () => {
           return syncToDynamics(inventory, source);
         });
+        break;
 
       case "gps":
       case "warehouse":
-        return await step.run("sync-to-warehouse", async () => {
+        result = await step.run("sync-to-warehouse", async () => {
           return syncToWarehouse(inventory, source, destination);
         });
+        break;
 
       default:
         console.warn(`[InventoryMesh] Unknown destination platform: ${destination}`);
-        return {
+        result = {
           success: false,
           message: `Unknown destination platform: ${destination}`,
         };
     }
+
+    // Callback to Battle Hub with sync result
+    if (inventory.sku) {
+      await step.run("notify-battle-hub", async () => {
+        const systemMap: Record<string, "gps" | "shopify" | "d365"> = {
+          shopify: "shopify",
+          dynamics: "d365",
+          gps: "gps",
+          warehouse: "gps",
+        };
+        const system = systemMap[destination] || "gps";
+        const quantity = inventory.quantity ?? inventory.available ?? 0;
+
+        await notifyBattleHub(
+          inventory.sku!,
+          system,
+          quantity,
+          result.success ? "synced" : "failed",
+          result.success ? undefined : result.message
+        );
+      });
+    }
+
+    return result;
   }
 );
 

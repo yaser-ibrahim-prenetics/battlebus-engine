@@ -21,6 +21,8 @@ export const config = {
     apiKey: process.env.GPS_API_KEY || "9d093e6f60af4e5d8d01f22ee5bb9353",
     apiSecret: process.env.GPS_API_SECRET || "4cf5d93e0b97455a99f85cb5dfd5cf02",
     warehouseCode: process.env.GPS_WAREHOUSE_CODE || "JFK01W",
+    // Note: Inventory queries use the same credentials as order API
+    // The OMS portal provides unified API access for orders and inventory
     // Polling settings
     scheduleIntervalMinutes: parseInt(process.env.GPS_SCHEDULE_INTERVAL_MINUTES || "60", 10),
     queryDaysBack: parseInt(process.env.GPS_QUERY_DAYS_BACK || "7", 10),
@@ -28,6 +30,8 @@ export const config = {
     gpsFulfilledStatus: 3,
     // Fulfillment sync settings
     fulfillmentHoursBack: parseInt(process.env.GPS_FULFILLMENT_HOURS_BACK || "80", 10),
+    // Inventory sync settings
+    inventorySyncIntervalMinutes: parseInt(process.env.GPS_INVENTORY_SYNC_INTERVAL_MINUTES || "120", 10),
   },
 
   // GPS UK Warehouse Configuration
