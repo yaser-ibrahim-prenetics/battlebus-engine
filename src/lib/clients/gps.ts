@@ -411,6 +411,163 @@ export class OutOfStockError extends Error {
 }
 
 // ============================================================================
+// INVENTORY QUERY
+// ============================================================================
+
+export interface GpsInventoryStockDetail {
+  availableAmount: number;
+  lockAmount: number;
+  transportAmount: number;
+}
+
+export interface GpsInventoryItem {
+  customerCode: string;
+  whCode: string;
+  whName: string;
+  sku: string;
+  skuId: string;
+  stockType: number;
+  totalAmount: number;
+  productTotalAmount: number;
+  boxTotalAmount: number;
+  fbaReturnTotalAmount: number;
+  productName: string;
+  operateTime: string;
+  productStockDtl: GpsInventoryStockDetail;
+  boxStockDtl: GpsInventoryStockDetail;
+  fbaReturnStockDtl: GpsInventoryStockDetail;
+  productType: number;
+}
+
+export interface GpsGetInventoryRequest {
+  appKey: string;
+  reqTime: string;
+  data: {
+    pageNum: number;
+    pageSize: number;
+    sku?: string;
+    whCode?: string;
+  };
+}
+
+export interface GpsGetInventoryResponse {
+  code: number;
+  msg: string;
+  data: {
+    records: GpsInventoryItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+    pages: number;
+  };
+}
+
+/**
+ * Fetch inventory from GPS warehouse system
+ * Uses the /openapi/v1/integratedInventory/pageOpen endpoint
+ */
+export async function getInventory(
+  options: {
+    pageNum?: number;
+    pageSize?: number;
+    sku?: string;
+    whCode?: string;
+  } = {},
+  warehouseName: GpsWarehouseName = "GPS Warehouse"
+): Promise<{ response: GpsGetInventoryResponse; items: GpsInventoryItem[] }> {
+  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
+  const timestamp = epochInSeconds().toString();
+
+  const requestData: GpsGetInventoryRequest["data"] = {
+    pageNum: options.pageNum ?? 1,
+    pageSize: options.pageSize ?? 100,
+    ...(options.sku && { sku: options.sku }),
+    ...(options.whCode && { whCode: options.whCode }),
+  };
+
+  const payload: GpsGetInventoryRequest = {
+    appKey,
+    reqTime: timestamp,
+    data: requestData,
+  };
+
+  console.log(`[GPS] Fetching inventory: page ${requestData.pageNum}, size ${requestData.pageSize}`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[GPS] DRY RUN - Would fetch inventory`);
+    return {
+      response: {
+        code: 200,
+        msg: "DRY RUN SUCCESS",
+        data: {
+          records: [],
+          total: 0,
+          page: 1,
+          pageSize: requestData.pageSize,
+          pages: 0,
+        },
+      },
+      items: [],
+    };
+  }
+
+  const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
+
+  const response = await fetch(
+    `${baseUrl}/openapi/v1/integratedInventory/pageOpen?authcode=${authCode}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const result: GpsGetInventoryResponse = await response.json();
+
+  if (result.code !== 200) {
+    throw new Error(`GPS Inventory API error: ${result.code} - ${result.msg}`);
+  }
+
+  console.log(`[GPS] Inventory fetched: ${result.data.records.length} items (page ${result.data.page}/${result.data.pages}, total ${result.data.total})`);
+
+  return { response: result, items: result.data.records };
+}
+
+/**
+ * Fetch ALL inventory from GPS (paginated, fetches all pages)
+ */
+export async function getAllInventory(
+  options: {
+    sku?: string;
+    whCode?: string;
+    pageSize?: number;
+  } = {},
+  warehouseName: GpsWarehouseName = "GPS Warehouse"
+): Promise<GpsInventoryItem[]> {
+  const allItems: GpsInventoryItem[] = [];
+  let page = 1;
+  let totalPages = 1;
+  const pageSize = options.pageSize ?? 100;
+
+  console.log(`[GPS] Fetching all inventory...`);
+
+  do {
+    const { response } = await getInventory(
+      { pageNum: page, pageSize, sku: options.sku, whCode: options.whCode },
+      warehouseName
+    );
+    allItems.push(...response.data.records);
+    totalPages = response.data.pages;
+    page++;
+  } while (page <= totalPages);
+
+  console.log(`[GPS] Total inventory fetched: ${allItems.length} items`);
+  return allItems;
+}
+
+// ============================================================================
 // PRODUCT & INVENTORY SYNC (PLACEHOLDER)
 // ============================================================================
 

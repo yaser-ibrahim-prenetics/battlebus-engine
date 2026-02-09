@@ -25,6 +25,8 @@ export {
   cancelOutboundOrder as cancelGpsOrder,
   verifyWebhookSignature as verifyGpsWebhook,
   generateAuthCode as generateGpsAuthCode,
+  getInventory as getGpsInventory,
+  getAllInventory as getAllGpsInventory,
   OutOfStockError,
   GpsOrderType,
 } from "./gps";
