@@ -12,7 +12,9 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "tunnel": "npx cloudflared tunnel --url http://localhost:3000",
-    "test:api": "npx tsx scripts/test-api-connections.ts"
+    "test:api": "npx tsx scripts/test-api-connections.ts",
+    "test:gps-product": "npx tsx scripts/test-gps-product-sync.ts",
+    "test:d365-product": "npx tsx scripts/test-d365-product-sync.ts"
   },
   "dependencies": {
     "@inngest/realtime": "^0.4.5",
