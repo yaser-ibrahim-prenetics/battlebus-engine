@@ -335,6 +335,63 @@ export async function POST(request: NextRequest) {
         }
         break;
 
+      // Location created - sync to Battle Hub
+      case "locations/create":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.created`);
+        const sent9 = await sendInngestEvent({
+          id: `shopify-location-created-${payload.id}`,
+          name: "shopify/location.created",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name,
+            shopifyStore: shopDomain || "im8",
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        }, requestId);
+        if (sent9) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/location.created for location ${payload.name} (${payload.id})`);
+        }
+        break;
+
+      // Location updated - sync to Battle Hub
+      case "locations/update":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.updated`);
+        const sent10 = await sendInngestEvent({
+          id: `shopify-location-updated-${payload.id}-${payload.updated_at}`,
+          name: "shopify/location.updated",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name,
+            shopifyStore: shopDomain || "im8",
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        }, requestId);
+        if (sent10) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/location.updated for location ${payload.name} (${payload.id})`);
+        }
+        break;
+
+      // Location deleted - sync to Battle Hub
+      case "locations/delete":
+        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.deleted`);
+        const sent11 = await sendInngestEvent({
+          id: `shopify-location-deleted-${payload.id}`,
+          name: "shopify/location.deleted",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name || "Unknown",
+            shopifyStore: shopDomain || "im8",
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        }, requestId);
+        if (sent11) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/location.deleted for location ${payload.name || payload.id}`);
+        }
+        break;
+
       // Inventory level updated - sync stock levels to D365 & GPS via mesh
       case "inventory_levels/update":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);

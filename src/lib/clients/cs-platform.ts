@@ -39,9 +39,13 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     const payload = JSON.stringify(event);
     const signature = generateSignature(payload);
 
-    // Route product events to products webhook, everything else to orders webhook
-    const isProductEvent = event.event.startsWith("product.");
-    const webhookPath = isProductEvent ? "/api/webhooks/products" : "/api/webhooks/orders";
+    // Route events to appropriate webhook endpoints
+    let webhookPath = "/api/webhooks/orders"; // Default
+    if (event.event.startsWith("product.")) {
+      webhookPath = "/api/webhooks/products";
+    } else if (event.event.startsWith("location.")) {
+      webhookPath = "/api/webhooks/locations";
+    }
     
     const response = await fetch(`${config.csPlatform.baseUrl}${webhookPath}`, {
       method: "POST",
@@ -343,6 +347,36 @@ export async function sendProductDeleted(productData: {
       d365Result: productData.d365Result,
       gpsResult: productData.gpsResult,
       deletedAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function sendLocationEvent(eventData: {
+  event: "location.created" | "location.updated" | "location.deleted";
+  data: {
+    id: string;
+    name: string;
+    shopify_location_id: string;
+    warehouse_name?: string;
+    dynamics_data_area_id?: string;
+    address_line1?: string | null;
+    address_line2?: string | null;
+    city?: string | null;
+    province?: string | null;
+    country?: string | null;
+    zip?: string | null;
+    phone?: string | null;
+    active?: boolean;
+    fulfillment_service_id?: string | null;
+  };
+}): Promise<void> {
+  await sendOrderEvent({
+    event: eventData.event,
+    data: {
+      ...eventData.data,
+      createdAt: eventData.event === "location.created" ? new Date().toISOString() : undefined,
+      updatedAt: eventData.event === "location.updated" ? new Date().toISOString() : undefined,
+      deletedAt: eventData.event === "location.deleted" ? new Date().toISOString() : undefined,
     },
   });
 }

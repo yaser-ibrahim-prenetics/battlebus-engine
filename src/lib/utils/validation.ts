@@ -180,18 +180,79 @@ export function getGpsWarehouseFromLocation(
 
 /**
  * Get data area ID based on fulfillment location
+ * Uses warehouse config to map location to dataAreaId
  */
 export function getDataAreaIdFromLocation(locationId: string | number): string {
   const location = getFulfillmentLocation(locationId);
+  const locId = String(locationId);
+  const locations = config.shopify.im8.locations;
 
+  // Map based on known location IDs
+  if (locations.gpsUk && locId === locations.gpsUk) {
+    return "H007"; // GPS UK uses H007
+  }
+  if (locations.gps && locId === locations.gps) {
+    return "U001"; // GPS US uses U001
+  }
+  if (locations.stord && locId === locations.stord) {
+    return "U001"; // STORD uses U001
+  }
+  if (locations.hkWarehouse && locId === locations.hkWarehouse) {
+    return "H007"; // HK Warehouse uses H007
+  }
+
+  // Fallback based on location type
   switch (location) {
     case "gpsUk":
-      return "U001"; // UK data area
+      return "H007";
+    case "hkWarehouse":
+      return "H007";
     case "gps":
     case "stord":
     default:
-      return "U001"; // US data area
+      return "U001";
   }
+}
+
+/**
+ * Get warehouse name from location ID
+ * Uses warehouse config and location name inference
+ */
+export function getWarehouseNameFromLocation(
+  locationId: string | number,
+  locationName?: string
+): string {
+  const locId = String(locationId);
+  const locations = config.shopify.im8.locations;
+
+  // Map based on known location IDs
+  if (locations.gps && locId === locations.gps) {
+    return "GPS Warehouse";
+  }
+  if (locations.gpsUk && locId === locations.gpsUk) {
+    return "GPS UK Warehouse";
+  }
+  if (locations.stord && locId === locations.stord) {
+    return "STORD ATL Location";
+  }
+  if (locations.hkWarehouse && locId === locations.hkWarehouse) {
+    return "HK Warehouse";
+  }
+
+  // Try to infer from location name
+  if (locationName) {
+    const name = locationName.toLowerCase();
+    if (name.includes("gps") && name.includes("uk")) return "GPS UK Warehouse";
+    if (name.includes("gps")) return "GPS Warehouse";
+    if (name.includes("stord") && name.includes("atl")) return "STORD ATL Location";
+    if (name.includes("stord") && name.includes("eu")) return "STORD EU Location";
+    if (name.includes("hk") || name.includes("hong kong")) return "HK Warehouse";
+    if (name.includes("charlotte")) return "Charlotte Warehouse";
+    if (name.includes("virtual")) return "Virtual location";
+  }
+
+  // Default fallback
+  return `Location ${locId}`;
 }
 
 // ============================================================================

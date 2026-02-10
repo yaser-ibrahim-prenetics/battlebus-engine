@@ -89,6 +89,53 @@ export async function getInventoryLevelsByLocation(
 }
 
 /**
+ * Get all locations from Shopify
+ * Returns all active locations with their details
+ */
+export async function getAllLocations(): Promise<Array<{
+  id: string;
+  name: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  country?: string;
+  zip?: string;
+  phone?: string;
+  active: boolean;
+  fulfillment_service_id?: string;
+}>> {
+  const url = buildUrl(`/locations.json`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get locations: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const locations = data.locations || [];
+
+  return locations.map((loc: any) => ({
+    id: String(loc.id),
+    name: loc.name,
+    address1: loc.address1 || null,
+    address2: loc.address2 || null,
+    city: loc.city || null,
+    province: loc.province || null,
+    country: loc.country || null,
+    zip: loc.zip || null,
+    phone: loc.phone || null,
+    active: loc.active !== false,
+    fulfillment_service_id: loc.fulfillment_service_id ? String(loc.fulfillment_service_id) : null,
+  }));
+}
+
+/**
  * Get Order by ID
  */
 export async function getOrder(orderId: string | number): Promise<ShopifyOrder> {
