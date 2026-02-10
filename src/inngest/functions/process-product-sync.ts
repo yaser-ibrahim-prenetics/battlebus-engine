@@ -12,6 +12,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
+import * as shopify from "@/lib/clients/shopify";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
@@ -89,6 +90,9 @@ export const processProductSync = inngest.createFunction(
       weight: v.weight,
       weight_unit: v.weight_unit,
       inventory_quantity: v.inventory_quantity,
+      inventory_item_id: v.inventory_item_id,
+      variant_id: v.id,
+      title: v.title,
     }));
 
     // Step 1: Sync product to D365
@@ -124,7 +128,31 @@ export const processProductSync = inngest.createFunction(
 
     console.log(`[ProductSync] GPS result: ${gpsResult.message}`);
 
-    // Step 3: Notify Battle Hub (always send, even if D365/GPS sync failed)
+    // Step 3: Fetch location-wise inventory from Shopify
+    const inventoryLevelsByVariant = await step.run("fetch-shopify-inventory-levels", async () => {
+      const levelsMap: Record<number, Array<{
+        location_id: string;
+        location_name: string;
+        available: number;
+        reserved: number;
+        committed: number;
+      }>> = {};
+
+      for (const variant of variants) {
+        if (variant.inventory_item_id) {
+          try {
+            const levels = await shopify.getInventoryLevelsByLocation(variant.inventory_item_id);
+            levelsMap[variant.inventory_item_id] = levels;
+          } catch (error) {
+            // If fetch fails, continue without location breakdown
+          }
+        }
+      }
+
+      return levelsMap;
+    });
+
+    // Step 4: Notify Battle Hub (always send, even if D365/GPS sync failed)
     await step.run("notify-battle-hub-product-sync", async () => {
       const isCreate = event.name === "shopify/product.created";
       // Map variants to convert null to undefined for barcode (TypeScript type compatibility)
@@ -134,7 +162,11 @@ export const processProductSync = inngest.createFunction(
         barcode: v.barcode ?? undefined, // Convert null to undefined
         weight: v.weight,
         weight_unit: v.weight_unit,
-        inventory_quantity: v.inventory_quantity,
+        inventory_quantity: v.inventory_quantity, // Total aggregate from Shopify
+        inventory_item_id: v.inventory_item_id,
+        variant_id: v.variant_id,
+        title: v.title,
+        inventory_levels: inventoryLevelsByVariant[v.inventory_item_id] || [], // Location-wise breakdown
       }));
 
       const productData = {
@@ -161,7 +193,7 @@ export const processProductSync = inngest.createFunction(
       }
     });
 
-    // Step 4: Notify via Slack
+    // Step 5: Notify via Slack
     await step.run("notify-product-sync", async () => {
       const isCreate = event.name === "shopify/product.created";
       const action = isCreate ? "created" : "updated";

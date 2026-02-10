@@ -14,7 +14,8 @@
     "tunnel": "npx cloudflared tunnel --url http://localhost:3000",
     "test:api": "npx tsx scripts/test-api-connections.ts",
     "test:gps-product": "npx tsx scripts/test-gps-product-sync.ts",
-    "test:d365-product": "npx tsx scripts/test-d365-product-sync.ts"
+    "test:d365-product": "npx tsx scripts/test-d365-product-sync.ts",
+    "test:product-hub": "npx tsx scripts/test-product-to-hub.ts"
   },
   "dependencies": {
     "@inngest/realtime": "^0.4.5",

@@ -244,6 +244,16 @@ export async function sendProductCreated(productData: {
     weight?: number;
     weight_unit?: string;
     inventory_quantity?: number;
+    inventory_item_id?: number;
+    variant_id?: number;
+    title?: string;
+    inventory_levels?: Array<{
+      location_id: string;
+      location_name: string | null;
+      available: number;
+      reserved: number;
+      committed: number;
+    }>;
   }>;
   vendor?: string;
   productType?: string;
@@ -281,6 +291,16 @@ export async function sendProductUpdated(productData: {
     weight?: number;
     weight_unit?: string;
     inventory_quantity?: number;
+    inventory_item_id?: number;
+    variant_id?: number;
+    title?: string;
+    inventory_levels?: Array<{
+      location_id: string;
+      location_name: string | null;
+      available: number;
+      reserved: number;
+      committed: number;
+    }>;
   }>;
   vendor?: string;
   productType?: string;

@@ -28,6 +28,67 @@ function buildUrl(endpoint: string): string {
 }
 
 /**
+ * Get inventory levels per location for an inventory item
+ * Returns location-wise breakdown of inventory
+ */
+export async function getInventoryLevelsByLocation(
+  inventoryItemId: number
+): Promise<Array<{
+  location_id: string;
+  location_name: string;
+  available: number;
+  reserved: number;
+  committed: number;
+}>> {
+  const url = buildUrl(`/inventory_levels.json?inventory_item_ids=${inventoryItemId}`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get inventory levels: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const inventoryLevels = data.inventory_levels || [];
+
+  // Also fetch location details to get location names
+  const locationIds = inventoryLevels.map((level: any) => level.location_id);
+  const locationsMap = new Map<string, string>();
+
+  if (locationIds.length > 0) {
+    try {
+      const locationsUrl = buildUrl(`/locations.json?ids=${locationIds.join(",")}`);
+      const locationsResponse = await fetch(locationsUrl, {
+        method: "GET",
+        headers: getHeaders(),
+      });
+
+      if (locationsResponse.ok) {
+        const locationsData = await locationsResponse.json();
+        const locations = locationsData.locations || [];
+        for (const location of locations) {
+          locationsMap.set(String(location.id), location.name);
+        }
+      }
+    } catch (error) {
+      // If location fetch fails, continue without location names
+    }
+  }
+
+  return inventoryLevels.map((level: any) => ({
+    location_id: String(level.location_id),
+    location_name: locationsMap.get(String(level.location_id)) || null,
+    available: level.available || 0,
+    reserved: 0, // Shopify doesn't provide reserved in inventory_levels endpoint
+    committed: 0, // Shopify doesn't provide committed in inventory_levels endpoint
+  }));
+}
+
+/**
  * Get Order by ID
  */
 export async function getOrder(orderId: string | number): Promise<ShopifyOrder> {
