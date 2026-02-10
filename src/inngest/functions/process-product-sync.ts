@@ -97,7 +97,14 @@ export const processProductSync = inngest.createFunction(
       inventory_quantity: v.inventory_quantity,
     }));
 
+    console.log(`[ProductSync] Extracted ${variants.length} variants`);
+    console.log(`[ProductSync] Variants with SKUs: ${variants.filter((v) => v.sku && v.sku.trim()).length}`);
     console.log(`[ProductSync] SKUs: ${variants.map((v) => v.sku).filter(Boolean).join(", ") || "none"}`);
+    
+    // Log variant details for debugging
+    variants.forEach((v, idx) => {
+      console.log(`[ProductSync]   Variant ${idx + 1}: SKU="${v.sku || "MISSING"}", Price=${v.price || "N/A"}, Barcode=${v.barcode || "N/A"}`);
+    });
 
     // Step 1: Sync product to D365
     const d365Result = await step.run("sync-product-to-d365", async () => {
@@ -132,9 +139,12 @@ export const processProductSync = inngest.createFunction(
 
     console.log(`[ProductSync] GPS result: ${gpsResult.message}`);
 
-    // Step 3: Notify Battle Hub
+    // Step 3: Notify Battle Hub (always send, even if D365/GPS sync failed)
     await step.run("notify-battle-hub-product-sync", async () => {
       console.log(`[ProductSync] Notifying Battle Hub...`);
+      console.log(`[ProductSync] Variants count: ${variants.length}`);
+      console.log(`[ProductSync] Variants with SKUs: ${variants.filter((v) => v.sku && v.sku.trim()).length}`);
+      
       const isCreate = event.name === "shopify/product.created";
       // Map variants to convert null to undefined for barcode (TypeScript type compatibility)
       const mappedVariants = variants.map((v) => ({
@@ -159,10 +169,19 @@ export const processProductSync = inngest.createFunction(
         gpsResult,
       };
 
-      if (isCreate) {
-        await csPlatform.sendProductCreated(productData);
-      } else {
-        await csPlatform.sendProductUpdated(productData);
+      try {
+        if (isCreate) {
+          console.log(`[ProductSync] Sending product.created event to Battle Hub...`);
+          await csPlatform.sendProductCreated(productData);
+          console.log(`[ProductSync] ✅ Successfully sent product.created to Battle Hub`);
+        } else {
+          console.log(`[ProductSync] Sending product.updated event to Battle Hub...`);
+          await csPlatform.sendProductUpdated(productData);
+          console.log(`[ProductSync] ✅ Successfully sent product.updated to Battle Hub`);
+        }
+      } catch (error) {
+        console.error(`[ProductSync] ❌ Failed to send product event to Battle Hub:`, error);
+        // Don't throw - Battle Hub notification failure shouldn't break the sync
       }
     });
 

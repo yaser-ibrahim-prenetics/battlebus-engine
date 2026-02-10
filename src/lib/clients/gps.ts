@@ -653,8 +653,15 @@ export async function syncProduct(product: {
     productDataArray.push(gpsProduct);
   }
 
+  // Check if we had any variants with SKUs to process
+  const variantsWithSkus = product.variants.filter((v) => v.sku && v.sku.trim() !== "");
+  
+  if (variantsWithSkus.length === 0) {
+    return { success: false, message: "No variants with SKUs to sync" };
+  }
+
   if (productDataArray.length === 0) {
-    return { success: false, message: "No valid variants to sync" };
+    return { success: false, message: `No valid variants to sync (${variantsWithSkus.length} variant(s) had SKUs but were filtered out)` };
   }
 
   try {

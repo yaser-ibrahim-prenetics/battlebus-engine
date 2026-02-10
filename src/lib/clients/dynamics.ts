@@ -1203,17 +1203,29 @@ export async function syncProduct(product: {
     }
   }
 
-  if (d365ItemNumbers.length === 0) {
+  // Check if we had any variants with SKUs to process
+  const variantsWithSkus = product.variants.filter((v) => v.sku && v.sku.trim() !== "");
+  
+  if (variantsWithSkus.length === 0) {
     return {
       success: false,
-      message: "Failed to sync any variants to D365",
+      message: "No variants with SKUs to sync to D365",
+      d365ItemNumbers: [],
+    };
+  }
+
+  if (d365ItemNumbers.length === 0) {
+    // Products don't exist in D365 - this is expected since we can't create via OData
+    return {
+      success: false,
+      message: `No products found in D365 for ${variantsWithSkus.length} variant(s). Products must be created manually in D365 UI.`,
       d365ItemNumbers: [],
     };
   }
 
   return {
     success: true,
-    message: `Synced ${d365ItemNumbers.length} variant(s) to D365`,
+    message: `Found ${d365ItemNumbers.length} of ${variantsWithSkus.length} variant(s) in D365`,
     d365ItemNumbers,
   };
 }
