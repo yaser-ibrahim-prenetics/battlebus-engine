@@ -225,3 +225,101 @@ export async function sendOrderRefunded(orderData: {
   });
 }
 
+// ============================================================================
+// PRODUCT EVENT FUNCTIONS
+// ============================================================================
+
+export async function sendProductCreated(productData: {
+  productId: string;
+  productTitle: string;
+  shopifyStore?: string;
+  variants?: Array<{
+    sku?: string;
+    price?: string;
+    barcode?: string;
+    weight?: number;
+    weight_unit?: string;
+    inventory_quantity?: number;
+  }>;
+  vendor?: string;
+  productType?: string;
+  tags?: string;
+  status?: string;
+  d365Result?: any;
+  gpsResult?: any;
+}): Promise<void> {
+  await sendOrderEvent({
+    event: "product.created",
+    data: {
+      productId: productData.productId,
+      productTitle: productData.productTitle,
+      shopifyStore: productData.shopifyStore,
+      variants: productData.variants || [],
+      vendor: productData.vendor,
+      productType: productData.productType,
+      tags: productData.tags,
+      status: productData.status,
+      d365Result: productData.d365Result,
+      gpsResult: productData.gpsResult,
+      createdAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function sendProductUpdated(productData: {
+  productId: string;
+  productTitle: string;
+  shopifyStore?: string;
+  variants?: Array<{
+    sku?: string;
+    price?: string;
+    barcode?: string;
+    weight?: number;
+    weight_unit?: string;
+    inventory_quantity?: number;
+  }>;
+  vendor?: string;
+  productType?: string;
+  tags?: string;
+  status?: string;
+  d365Result?: any;
+  gpsResult?: any;
+}): Promise<void> {
+  await sendOrderEvent({
+    event: "product.updated",
+    data: {
+      productId: productData.productId,
+      productTitle: productData.productTitle,
+      shopifyStore: productData.shopifyStore,
+      variants: productData.variants || [],
+      vendor: productData.vendor,
+      productType: productData.productType,
+      tags: productData.tags,
+      status: productData.status,
+      d365Result: productData.d365Result,
+      gpsResult: productData.gpsResult,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function sendProductDeleted(productData: {
+  productId: string;
+  productTitle?: string;
+  shopifyStore?: string;
+  d365Result?: any;
+  gpsResult?: any;
+}): Promise<void> {
+  await sendOrderEvent({
+    event: "product.deleted",
+    data: {
+      productId: productData.productId,
+      productTitle: productData.productTitle,
+      shopifyStore: productData.shopifyStore,
+      d365Result: productData.d365Result,
+      gpsResult: productData.gpsResult,
+      deletedAt: new Date().toISOString(),
+    },
+  });
+}
+

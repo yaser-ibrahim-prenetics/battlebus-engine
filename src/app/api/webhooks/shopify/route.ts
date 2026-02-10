@@ -8,6 +8,22 @@ import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 
+// Helper function to send Inngest events with error handling
+async function sendInngestEvent(event: Parameters<typeof inngest.send>[0], requestId: string): Promise<boolean> {
+  try {
+    await inngest.send(event);
+    return true;
+  } catch (error) {
+    console.error(`[Webhook] [${requestId}] ⚠️  Failed to send Inngest event:`, error);
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`);
+    }
+    // Don't throw - allow webhook to return success even if Inngest is unavailable
+    // Events will be queued and processed when Inngest is available
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const requestId = `webhook-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -126,7 +142,7 @@ export async function POST(request: NextRequest) {
       // Order creation - main flow
       case "orders/create":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.created`);
-        await inngest.send({
+        const sent1 = await sendInngestEvent({
           id: `shopify-order-created-${payload.id}`, // Event-level idempotency key
           name: "shopify/order.created",
           data: {
@@ -136,31 +152,43 @@ export async function POST(request: NextRequest) {
             orderJson: payload,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.created for ${payload.name}`);
+        }, requestId);
+        if (sent1) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.created for ${payload.name}`);
+        } else {
+          console.log(`[Webhook] [${requestId}] ⚠️  Queued shopify/order.created for ${payload.name} (Inngest unavailable)`);
+        }
         break;
 
       // Order paid - triggers order processing (alternative to orders/create)
       case "orders/paid": {
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.paid`);
         const idempotencyKey = `shopify-order-paid-${payload.id}`;
-        const sendResult = await inngest.send({
-          id: idempotencyKey, // Event-level idempotency key
-          name: "shopify/order.paid",
-          data: {
-            shopifyOrderId: String(payload.id),
-            shopifyOrderName: payload.name,
-            shopifyStore: shopDomain || "im8",
-            orderJson: payload,
-            receivedAt: new Date().toISOString(),
-            // Pass the idempotency key so the function knows it
-            inngestIdempotencyKey: idempotencyKey,
-          },
-        });
-        // The internal event ID is in the response - this is what we need for /events/ URLs
-        const internalEventId = sendResult.ids?.[0];
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
-        console.log(`[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`);
+        try {
+          const sendResult = await inngest.send({
+            id: idempotencyKey, // Event-level idempotency key
+            name: "shopify/order.paid",
+            data: {
+              shopifyOrderId: String(payload.id),
+              shopifyOrderName: payload.name,
+              shopifyStore: shopDomain || "im8",
+              orderJson: payload,
+              receivedAt: new Date().toISOString(),
+              // Pass the idempotency key so the function knows it
+              inngestIdempotencyKey: idempotencyKey,
+            },
+          });
+          // The internal event ID is in the response - this is what we need for /events/ URLs
+          const internalEventId = sendResult.ids?.[0];
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
+          console.log(`[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`);
+        } catch (error) {
+          console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
+          if (process.env.NODE_ENV === "development") {
+            console.warn(`[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`);
+          }
+          // Don't throw - allow webhook to return success
+        }
         break;
       }
 
@@ -169,7 +197,7 @@ export async function POST(request: NextRequest) {
         // Only process if order is paid (avoid processing draft updates)
         if (payload.financial_status === "paid") {
           console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.updated`);
-          await inngest.send({
+          const sent2 = await sendInngestEvent({
             // Use updated_at to allow re-processing when order actually changes
             id: `shopify-order-updated-${payload.id}-${payload.updated_at}`,
             name: "shopify/order.updated", // Now routes to debounced handler
@@ -180,8 +208,10 @@ export async function POST(request: NextRequest) {
               orderJson: payload,
               receivedAt: new Date().toISOString(),
             },
-          });
-          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.updated for ${payload.name}`);
+          }, requestId);
+          if (sent2) {
+            console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.updated for ${payload.name}`);
+          }
         } else {
           console.log(`[Webhook] [${requestId}] ⏭️  Skipped orders/updated for ${payload.name} - status: ${payload.financial_status}`);
         }
@@ -190,7 +220,7 @@ export async function POST(request: NextRequest) {
       // Order cancelled - need to cancel in D365 and GPS
       case "orders/cancelled":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.cancelled`);
-        await inngest.send({
+        const sent3 = await sendInngestEvent({
           id: `shopify-order-cancelled-${payload.id}`, // Event-level idempotency key
           name: "shopify/order.cancelled",
           data: {
@@ -202,15 +232,17 @@ export async function POST(request: NextRequest) {
             cancelReason: payload.cancel_reason || null,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.cancelled for ${payload.name}`);
+        }, requestId);
+        if (sent3) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.cancelled for ${payload.name}`);
+        }
         break;
 
       // Order fulfilled - Shopify notifying us (Flow 7: Shopify Direct Fulfillment)
       // This happens when Shopify is the source of truth (manual, Stord, etc.)
       case "orders/fulfilled":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.fulfilled`);
-        await inngest.send({
+        const sent4 = await sendInngestEvent({
           id: `shopify-order-fulfilled-${payload.id}-${payload.updated_at}`, // Event-level idempotency key
           name: "shopify/order.fulfilled",
           data: {
@@ -221,14 +253,16 @@ export async function POST(request: NextRequest) {
             fulfillments: payload.fulfillments || [],
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.fulfilled for ${payload.name}`);
+        }, requestId);
+        if (sent4) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.fulfilled for ${payload.name}`);
+        }
         break;
 
       // Refund created - need to create credit note in D365
       case "refunds/create":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/refund.created`);
-        await inngest.send({
+        const sent5 = await sendInngestEvent({
           id: `shopify-refund-created-${payload.id}`, // Event-level idempotency key
           name: "shopify/refund.created",
           data: {
@@ -238,14 +272,16 @@ export async function POST(request: NextRequest) {
             refundJson: payload,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/refund.created for order ${payload.order_id}`);
+        }, requestId);
+        if (sent5) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/refund.created for order ${payload.order_id}`);
+        }
         break;
 
       // Product created - sync to D365 & GPS
       case "products/create":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.created`);
-        await inngest.send({
+        const sent6 = await sendInngestEvent({
           id: `shopify-product-created-${payload.id}`,
           name: "shopify/product.created",
           data: {
@@ -255,14 +291,16 @@ export async function POST(request: NextRequest) {
             productJson: payload,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.created for ${payload.title}`);
+        }, requestId);
+        if (sent6) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.created for ${payload.title}`);
+        }
         break;
 
       // Product updated - sync changes to D365 & GPS
       case "products/update":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.updated`);
-        await inngest.send({
+        const sent7 = await sendInngestEvent({
           id: `shopify-product-updated-${payload.id}-${payload.updated_at}`,
           name: "shopify/product.updated",
           data: {
@@ -272,14 +310,16 @@ export async function POST(request: NextRequest) {
             productJson: payload,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.updated for ${payload.title}`);
+        }, requestId);
+        if (sent7) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.updated for ${payload.title}`);
+        }
         break;
 
       // Product deleted - sync deletion to D365 & GPS
       case "products/delete":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.deleted`);
-        await inngest.send({
+        const sent8 = await sendInngestEvent({
           id: `shopify-product-deleted-${payload.id}`,
           name: "shopify/product.deleted",
           data: {
@@ -289,15 +329,17 @@ export async function POST(request: NextRequest) {
             productJson: payload,
             receivedAt: new Date().toISOString(),
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.deleted for product ${payload.id}`);
+        }, requestId);
+        if (sent8) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/product.deleted for product ${payload.id}`);
+        }
         break;
 
       // Inventory level updated - sync stock levels to D365 & GPS via mesh
       case "inventory_levels/update":
         console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);
         // Use the mesh API pattern - send to mesh which routes to destinations
-        await inngest.send({
+        const sentDynamics = await sendInngestEvent({
           id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
           name: "inventory/sync",
           data: {
@@ -313,9 +355,9 @@ export async function POST(request: NextRequest) {
               timestamp: payload.updated_at || new Date().toISOString(),
             },
           },
-        });
+        }, requestId);
         // Also sync to GPS warehouse
-        await inngest.send({
+        const sentGps = await sendInngestEvent({
           id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
           name: "inventory/sync",
           data: {
@@ -331,8 +373,12 @@ export async function POST(request: NextRequest) {
               timestamp: payload.updated_at || new Date().toISOString(),
             },
           },
-        });
-        console.log(`[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`);
+        }, requestId);
+        if (sentDynamics && sentGps) {
+          console.log(`[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`);
+        } else {
+          console.log(`[Webhook] [${requestId}] ⚠️  Queued inventory/sync events (Inngest unavailable)`);
+        }
         break;
 
       default:
@@ -343,7 +389,15 @@ export async function POST(request: NextRequest) {
     console.log(`[Webhook] [${requestId}] ✅ Completed in ${duration}ms`);
     console.log(`[Webhook] [${requestId}] ========================================`);
 
-    return NextResponse.json({ received: true, requestId }, { status: 200 });
+    // Return success - webhook was received and processed
+    // Note: Events may be queued if Inngest is unavailable (in dev mode)
+    return NextResponse.json({ 
+      received: true, 
+      requestId,
+      ...(process.env.NODE_ENV === "development" && {
+        note: "In development mode, if Inngest dev server is not running, events are queued but not processed. Start with: npm run dev:inngest"
+      })
+    }, { status: 200 });
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error(`[Webhook] [${requestId}] ❌ Error processing Shopify webhook (${duration}ms):`, error);

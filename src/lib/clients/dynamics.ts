@@ -1101,7 +1101,15 @@ export async function getSalesOrderByShopifyId(
 
 /**
  * Sync a Shopify product to D365 as a Released Product
- * TODO: Implement actual D365 product/item sync via ReleasedProductsV2 or custom THK API
+ * 
+ * IMPORTANT: D365 OData API does not support direct product creation.
+ * Products must be created through D365 UI or custom D365 services.
+ * This function only checks if products exist and logs what would be synced.
+ * 
+ * For actual product creation, use:
+ * - D365 Product Information Management UI
+ * - Custom D365 service actions (if configured)
+ * - D365 Data Management Framework (DMF) packages
  */
 export async function syncProduct(product: {
   productId: string;
@@ -1121,23 +1129,92 @@ export async function syncProduct(product: {
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would sync product ${product.title}`);
-    return { success: true, message: "DRY RUN - Product sync placeholder" };
+    return { success: true, message: "DRY RUN - Product sync", d365ItemNumbers: product.variants.map((v) => v.sku) };
   }
 
-  // TODO: Map Shopify product → D365 Released Products / Item Numbers
-  // Example endpoints:
-  //   POST /data/ReleasedProductsV2
-  //   PATCH /data/ReleasedProductsV2(ItemNumber='...',dataAreaId='...')
-  // Steps:
-  //   1. Check if product/variant already exists in D365 by SKU (ItemNumber)
-  //   2. If not, create a new Released Product record
-  //   3. If yes, update price, weight, barcode, etc.
-  //   4. Return the D365 item numbers for tracking
-  console.log(`[D365] ⚠️  Product sync not yet implemented - placeholder only`);
+  if (!product.variants || product.variants.length === 0) {
+    console.log(`[D365] ⚠️  No variants to sync for product ${product.productId}`);
+    return { success: false, message: "No variants to sync", d365ItemNumbers: [] };
+  }
+
+  const token = await getAuthToken();
+  const dataAreaId = config.dynamics.dataAreaId;
+  const baseUrl = config.dynamics.baseUrl;
+  const d365ItemNumbers: string[] = [];
+
+  // Process each variant as a separate D365 item
+  for (const variant of product.variants) {
+    if (!variant.sku || variant.sku.trim() === "") {
+      console.log(`[D365] ⚠️  Skipping variant without SKU`);
+      continue;
+    }
+
+    const itemNumber = variant.sku;
+    const productName = product.title || itemNumber;
+    
+    try {
+      // Check if product already exists using ReleasedProductsV2 (read-only endpoint)
+      const checkUrl = `${baseUrl}/data/ReleasedProductsV2?$filter=ItemNumber eq '${itemNumber}' and dataAreaId eq '${dataAreaId}'&$top=1`;
+      const checkResponse = await fetch(checkUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "OData-MaxVersion": "4.0",
+          "OData-Version": "4.0",
+        },
+      });
+
+      if (!checkResponse.ok) {
+        const errorText = await checkResponse.text();
+        console.error(`[D365] Failed to check product ${itemNumber}: ${errorText}`);
+        continue;
+      }
+
+      const checkData = await checkResponse.json();
+      const exists = checkData.value && checkData.value.length > 0;
+
+      if (exists) {
+        console.log(`[D365] ✅ Product ${itemNumber} already exists in D365`);
+        d365ItemNumbers.push(itemNumber);
+      } else {
+        // D365 OData API does not support direct product creation
+        // Products must be created through D365 UI or custom services
+        console.log(`[D365] ⚠️  Product ${itemNumber} does not exist in D365`);
+        console.log(`[D365]    Product creation via OData is not supported.`);
+        console.log(`[D365]    Please create product "${productName}" (SKU: ${itemNumber}) manually in D365:`);
+        console.log(`[D365]    1. Go to Product Information Management → Products → Released products`);
+        console.log(`[D365]    2. Create new product with Item Number: ${itemNumber}`);
+        console.log(`[D365]    3. Set Product Name: ${productName}`);
+        if (variant.barcode) {
+          console.log(`[D365]    4. Set Barcode: ${variant.barcode}`);
+        }
+        if (variant.weight && variant.weight > 0) {
+          const weightInKg = variant.weight_unit?.toLowerCase() === "kg" 
+            ? variant.weight 
+            : variant.weight * 0.453592;
+          console.log(`[D365]    5. Set Weight: ${weightInKg} kg`);
+        }
+        // Don't add to d365ItemNumbers since it wasn't actually created
+      }
+    } catch (error) {
+      console.error(`[D365] Error syncing variant ${itemNumber}:`, error);
+      // Continue with other variants
+    }
+  }
+
+  if (d365ItemNumbers.length === 0) {
+    return {
+      success: false,
+      message: "Failed to sync any variants to D365",
+      d365ItemNumbers: [],
+    };
+  }
+
   return {
     success: true,
-    message: "Placeholder - D365 product sync not yet implemented",
-    d365ItemNumbers: product.variants.map((v) => v.sku),
+    message: `Synced ${d365ItemNumbers.length} variant(s) to D365`,
+    d365ItemNumbers,
   };
 }
 

@@ -11,6 +11,7 @@ import type { ShopifyProductPayload } from "../events";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import * as csPlatform from "@/lib/clients/cs-platform";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
@@ -56,6 +57,18 @@ export const processProductSync = inngest.createFunction(
           success: true,
           message: "Placeholder - GPS product deletion not yet implemented",
         };
+      });
+
+      // Step 3: Notify Battle Hub
+      await step.run("notify-battle-hub-product-deleted", async () => {
+        console.log(`[ProductSync] Notifying Battle Hub of product deletion...`);
+        await csPlatform.sendProductDeleted({
+          productId,
+          productTitle: product.title || productTitle,
+          shopifyStore,
+          d365Result,
+          gpsResult,
+        });
       });
 
       return {
@@ -119,7 +132,31 @@ export const processProductSync = inngest.createFunction(
 
     console.log(`[ProductSync] GPS result: ${gpsResult.message}`);
 
-    // Step 3: Notify via Slack
+    // Step 3: Notify Battle Hub
+    await step.run("notify-battle-hub-product-sync", async () => {
+      console.log(`[ProductSync] Notifying Battle Hub...`);
+      const isCreate = event.name === "shopify/product.created";
+      const productData = {
+        productId,
+        productTitle,
+        shopifyStore,
+        variants,
+        vendor: product.vendor,
+        productType: product.product_type,
+        tags: product.tags,
+        status: product.status,
+        d365Result,
+        gpsResult,
+      };
+
+      if (isCreate) {
+        await csPlatform.sendProductCreated(productData);
+      } else {
+        await csPlatform.sendProductUpdated(productData);
+      }
+    });
+
+    // Step 4: Notify via Slack
     await step.run("notify-product-sync", async () => {
       const isCreate = event.name === "shopify/product.created";
       const action = isCreate ? "created" : "updated";

@@ -573,13 +573,14 @@ export async function getAllInventory(
 
 /**
  * Sync a Shopify product/SKU to GPS warehouse system
- * TODO: Implement actual GPS product master sync (SKU registration)
+ * Uses GPS /openapi/v1/product/batchCreate API to register products (supports up to 200 products per batch)
+ * API Documentation: https://api.xlwms.com
  */
 export async function syncProduct(product: {
   productId: string;
   title: string;
   variants: { sku: string; barcode: string | null; weight: number; weight_unit: string }[];
-}): Promise<{ success: boolean; message: string }> {
+}, warehouseName: GpsWarehouseName = "GPS Warehouse"): Promise<{ success: boolean; message: string }> {
   console.log(`[GPS] 🔄 syncProduct called for "${product.title}" (${product.productId})`);
   console.log(`[GPS]   Variants: ${product.variants.length}`);
   for (const v of product.variants) {
@@ -588,21 +589,136 @@ export async function syncProduct(product: {
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would sync product ${product.title}`);
-    return { success: true, message: "DRY RUN - GPS product sync placeholder" };
+    return { success: true, message: "DRY RUN - GPS product sync" };
   }
 
-  // TODO: GPS product master / SKU registration API
-  // Steps:
-  //   1. Check if SKU already exists in GPS product master
-  //   2. If not, register new SKU with barcode, weight, dimensions
-  //   3. If yes, update product attributes
-  // May involve:
-  //   POST /openapi/v1/product/create or similar GPS endpoint
-  console.log(`[GPS] ⚠️  Product sync not yet implemented - placeholder only`);
-  return {
-    success: true,
-    message: "Placeholder - GPS product sync not yet implemented",
-  };
+  if (!product.variants || product.variants.length === 0) {
+    console.log(`[GPS] ⚠️  No variants to sync for product ${product.productId}`);
+    return { success: false, message: "No variants to sync" };
+  }
+
+  // Validate warehouse exists
+  getWarehouseConfig(warehouseName);
+  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
+
+  // Build product data array for batch create (max 200 per batch)
+  const productDataArray: any[] = [];
+
+  for (const variant of product.variants) {
+    if (!variant.sku || variant.sku.trim() === "") {
+      console.log(`[GPS] ⚠️  Skipping variant without SKU`);
+      continue;
+    }
+
+    // Convert weight to kg if needed (GPS requires kg)
+    const weightInKg = variant.weight && variant.weight > 0
+      ? (variant.weight_unit?.toLowerCase() === "kg" 
+          ? variant.weight 
+          : variant.weight * 0.453592) // Convert lb to kg
+      : 0.001; // Minimum weight required by GPS (0.001 kg)
+
+    // Build GPS product payload according to API documentation
+    const gpsProduct: any = {
+      sku: variant.sku,
+      productCode: variant.barcode || variant.sku, // Required: EAN/UPC barcode, fallback to SKU
+      productName: product.title || variant.sku, // Required
+      // Optional fields
+      productAliasName: variant.sku, // Product alias
+      productDescription: product.title, // Product description
+      // Dimensions (required but we don't have them from Shopify, use defaults)
+      length: "1", // Required: Default to 1cm (GPS accepts 0.001~99999.999)
+      width: "1", // Required: Default to 1cm
+      height: "1", // Required: Default to 1cm
+      sizeUnit: "cm", // Optional: Defaults to cm
+      // Weight (required)
+      weight: weightInKg.toString(), // Required: Convert to string as GPS expects string
+      weightUnit: "kg", // Optional: Defaults to kg
+      // Declaration fields (required for customs)
+      declareNameCn: product.title || variant.sku, // Required: Chinese declaration name
+      declareNameEn: product.title || variant.sku, // Required: English declaration name
+      customhouseCode: "", // Optional: Customs code
+      declarePrice: "0.01", // Required: Declaration price (default to $0.01 USD)
+      currencyCode: "USD", // Required: Currency code (fixed to USD per docs)
+      countryOfOriginName: "CN", // Required: Country of origin (default to CN)
+      dangerousCargo: "1", // Required: 1=普货（非危险品） - General cargo (non-dangerous)
+    };
+
+    // Add optional barcode lists if available
+    if (variant.barcode && variant.barcode !== variant.sku) {
+      gpsProduct.otherCodeList = [
+        { otherCode: variant.barcode }
+      ];
+    }
+
+    productDataArray.push(gpsProduct);
+  }
+
+  if (productDataArray.length === 0) {
+    return { success: false, message: "No valid variants to sync" };
+  }
+
+  try {
+    const timestamp = epochInSeconds().toString();
+    
+    // Build GPS batch create payload
+    const payload = {
+      appKey,
+      data: productDataArray,
+      reqTime: timestamp,
+    };
+
+    // Generate authcode using GPS signature algorithm
+    const authCode = generateAuthCode(productDataArray, timestamp, appKey, appSecret);
+
+    console.log(`[GPS] Batch creating ${productDataArray.length} product(s) via /openapi/v1/product/batchCreate`);
+
+    const response = await fetch(
+      `${baseUrl}/openapi/v1/product/batchCreate?authcode=${authCode}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const result: any = await response.json();
+
+    if (result.code === 200) {
+      // Check individual product results
+      const failedProducts = result.data?.filter((item: any) => !item.success) || [];
+      const successProducts = result.data?.filter((item: any) => item.success) || [];
+
+      if (failedProducts.length > 0) {
+        console.log(`[GPS] ⚠️  Some products failed:`, failedProducts);
+        const errorMessages = failedProducts.map((p: any) => `${p.sku}: ${p.message || "Unknown error"}`).join(", ");
+        return {
+          success: successProducts.length > 0,
+          message: `Synced ${successProducts.length}/${productDataArray.length} product(s) to GPS. Failures: ${errorMessages}`,
+        };
+      }
+
+      console.log(`[GPS] ✅ Successfully synced ${productDataArray.length} product(s) to GPS`);
+      return {
+        success: true,
+        message: `Successfully synced ${productDataArray.length} product(s) to GPS`,
+      };
+    } else {
+      const errorMsg = result.msg || JSON.stringify(result);
+      console.error(`[GPS] ❌ Failed to batch create products: ${errorMsg}`);
+      return {
+        success: false,
+        message: `GPS API error: ${errorMsg}`,
+      };
+    }
+  } catch (error) {
+    console.error(`[GPS] Error syncing products:`, error);
+    return {
+      success: false,
+      message: `Error syncing products to GPS: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /**
