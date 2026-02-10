@@ -39,7 +39,11 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     const payload = JSON.stringify(event);
     const signature = generateSignature(payload);
 
-    const response = await fetch(`${config.csPlatform.baseUrl}/api/webhooks/orders`, {
+    // Route product events to products webhook, everything else to orders webhook
+    const isProductEvent = event.event.startsWith("product.");
+    const webhookPath = isProductEvent ? "/api/webhooks/products" : "/api/webhooks/orders";
+    
+    const response = await fetch(`${config.csPlatform.baseUrl}${webhookPath}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
