@@ -27,7 +27,7 @@ export const processProductSync = inngest.createFunction(
     { event: "shopify/product.updated" },
     { event: "shopify/product.deleted" },
   ],
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { productId, productTitle, shopifyStore, productJson } = event.data;
     const product = productJson as ShopifyProductPayload;
 
@@ -136,11 +136,21 @@ export const processProductSync = inngest.createFunction(
     await step.run("notify-battle-hub-product-sync", async () => {
       console.log(`[ProductSync] Notifying Battle Hub...`);
       const isCreate = event.name === "shopify/product.created";
+      // Map variants to convert null to undefined for barcode (TypeScript type compatibility)
+      const mappedVariants = variants.map((v) => ({
+        sku: v.sku,
+        price: v.price,
+        barcode: v.barcode ?? undefined, // Convert null to undefined
+        weight: v.weight,
+        weight_unit: v.weight_unit,
+        inventory_quantity: v.inventory_quantity,
+      }));
+
       const productData = {
         productId,
         productTitle,
         shopifyStore,
-        variants,
+        variants: mappedVariants,
         vendor: product.vendor,
         productType: product.product_type,
         tags: product.tags,
