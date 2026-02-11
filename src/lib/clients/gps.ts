@@ -592,7 +592,8 @@ export async function syncProduct(product: {
     return { success: true, message: "DRY RUN - GPS product sync" };
   }
 
-  if (!product.variants || product.variants.length === 0) {
+  // Validate variants array exists and is not empty
+  if (!product.variants || !Array.isArray(product.variants) || product.variants.length === 0) {
     console.log(`[GPS] ⚠️  No variants to sync for product ${product.productId}`);
     return { success: false, message: "No variants to sync" };
   }
@@ -604,7 +605,15 @@ export async function syncProduct(product: {
   // Build product data array for batch create (max 200 per batch)
   const productDataArray: any[] = [];
 
-  for (const variant of product.variants) {
+  // Filter out invalid variants and process valid ones
+  const validVariants = product.variants.filter((v) => v && typeof v === 'object');
+  
+  if (validVariants.length === 0) {
+    console.log(`[GPS] ⚠️  No valid variants to sync for product ${product.productId}`);
+    return { success: false, message: "No valid variants to sync" };
+  }
+
+  for (const variant of validVariants) {
     if (!variant.sku || variant.sku.trim() === "") {
       console.log(`[GPS] ⚠️  Skipping variant without SKU`);
       continue;

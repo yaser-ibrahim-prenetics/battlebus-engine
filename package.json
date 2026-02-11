@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "seed:locations": "tsx scripts/seed-locations-with-inventory.ts",
     "dev": "next dev -p 7000",
     "dev:inngest": "npx inngest-cli@latest dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:inngest\"",
@@ -20,6 +21,7 @@
   "dependencies": {
     "@inngest/realtime": "^0.4.5",
     "@slack/webhook": "^7.0.6",
+    "@supabase/supabase-js": "^2.39.0",
     "inngest": "^3.49.3",
     "next": "16.1.4",
     "react": "19.2.3",

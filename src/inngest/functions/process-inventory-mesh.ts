@@ -96,7 +96,7 @@ export const processInventoryMesh = inngest.createFunction(
     concurrency: [{ limit: 5 }],
   },
   { event: "inventory/sync" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { source, destination, payload } = event.data;
     const inventory = payload as InventorySyncPayload;
 
@@ -269,7 +269,40 @@ async function syncToDynamics(
 
   try {
     // Map location/warehouse to Dynamics dataAreaId
-    const dataAreaId = inventory.dataAreaId || config.dynamics.dataAreaId;
+    // Priority: 1. Explicit dataAreaId in payload, 2. Location-based mapping, 3. Default
+    let dataAreaId = inventory.dataAreaId;
+    
+    if (!dataAreaId && inventory.locationId) {
+      // Use location routing service to get DataAreaId from Shopify location ID (one-way: locations → Dynamics)
+      const { getDataAreaIdForLocation } = await import("@/lib/services/location-routing");
+      const routedDataAreaId = await getDataAreaIdForLocation(inventory.locationId, "im8");
+      if (routedDataAreaId) {
+        dataAreaId = routedDataAreaId;
+        console.log(`[InventoryMesh] Mapped location ${inventory.locationId} to dataAreaId ${dataAreaId} via location routing`);
+      } else {
+        // Fallback to existing validation if location routing didn't work
+        const { getDataAreaIdFromLocation } = await import("@/lib/utils/validation");
+        dataAreaId = getDataAreaIdFromLocation(inventory.locationId);
+        console.log(`[InventoryMesh] Mapped location ${inventory.locationId} to dataAreaId ${dataAreaId} via validation utils`);
+      }
+    }
+    
+    if (!dataAreaId && inventory.warehouseName) {
+      // Try to get from warehouse name
+      const { getDataAreaId } = await import("@/lib/helpers/warehouse");
+      try {
+        dataAreaId = getDataAreaId(inventory.warehouseName);
+        console.log(`[InventoryMesh] Mapped warehouse ${inventory.warehouseName} to dataAreaId ${dataAreaId}`);
+      } catch {
+        // Fallback to default
+      }
+    }
+    
+    // Final fallback to default
+    if (!dataAreaId) {
+      dataAreaId = config.dynamics.dataAreaId;
+      console.log(`[InventoryMesh] Using default dataAreaId: ${dataAreaId}`);
+    }
 
     if (!inventory.sku) {
       return {
@@ -280,20 +313,21 @@ async function syncToDynamics(
 
     const quantity = inventory.quantity ?? inventory.available ?? 0;
 
-    // Use existing Dynamics sync function
+    // Use existing Dynamics sync function with location-specific dataAreaId
     const result = await dynamics.syncInventoryLevel({
       inventoryItemId: inventory.inventoryItemId || inventory.sku,
       locationId: inventory.locationId?.toString() || inventory.warehouseId || "",
       available: quantity,
       sku: inventory.sku,
+      dataAreaId, // Pass the resolved dataAreaId
     });
 
-    console.log(`[InventoryMesh] ✅ Synced to Dynamics: ${result.message}`);
+    console.log(`[InventoryMesh] ✅ Synced to Dynamics (${dataAreaId}): ${result.message}`);
 
     return {
       success: result.success,
       message: result.message,
-      data: result,
+      data: { ...result, dataAreaId },
     };
   } catch (error) {
     console.error(`[InventoryMesh] ❌ Error syncing to Dynamics:`, error);

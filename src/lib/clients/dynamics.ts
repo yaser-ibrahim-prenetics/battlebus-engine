@@ -1344,13 +1344,15 @@ export async function syncInventoryLevel(inventory: {
   locationId: string;
   available: number | null;
   sku?: string;
+  dataAreaId?: string; // Location-specific data area ID
 }): Promise<{ success: boolean; message: string }> {
+  const dataAreaId = inventory.dataAreaId || config.dynamics.dataAreaId;
   console.log(`[D365] 🔄 syncInventoryLevel called for item ${inventory.inventoryItemId}`);
-  console.log(`[D365]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}`);
+  console.log(`[D365]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}, DataAreaId: ${dataAreaId}`);
 
   if (config.features.dryRunMode) {
-    console.log(`[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId}`);
-    return { success: true, message: "DRY RUN - Inventory sync placeholder" };
+    console.log(`[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId} to ${dataAreaId}`);
+    return { success: true, message: `DRY RUN - Inventory sync placeholder (${dataAreaId})` };
   }
 
   // TODO: Map Shopify inventory → D365 On-hand inventory
@@ -1360,13 +1362,13 @@ export async function syncInventoryLevel(inventory: {
   //   3. Call THK custom API if one exists for inventory sync
   // Steps:
   //   1. Map Shopify inventory_item_id → D365 ItemNumber (via SKU lookup)
-  //   2. Map Shopify location_id → D365 Warehouse/Site
+  //   2. Map Shopify location_id → D365 Warehouse/Site using dataAreaId
   //   3. Compare current D365 on-hand vs Shopify available
   //   4. Create adjustment if different
-  console.log(`[D365] ⚠️  Inventory sync not yet implemented - placeholder only`);
+  console.log(`[D365] ⚠️  Inventory sync not yet implemented - placeholder only (${dataAreaId})`);
   return {
     success: true,
-    message: "Placeholder - D365 inventory sync not yet implemented",
+    message: `Placeholder - D365 inventory sync not yet implemented (${dataAreaId})`,
   };
 }
 

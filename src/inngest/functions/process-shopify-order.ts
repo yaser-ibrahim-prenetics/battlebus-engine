@@ -25,6 +25,8 @@ import {
 } from "@/lib/transformers/order";
 import { getDataAreaId } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
+import { getDataAreaIdForLocation, getWarehouseNameForLocation } from "@/lib/services/location-routing";
+import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -205,9 +207,52 @@ export const processShopifyOrder = inngest.createFunction(
 
     await publishStatus("validate-order", "completed", "Order validation passed");
 
-    const warehouseName = determineWarehouse(
-      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-    );
+    // Determine warehouse and DataAreaId using location-based routing
+    // Priority: 1. Fulfillment location from order, 2. Country-based warehouse determination
+    const routingResult = await step.run("determine-warehouse-routing", async () => {
+      let warehouseName: string;
+      let dataAreaId: string;
+      
+      // Try to get fulfillment location from fulfillment orders
+      let fulfillmentLocationId: number | null = null;
+      try {
+        const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+        if (fulfillmentOrders.length > 0) {
+          // Use the first open/in_progress fulfillment order's assigned location
+          const openFulfillment = fulfillmentOrders.find(
+            (fo: any) => fo.status === "open" || fo.status === "in_progress"
+          );
+          if (openFulfillment?.assigned_location_id) {
+            fulfillmentLocationId = openFulfillment.assigned_location_id;
+            console.log(`[Order Routing] Found fulfillment location: ${fulfillmentLocationId}`);
+          }
+        }
+      } catch (error) {
+        console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
+      }
+
+      // Use location-based routing if fulfillment location is available
+      if (fulfillmentLocationId) {
+        dataAreaId = await getDataAreaIdForLocation(fulfillmentLocationId, "im8") || config.dynamics.dataAreaId;
+        const warehouseNameFromLocation = await getWarehouseNameForLocation(fulfillmentLocationId, "im8");
+        warehouseName = warehouseNameFromLocation || determineWarehouse(
+          order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+        );
+        console.log(`[Order Routing] Using location-based routing: ${warehouseName} → ${dataAreaId}`);
+      } else {
+        // Fallback to country-based warehouse determination
+        warehouseName = determineWarehouse(
+          order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+        );
+        dataAreaId = getDataAreaId(warehouseName);
+        console.log(`[Order Routing] Using country-based routing: ${warehouseName} → ${dataAreaId}`);
+      }
+
+      return { warehouseName, dataAreaId };
+    });
+
+    const warehouseName = routingResult.warehouseName;
+    const dataAreaId = routingResult.dataAreaId;
 
     try {
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
@@ -221,8 +266,8 @@ export const processShopifyOrder = inngest.createFunction(
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
           return null;
         }
-        console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName}`);
-        return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
+        console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`);
+        return dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
       });
       await publishStatus("d365.check-existing", "completed", "No existing order found");
 
@@ -241,6 +286,8 @@ export const processShopifyOrder = inngest.createFunction(
       await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
       const d365Header = await step.run("create-d365-header", async () => {
         const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
+        // Override dataAreaId in header request with location-based routing result
+        headerRequest.dataAreaId = dataAreaId;
         if (skipD365) {
           return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
         }
@@ -252,6 +299,10 @@ export const processShopifyOrder = inngest.createFunction(
 
       // 2b. Create D365 Lines - OPTIMIZED: Parallel creation instead of sequential
       const lineItems = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
+      // Update all line items with the correct dataAreaId from location routing
+      lineItems.forEach(item => {
+        item.dataAreaId = dataAreaId;
+      });
       await publishStatus("d365.create-lines", "running", `Creating ${lineItems.length} line items`, { totalLines: lineItems.length });
       await step.run("create-d365-lines", async () => {
         if (skipD365) {
@@ -269,9 +320,6 @@ export const processShopifyOrder = inngest.createFunction(
         return lineItems;
       });
       await publishStatus("d365.create-lines", "completed", `Created ${lineItems.length} line items`, { totalLines: lineItems.length });
-
-      // Get the correct data area ID based on warehouse
-      const dataAreaId = getDataAreaId(warehouseName);
 
       // 2c. Confirm D365 Order - OPTIMIZED: Smart retry replaces fixed 5s wait
       // Instead of always waiting 5s, we try immediately and only wait on "not found" errors
