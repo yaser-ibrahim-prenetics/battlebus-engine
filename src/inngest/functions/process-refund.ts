@@ -34,7 +34,7 @@ export const processRefund = inngest.createFunction(
     },
   },
   { event: "shopify/refund.created" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
     const refund = refundJson as ShopifyRefundPayload;
 

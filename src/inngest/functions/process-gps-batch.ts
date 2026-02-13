@@ -29,7 +29,7 @@ const processGpsBatchConfig = Object.freeze({
 export const processGpsBatch = inngest.createFunction(
   processGpsBatchConfig,
   { event: 'gps/batch.process' },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { gpsOrderIds, warehouse, batchId } = event.data;
     console.log(`[GPS Batch] Starting batch ${batchId} with ${gpsOrderIds.length} orders`);
 
@@ -88,7 +88,7 @@ export const processGpsBatch = inngest.createFunction(
 
     // Step 2: Validate and filter orders
     const validOrders = await step.run('validate-orders', async (): Promise<IGpsGetOrderData[]> => {
-      return fulfilledOrders.filter((orderData) => {
+      return fulfilledOrders.filter((orderData: IGpsGetOrderData) => {
         if (!orderData.outboundOrderNo || !orderData.logisticsTrackNo || !orderData.outboundTime) {
           console.error(`[GPS Batch] Order ${orderData.outboundOrderNo || 'unknown'} missing required fields`);
           return false;
@@ -110,7 +110,7 @@ export const processGpsBatch = inngest.createFunction(
 
     // Step 3: Trigger individual fulfilment events
     const eventResults = await step.run('trigger-individual-events', async () => {
-      const events = validOrders.map((orderData) => {
+      const events = validOrders.map((orderData: IGpsGetOrderData) => {
         const eventId = `GPSI${orderData.outboundOrderNo}`;
         const fulfilmentPayload: IGpsIndividualFulfilment = {
           type: 'individual',

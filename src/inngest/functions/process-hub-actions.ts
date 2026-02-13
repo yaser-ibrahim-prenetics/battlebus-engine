@@ -21,7 +21,7 @@ export const processActionCancel = inngest.createFunction(
     retries: 1,
   },
   { event: "action/order.cancel" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, reason, source } = event.data;
 
     // Log the action
@@ -72,7 +72,7 @@ export const processActionRefund = inngest.createFunction(
     retries: 1,
   },
   { event: "action/order.refund" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } = event.data;
 
     // Log the action
@@ -113,7 +113,7 @@ export const processActionFulfill = inngest.createFunction(
     retries: 1,
   },
   { event: "action/order.fulfill" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { 
       shopifyOrderId, 
       shopifyOrderName, 

@@ -45,7 +45,7 @@ export const processInventoryFullSync = inngest.createFunction(
     concurrency: [{ limit: 1 }],
   },
   { event: "inventory/sync.requested" },
-  async ({ event, step, publish }) => {
+  async ({ event, step, publish }: { event: any; step: any; publish: any }) => {
     const { syncId, steps, skus, dryRun = false, requestedBy } = event.data;
     const channel = `inventory:sync:${syncId}`;
 

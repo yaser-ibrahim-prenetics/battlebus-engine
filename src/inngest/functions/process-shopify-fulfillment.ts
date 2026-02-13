@@ -47,7 +47,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     },
   },
   { event: "shopify/order.fulfilled" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 

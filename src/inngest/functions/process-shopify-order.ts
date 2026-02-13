@@ -63,7 +63,7 @@ export const processShopifyOrder = inngest.createFunction(
     },
   },
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
-  async ({ event, step, publish, runId }) => {
+  async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
     const order = orderJson as ShopifyOrderPayload;
 

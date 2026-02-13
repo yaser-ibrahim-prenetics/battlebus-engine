@@ -18,6 +18,7 @@ import { getTrackingUrl, mapGpsCarrierToShopify } from '@/lib/helpers/tracking';
 // Interfaces
 import { isGpsIndividualFulfilmentPayload } from '@/lib/types/gps';
 import { SlackChannelEnum } from '@/lib/types/slack';
+import type { IFulfillmentOrderLineItem, ILineItem } from '@/lib/types/shopify';
 
 // API Calls
 import * as slack from '@/lib/clients/slack';
@@ -44,7 +45,7 @@ const processGpsIndividualConfig = Object.freeze({
 export const processGpsIndividual = inngest.createFunction(
   processGpsIndividualConfig,
   { event: 'gps/individual.fulfilment' },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { fulfilmentPayload, warehouse } = event.data;
 
     // Step 1: Validate and extract fulfilment data
@@ -141,7 +142,7 @@ export const processGpsIndividual = inngest.createFunction(
       const trackingUrl = getTrackingUrl(fulfilmentData.carrier, fulfilmentData.trackingNumber);
       const carrierName = mapGpsCarrierToShopify(fulfilmentData.carrier);
 
-      const lineItems = fulfillmentOrder.line_items.map((item) => ({
+      const lineItems = fulfillmentOrder.line_items.map((item: IFulfillmentOrderLineItem) => ({
         id: item.id,
         quantity: item.fulfillable_quantity,
       }));
@@ -201,7 +202,7 @@ export const processGpsIndividual = inngest.createFunction(
         dataAreaId,
         type: 'PackingSlip',
         confirmedShippedDate: shippedDate,
-        lines: lineItemsFiltered.map((item) => ({
+        lines: (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => ({
           itemNumber: item.sku,
           quantity: item.quantity,
           trackingNumber: fulfilmentData.trackingNumber,

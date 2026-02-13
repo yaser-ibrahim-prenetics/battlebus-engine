@@ -21,7 +21,7 @@
   "dependencies": {
     "@inngest/realtime": "^0.4.5",
     "@slack/webhook": "^7.0.6",
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.95.3",
     "inngest": "^3.49.3",
     "next": "16.1.4",
     "react": "19.2.3",

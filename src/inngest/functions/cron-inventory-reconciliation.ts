@@ -17,6 +17,7 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as inventorySync from "@/lib/services/inventory-sync";
+import type { InventoryDiff } from "@/lib/services/inventory-sync";
 import * as slack from "@/lib/clients/slack";
 import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
 
@@ -57,7 +58,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
     throttle: THROTTLE_CONFIGS.CRON,
   },
   { cron: `*/${config.gps.inventorySyncIntervalMinutes || 120} * * * *` },
-  async ({ step, event }) => {
+  async ({ step }: { step: any }) => {
     console.log("[InventoryReconciliation] Starting scheduled reconciliation");
 
     // Check if inventory sync is enabled
@@ -196,7 +197,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
     name: "Trigger Inventory Reconciliation",
   },
   { event: "inventory/reconciliation.requested" },
-  async ({ step, event }) => {
+  async ({ step, event }: { step: any, event: any }) => {
     const { skus, warehouse, autoSync = false } = event.data;
 
     console.log(
@@ -218,7 +219,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
     return {
       status: "completed",
       reconciliation: result,
-      discrepancies: discrepancies.filter((d) => d.needsSync),
+      discrepancies: discrepancies.filter((d: InventoryDiff) => d.needsSync),
     };
   }
 );
@@ -234,7 +235,7 @@ export const syncSkuInventory = inngest.createFunction(
     retries: 3,
   },
   { event: "inventory/sku.sync.requested" },
-  async ({ step, event }) => {
+  async ({ step, event }: { step: any, event: any }) => {
     const { sku, source, destination, warehouse } = event.data;
 
     console.log(

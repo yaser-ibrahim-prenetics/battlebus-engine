@@ -7,6 +7,7 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
+import type { IShopifyFulfillmentOrder, IFulfillmentOrderLineItem, ILineItem } from "@/lib/types/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import { ExtensivOrderConfirmPayload } from "../events";
@@ -22,7 +23,7 @@ export const processExtensivFulfillment = inngest.createFunction(
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
   },
   { event: "extensiv/order.confirm" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const {
       wmsEventId,
       extensivOrderId,
@@ -75,7 +76,7 @@ export const processExtensivFulfillment = inngest.createFunction(
     });
 
     const openFulfillmentOrder = fulfillmentOrders.find(
-      (fo) => fo.status === "open" || fo.status === "in_progress"
+      (fo: IShopifyFulfillmentOrder) => fo.status === "open" || fo.status === "in_progress"
     );
 
     if (!openFulfillmentOrder) {
@@ -90,7 +91,7 @@ export const processExtensivFulfillment = inngest.createFunction(
 
     // 4. Create Shopify fulfillment
     const shopifyFulfillment = await step.run("create-shopify-fulfillment", async () => {
-      const lineItems = openFulfillmentOrder.line_items.map((item) => ({
+      const lineItems = openFulfillmentOrder.line_items.map((item: IFulfillmentOrderLineItem) => ({
         id: item.id,
         quantity: item.fulfillable_quantity,
       }));
@@ -134,7 +135,7 @@ export const processExtensivFulfillment = inngest.createFunction(
         }
 
         // Filter dummy SKUs
-        const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
+        const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items) as ILineItem[];
 
         // Get lotId mapping from D365 sales order lines
         const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
@@ -145,7 +146,7 @@ export const processExtensivFulfillment = inngest.createFunction(
           dataAreaId,
           type: "PackingSlip",
           confirmedShippedDate: new Date().toISOString().split("T")[0],
-          lines: lineItemsFiltered.map((item) => ({
+          lines: lineItemsFiltered.map((item: ILineItem) => ({
             itemNumber: item.sku,
             quantity: item.quantity,
             trackingNumber,
@@ -197,7 +198,7 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
   },
   { event: "extensiv/receiver.confirm" },
-  async ({ event, step }) => {
+  async ({ event, step }: { event: any; step: any }) => {
     const { wmsEventId, receiverId, referenceNum, eventJson } = event.data;
 
     console.log(
