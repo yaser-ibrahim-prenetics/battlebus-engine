@@ -58,3 +58,7 @@ scripts/add-vercel-env.js
 scripts/add-vercel-env.sh
 scripts/get-ngrok-urls.sh
 scripts/test-api-connections.ts
+
+# Test scripts
+scripts/test-*.sh
+scripts/seed-*.ts
