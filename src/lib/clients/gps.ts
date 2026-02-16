@@ -199,7 +199,8 @@ function epochInSeconds(): number {
  */
 export async function createOutboundOrder(
   orderData: GpsOrderData,
-  warehouseName: GpsWarehouseName = "GPS Warehouse"
+  warehouseName: GpsWarehouseName = "GPS Warehouse",
+  isRetry: boolean = false
 ): Promise<{
   response: GpsCreateOrderResponse;
   request: GpsCreateOrderRequest;
@@ -282,6 +283,28 @@ export async function createOutboundOrder(
         `GPS out of stock for ${orderData.platformOrderNo}: ${orderResult.msg}`
       );
     }
+    
+    // Check if it's a logistics channel error - try fallback channel (only once)
+    if (
+      !isRetry &&
+      (orderResult.msg?.includes("物流渠道") ||
+        orderResult.msg?.includes("logistics channel") ||
+        orderResult.msg?.includes("渠道") ||
+        orderResult.msg?.toLowerCase().includes("channel"))
+    ) {
+      console.warn(
+        `[GPS] Logistics channel error: ${orderResult.msg}. Retrying with fallback channel "No_Shipping_Service"...`
+      );
+      
+      // Retry with fallback channel
+      const fallbackOrderData = {
+        ...orderData,
+        logisticsChannel: "No_Shipping_Service",
+      };
+      
+      return createOutboundOrder(fallbackOrderData, warehouseName, true);
+    }
+    
     throw new Error(`GPS order failed: ${orderResult.msg}`);
   }
 

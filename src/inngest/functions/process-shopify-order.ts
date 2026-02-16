@@ -502,7 +502,33 @@ export const processShopifyOrder = inngest.createFunction(
               console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
               return { type: "out_of_stock", error: error.message };
             }
-            throw error;
+            
+            // Handle other GPS errors gracefully - don't fail the entire order
+            // The order has already been created in D365, so we log the error and continue
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isGpsApiError = errorMessage.includes("GPS API error");
+            
+            await publishStatus(
+              "gps.send-order",
+              "failed",
+              `GPS order creation failed: ${errorMessage}. Order will continue without GPS sync.`,
+              {
+                error: errorMessage,
+                warehouse: warehouseName,
+                salesOrderNumber,
+              }
+            );
+            
+            await slack.sendWarningMessage(
+              SlackChannelEnum.SHOPIFY,
+              `⚠️ [GPS] Failed to create outbound order\n` +
+              `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
+              `Warehouse: ${warehouseName}\n` +
+              `Error: ${errorMessage}\n` +
+              `D365 order created successfully, but GPS sync failed.`
+            );
+            
+            return { type: "failed", error: errorMessage };
           }
         }
 
@@ -520,6 +546,9 @@ export const processShopifyOrder = inngest.createFunction(
         if (gpsOrderNo) {
           await publishStatus("gps.store-metafield", "completed", `Metafield stored: ${gpsOrderNo}`, { gpsOrderNo });
         }
+      } else if (gpsResult.type === "failed") {
+        // Status already published in the catch block above
+        console.log(`[GPS] Order processing will continue despite GPS failure`);
       } else if (gpsResult.type === "skipped") {
         await publishStatus("gps.send-order", "skipped", "GPS sync not required for this order");
       }
