@@ -373,10 +373,62 @@ export const processShopifyOrder = inngest.createFunction(
         // 3. Create Prepayment (runs in parallel)
         step.run("create-d365-prepayment", async () => {
           if (skipD365 || prepaymentAmount <= 0) {
-            return prepaymentAmount;
+            return { success: true, amount: prepaymentAmount };
           }
-          await dynamics.createPrepayment(salesOrderNumber, dataAreaId);
-          return prepaymentAmount;
+          
+          try {
+            await dynamics.createPrepayment(salesOrderNumber, dataAreaId);
+            return { success: true, amount: prepaymentAmount };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isNumberSequenceError = 
+              errorMessage.includes("Number sequence") && 
+              errorMessage.includes("has been exceeded");
+            
+            if (isNumberSequenceError) {
+              // D365 number sequence exceeded - this is a configuration issue
+              // Log as warning and continue processing (prepayment is not critical for fulfillment)
+              await publishStatus(
+                "d365.create-prepayment", 
+                "warning", 
+                `Prepayment skipped: D365 number sequence exceeded. Order will continue without prepayment.`,
+                { 
+                  amount: prepaymentAmount,
+                  error: "number_sequence_exceeded",
+                  salesOrderNumber 
+                }
+              );
+              
+              await slack.sendWarningMessage(
+                SlackChannelEnum.SHOPIFY,
+                `⚠️ [D365] Number sequence exceeded for prepayment\n` +
+                `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
+                `Error: ${errorMessage}\n` +
+                `Action Required: Extend number sequence U001-JBN in D365`
+              );
+              
+              return { success: false, amount: prepaymentAmount, error: "number_sequence_exceeded" };
+            }
+            
+            // For other prepayment errors, still log but don't fail the order
+            await publishStatus(
+              "d365.create-prepayment", 
+              "warning", 
+              `Prepayment failed: ${errorMessage}. Order will continue without prepayment.`,
+              { 
+                amount: prepaymentAmount,
+                error: errorMessage,
+                salesOrderNumber 
+              }
+            );
+            
+            await slack.sendWarningMessage(
+              SlackChannelEnum.SHOPIFY,
+              `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNumber}): ${errorMessage}`
+            );
+            
+            return { success: false, amount: prepaymentAmount, error: errorMessage };
+          }
         }),
         
         // 4a. Build GPS payload (runs in parallel with prepayment)
@@ -395,7 +447,10 @@ export const processShopifyOrder = inngest.createFunction(
       
       // Publish results after parallel completion
       if (prepaymentAmount > 0) {
-        await publishStatus("d365.create-prepayment", "completed", `Prepayment created: $${prepaymentAmount.toFixed(2)}`, { amount: prepaymentAmount });
+        if (prepaymentResult.success) {
+          await publishStatus("d365.create-prepayment", "completed", `Prepayment created: $${prepaymentAmount.toFixed(2)}`, { amount: prepaymentAmount });
+        }
+        // If prepayment failed, status was already published in the step.run catch block
       }
       
       if (gpsOrderPayload) {
