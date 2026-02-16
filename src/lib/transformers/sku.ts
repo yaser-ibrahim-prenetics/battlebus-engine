@@ -205,14 +205,14 @@ export function filterServiceSkus<L extends OrderLine>(lines: L[]): L[] {
 // Dummy SKU Detection
 // ============================================================================
 
-const DUMMY_SKU_PATTERNS = ["DUMMY", "TEST", "SAMPLE"];
-
 /**
  * Check if a SKU is a dummy/test SKU
+ * Dummy SKUs match the pattern: IM8-FG-G* (third part starts with G)
  */
 export function isDummySku(sku: string): boolean {
-  const upperSku = sku.toUpperCase();
-  return DUMMY_SKU_PATTERNS.some((pattern) => upperSku.includes(pattern));
+  const upperSku = (sku || "").toUpperCase();
+  // Check if SKU matches pattern IM8-FG-G* (third part starts with G)
+  return /^IM8-FG-G/.test(upperSku);
 }
 
 /**

@@ -45,7 +45,18 @@ export function isHighRiskOrder(order: Pick<ShopifyOrderPayload, "tags">): boole
 }
 
 /**
+ * Check if a SKU is a dummy SKU
+ * Dummy SKUs match the pattern: IM8-FG-G* (third part starts with G)
+ */
+function isDummySku(sku: string): boolean {
+  const upperSku = (sku || "").toUpperCase();
+  // Check if SKU matches pattern IM8-FG-G* (third part starts with G)
+  return /^IM8-FG-G/.test(upperSku);
+}
+
+/**
  * Check if order has only dummy/test SKUs
+ * Dummy SKUs are those matching IM8-FG-G* pattern
  */
 export function hasOnlyDummySkus(
   order: Pick<ShopifyOrderPayload, "line_items">
@@ -54,22 +65,17 @@ export function hasOnlyDummySkus(
   if (lineItems.length === 0) return false;
 
   return lineItems.every((item) => {
-    const sku = (item.sku || "").toUpperCase();
-    return config.orders.dummySkuPatterns.some((pattern) =>
-      sku.includes(pattern.toUpperCase())
-    );
+    return isDummySku(item.sku || "");
   });
 }
 
 /**
  * Filter out dummy SKUs from line items
+ * Dummy SKUs are those matching IM8-FG-G* pattern
  */
 export function filterDummySkus<T extends { sku: string }>(items: T[]): T[] {
   return items.filter((item) => {
-    const sku = (item.sku || "").toUpperCase();
-    return !config.orders.dummySkuPatterns.some((pattern) =>
-      sku.includes(pattern.toUpperCase())
-    );
+    return !isDummySku(item.sku || "");
   });
 }
 
