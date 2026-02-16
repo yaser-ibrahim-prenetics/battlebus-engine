@@ -387,10 +387,10 @@ export const processShopifyOrder = inngest.createFunction(
             
             if (isNumberSequenceError) {
               // D365 number sequence exceeded - this is a configuration issue
-              // Log as warning and continue processing (prepayment is not critical for fulfillment)
+              // Log as skipped and continue processing (prepayment is not critical for fulfillment)
               await publishStatus(
                 "d365.create-prepayment", 
-                "warning", 
+                "skipped", 
                 `Prepayment skipped: D365 number sequence exceeded. Order will continue without prepayment.`,
                 { 
                   amount: prepaymentAmount,
@@ -413,7 +413,7 @@ export const processShopifyOrder = inngest.createFunction(
             // For other prepayment errors, still log but don't fail the order
             await publishStatus(
               "d365.create-prepayment", 
-              "warning", 
+              "skipped", 
               `Prepayment failed: ${errorMessage}. Order will continue without prepayment.`,
               { 
                 amount: prepaymentAmount,
