@@ -126,11 +126,12 @@ export const processInventoryMesh = inngest.createFunction(
         // After syncing to Dynamics, ALWAYS sync from Dynamics to Shopify
         // Flow: Location → Dynamics → Shopify (one-way, mandatory)
         if (result.success && inventory.sku) {
+          const sku = inventory.sku; // Type narrowing
           const shopifyResult = await step.run("sync-dynamics-to-shopify", async () => {
-            console.log(`[InventoryMesh] 🔄 Auto-triggering D365 → Shopify sync for SKU: ${inventory.sku}`);
+            console.log(`[InventoryMesh] 🔄 Auto-triggering D365 → Shopify sync for SKU: ${sku}`);
             const { syncD365ToShopify } = await import("@/lib/services/inventory-sync");
             const dataAreaId = result.data?.dataAreaId || config.dynamics.dataAreaId;
-            const syncResult = await syncD365ToShopify(inventory.sku, dataAreaId);
+            const syncResult = await syncD365ToShopify(sku, dataAreaId);
             console.log(`[InventoryMesh] ✅ D365 → Shopify sync result: ${syncResult.message}`);
             return syncResult;
           });
