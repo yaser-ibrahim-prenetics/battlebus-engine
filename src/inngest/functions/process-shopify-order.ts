@@ -468,6 +468,7 @@ export const processShopifyOrder = inngest.createFunction(
       await publishStatus("create-d365-order", "completed", `D365 order created: ${salesOrderNumber}`, { d365OrderNumber: salesOrderNumber });
 
       // 4. Send to GPS (if applicable)
+      // Only GPS warehouses need syncing - Stord has its own Shopify app
       await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
 
       // 4b. Send to GPS warehouse + store metafield in SINGLE step
@@ -475,6 +476,9 @@ export const processShopifyOrder = inngest.createFunction(
       // This eliminates ~4s of Inngest step overhead
       if (shouldSendToRealGps && gpsOrderPayload) {
         await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, { warehouse: warehouseName });
+      } else if (!shouldSendToRealGps) {
+        // Skip GPS sync for non-GPS warehouses (e.g., Stord - handled by Shopify app)
+        await publishStatus("gps.send-order", "skipped", `GPS sync not required - ${warehouseName} uses Shopify app`, { warehouse: warehouseName });
       }
       
       const gpsResult = await step.run("send-to-gps-and-store-metafield", async () => {
@@ -534,7 +538,10 @@ export const processShopifyOrder = inngest.createFunction(
           }
         }
 
-        // Skip if GPS not enabled
+        // Skip if GPS not enabled or not a GPS warehouse
+        if (!shouldSendToRealGps) {
+          return { type: "skipped", reason: `GPS sync not required - ${warehouseName} uses Shopify app` };
+        }
         return { type: "skipped", reason: "GPS sync disabled or no payload" };
       });
       
