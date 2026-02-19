@@ -360,7 +360,9 @@ export const processShopifyOrder = inngest.createFunction(
       // OPTIMIZATION: Run D365 prepayment + GPS payload building in PARALLEL
       // This saves ~4s by overlapping these independent operations
       const prepaymentAmount = calculatePrepaymentAmount(order);
-      const shouldSendToRealGps = shouldSendToGps(order) && config.features.enableGpsSync;
+      // Only sync to GPS if warehouse is actually a GPS warehouse
+      // Stord orders are already syncing via Shopify app, so skip GPS sync for Stord
+      const shouldSendToRealGps = shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
       
       // Start both operations simultaneously
       if (prepaymentAmount > 0) {

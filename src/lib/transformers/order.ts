@@ -42,6 +42,7 @@ import {
   getGpsWarehouseCode,
   getGpsLogisticsChannel,
   isGpsUkWarehouse,
+  isGpsWarehouse,
   getShippingSku,
   getTaxSku,
   getOrderingCustomerAccountNumber,
@@ -331,8 +332,18 @@ export function calculateOrderCost(
 
 /**
  * Check if order should be sent to GPS warehouse
+ * Only GPS warehouses need syncing - Stord has its own Shopify app
  */
-export function shouldSendToGps(order: ShopifyOrderPayload): boolean {
+export function shouldSendToGps(order: ShopifyOrderPayload, warehouseName?: string): boolean {
+  // If warehouse is explicitly provided, check if it's a GPS warehouse
+  // Stord orders are already syncing via Shopify app, so skip GPS sync for Stord
+  if (warehouseName) {
+    return isGpsWarehouse(warehouseName);
+  }
+
+  // Fallback: Check fulfillment location to see if it's GPS (not Stord)
+  // Try to get fulfillment location from fulfillment orders
+  // If location is Stord, return false (Stord has its own Shopify app)
   const lineItems = getLineItems(order);
 
   if (!Array.isArray(order.line_items)) {
@@ -340,11 +351,21 @@ export function shouldSendToGps(order: ShopifyOrderPayload): boolean {
       "[Transformers] order.line_items is missing or not an array – treating as no-GPS order. " +
         "This usually means a test payload is incomplete."
     );
+    return false;
   }
 
-  return lineItems.some(
+  // Check if order has shippable items
+  const hasShippableItems = lineItems.some(
     (item) => item.requires_shipping && !item.gift_card
   );
+
+  if (!hasShippableItems) {
+    return false;
+  }
+
+  // Default: assume GPS if we can't determine otherwise
+  // This will be refined by warehouseName check in process-shopify-order
+  return true;
 }
 
 /**
