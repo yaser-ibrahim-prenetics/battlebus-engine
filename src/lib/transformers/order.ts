@@ -134,7 +134,8 @@ export function toD365SalesOrderLine(
   salesOrderNumber: string,
   dataAreaId: string,
   currency: string,
-  discountCodes?: string[]
+  discountCodes?: string[],
+  countryCode?: string
 ): D365SalesOrderLineRequest {
   const itemNumber = mapShopifySkuToDynamics(lineItem.sku);
   const price = parseFloat(lineItem.price);
@@ -150,6 +151,7 @@ export function toD365SalesOrderLine(
     ...(discountPerUnit > 0 ? { discount: discountPerUnit } : {}),
     currency,
     discountCode: discountCodes,
+    ...(countryCode ? { countryCode } : {}),
   };
 }
 
@@ -168,6 +170,9 @@ export function toD365SalesOrderLines(
   const currency = order.currency || "USD";
   const discountCodes = order.discount_codes?.map((d) => d.code);
   const skuTransformer = createShopifyToDynamicsLineTransformer();
+  
+  // Extract country code from shipping or billing address
+  const countryCode = order.shipping_address?.country_code || order.billing_address?.country_code || undefined;
 
   const lines: D365SalesOrderLineRequest[] = [];
 
@@ -184,7 +189,7 @@ export function toD365SalesOrderLines(
   for (const item of lineItems) {
     if (item.gift_card) continue; // Skip gift card purchases
 
-    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, currency, discountCodes);
+    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, currency, discountCodes, countryCode);
     const transformedLine = skuTransformer(line);
     lines.push(transformedLine);
   }

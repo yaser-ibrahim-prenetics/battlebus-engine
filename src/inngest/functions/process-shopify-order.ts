@@ -65,7 +65,8 @@ export const processShopifyOrder = inngest.createFunction(
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
-    const order = orderJson as ShopifyOrderPayload;
+    // Initial order from webhook - will be refreshed after 5min delay
+    let order = orderJson as ShopifyOrderPayload;
 
     // Inngest IDs for linking to dashboard:
     // - event.id is the idempotency key we passed (e.g., "shopify-order-paid-xxx")
@@ -153,6 +154,25 @@ export const processShopifyOrder = inngest.createFunction(
         shopifyOrderName,
       };
     }
+
+    // Wait 5 minutes and refetch order to ensure tags are available
+    // Tags may not be immediately available when order is created
+    await publishStatus("wait-for-tags", "running", "Waiting 5 minutes for order tags to be available");
+    
+    // Wait 5 minutes using Inngest step.sleep (must be outside step.run)
+    await step.sleep("wait-for-tags", "5m");
+    
+    // Refetch order from Shopify to get latest tags
+    const refreshedOrder = await step.run("refetch-order-after-delay", async () => {
+      const { getOrder } = await import("@/lib/clients/shopify");
+      const freshOrder = await getOrder(shopifyOrderId);
+      console.log(`[Order] Refetched order ${shopifyOrderName} after 5min delay. Tags: ${freshOrder.tags || "none"}`);
+      return freshOrder;
+    });
+    await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
+
+    // Use the refreshed order for all subsequent processing
+    order = refreshedOrder as ShopifyOrderPayload;
 
     // Comprehensive order validation - all checks in one place
     await publishStatus("validate-order", "running", "Validating order");
@@ -562,30 +582,45 @@ export const processShopifyOrder = inngest.createFunction(
         await publishStatus("gps.send-order", "skipped", "GPS sync not required for this order");
       }
 
-      // Handle out of stock retry
+      // Handle inventory errors — emit to backorder queue for durable retry
       if (gpsResult.type === "out_of_stock" && gpsOrderPayload) {
         const oosError = "error" in gpsResult ? gpsResult.error : "Unknown";
-        const retryAtTime = new Date(Date.now() + config.delays.outOfStockRetryHours * 60 * 60 * 1000);
-        
-        // Publish out of stock status to Battle Hub
+        const { classifyGpsError } = await import("@/lib/clients/gps");
+        const errorType = classifyGpsError(oosError);
+        const failedSkus = gpsOrderPayload.productList?.map((p: { sku?: string; itemNumber?: string }) => p.sku || p.itemNumber || "unknown") || [];
+
         await publishStatus(
           "gps.send-order",
           "failed",
-          `Out of stock: ${oosError}`,
-          { 
-            errorType: "out_of_stock", 
-            error: oosError,
-            retryIn: `${config.delays.outOfStockRetryHours} hours`,
-            retryAt: retryAtTime.toISOString()
-          }
+          `Inventory error: ${oosError}. Sending to backorder queue.`,
+          { errorType, error: oosError }
         );
-        
+
         await slack.sendWarningMessage(
           "gpslow",
-          `GPS Out of Stock for ${shopifyOrderName}: ${oosError}`
+          `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`
         );
-        
-        // Also send to CS Platform so Battle Hub can display the error
+
+        // Emit backorder event for durable retry with step.waitForEvent
+        await step.run("emit-backorder-event", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNumber,
+              warehouse: warehouseName,
+              errorMessage: oosError,
+              errorType,
+              failedSkus,
+              retryCount: 0,
+              maxRetries: 7,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        });
+
+        // Notify Battle Hub
         await csPlatform.sendOrderUpdate({
           id: shopifyOrderId,
           name: shopifyOrderName,
@@ -593,55 +628,10 @@ export const processShopifyOrder = inngest.createFunction(
           shopifyOrderName,
           d365OrderNumber: salesOrderNumber,
           warehouse: warehouseName,
-          status: "waiting_stock",
+          status: "backorder",
           error: oosError,
-          errorType: "out_of_stock",
-          retryAt: retryAtTime.toISOString(),
+          errorType,
         }, { inngestIdempotencyKey, inngestRunId });
-        
-        // Publish wait status
-        await publishStatus(
-          "gps.wait-for-stock",
-          "running",
-          `Waiting ${config.delays.outOfStockRetryHours} hours for stock replenishment`,
-          { 
-            waitDuration: `${config.delays.outOfStockRetryHours}h`,
-            retryAt: retryAtTime.toISOString()
-          }
-        );
-        
-        await step.sleep("wait-for-stock", `${config.delays.outOfStockRetryHours}h`);
-        
-        await publishStatus(
-          "gps.wait-for-stock",
-          "completed",
-          "Stock wait period complete"
-        );
-        
-        // Publish retry status
-        await publishStatus(
-          "gps.retry-order",
-          "running",
-          "Retrying GPS order after stock wait"
-        );
-        
-        const retryResult = await step.run("retry-gps-after-oos", async () => {
-          return gps.createOutboundOrder(
-            gpsOrderPayload,
-            warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
-          );
-        });
-        
-        // Update with retry result
-        if (retryResult) {
-          const gpsOrderNo = retryResult.response?.data?.[0]?.orderNo;
-          await publishStatus(
-            "gps.retry-order",
-            "completed",
-            `GPS order created: ${gpsOrderNo || 'OK'}`,
-            { gpsOrderNo }
-          );
-        }
       }
 
       await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", { gpsResult });

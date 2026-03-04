@@ -165,7 +165,7 @@ async function testGpsConnection() {
     thirdOrderNo: "SHOPIFY-123456",
     whCode: GPS_WAREHOUSE_CODE,
     subOrderType: 1, // Product outbound
-    logisticsChannel: "GPS-IM8-STANDARD",
+    logisticsChannel: "GPS-IM8-STANDARD-UK",
     receiver: "Test User",
     addressOne: "123 Test Street",
     addressTwo: "",

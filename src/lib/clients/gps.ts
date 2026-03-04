@@ -258,15 +258,13 @@ export async function createOutboundOrder(
 
   console.log(`[GPS] Response: ${JSON.stringify(result)}`);
 
-  // Check for out of stock error
-  // Note: GPS API returns Chinese error messages - 库存不足 means "insufficient inventory"
+  // Check for inventory-related errors
+  // GPS API returns Chinese error messages:
+  //   库存不足 = "insufficient inventory"
+  //   未维护新品 = "unmaintained new product" (SKU not registered in GPS warehouse)
   if (result.code !== 200) {
-    if (
-      result.msg?.toLowerCase().includes("out of stock") ||
-      result.msg?.toLowerCase().includes("insufficient") ||
-      result.msg?.includes("库存不足")
-    ) {
-      throw new OutOfStockError(`GPS out of stock: ${result.msg}`);
+    if (isGpsInventoryError(result.msg)) {
+      throw new OutOfStockError(`GPS inventory error: ${result.msg}`);
     }
     throw new Error(`GPS API error: ${result.code} - ${result.msg}`);
   }
@@ -274,13 +272,9 @@ export async function createOutboundOrder(
   // Check individual order result
   if (result.data?.[0] && !result.data[0].success) {
     const orderResult = result.data[0];
-    if (
-      orderResult.msg?.toLowerCase().includes("out of stock") ||
-      orderResult.msg?.toLowerCase().includes("insufficient") ||
-      orderResult.msg?.includes("库存不足")
-    ) {
+    if (isGpsInventoryError(orderResult.msg)) {
       throw new OutOfStockError(
-        `GPS out of stock for ${orderData.platformOrderNo}: ${orderResult.msg}`
+        `GPS inventory error for ${orderData.platformOrderNo}: ${orderResult.msg}`
       );
     }
     
@@ -425,11 +419,56 @@ export function verifyWebhookSignature(
   }
 }
 
-// Custom error for Out of Stock scenarios
+// GPS inventory error types
+export type GpsInventoryErrorType = "out_of_stock" | "unmaintained_product" | "gps_error" | "inventory_insufficient";
+
+/**
+ * Detect GPS inventory-related errors from error messages.
+ * Covers all known Chinese and English error patterns from GPS API.
+ *
+ * Known GPS error patterns:
+ *   库存不足 = insufficient inventory
+ *   未维护新品 = unmaintained new product (SKU not registered in warehouse)
+ *   cannot be reserved = D365 inventory reservation failure
+ */
+export function isGpsInventoryError(msg: string | undefined): boolean {
+  if (!msg) return false;
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("out of stock") ||
+    lower.includes("insufficient") ||
+    msg.includes("库存不足") ||
+    msg.includes("未维护新品") ||
+    lower.includes("cannot be reserved") ||
+    lower.includes("inventory") && lower.includes("error")
+  );
+}
+
+/**
+ * Classify the GPS error type for backorder tracking
+ */
+export function classifyGpsError(msg: string | undefined): GpsInventoryErrorType {
+  if (!msg) return "gps_error";
+  if (msg.includes("库存不足") || msg.toLowerCase().includes("out of stock") || msg.toLowerCase().includes("insufficient")) {
+    return "out_of_stock";
+  }
+  if (msg.includes("未维护新品")) {
+    return "unmaintained_product";
+  }
+  if (msg.toLowerCase().includes("cannot be reserved")) {
+    return "inventory_insufficient";
+  }
+  return "gps_error";
+}
+
+// Custom error for inventory-related GPS scenarios
 export class OutOfStockError extends Error {
+  public readonly errorType: GpsInventoryErrorType;
+
   constructor(message: string) {
     super(message);
     this.name = "OutOfStockError";
+    this.errorType = classifyGpsError(message);
   }
 }
 

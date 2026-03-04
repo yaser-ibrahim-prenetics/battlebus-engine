@@ -24,6 +24,7 @@ export { processInventorySync } from "./process-inventory-sync";
 export { processInventoryMesh } from "./process-inventory-mesh";
 export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processLocationSync } from "./process-location-sync";
+export { processBackorder } from "./process-backorder";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -49,6 +50,7 @@ import { processInventorySync } from "./process-inventory-sync";
 import { processInventoryMesh } from "./process-inventory-mesh";
 import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processLocationSync } from "./process-location-sync";
+import { processBackorder } from "./process-backorder";
 
 export const functions = [
   processShopifyOrder,
@@ -73,4 +75,6 @@ export const functions = [
   processInventoryFullSync,
   // Location Sync
   processLocationSync,
+  // Backorder Retry Queue
+  processBackorder,
 ];

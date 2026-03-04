@@ -452,6 +452,7 @@ export async function createSalesOrderLine(
     THK_DiscountType: giftCardNumber,
     THK_PromotionCode: discountCode && discountCode.length > 0 ? discountCode[0] : "",
     ...(shippingWarehouseId ? { ShippingWarehouseId: shippingWarehouseId } : {}),
+    ...(countryCode ? { CountryCode: countryCode } : {}),
   };
 
   console.log(`[D365] Creating sales order line: ${JSON.stringify(body)}`);

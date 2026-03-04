@@ -221,6 +221,64 @@ export type ActionOrderFulfillEvent = {
 };
 
 // ============================================================================
+// SUBSCRIPTION / RENEWAL EVENTS
+// ============================================================================
+
+export type SubscriptionRenewalEvent = {
+  name: "shopify/subscription.renewed";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    subscriptionContractId: string;
+    orderJson: ShopifyOrderPayload;
+    receivedAt: string;
+  };
+};
+
+// ============================================================================
+// BACKORDER EVENTS
+// ============================================================================
+
+export type BackorderCreatedEvent = {
+  name: "backorder/created";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    d365OrderNumber: string;
+    warehouse: string;
+    errorMessage: string;
+    errorType: "out_of_stock" | "unmaintained_product" | "gps_error" | "inventory_insufficient";
+    failedSkus: string[];
+    retryCount: number;
+    maxRetries: number;
+    createdAt: string;
+  };
+};
+
+export type BackorderResolvedEvent = {
+  name: "backorder/resolved";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    resolvedAt: string;
+    resolution: "fulfilled" | "cancelled" | "manual";
+  };
+};
+
+export type BackorderRetryEvent = {
+  name: "backorder/retry";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    d365OrderNumber: string;
+    warehouse: string;
+    retryCount: number;
+    triggeredBy: "auto" | "manual";
+  };
+};
+
+// ============================================================================
 // INVENTORY MESH EVENTS (Centralized inventory sync routing)
 // ============================================================================
 
@@ -293,7 +351,11 @@ export type BattleBusEvents =
   | ActionOrderRefundEvent
   | ActionOrderFulfillEvent
   | InventorySyncEvent
-  | InventoryFullSyncRequestedEvent;
+  | InventoryFullSyncRequestedEvent
+  | SubscriptionRenewalEvent
+  | BackorderCreatedEvent
+  | BackorderResolvedEvent
+  | BackorderRetryEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)

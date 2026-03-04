@@ -150,6 +150,15 @@ export const config = {
     outOfStockRetryHours: parseInt(process.env.OOS_RETRY_HOURS || "4", 10),
   },
 
+  // Backorder Queue Configuration
+  backorder: {
+    enabled: process.env.BACKORDER_RETRY_ENABLED !== "false",
+    maxRetries: parseInt(process.env.BACKORDER_MAX_RETRIES || "7", 10),
+    retryIntervalHours: parseInt(process.env.BACKORDER_RETRY_INTERVAL_HOURS || "24", 10),
+    maxDaysBeforeCancel: parseInt(process.env.BACKORDER_MAX_DAYS || "30", 10),
+    waitForEventTimeoutHours: parseInt(process.env.BACKORDER_WAIT_TIMEOUT_HOURS || "48", 10),
+  },
+
   // Order validation
   orders: {
     liveDateTime: process.env.ORDERS_LIVE_DATE || "2024-11-17T13:22:00-05:00",

@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyOrderPayload } from "../events";
+import { THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
 
 export const processOrderUpdate = inngest.createFunction(
   {
@@ -14,8 +15,7 @@ export const processOrderUpdate = inngest.createFunction(
       timeout: "5m",
     },
     throttle: {
-      limit: 10,
-      period: "1s",
+      ...THROTTLE_CONFIGS.SHOPIFY,
       key: "event.data.shopifyStore",
     },
     concurrency: [
@@ -24,7 +24,7 @@ export const processOrderUpdate = inngest.createFunction(
         key: "event.data.shopifyOrderId",
       },
     ],
-    retries: 3,
+    retries: RETRY_CONFIGS.LOW_PRIORITY,
   },
   { event: "shopify/order.updated" },
   async ({ event, step, runId }: { event: any; step: any; runId: any }) => {
