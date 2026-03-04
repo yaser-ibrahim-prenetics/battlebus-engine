@@ -158,8 +158,8 @@ export const processBackorder = inngest.createFunction(
             d365OrderNumber,
             warehouse,
             status: "processing",
-            error: null,
-            errorType: null,
+            error: undefined,
+            errorType: undefined,
           }, {});
         });
 
