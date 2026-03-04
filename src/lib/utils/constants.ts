@@ -93,13 +93,17 @@ export const RATE_LIMIT_CONFIGS = {
 // ============================================================================
 // RETRY CONFIGURATIONS
 // ============================================================================
+// Inngest accepts retries as 0-20 (literal union). Clamp env values and cast.
+type InngestRetries = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20;
+const clampRetries = (n: number): InngestRetries =>
+  Math.min(20, Math.max(0, n)) as InngestRetries;
 
 export const RETRY_CONFIGS = {
-  DEFAULT: envInt("RETRY_DEFAULT", 5),
-  CRITICAL: envInt("RETRY_CRITICAL", 10),
-  LOW_PRIORITY: envInt("RETRY_LOW_PRIORITY", 3),
-  STANDARD: envInt("RETRY_STANDARD", 5),
-  CRON: envInt("RETRY_CRON", 3),
+  DEFAULT: clampRetries(envInt("RETRY_DEFAULT", 5)),
+  CRITICAL: clampRetries(envInt("RETRY_CRITICAL", 10)),
+  LOW_PRIORITY: clampRetries(envInt("RETRY_LOW_PRIORITY", 3)),
+  STANDARD: clampRetries(envInt("RETRY_STANDARD", 5)),
+  CRON: clampRetries(envInt("RETRY_CRON", 3)),
 };
 
 // ============================================================================
