@@ -408,6 +408,8 @@ export {
 
 export {
   determineWarehouse,
+  resolveCountryRouting,
+  getActiveRoutingTable,
   getWarehouseConfig,
   toDefaultLedgerDimensionDisplayValue,
 } from "../helpers/warehouse";

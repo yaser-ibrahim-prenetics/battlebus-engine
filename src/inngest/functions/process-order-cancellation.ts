@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
+import * as slack from "@/lib/clients/slack";
 import * as warehouseHelper from "@/lib/helpers/warehouse";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import {
@@ -12,6 +13,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { ShopifyOrderPayload } from "../events";
+import { SlackChannelEnum } from "@/lib/types/slack";
 
 export const processOrderCancellation = inngest.createFunction(
   {
@@ -86,17 +88,36 @@ export const processOrderCancellation = inngest.createFunction(
         gpsCancellation.status === "cancelled" || gpsCancellation.status === "skipped";
 
       if (isGpsCancelled) {
-        // Case A: GPS Cancelled -> Cancel D365 Order
-        // Currently we don't have a direct cancel API in D365 clients.
-        // Assuming we just log it or maybe implement cancel later.
-        return {
-          status: "not_implemented",
-          action: "cancel_order",
-          dataAreaId,
-          salesOrderNumber: d365Order.SalesOrderNumber,
-          cancelReason: cancelReason || "Customer Request",
-          message: "GPS cancelled, D365 cancellation pending implementation",
-        };
+        // Case A: GPS Cancelled (or was never sent to GPS) → Delete D365 Sales Order
+        // D365 sales orders can be deleted if they haven't been confirmed/posted yet.
+        // If already confirmed, D365 will return an error — catch and fall through to return order.
+        try {
+          await dynamics.deleteSalesOrderHeaderV3(dataAreaId, d365Order.SalesOrderNumber!);
+          console.log(
+            `[Cancellation] ✅ D365 order deleted: ${d365Order.SalesOrderNumber} for ${shopifyOrderName}`
+          );
+          return {
+            status: "success",
+            action: "cancel_order",
+            salesOrderNumber: d365Order.SalesOrderNumber,
+            cancelReason: cancelReason || "Customer Request",
+          };
+        } catch (deleteErr: any) {
+          // Order may already be confirmed/posted — log and escalate to Slack
+          console.warn(
+            `[Cancellation] ⚠️  Could not delete D365 order ${d365Order.SalesOrderNumber}: ${deleteErr.message}. Order may be confirmed — manual action required.`
+          );
+          await slack.sendWarningMessage(
+            SlackChannelEnum.DYNAMICS,
+            `[Cancellation] D365 order ${d365Order.SalesOrderNumber} (${shopifyOrderName}) could not be auto-cancelled — manual action required. GPS was cancelled. Reason: ${deleteErr.message}`
+          );
+          return {
+            status: "manual_required",
+            action: "cancel_order",
+            salesOrderNumber: d365Order.SalesOrderNumber,
+            error: deleteErr.message,
+          };
+        }
       } else {
         // Case B: GPS Failed (Likely Shipped) -> Create Return Order in D365
         // This is the "Return" flow from spock-store
@@ -141,12 +162,16 @@ export const processOrderCancellation = inngest.createFunction(
 
         // 3e. Create Return Order Lines
         const returnLinesResult = [];
+        const skippedLines: string[] = [];
         for (const item of shopifyOrder.line_items) {
+          if (item.gift_card || !item.requires_shipping) continue;
+
           const originalLotId = skuToLotIdMap[item.sku];
           if (!originalLotId) {
             console.warn(
-              `[Cancellation] Original LotId not found for SKU ${item.sku} in D365 order ${d365Order.SalesOrderNumber}`
+              `[Cancellation] ⚠️  LotId not found for SKU ${item.sku} in D365 order ${d365Order.SalesOrderNumber} — skipping return line`
             );
+            skippedLines.push(item.sku);
             continue;
           }
 
@@ -167,6 +192,14 @@ export const processOrderCancellation = inngest.createFunction(
           returnLinesResult.push({ sku: item.sku, quantity: item.quantity });
         }
 
+        // Alert if any lines were silently skipped
+        if (skippedLines.length > 0) {
+          await slack.sendWarningMessage(
+            SlackChannelEnum.DYNAMICS,
+            `[Cancellation] Partial return order ${returnOrderNumber} for ${shopifyOrderName}: ${skippedLines.length} SKU(s) skipped (no LotId in D365). Skipped: ${skippedLines.join(", ")}. Original order: ${d365Order.SalesOrderNumber}`
+          );
+        }
+
         // 3f. Confirm Return Order
         await dynamics.confirmSalesOrder(returnOrderNumber, dataAreaId);
 
@@ -176,13 +209,14 @@ export const processOrderCancellation = inngest.createFunction(
           returnOrderNumber,
           dataAreaId,
           returnLines: returnLinesResult,
+          skippedLines,
         };
       }
     });
 
     const result = {
       status:
-        d365Cancellation.status === "success" || d365Cancellation.status === "not_implemented"
+        d365Cancellation.status === "success" || d365Cancellation.status === "manual_required"
           ? "success"
           : "partial",
       shopifyOrderId,

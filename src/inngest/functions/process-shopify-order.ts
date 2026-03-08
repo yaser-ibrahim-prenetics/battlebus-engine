@@ -21,12 +21,11 @@ import {
   toGpsOutboundOrder,
   calculatePrepaymentAmount,
   shouldSendToGps,
-  determineWarehouse,
 } from "@/lib/transformers/order";
-import { getDataAreaId } from "@/lib/helpers/warehouse";
+import { resolveCountryRouting, type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
-  getDataAreaIdForLocation,
+  getDataAreaIdForLocationAndCountry,
   getWarehouseNameForLocation,
 } from "@/lib/services/location-routing";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
@@ -239,62 +238,72 @@ export const processShopifyOrder = inngest.createFunction(
     await publishStatus("validate-order", "completed", "Order validation passed");
 
     // Determine warehouse and DataAreaId using location-based routing
-    // Priority: 1. Fulfillment location from order, 2. Country-based warehouse determination
+    // Priority:
+    //   1. Shopify fulfillment location assignment (most specific — set by Shopify routing rules)
+    //   2. Country-based routing (warehouse-config.json countryRouting + COUNTRY_ROUTING_OVERRIDES env)
     const routingResult = await step.run("determine-warehouse-routing", async () => {
-      let warehouseName: string;
-      let dataAreaId: string;
+      const countryCode =
+        order.shipping_address?.country_code || order.billing_address?.country_code || "US";
 
-      // Try to get fulfillment location from fulfillment orders
+      // 1. Try fulfillment-location-based routing (most specific)
       let fulfillmentLocationId: number | null = null;
       try {
         const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-        if (fulfillmentOrders.length > 0) {
-          // Use the first open/in_progress fulfillment order's assigned location
-          const openFulfillment = fulfillmentOrders.find(
-            (fo: any) => fo.status === "open" || fo.status === "in_progress"
-          );
-          if (openFulfillment?.assigned_location_id) {
-            fulfillmentLocationId = openFulfillment.assigned_location_id;
-            console.log(`[Order Routing] Found fulfillment location: ${fulfillmentLocationId}`);
-          }
+        const openFulfillment = fulfillmentOrders.find(
+          (fo: any) => fo.status === "open" || fo.status === "in_progress"
+        );
+        if (openFulfillment?.assigned_location_id) {
+          fulfillmentLocationId = openFulfillment.assigned_location_id;
         }
       } catch (error) {
         console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
       }
 
-      // Use location-based routing if fulfillment location is available
       if (fulfillmentLocationId) {
-        dataAreaId =
-          (await getDataAreaIdForLocation(fulfillmentLocationId, "im8")) ||
-          config.dynamics.dataAreaId;
+        // Use country-aware lookup: picks per-country dataAreaId override if configured
+        const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+          fulfillmentLocationId,
+          countryCode,
+          "im8"
+        );
         const warehouseNameFromLocation = await getWarehouseNameForLocation(
           fulfillmentLocationId,
           "im8"
         );
-        warehouseName =
-          warehouseNameFromLocation ||
-          determineWarehouse(
-            order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+
+        if (locationDataAreaId && warehouseNameFromLocation) {
+          console.log(
+            `[Order Routing] Location ${fulfillmentLocationId} + country ${countryCode} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
           );
-        console.log(
-          `[Order Routing] Using location-based routing: ${warehouseName} → ${dataAreaId}`
-        );
-      } else {
-        // Fallback to country-based warehouse determination
-        warehouseName = determineWarehouse(
-          order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-        );
-        dataAreaId = getDataAreaId(warehouseName);
-        console.log(
-          `[Order Routing] Using country-based routing: ${warehouseName} → ${dataAreaId}`
+          return {
+            warehouseName: warehouseNameFromLocation as WarehouseName,
+            dataAreaId: locationDataAreaId,
+            countryCode,
+            routingSource: "location" as const,
+          };
+        }
+        // Location found in Shopify but not yet in routing table — fall through
+        console.warn(
+          `[Order Routing] Location ${fulfillmentLocationId} not found in routing table — falling back to country routing`
         );
       }
 
-      return { warehouseName, dataAreaId };
+      // 2. Country-based routing (config-driven)
+      const routing = resolveCountryRouting(countryCode);
+      console.log(
+        `[Order Routing] Country ${countryCode} → warehouse: ${routing.warehouseName}, dataAreaId: ${routing.dataAreaId} (source: ${routing.source})`
+      );
+      return {
+        warehouseName: routing.warehouseName,
+        dataAreaId: routing.dataAreaId,
+        countryCode,
+        routingSource: routing.source,
+      };
     });
 
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;
+    const country_code = routingResult.countryCode;
 
     try {
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC

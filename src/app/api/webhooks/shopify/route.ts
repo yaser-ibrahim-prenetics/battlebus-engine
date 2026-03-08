@@ -92,7 +92,9 @@ export async function POST(request: NextRequest) {
         }
       }
     } else {
-      console.log(`[Webhook] [${requestId}] ⚠️  No HMAC header present (x-shopify-hmac-sha256)`);
+      // Secret is configured but the header is missing — reject to prevent spoofing
+      console.error(`[Webhook] [${requestId}] ❌ Missing x-shopify-hmac-sha256 header`);
+      return NextResponse.json({ error: "Missing signature header", requestId }, { status: 401 });
     }
 
     console.log(`[Webhook] [${requestId}] ✅ Signature check complete`);
@@ -168,36 +170,71 @@ export async function POST(request: NextRequest) {
 
       // Order paid - triggers order processing (alternative to orders/create)
       case "orders/paid": {
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.paid`);
-        const idempotencyKey = `shopify-order-paid-${payload.id}`;
-        try {
-          const sendResult = await inngest.send({
-            id: idempotencyKey, // Event-level idempotency key
-            name: "shopify/order.paid",
-            data: {
-              shopifyOrderId: String(payload.id),
-              shopifyOrderName: payload.name,
-              shopifyStore: shopDomain || "im8",
-              orderJson: payload,
-              receivedAt: new Date().toISOString(),
-              // Pass the idempotency key so the function knows it
-              inngestIdempotencyKey: idempotencyKey,
-            },
-          });
-          // The internal event ID is in the response - this is what we need for /events/ URLs
-          const internalEventId = sendResult.ids?.[0];
-          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
+        // Detect Skio / subscription contract renewals via source_name
+        const isSubscriptionRenewal = payload.source_name === "subscription_contract";
+        const subscriptionContractId = payload.note_attributes?.find(
+          (a: { name: string; value: string }) => a.name === "subscription_id" || a.name === "contract_id"
+        )?.value || "";
+
+        if (isSubscriptionRenewal) {
           console.log(
-            `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
+            `[Webhook] [${requestId}] 🔄 Subscription renewal detected for ${payload.name} (Skio contract: ${subscriptionContractId || "unknown"})`
           );
-        } catch (error) {
-          console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
-          if (process.env.NODE_ENV === "development") {
-            console.warn(
-              `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
+          console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/subscription.renewed`);
+          const sent = await sendInngestEvent(
+            {
+              id: `shopify-subscription-renewed-${payload.id}`,
+              name: "shopify/subscription.renewed",
+              data: {
+                shopifyOrderId: String(payload.id),
+                shopifyOrderName: payload.name,
+                shopifyStore: shopDomain || "im8",
+                subscriptionContractId,
+                orderJson: payload,
+                receivedAt: new Date().toISOString(),
+              },
+            },
+            requestId
+          );
+          if (sent) {
+            console.log(
+              `[Webhook] [${requestId}] ✅ Sent shopify/subscription.renewed for ${payload.name}`
             );
           }
-          // Don't throw - allow webhook to return success
+        } else {
+          console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.paid`);
+          const idempotencyKey = `shopify-order-paid-${payload.id}`;
+          try {
+            const sendResult = await inngest.send({
+              id: idempotencyKey,
+              name: "shopify/order.paid",
+              data: {
+                shopifyOrderId: String(payload.id),
+                shopifyOrderName: payload.name,
+                shopifyStore: shopDomain || "im8",
+                orderJson: payload,
+                receivedAt: new Date().toISOString(),
+                inngestIdempotencyKey: idempotencyKey,
+              },
+            });
+            const internalEventId = sendResult.ids?.[0];
+            console.log(
+              `[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`
+            );
+            console.log(
+              `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
+            );
+          } catch (error) {
+            console.error(
+              `[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`,
+              error
+            );
+            if (process.env.NODE_ENV === "development") {
+              console.warn(
+                `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
+              );
+            }
+          }
         }
         break;
       }

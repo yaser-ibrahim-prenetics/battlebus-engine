@@ -2,6 +2,13 @@
 // WAREHOUSE ROUTING HELPERS
 // ============================================================================
 // Ported from spock-store src/component/warehouse.ts
+//
+// Routing chain: countryCode → countryRouting[country] → warehouseName → dataAreaId
+//
+// The full routing table lives in warehouse-config.json (countryRouting section).
+// Per-environment overrides can be applied via COUNTRY_ROUTING_OVERRIDES env var
+// (JSON string mapping country codes to warehouse names), e.g.:
+//   COUNTRY_ROUTING_OVERRIDES='{"AU":"HK Warehouse","JP":"HK Warehouse"}'
 
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { IGpsIndividualFulfilment } from "../types/gps";
@@ -36,6 +43,46 @@ export interface WarehouseConfig {
     refund: string;
     shipping: string;
   };
+}
+
+export interface RoutingResult {
+  warehouseName: WarehouseName;
+  dataAreaId: string;
+  countryCode: string;
+  source: "location" | "country_override" | "country_config" | "default";
+}
+
+// ============================================================================
+// Env-var override loader (parsed once per cold-start)
+// ============================================================================
+
+function loadCountryOverrides(): Record<string, WarehouseName> {
+  const raw = process.env.COUNTRY_ROUTING_OVERRIDES;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    const validWarehouses = Object.keys(warehouseConfig.warehouses);
+    const result: Record<string, WarehouseName> = {};
+    for (const [country, warehouse] of Object.entries(parsed)) {
+      if (validWarehouses.includes(warehouse)) {
+        result[country.toUpperCase()] = warehouse as WarehouseName;
+      } else {
+        console.warn(
+          `[Routing] COUNTRY_ROUTING_OVERRIDES: unknown warehouse "${warehouse}" for country "${country}" — skipped`
+        );
+      }
+    }
+    return result;
+  } catch {
+    console.error("[Routing] COUNTRY_ROUTING_OVERRIDES is not valid JSON — ignoring");
+    return {};
+  }
+}
+
+let _countryOverrides: Record<string, WarehouseName> | null = null;
+function getCountryOverrides(): Record<string, WarehouseName> {
+  if (!_countryOverrides) _countryOverrides = loadCountryOverrides();
+  return _countryOverrides;
 }
 
 // ============================================================================
@@ -145,47 +192,100 @@ export function toDefaultLedgerDimensionDisplayValue(warehouseName: string): str
 // ============================================================================
 
 /**
- * Determine warehouse based on shipping country
- * Simplified routing logic - can be extended based on business rules
+ * Determine warehouse name from a shipping country code.
+ *
+ * Priority:
+ *   1. COUNTRY_ROUTING_OVERRIDES env var (per-deploy tweaks)
+ *   2. warehouse-config.json countryRouting table
+ *   3. defaultWarehouse fallback
  */
 export function determineWarehouse(shippingCountryCode: string): WarehouseName {
-  // UK/EU orders go to GPS UK
-  const ukEuCountries = [
-    "GB",
-    "UK",
-    "IE",
-    "FR",
-    "DE",
-    "IT",
-    "ES",
-    "NL",
-    "BE",
-    "AT",
-    "PT",
-    "PL",
-    "SE",
-    "DK",
-    "FI",
-    "NO",
-    "CH",
-    "CZ",
-    "GR",
-    "HU",
-    "RO",
-  ];
+  const code = (shippingCountryCode || "").toUpperCase();
 
-  if (ukEuCountries.includes(shippingCountryCode?.toUpperCase())) {
-    return "GPS UK Warehouse";
+  // 1. Env-var overrides (e.g. per-environment / A-B routing)
+  const overrides = getCountryOverrides();
+  if (overrides[code]) {
+    console.log(`[Routing] Country ${code} → ${overrides[code]} (env override)`);
+    return overrides[code];
   }
 
-  // HK/Asia orders could go to HK Warehouse
-  const asiaCountries = ["HK", "SG", "MY", "TH", "VN", "PH", "ID", "TW"];
-  if (asiaCountries.includes(shippingCountryCode?.toUpperCase())) {
-    return "HK Warehouse";
+  // 2. Config-driven routing table
+  const routingTable = warehouseConfig.countryRouting as Record<string, string>;
+  const fromConfig = routingTable[code];
+  if (fromConfig && fromConfig in warehouseConfig.warehouses) {
+    return fromConfig as WarehouseName;
   }
 
-  // Default to US GPS warehouse
-  return "GPS Warehouse";
+  // 3. Default
+  console.warn(
+    `[Routing] No routing rule for country "${code}" — falling back to default warehouse "${warehouseConfig.defaultWarehouse}"`
+  );
+  return warehouseConfig.defaultWarehouse as WarehouseName;
+}
+
+/**
+ * Resolve full routing from a country code in one call.
+ * Returns warehouseName + dataAreaId together.
+ *
+ * Use this everywhere instead of calling determineWarehouse + getDataAreaId separately.
+ */
+export function resolveCountryRouting(countryCode: string): RoutingResult {
+  const warehouseName = determineWarehouse(countryCode);
+  const warehouseCfg = getWarehouseConfig(warehouseName);
+  const code = (countryCode || "").toUpperCase();
+  const overrides = getCountryOverrides();
+
+  const source: RoutingResult["source"] = overrides[code]
+    ? "country_override"
+    : (warehouseConfig.countryRouting as Record<string, string>)[code]
+      ? "country_config"
+      : "default";
+
+  return {
+    warehouseName,
+    dataAreaId: warehouseCfg.dataAreaId,
+    countryCode: code,
+    source,
+  };
+}
+
+/**
+ * Returns the complete routing table as currently resolved —
+ * merges the config JSON with any active env-var overrides.
+ * Used by the /api/routing debug endpoint.
+ */
+export function getActiveRoutingTable(): {
+  countryRouting: Record<string, { warehouse: WarehouseName; dataAreaId: string; source: string }>;
+  warehouses: Record<string, { dataAreaId: string; gpsCode?: string }>;
+  overrides: Record<string, WarehouseName>;
+} {
+  const overrides = getCountryOverrides();
+  const configTable = warehouseConfig.countryRouting as Record<string, string>;
+
+  const allCountries = new Set([...Object.keys(configTable), ...Object.keys(overrides)]);
+  const countryRouting: Record<
+    string,
+    { warehouse: WarehouseName; dataAreaId: string; source: string }
+  > = {};
+
+  for (const country of allCountries) {
+    const result = resolveCountryRouting(country);
+    countryRouting[country] = {
+      warehouse: result.warehouseName,
+      dataAreaId: result.dataAreaId,
+      source: result.source,
+    };
+  }
+
+  const warehouses: Record<string, { dataAreaId: string; gpsCode?: string }> = {};
+  for (const [name, cfg] of Object.entries(warehouseConfig.warehouses)) {
+    warehouses[name] = {
+      dataAreaId: (cfg as WarehouseConfig).dataAreaId,
+      gpsCode: (cfg as WarehouseConfig).gpsCode,
+    };
+  }
+
+  return { countryRouting, warehouses, overrides };
 }
 
 /**

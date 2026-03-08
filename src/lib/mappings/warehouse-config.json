@@ -6,6 +6,7 @@
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
+      "orderingCustomerAccountNumber": "U001-C000000006",
       "gpsCode": "JFK01W",
       "logisticsChannel": "GPS-IM8-STANDARD",
       "fulfilment": {
@@ -30,6 +31,7 @@
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "H007",
+      "orderingCustomerAccountNumber": "H007-C000000001",
       "gpsCode": "LHR",
       "logisticsChannel": "GPS-IM8-STANDARD-UK",
       "fulfilment": {
@@ -54,6 +56,7 @@
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
+      "orderingCustomerAccountNumber": "U001-C000000006",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
         "shippingWarehouseId": "USOPS-WH05",
@@ -75,7 +78,8 @@
       "name": "HK Warehouse",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "H007",
+      "dataAreaId": "H005",
+      "orderingCustomerAccountNumber": "H005-C000000001",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
         "shippingWarehouseId": "OPS-WH01",
@@ -93,7 +97,61 @@
       }
     }
   },
+
   "gpsWarehouses": ["GPS Warehouse", "GPS UK Warehouse"],
   "stordWarehouses": ["STORD ATL Location"],
-  "defaultWarehouse": "GPS Warehouse"
+  "defaultWarehouse": "GPS Warehouse",
+
+  "countryRouting": {
+    "US": "GPS Warehouse",
+    "CA": "GPS Warehouse",
+    "MX": "GPS Warehouse",
+    "AU": "GPS Warehouse",
+    "NZ": "GPS Warehouse",
+    "JP": "GPS Warehouse",
+    "KR": "GPS Warehouse",
+    "IN": "GPS Warehouse",
+
+    "GB": "GPS UK Warehouse",
+    "UK": "GPS UK Warehouse",
+    "IE": "GPS UK Warehouse",
+    "FR": "GPS UK Warehouse",
+    "DE": "GPS UK Warehouse",
+    "IT": "GPS UK Warehouse",
+    "ES": "GPS UK Warehouse",
+    "NL": "GPS UK Warehouse",
+    "BE": "GPS UK Warehouse",
+    "AT": "GPS UK Warehouse",
+    "PT": "GPS UK Warehouse",
+    "PL": "GPS UK Warehouse",
+    "SE": "GPS UK Warehouse",
+    "DK": "GPS UK Warehouse",
+    "FI": "GPS UK Warehouse",
+    "NO": "GPS UK Warehouse",
+    "CH": "GPS UK Warehouse",
+    "CZ": "GPS UK Warehouse",
+    "GR": "GPS UK Warehouse",
+    "HU": "GPS UK Warehouse",
+    "RO": "GPS UK Warehouse",
+    "SK": "GPS UK Warehouse",
+    "SI": "GPS UK Warehouse",
+    "BG": "GPS UK Warehouse",
+    "HR": "GPS UK Warehouse",
+    "LT": "GPS UK Warehouse",
+    "LV": "GPS UK Warehouse",
+    "EE": "GPS UK Warehouse",
+    "LU": "GPS UK Warehouse",
+    "MT": "GPS UK Warehouse",
+    "CY": "GPS UK Warehouse",
+
+    "HK": "HK Warehouse",
+    "SG": "HK Warehouse",
+    "MY": "HK Warehouse",
+    "TH": "HK Warehouse",
+    "VN": "HK Warehouse",
+    "PH": "HK Warehouse",
+    "ID": "HK Warehouse",
+    "TW": "HK Warehouse",
+    "MO": "HK Warehouse"
+  }
 }
