@@ -55,10 +55,11 @@ D365_SCOPE=${D365_BASE_URL}/.default  # Defaults to ${D365_BASE_URL}/.default
 Dynamics 365 uses **OAuth2 Client Credentials Flow**:
 
 1. **Request Access Token**:
+
    ```
    POST https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
    Content-Type: application/x-www-form-urlencoded
-   
+
    grant_type=client_credentials
    client_id={clientId}
    client_secret={clientSecret}
@@ -66,6 +67,7 @@ Dynamics 365 uses **OAuth2 Client Credentials Flow**:
    ```
 
 2. **Use Bearer Token**:
+
    ```
    Authorization: Bearer {access_token}
    ```
@@ -86,11 +88,13 @@ npm run test:d365-product
 ```
 
 Or directly:
+
 ```bash
 npx tsx scripts/test-d365-product-sync.ts
 ```
 
 This will:
+
 - ✅ Check if credentials are configured
 - ✅ Authenticate with Azure AD
 - ✅ Check if test product exists
@@ -150,16 +154,19 @@ curl -X POST \
 ## API Endpoint Details
 
 ### Endpoint
+
 ```
 GET/POST/PATCH https://{baseUrl}/data/ReleasedProductsV2
 ```
 
 ### Check if Product Exists
+
 ```
 GET /data/ReleasedProductsV2?$filter=ItemNumber eq '{sku}' and dataAreaId eq '{dataAreaId}'&$top=1
 ```
 
 ### Create Product
+
 ```
 POST /data/ReleasedProductsV2
 Content-Type: application/json
@@ -175,6 +182,7 @@ Authorization: Bearer {access_token}
 ```
 
 ### Update Product
+
 ```
 PATCH /data/ReleasedProductsV2(ItemNumber='PROD-123',dataAreaId='U001')
 Content-Type: application/json
@@ -189,6 +197,7 @@ If-Match: *
 ```
 
 ### Response Format
+
 ```json
 {
   "@odata.context": "https://...",
@@ -204,32 +213,34 @@ If-Match: *
 
 ## Common Error Codes
 
-| HTTP Status | Description | Solution |
-|-------------|-------------|----------|
-| 401 | Unauthorized | Check access token, ensure it's not expired |
-| 403 | Forbidden | Check API permissions in Azure AD, grant admin consent |
-| 404 | Not Found | Check D365_BASE_URL is correct |
-| 400 | Bad Request | Check request body format, required fields |
-| 409 | Conflict | Product may already exist with different data |
-| 500 | Internal Server Error | D365 server error, check D365 status |
+| HTTP Status | Description           | Solution                                               |
+| ----------- | --------------------- | ------------------------------------------------------ |
+| 401         | Unauthorized          | Check access token, ensure it's not expired            |
+| 403         | Forbidden             | Check API permissions in Azure AD, grant admin consent |
+| 404         | Not Found             | Check D365_BASE_URL is correct                         |
+| 400         | Bad Request           | Check request body format, required fields             |
+| 409         | Conflict              | Product may already exist with different data          |
+| 500         | Internal Server Error | D365 server error, check D365 status                   |
 
 ### Azure AD Authentication Errors
 
-| Error | Description | Solution |
-|-------|-------------|----------|
-| `AADSTS7000215` | Invalid client secret | Check D365_CLIENT_SECRET is correct |
-| `AADSTS700016` | Application not found | Check D365_CLIENT_ID is correct |
-| `AADSTS90002` | Tenant not found | Check D365_TENANT_ID is correct |
-| `AADSTS65005` | Insufficient permissions | Grant API permissions in Azure AD |
+| Error           | Description              | Solution                            |
+| --------------- | ------------------------ | ----------------------------------- |
+| `AADSTS7000215` | Invalid client secret    | Check D365_CLIENT_SECRET is correct |
+| `AADSTS700016`  | Application not found    | Check D365_CLIENT_ID is correct     |
+| `AADSTS90002`   | Tenant not found         | Check D365_TENANT_ID is correct     |
+| `AADSTS65005`   | Insufficient permissions | Grant API permissions in Azure AD   |
 
 ## Required Product Fields
 
 ### Mandatory Fields:
+
 - `ItemNumber` - Product SKU (string, max 20 chars)
 - `ProductDescription` - Product name/description (string) - **Note**: `ReleasedProductsV2` uses `ProductDescription`, not `ProductName`
 - `dataAreaId` - Legal entity ID (string, e.g., "U001", "H007")
 
 ### Optional Fields:
+
 - `ProductSearchName` - Barcode/Search name (string)
 - `NetWeight` - Weight in kg (decimal)
 - `ProductColorId` - Color ID (string)
@@ -241,21 +252,25 @@ If-Match: *
 ## OData Query Options
 
 ### Filter Products
+
 ```
 /data/ReleasedProductsV2?$filter=ItemNumber eq 'PROD-123' and dataAreaId eq 'U001'
 ```
 
 ### Select Specific Fields
+
 ```
 /data/ReleasedProductsV2?$select=ItemNumber,ProductDescription,NetWeight
 ```
 
 ### Top N Results
+
 ```
 /data/ReleasedProductsV2?$top=10
 ```
 
 ### Order By
+
 ```
 /data/ReleasedProductsV2?$orderby=ProductDescription asc
 ```
@@ -277,31 +292,37 @@ If-Match: *
 ## Troubleshooting
 
 ### "401 Unauthorized" or "403 Forbidden"
+
 - **Check API Permissions**: Azure Portal → App Registration → API permissions
 - **Grant Admin Consent**: Click "Grant admin consent" button
 - **Verify Scope**: Ensure scope is `${D365_BASE_URL}/.default`
 - **Check Token**: Verify access token is valid and not expired
 
 ### "Application not found" (AADSTS700016)
+
 - Verify D365_CLIENT_ID matches Azure AD app registration
 - Check app registration exists in correct tenant
 
 ### "Invalid client secret" (AADSTS7000215)
+
 - Verify D365_CLIENT_SECRET matches the secret in Azure AD
 - Check if secret has expired (create new secret if needed)
 - Ensure you copied the **Value**, not the Secret ID
 
 ### "Product not found" (404)
+
 - Check D365_BASE_URL is correct for your environment
 - Verify dataAreaId matches your company
 - Ensure product exists in D365 (check via web client)
 
 ### "Bad Request" (400)
+
 - Check required fields are present (ItemNumber, ProductName, dataAreaId)
 - Verify field names match D365 OData schema exactly
 - Check data types (strings vs numbers)
 
 ### Product Created But Not Visible
+
 - Products may need to be **released** in D365
 - Check **Product information management** → **Products** → **Released products**
 - Verify you're looking in the correct company (dataAreaId)
@@ -343,4 +364,3 @@ If-Match: *
 - ✅ Use least-privilege permissions
 - ✅ Monitor API access logs in Azure AD
 - ✅ Set appropriate secret expiration dates
-

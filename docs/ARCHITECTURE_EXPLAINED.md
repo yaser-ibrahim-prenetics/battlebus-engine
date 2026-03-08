@@ -145,16 +145,16 @@ Battle Hub is the **operations dashboard** that gives Ops, CS, and Finance teams
 
 #### Features
 
-| Feature | Purpose | Users |
-|---------|---------|-------|
-| **Order Lookup** | Search any order, see full status | CS, Ops |
-| **Lifecycle Tracker** | Visual pipeline of order journey | CS, Ops |
-| **Bulk Operations** | One-click retry/resync for many orders | Ops |
-| **OOS Queue** | View and manage out-of-stock orders | Ops |
-| **Inventory Dashboard** | Monitor stock across all systems | Ops |
-| **Alerts Config** | Configure Slack notifications | Ops |
-| **Reports** | Daily/weekly reconciliation | Finance |
-| **System Health** | Integration status at a glance | Management |
+| Feature                 | Purpose                                | Users      |
+| ----------------------- | -------------------------------------- | ---------- |
+| **Order Lookup**        | Search any order, see full status      | CS, Ops    |
+| **Lifecycle Tracker**   | Visual pipeline of order journey       | CS, Ops    |
+| **Bulk Operations**     | One-click retry/resync for many orders | Ops        |
+| **OOS Queue**           | View and manage out-of-stock orders    | Ops        |
+| **Inventory Dashboard** | Monitor stock across all systems       | Ops        |
+| **Alerts Config**       | Configure Slack notifications          | Ops        |
+| **Reports**             | Daily/weekly reconciliation            | Finance    |
+| **System Health**       | Integration status at a glance         | Management |
 
 #### How It Works
 
@@ -184,12 +184,14 @@ Battle Bus is the **event processing engine** that handles all order operations 
 #### Core Concepts
 
 **1. Event-Driven Architecture**
+
 ```
 OLD: Poll database every 10 seconds, check for new tasks
 NEW: Webhook arrives → Event fires → Processing starts instantly
 ```
 
 **2. Concurrent Processing**
+
 ```typescript
 // Process 3 orders per country simultaneously
 concurrency: [{
@@ -206,6 +208,7 @@ throttle: {
 ```
 
 **3. Durable Execution (Checkpointing)**
+
 ```typescript
 // Each step is saved - resume from failure
 const d365Header = await step.run("create-d365-header", async () => {
@@ -220,12 +223,14 @@ const d365Lines = await step.run("create-d365-lines", async () => {
 ```
 
 **4. Built-in Idempotency**
+
 ```typescript
 // Same order ID = same result (no duplicates)
-idempotency: "event.data.shopifyOrderId"
+idempotency: "event.data.shopifyOrderId";
 ```
 
 **5. Automatic OOS Retry**
+
 ```typescript
 if (error instanceof OutOfStockError) {
   // Wait 4 hours, then retry automatically
@@ -481,25 +486,27 @@ battle-bus/
 export const processShopifyOrder = inngest.createFunction(
   {
     id: "process-shopify-order",
-    
+
     // Prevent duplicate processing
     idempotency: "event.data.shopifyOrderId",
-    
+
     // Retry configuration
     retries: 5,
-    
+
     // Concurrent processing (3 per country)
-    concurrency: [{
-      limit: 3,
-      key: "event.data.orderJson.shipping_address.country_code"
-    }],
-    
+    concurrency: [
+      {
+        limit: 3,
+        key: "event.data.orderJson.shipping_address.country_code",
+      },
+    ],
+
     // Throttle D365 calls (10/second per store)
     throttle: {
       limit: 10,
       period: "1s",
-      key: "event.data.shopifyStore"
-    }
+      key: "event.data.shopifyStore",
+    },
   },
   { event: "shopify/order.created" },
   async ({ event, step }) => {
@@ -526,17 +533,17 @@ MAX_OOS_RETRIES=7               # Maximum OOS retry attempts
 
 ## Comparison: Spock Store vs Battle Bus
 
-| Aspect | Spock Store | Battle Bus |
-|--------|-------------|------------|
-| **Architecture** | Polling + Task Table | Event-driven + Inngest |
-| **Processing** | Sequential (`parallel: 1`) | Concurrent (10+ at a time) |
-| **Speed** | ~6 orders/minute | ~600 orders/minute |
-| **Retry** | Manual Slack request | Automatic with backoff |
-| **OOS Handling** | Manual replay next day | Auto-retry after 4 hours |
-| **Idempotency** | Custom DB query | Built-in Inngest feature |
-| **Visibility** | Check database manually | Real-time dashboard |
-| **Checkpointing** | None (restart from beginning) | Every step saved |
-| **Scaling** | Single Kubernetes pod | Serverless auto-scale |
+| Aspect            | Spock Store                   | Battle Bus                 |
+| ----------------- | ----------------------------- | -------------------------- |
+| **Architecture**  | Polling + Task Table          | Event-driven + Inngest     |
+| **Processing**    | Sequential (`parallel: 1`)    | Concurrent (10+ at a time) |
+| **Speed**         | ~6 orders/minute              | ~600 orders/minute         |
+| **Retry**         | Manual Slack request          | Automatic with backoff     |
+| **OOS Handling**  | Manual replay next day        | Auto-retry after 4 hours   |
+| **Idempotency**   | Custom DB query               | Built-in Inngest feature   |
+| **Visibility**    | Check database manually       | Real-time dashboard        |
+| **Checkpointing** | None (restart from beginning) | Every step saved           |
+| **Scaling**       | Single Kubernetes pod         | Serverless auto-scale      |
 
 ---
 

@@ -32,9 +32,9 @@ This flow tests how cancelled Shopify orders are handled by battle-bus. The key 
 
 ## Key Endpoints
 
-| System | Direction | Endpoint | Description |
-|--------|-----------|----------|-------------|
-| Shopify → battle-bus | Inbound | `POST /v1.0/shopify/webhook` | Receives cancellation webhook |
+| System               | Direction | Endpoint                     | Description                   |
+| -------------------- | --------- | ---------------------------- | ----------------------------- |
+| Shopify → battle-bus | Inbound   | `POST /v1.0/shopify/webhook` | Receives cancellation webhook |
 
 ---
 
@@ -57,10 +57,11 @@ This flow tests how cancelled Shopify orders are handled by battle-bus. The key 
 ### The `CANCELLED_ORDER_FULFILMENT_ID`
 
 ```javascript
-const CANCELLED_ORDER_FULFILMENT_ID = '00000000000000';
+const CANCELLED_ORDER_FULFILMENT_ID = "00000000000000";
 ```
 
 When an order is cancelled:
+
 1. battle-bus creates a `Fulfilment` entity
 2. Sets `shopifyFulfilmentId = '00000000000000'`
 3. This special ID is recognized by GPS polling queries
@@ -71,7 +72,7 @@ When an order is cancelled:
 SELECT * FROM SalesOrder so
 LEFT JOIN Fulfilment f ON f.salesOrderId = so.id
 WHERE so.gpsOrderId IS NOT NULL
-  AND (f.shopifyFulfilmentId IS NULL 
+  AND (f.shopifyFulfilmentId IS NULL
        OR f.shopifyFulfilmentId != '00000000000000')
 ```
 
@@ -123,6 +124,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 ```
 
 **Verify order state:**
+
 ```bash
 curl http://localhost:3100/state/orders/IM8-1001
 ```
@@ -141,6 +143,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/cancelled \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "order": {
@@ -162,6 +165,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 **Expected:**
+
 ```json
 {
   "id": "<uuid>",
@@ -194,6 +198,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 **Key Detection Logic:**
+
 ```javascript
 if (order.cancelled_at !== null) {
   // Order is cancelled
@@ -230,6 +235,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/cancelled \
 ```
 
 **Cancel Reasons:**
+
 - `customer` - Customer changed/cancelled order
 - `fraud` - Fraudulent order
 - `inventory` - Items not in stock
@@ -246,6 +252,7 @@ npm run flow:order -- --template usGpsOrder --cancel
 ```
 
 **CLI Output:**
+
 ```
 🚀 Starting Order Flow Simulation
    Template: usGpsOrder
@@ -315,6 +322,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/cancelled \
 #### Step 2: Simulate GPS Polling Query
 
 The battle-bus GPS polling query should:
+
 - **Include:** IM8-1002 (not cancelled)
 - **Exclude:** IM8-1001 (cancelled with dummy fulfillment ID)
 
@@ -366,12 +374,12 @@ Same structure as above, but topic is `orders/updated` instead of `orders/cancel
 async function handleCancellation(shopifyOrder) {
   // 1. Find SalesOrder
   const salesOrder = await findByShopifyOrderId(shopifyOrder.id);
-  
+
   // 2. Update SalesOrder status
-  salesOrder.status = 'cancelled';
+  salesOrder.status = "cancelled";
   salesOrder.cancelledAt = shopifyOrder.cancelled_at;
   salesOrder.cancelReason = shopifyOrder.cancel_reason;
-  
+
   // 3. Create dummy Fulfillment if none exists
   if (!salesOrder.fulfillment || !salesOrder.fulfillment.shopifyFulfilmentId) {
     const dummyFulfillment = await createFulfillment({
@@ -380,12 +388,12 @@ async function handleCancellation(shopifyOrder) {
       shopifyFulfilmentOrderId: await getShopifyFulfilmentOrderId(shopifyOrder),
     });
   }
-  
+
   // 4. Optionally cancel GPS order
   if (salesOrder.gpsOrderId && config.cancelGpsOnCancellation) {
     await cancelGpsOrder(salesOrder.gpsOrderId);
   }
-  
+
   // 5. Optionally notify Dynamics
   if (config.notifyDynamicsOnCancellation) {
     await notifyDynamicsCancellation(salesOrder);
@@ -397,16 +405,16 @@ async function handleCancellation(shopifyOrder) {
 
 ## Validation Checklist
 
-| Step | Check | Method |
-|------|-------|--------|
-| 1 | Cancellation webhook received | Check battle-bus logs |
-| 2 | SalesOrder status = cancelled | Query internal DB |
-| 3 | `cancelledAt` populated | Check field |
-| 4 | `cancelReason` populated | Check field |
-| 5 | Dummy fulfillment created | Check Fulfillment table |
-| 6 | `shopifyFulfilmentId` = '00000000000000' | Verify dummy ID |
-| 7 | Excluded from GPS polling | Run polling query |
-| 8 | Not re-processed on subsequent polls | Verify no duplicates |
+| Step | Check                                    | Method                  |
+| ---- | ---------------------------------------- | ----------------------- |
+| 1    | Cancellation webhook received            | Check battle-bus logs   |
+| 2    | SalesOrder status = cancelled            | Query internal DB       |
+| 3    | `cancelledAt` populated                  | Check field             |
+| 4    | `cancelReason` populated                 | Check field             |
+| 5    | Dummy fulfillment created                | Check Fulfillment table |
+| 6    | `shopifyFulfilmentId` = '00000000000000' | Verify dummy ID         |
+| 7    | Excluded from GPS polling                | Run polling query       |
+| 8    | Not re-processed on subsequent polls     | Verify no duplicates    |
 
 ---
 
@@ -417,6 +425,7 @@ async function handleCancellation(shopifyOrder) {
 **Trigger:** Cancellation webhook for unknown order
 
 **Expected Behavior:**
+
 - Log warning
 - Return acknowledgment (prevent retries)
 - May need manual investigation
@@ -426,6 +435,7 @@ async function handleCancellation(shopifyOrder) {
 **Trigger:** Second cancellation webhook for same order
 
 **Expected Behavior:**
+
 - Idempotent - no duplicate processing
 - Log duplicate detection
 - Return success
@@ -435,6 +445,7 @@ async function handleCancellation(shopifyOrder) {
 **Trigger:** Cancellation for order that has real fulfillment
 
 **Expected Behavior:**
+
 - Log warning - physical shipment already occurred
 - Update status to cancelled
 - Do NOT overwrite real fulfillment ID with dummy
@@ -468,6 +479,7 @@ async function handleCancellation(shopifyOrder) {
 ### Partial Cancellation
 
 Shopify doesn't support partial cancellation at order level. For partial cancellations:
+
 - Use refunds for unwanted items
 - Cancel remaining fulfillment orders
 - Or edit order to remove items
@@ -487,6 +499,7 @@ Shopify doesn't support partial cancellation at order level. For partial cancell
 ```
 
 **Handling:**
+
 - Real fulfillment remains intact
 - Do NOT create dummy fulfillment (real one exists)
 - Remaining items marked as cancelled
@@ -494,6 +507,7 @@ Shopify doesn't support partial cancellation at order level. For partial cancell
 ### GPS Order Already Shipped
 
 If GPS already shipped the order:
+
 1. Cancellation comes too late
 2. Log warning
 3. May need return process instead
@@ -530,4 +544,3 @@ If GPS already shipped the order:
 - Consider race conditions between cancellation and GPS shipping
 - Log all cancellations for audit trail
 - May need manual process for orders cancelled after physical shipment
-

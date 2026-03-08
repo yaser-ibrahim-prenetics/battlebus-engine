@@ -13,21 +13,13 @@ function getLineItems(order: ShopifyOrderPayload): ShopifyLineItem[] {
 }
 
 import { config } from "../config";
-import type {
-  ShopifyOrderPayload,
-  ShopifyLineItem,
-  ShopifyAddress,
-} from "../../inngest/events";
+import type { ShopifyOrderPayload, ShopifyLineItem, ShopifyAddress } from "../../inngest/events";
 import type {
   D365SalesOrderHeaderV3Request,
   D365SalesOrderLineRequest,
   D365SalesOrderHeadersV3Address,
 } from "../types/dynamics";
-import {
-  toSalesOrderHeadersV3Address,
-  toGpsOrderAddress,
-  formatAddressName,
-} from "./address";
+import { toSalesOrderHeadersV3Address, toGpsOrderAddress, formatAddressName } from "./address";
 import {
   mapShopifySkuToDynamics,
   createShopifyToDynamicsLineTransformer,
@@ -68,9 +60,11 @@ export function toD365SalesOrderHeaderV3(
   order: ShopifyOrderPayload,
   warehouseName?: string
 ): D365SalesOrderHeaderV3Request {
-  const warehouse = warehouseName || determineWarehouse(
-    order.shipping_address?.country_code || order.billing_address?.country_code || "US"
-  );
+  const warehouse =
+    warehouseName ||
+    determineWarehouse(
+      order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+    );
   const warehouseConfig = getWarehouseConfig(warehouse);
 
   const shippingAddress = order.shipping_address || order.billing_address;
@@ -88,12 +82,8 @@ export function toD365SalesOrderHeaderV3(
       ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
       : formatAddressName(shippingAddress),
     shopifyReference: order.name,
-    shippingAddress: shippingAddress
-      ? toSalesOrderHeadersV3Address(shippingAddress)
-      : undefined,
-    billingAddress: billingAddress
-      ? toSalesOrderHeadersV3Address(billingAddress)
-      : undefined,
+    shippingAddress: shippingAddress ? toSalesOrderHeadersV3Address(shippingAddress) : undefined,
+    billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
     comment: buildOrderComment(order),
     currency: order.currency,
     // Skip fulfilment notification for GPS UK to avoid double notification
@@ -170,9 +160,10 @@ export function toD365SalesOrderLines(
   const currency = order.currency || "USD";
   const discountCodes = order.discount_codes?.map((d) => d.code);
   const skuTransformer = createShopifyToDynamicsLineTransformer();
-  
+
   // Extract country code from shipping or billing address
-  const countryCode = order.shipping_address?.country_code || order.billing_address?.country_code || undefined;
+  const countryCode =
+    order.shipping_address?.country_code || order.billing_address?.country_code || undefined;
 
   const lines: D365SalesOrderLineRequest[] = [];
 
@@ -189,7 +180,14 @@ export function toD365SalesOrderLines(
   for (const item of lineItems) {
     if (item.gift_card) continue; // Skip gift card purchases
 
-    const line = toD365SalesOrderLine(item, salesOrderNumber, dataAreaId, currency, discountCodes, countryCode);
+    const line = toD365SalesOrderLine(
+      item,
+      salesOrderNumber,
+      dataAreaId,
+      currency,
+      discountCodes,
+      countryCode
+    );
     const transformedLine = skuTransformer(line);
     lines.push(transformedLine);
   }
@@ -257,7 +255,7 @@ export function toGpsOutboundOrder(
 
   // Transform line items (filter and merge duplicates)
   const lineItems = getLineItems(order);
-  
+
   if (!Array.isArray(order.line_items)) {
     console.warn(
       `[Transformers] order.line_items is missing or not an array for GPS order ${order.name} – using empty product list`
@@ -360,9 +358,7 @@ export function shouldSendToGps(order: ShopifyOrderPayload, warehouseName?: stri
   }
 
   // Check if order has shippable items
-  const hasShippableItems = lineItems.some(
-    (item) => item.requires_shipping && !item.gift_card
-  );
+  const hasShippableItems = lineItems.some((item) => item.requires_shipping && !item.gift_card);
 
   if (!hasShippableItems) {
     return false;
@@ -386,25 +382,24 @@ export function shouldSendToStord(order: ShopifyOrderPayload): boolean {
  */
 export function isTestOrder(order: ShopifyOrderPayload): boolean {
   const testTags = ["testing", "load-testing", "test"];
-  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  const tags = (order.tags || "")
+    .toLowerCase()
+    .split(",")
+    .map((t) => t.trim());
   return testTags.some((tag) => tags.includes(tag));
 }
 
-export function isOrderTaggedWith(order: Pick<ShopifyOrderPayload, 'tags'>, tagToCheck: string) {
+export function isOrderTaggedWith(order: Pick<ShopifyOrderPayload, "tags">, tagToCheck: string) {
   if (!order.tags) return false;
   const normalizedTag = tagToCheck.toLowerCase();
-  return order.tags.split(',').some(tag => tag.trim().toLowerCase().startsWith(normalizedTag));
+  return order.tags.split(",").some((tag) => tag.trim().toLowerCase().startsWith(normalizedTag));
 }
 
 // ============================================================================
 // LEGACY EXPORTS (for backwards compatibility)
 // ============================================================================
 
-export {
-  toSalesOrderHeadersV3Address,
-  toGpsOrderAddress,
-  formatAddressName,
-} from "./address";
+export { toSalesOrderHeadersV3Address, toGpsOrderAddress, formatAddressName } from "./address";
 
 export {
   mapShopifySkuToDynamics,

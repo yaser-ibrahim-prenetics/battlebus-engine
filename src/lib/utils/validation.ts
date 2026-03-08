@@ -15,7 +15,9 @@ import * as shopify from "@/lib/clients/shopify";
  * Check if order is a test order (before live date or has testing tags)
  * Ported from spock-store isTestOrder
  */
-export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tags" | "name">): boolean {
+export function isTestOrder(
+  order: Pick<ShopifyOrderPayload, "created_at" | "tags" | "name">
+): boolean {
   // Guard against undefined/null order
   if (!order) {
     console.warn("[Validation] isTestOrder called with undefined order");
@@ -32,7 +34,10 @@ export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tag
     }
   }
 
-  const tags = (order?.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  const tags = (order?.tags || "")
+    .toLowerCase()
+    .split(",")
+    .map((t) => t.trim());
   return config.orders.testTags.some((testTag) => tags.includes(testTag.toLowerCase()));
 }
 
@@ -40,7 +45,10 @@ export function isTestOrder(order: Pick<ShopifyOrderPayload, "created_at" | "tag
  * Check if order is tagged as high-risk
  */
 export function isHighRiskOrder(order: Pick<ShopifyOrderPayload, "tags">): boolean {
-  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  const tags = (order.tags || "")
+    .toLowerCase()
+    .split(",")
+    .map((t) => t.trim());
   return tags.includes(config.orders.highRiskTag.toLowerCase());
 }
 
@@ -58,9 +66,7 @@ function isDummySku(sku: string): boolean {
  * Check if order has only dummy/test SKUs
  * Dummy SKUs are those matching IM8-FG-G* pattern
  */
-export function hasOnlyDummySkus(
-  order: Pick<ShopifyOrderPayload, "line_items">
-): boolean {
+export function hasOnlyDummySkus(order: Pick<ShopifyOrderPayload, "line_items">): boolean {
   const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
   if (lineItems.length === 0) return false;
 
@@ -272,7 +278,10 @@ export function isOrderTaggedWith(
   order: Pick<ShopifyOrderPayload, "tags">,
   tagToCheck: string
 ): boolean {
-  const tags = (order.tags || "").toLowerCase().split(",").map((t) => t.trim());
+  const tags = (order.tags || "")
+    .toLowerCase()
+    .split(",")
+    .map((t) => t.trim());
   return tags.includes(tagToCheck.toLowerCase());
 }
 
@@ -319,9 +328,7 @@ export function validateFraudAndCancellation(
  * Check Shopify order risks and return flagged risk messages
  * Returns array of risk messages for risks with score >= 0.8
  */
-export async function checkShopifyOrderRisks(
-  shopifyOrderId: number | string
-): Promise<string[]> {
+export async function checkShopifyOrderRisks(shopifyOrderId: number | string): Promise<string[]> {
   if (!config.slack.enabledRiskCheck) {
     return [];
   }
@@ -346,9 +353,11 @@ export async function checkShopifyOrderRisks(
  * Validate order for processing
  * Returns validation result with skip reason if order should be skipped
  */
-export function validateOrderForProcessing(
-  order: ShopifyOrderPayload
-): { valid: boolean; skip: boolean; reason?: string } {
+export function validateOrderForProcessing(order: ShopifyOrderPayload): {
+  valid: boolean;
+  skip: boolean;
+  reason?: string;
+} {
   // Guard against undefined/null order
   if (!order) {
     return { valid: false, skip: false, reason: "Order data is missing" };

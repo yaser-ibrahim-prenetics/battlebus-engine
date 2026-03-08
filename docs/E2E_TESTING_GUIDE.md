@@ -3,6 +3,7 @@
 ## Battle Bus & Battle Hub Integration Testing
 
 This document provides comprehensive end-to-end testing procedures for all integrations between:
+
 - **Shopify** (E-commerce)
 - **Battle Bus** (Integration Mesh)
 - **Battle Hub** (Customer Service Portal)
@@ -83,6 +84,7 @@ npm run dev  # Starts on port 3000
 ```
 
 **Important**: After making code changes, restart the dev server or wait for Next.js to recompile. If you see errors about old code paths, restart the server:
+
 ```bash
 # Stop the server (Ctrl+C) and restart
 npm run dev:all
@@ -117,6 +119,7 @@ open http://localhost:3000
 **Flow**: Shopify → Battle Bus → Dynamics 365 → GPS Warehouse
 
 #### Prerequisites
+
 - Test product exists in Shopify
 - Customer account exists
 - GPS warehouse API accessible
@@ -124,6 +127,7 @@ open http://localhost:3000
 #### Test Steps
 
 1. **Create Order in Shopify**
+
    ```bash
    # Via Shopify Admin or API
    # Order should have:
@@ -133,6 +137,7 @@ open http://localhost:3000
    ```
 
 2. **Trigger Webhook** (if not automatic)
+
    ```bash
    curl -X POST "http://localhost:7000/api/webhooks/shopify" \
      -H "Content-Type: application/json" \
@@ -194,6 +199,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 **Flow**: GPS Warehouse → Battle Bus → Shopify → Dynamics 365
 
 #### Prerequisites
+
 - Order exists in GPS with status = 3 (fulfilled)
 - Order has tracking information
 - GPS webhook endpoint configured
@@ -201,6 +207,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 #### Test Steps
 
 1. **Simulate GPS Fulfillment**
+
    ```bash
    # Option 1: Use GPS webhook
    curl -X POST "http://localhost:7000/api/webhooks/gps" \
@@ -246,6 +253,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 #### Test Steps
 
 1. **Send Extensiv Webhook**
+
    ```bash
    curl -X POST "http://localhost:7000/api/webhooks/extensiv" \
      -H "Content-Type: application/json" \
@@ -281,6 +289,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    - Submit
 
 2. **Verify API Call**
+
    ```bash
    # Check Battle Bus logs for:
    POST /api/actions/cancel
@@ -327,6 +336,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    - Submit
 
 2. **Verify API Call**
+
    ```bash
    # Check Battle Bus logs for:
    POST /api/actions/refund
@@ -376,6 +386,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    - Submit
 
 2. **Verify API Call**
+
    ```bash
    # Manual fulfillment
    POST /api/actions/fulfillment
@@ -421,6 +432,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 1. **Update Inventory in Shopify**
    - Change inventory level for a product
    - Or trigger webhook manually:
+
    ```bash
    curl -X POST "http://localhost:7000/api/webhooks/shopify" \
      -H "x-shopify-topic: inventory_levels/update" \
@@ -460,6 +472,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 #### Test Steps
 
 1. **Sync from Shopify to Dynamics**
+
    ```bash
    curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics" \
      -H "Content-Type: application/json" \
@@ -473,6 +486,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    ```
 
 2. **Sync from Warehouse to Shopify**
+
    ```bash
    curl -X POST "http://localhost:7000/api/inventory/sync?from=warehouse&to=shopify" \
      -H "Content-Type: application/json" \
@@ -519,6 +533,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    - Save product
 
 2. **Trigger Webhook**
+
    ```bash
    curl -X POST "http://localhost:7000/api/webhooks/shopify" \
      -H "x-shopify-topic: products/create" \
@@ -574,6 +589,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    - Delete product from Shopify admin
 
 2. **Trigger Webhook**
+
    ```bash
    curl -X POST "http://localhost:7000/api/webhooks/shopify" \
      -H "x-shopify-topic: products/delete" \
@@ -633,6 +649,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 #### Test Steps
 
 1. **Test HMAC Verification**
+
    ```bash
    # Valid signature
    curl -X POST "http://localhost:7000/api/webhooks/shopify" \
@@ -675,6 +692,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 **URL**: http://localhost:8288 (local) or cloud dashboard
 
 **What to Check**:
+
 - Function runs and status
 - Event history
 - Retry attempts
@@ -739,6 +757,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: No event in Inngest dashboard
 
 **Solutions**:
+
 - Check webhook URL is correct
 - Verify HMAC signature
 - Check Battle Bus logs for errors
@@ -749,6 +768,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: Event received but function not running
 
 **Solutions**:
+
 - Check function is registered in `index.ts`
 - Verify event name matches function trigger
 - Check Inngest dashboard for errors
@@ -759,6 +779,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: Order not created in D365
 
 **Solutions**:
+
 - Check Dynamics API credentials
 - Verify dataAreaId is correct
 - Check D365 logs for errors
@@ -769,6 +790,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: No GPS order ID in Shopify metafields
 
 **Solutions**:
+
 - Check GPS API credentials
 - Verify warehouse mapping
 - Check GPS API response for errors
@@ -779,6 +801,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: Inventory not updating in destination
 
 **Solutions**:
+
 - Check mesh API response
 - Verify SKU mapping
 - Check location/warehouse mapping
@@ -789,6 +812,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/status?orderId=<gps-orde
 **Symptoms**: Cancel/Refund/Fulfill not working
 
 **Solutions**:
+
 - Check Battle Bus API is accessible
 - Verify order name/ID is correct
 - Check API response for errors
@@ -820,6 +844,7 @@ curl -X POST http://localhost:7000/api/webhooks/shopify \
 ## Test Checklist
 
 ### Order Flows
+
 - [ ] Order creation (Shopify → D365 → GPS)
 - [ ] GPS fulfillment (GPS → Shopify → D365)
 - [ ] Extensiv fulfillment (Extensiv → Shopify → D365)
@@ -829,17 +854,20 @@ curl -X POST http://localhost:7000/api/webhooks/shopify \
 - [ ] GPS fulfillment via Battle Hub
 
 ### Inventory Flows
+
 - [ ] Inventory sync from Shopify (Shopify → D365 + GPS)
 - [ ] Inventory sync from warehouse (Warehouse → Shopify)
 - [ ] Inventory sync mesh API (any → any)
 - [ ] Multi-destination sync
 
 ### Product Flows
+
 - [ ] Product creation (Shopify → D365 + GPS)
 - [ ] Product update (Shopify → D365 + GPS)
 - [ ] Product deletion (Shopify → D365 + GPS)
 
 ### Battle Hub Actions
+
 - [ ] Single order cancel
 - [ ] Single order refund
 - [ ] Single order fulfill
@@ -848,6 +876,7 @@ curl -X POST http://localhost:7000/api/webhooks/shopify \
 - [ ] Order details fetch
 
 ### Webhooks
+
 - [ ] Shopify webhook verification
 - [ ] GPS webhook processing
 - [ ] Extensiv webhook processing
@@ -946,4 +975,3 @@ This guide covers all major integration flows. For specific test scenarios or ed
 
 **Last Updated**: 2026-02-08
 **Version**: 1.0.0
-

@@ -7,7 +7,11 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
-import type { IShopifyFulfillmentOrder, IFulfillmentOrderLineItem, ILineItem } from "@/lib/types/shopify";
+import type {
+  IShopifyFulfillmentOrder,
+  IFulfillmentOrderLineItem,
+  ILineItem,
+} from "@/lib/types/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import { ExtensivOrderConfirmPayload } from "../events";
@@ -122,15 +126,10 @@ export const processExtensivFulfillment = inngest.createFunction(
       d365Result = await step.run("sync-to-dynamics", async () => {
         // Find D365 order
         // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
-        const d365Order = await dynamics.getSalesOrderByShopifyId(
-          shopifyOrderName,
-          dataAreaId
-        );
+        const d365Order = await dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
 
         if (!d365Order?.SalesOrderNumber) {
-          console.warn(
-            `[Extensiv] D365 order not found for Shopify order ${shopifyOrderId}`
-          );
+          console.warn(`[Extensiv] D365 order not found for Shopify order ${shopifyOrderId}`);
           return { status: "not_found" };
         }
 
@@ -157,9 +156,7 @@ export const processExtensivFulfillment = inngest.createFunction(
           })),
         });
 
-        console.log(
-          `[Extensiv] Created D365 packing slip for ${d365Order.SalesOrderNumber}`
-        );
+        console.log(`[Extensiv] Created D365 packing slip for ${d365Order.SalesOrderNumber}`);
 
         return {
           status: "success",
@@ -236,8 +233,7 @@ function getTrackingUrl(carrier: string, trackingNumber: string): string {
   const carrierLower = (carrier || "").toLowerCase();
   if (carrierLower.includes("fedex"))
     return `https://www.fedex.com/apps/fedextrack/?tracknumbers=${trackingNumber}`;
-  if (carrierLower.includes("ups"))
-    return `https://www.ups.com/track?tracknum=${trackingNumber}`;
+  if (carrierLower.includes("ups")) return `https://www.ups.com/track?tracknum=${trackingNumber}`;
   if (carrierLower.includes("usps"))
     return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`;
   if (carrierLower.includes("dhl"))
@@ -262,4 +258,3 @@ function mapExtensivCarrierToShopify(carrier: string): string {
   };
   return carrierMap[(carrier || "").toUpperCase()] || carrier;
 }
-

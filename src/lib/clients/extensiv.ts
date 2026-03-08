@@ -85,9 +85,7 @@ function getWarehouseConfig(warehouse: ExtensivWarehouseName) {
   throw new Error(`Unknown Extensiv warehouse: ${warehouse}`);
 }
 
-export async function authenticate(
-  warehouse: ExtensivWarehouseName
-): Promise<AuthToken> {
+export async function authenticate(warehouse: ExtensivWarehouseName): Promise<AuthToken> {
   if (!config.extensiv.enabled) {
     console.log("[Extensiv] Integration disabled, returning mock token");
     return { token: "MOCK_ACCESS_TOKEN", expiresAt: Date.now() + 3600000 };
@@ -98,20 +96,17 @@ export async function authenticate(
 
   console.log(`[Extensiv] Authenticating for ${warehouse}`);
 
-  const response = await fetch(
-    `${config.extensiv.baseUrl}/AuthServer/api/Token`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
-      },
-      body: JSON.stringify({
-        grant_type: grantType,
-        user_login_id: userLoginId,
-      }),
-    }
-  );
+  const response = await fetch(`${config.extensiv.baseUrl}/AuthServer/api/Token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+    },
+    body: JSON.stringify({
+      grant_type: grantType,
+      user_login_id: userLoginId,
+    }),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -300,4 +295,3 @@ export function parseWebhookEvent(body: unknown): ExtensivEvent {
   }
   return body as ExtensivEvent;
 }
-

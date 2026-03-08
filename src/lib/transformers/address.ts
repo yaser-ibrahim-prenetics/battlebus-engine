@@ -38,8 +38,7 @@ export function toSalesOrderHeadersV3Address(
   return {
     addressCity: address.city,
     addressCountryCode: getCountryISO3(address.country_code),
-    addressLine:
-      address.address1 + (address.address2 ? ", " + address.address2 : ""),
+    addressLine: address.address1 + (address.address2 ? ", " + address.address2 : ""),
     addressName: `${address.first_name} ${address.last_name}`.trim(),
     addressStateId: address.province_code ?? "",
     addressStreet: address.address1,
@@ -56,9 +55,7 @@ export function toSalesOrderHeadersV3Address(
  * Transform Shopify address to GPS address format
  * Ported from spock-store - includes UAE/SA postal code handling
  */
-export function toGpsOrderAddress(
-  address: ShopifyAddress & { email: string }
-): GpsAddress {
+export function toGpsOrderAddress(address: ShopifyAddress & { email: string }): GpsAddress {
   /**
    * UAE and Saudi Arabia do not have a postal code system like many other countries.
    * Use '00000' as a placeholder for UAE/Saudi Arabia addresses.

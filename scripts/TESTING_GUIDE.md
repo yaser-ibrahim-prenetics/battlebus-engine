@@ -107,6 +107,7 @@ curl -k -X POST https://your-ngrok-url.ngrok-free.app/api/webhooks/shopify \
 ### Flow 3: GPS Fulfillment (Cron)
 
 **Manual Trigger:**
+
 1. Open Inngest Dev UI: http://localhost:8288
 2. Find function: `Sync GPS Fulfillments` (cron-gps-sync)
 3. Click "Trigger" button
@@ -206,6 +207,7 @@ tail -100 logs/pm2-out.log | grep -E "Authentication|scope|token"
 ## Expected Log Messages
 
 ### Flow 1 (Create Order)
+
 - `[D365] Looking up order by Shopify ID: ...`
 - `[D365] Creating sales order header: ...`
 - `[D365] Created sales order: <SalesOrderNumber>`
@@ -214,10 +216,12 @@ tail -100 logs/pm2-out.log | grep -E "Authentication|scope|token"
 - `[D365] Created prepayment for: <SalesOrderNumber>`
 
 ### Flow 2/3/4 (Fulfillment)
+
 - `[D365] Creating fulfilment for: <SalesOrderNumber>`
 - `[D365] Created fulfilment for: <SalesOrderNumber>`
 
 ### Flow 5/7 (Return Order)
+
 - `[D365] Creating return sales order header: ...`
 - `[D365] Created return sales order: <ReturnOrderNumber>`
 - `[D365] Created return sales order line with lot ID: ...`
@@ -226,28 +230,32 @@ tail -100 logs/pm2-out.log | grep -E "Authentication|scope|token"
 ## Troubleshooting
 
 ### Authentication Errors
+
 - Check `D365_SCOPE` in config (should be `https://p-uat.sandbox.operations.dynamics.com/.default`)
 - Check `D365_BASE_URL` is set
 - Verify credentials in `.env.local`
 
 ### Order Not Found
+
 - Wait 10-15 seconds after creating order before testing fulfillment/cancellation
 - Check if order was actually created: `grep "Created sales order" logs/pm2-out.log`
 
 ### GPS Sync Not Running
+
 - Check `ENABLE_GPS_SYNC=true` in config
 - Manually trigger in Inngest Dev UI
 - Check cron schedule: `*/60 * * * *` (every 60 minutes)
 
 ### Extensiv Webhook Failing
+
 - Check `DISABLE_EXTENSIV_WEBHOOK_VERIFICATION=true` for testing
 - Or set `TESTING_MODE=true` (auto-disables verification)
 
 ## Next Steps
 
 After testing all flows:
+
 1. Verify D365 orders exist in D365 system
 2. Check Inngest dashboard for any failed steps
 3. Review logs for any errors
 4. Test with real Shopify orders (if available)
-

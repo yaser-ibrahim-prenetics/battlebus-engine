@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     // Send event to Inngest with event-level idempotency
     const stordOrderId = payload.orderId || payload.id;
     const trackingNumber = payload.trackingNumber || payload.tracking?.number || "";
-    
+
     await inngest.send({
       // Event-level idempotency: unique per order + tracking number
       id: `stord-fulfilment-${stordOrderId}-${trackingNumber}`,
@@ -43,10 +43,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
     console.error("[Webhook] Error processing STORD webhook:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 

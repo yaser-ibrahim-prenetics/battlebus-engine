@@ -560,11 +560,11 @@ export interface ShopifyFulfillmentLineItem {
 }
 
 export enum CancelReasonEnum {
-  customer = 'The customer canceled the order',
-  fraud = 'The order was fraudulent',
-  inventory = 'Items in the order were not in inventory',
-  declined = 'The payment was declined',
-  other = 'Other reason',
+  customer = "The customer canceled the order",
+  fraud = "The order was fraudulent",
+  inventory = "Items in the order were not in inventory",
+  declined = "The payment was declined",
+  other = "Other reason",
 }
 
 // ============================================================================

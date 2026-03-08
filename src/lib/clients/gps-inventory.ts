@@ -176,7 +176,9 @@ export async function queryOmsInventory(options: {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.log(`[GPS-Inventory] Endpoint ${endpoint} returned ${response.status}: ${errorText}`);
+        console.log(
+          `[GPS-Inventory] Endpoint ${endpoint} returned ${response.status}: ${errorText}`
+        );
         continue;
       }
 

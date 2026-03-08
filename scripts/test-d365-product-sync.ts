@@ -1,16 +1,16 @@
 #!/usr/bin/env tsx
 /**
  * Test Dynamics 365 Product Sync API
- * 
+ *
  * Tests the ReleasedProductsV2 OData API for creating/updating products
- * 
+ *
  * Required Environment Variables:
  * - D365_BASE_URL (default: https://p-uat.sandbox.operations.dynamics.com)
  * - D365_TENANT_ID (Azure AD tenant ID)
  * - D365_CLIENT_ID (Azure AD app registration client ID)
  * - D365_CLIENT_SECRET (Azure AD app registration client secret)
  * - D365_DATA_AREA_ID (default: U001)
- * 
+ *
  * Optional:
  * - D365_SCOPE (defaults to ${D365_BASE_URL}/.default)
  */
@@ -61,10 +61,7 @@ async function getAuthToken(): Promise<string> {
  * Check if product exists in D365
  * Uses ReleasedProductsV2 (read-only endpoint that works)
  */
-async function checkProductExists(
-  accessToken: string,
-  itemNumber: string
-): Promise<boolean> {
+async function checkProductExists(accessToken: string, itemNumber: string): Promise<boolean> {
   // Use ReleasedProductsV2 (read-only but works)
   const checkUrl = `${D365_BASE_URL}/data/ReleasedProductsV2?$filter=ItemNumber eq '${itemNumber}' and dataAreaId eq '${D365_DATA_AREA_ID}'&$top=1`;
 
@@ -110,9 +107,15 @@ async function testD365ProductSync() {
   // Check credentials
   console.log("📋 Configuration:");
   console.log(`   Base URL: ${D365_BASE_URL}`);
-  console.log(`   Tenant ID: ${D365_TENANT_ID ? D365_TENANT_ID.substring(0, 8) + "..." : "NOT SET"}`);
-  console.log(`   Client ID: ${D365_CLIENT_ID ? D365_CLIENT_ID.substring(0, 8) + "..." : "NOT SET"}`);
-  console.log(`   Client Secret: ${D365_CLIENT_SECRET ? "***" + D365_CLIENT_SECRET.slice(-4) : "NOT SET"}`);
+  console.log(
+    `   Tenant ID: ${D365_TENANT_ID ? D365_TENANT_ID.substring(0, 8) + "..." : "NOT SET"}`
+  );
+  console.log(
+    `   Client ID: ${D365_CLIENT_ID ? D365_CLIENT_ID.substring(0, 8) + "..." : "NOT SET"}`
+  );
+  console.log(
+    `   Client Secret: ${D365_CLIENT_SECRET ? "***" + D365_CLIENT_SECRET.slice(-4) : "NOT SET"}`
+  );
   console.log(`   Data Area ID: ${D365_DATA_AREA_ID}`);
   console.log(`   Scope: ${D365_SCOPE}`);
   console.log();
@@ -202,4 +205,3 @@ testD365ProductSync()
     console.error("Test failed:", error);
     process.exit(1);
   });
-

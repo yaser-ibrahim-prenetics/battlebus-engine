@@ -24,19 +24,19 @@ interface InventorySyncPayload {
   inventoryItemId?: string;
   variantId?: string;
   productId?: string;
-  
+
   // Inventory data
   quantity?: number;
   available?: number;
   reserved?: number;
   committed?: number;
-  
+
   // Location/Warehouse
   locationId?: string | number;
   warehouseId?: string;
   warehouseName?: string;
   dataAreaId?: string; // For Dynamics
-  
+
   // Product metadata (for product sync)
   productTitle?: string;
   variantTitle?: string;
@@ -44,10 +44,10 @@ interface InventorySyncPayload {
   price?: string | number;
   weight?: number;
   weightUnit?: string;
-  
+
   // Action type
   action?: "create" | "update" | "delete" | "adjust";
-  
+
   // Metadata
   source?: Platform;
   destination?: Platform | Platform[];
@@ -59,13 +59,16 @@ export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const fromPlatform = searchParams.get("from") as Platform | null;
-    const toPlatforms = searchParams.get("to")?.split(",").map((p) => p.trim()) as Platform[] | null;
+    const toPlatforms = searchParams
+      .get("to")
+      ?.split(",")
+      .map((p) => p.trim()) as Platform[] | null;
 
     const body: InventorySyncPayload = await request.json();
-    
+
     // Determine source platform: from query param, body, or infer from payload
     const source: Platform = fromPlatform || body.source || "shopify";
-    
+
     // Determine destination platforms: from query param, body, or default to all
     let destinations: Platform[] = [];
     if (toPlatforms && toPlatforms.length > 0) {
@@ -119,7 +122,9 @@ export async function POST(request: NextRequest) {
         console.error(`[Inventory Sync Mesh] Failed to send event to ${destination}:`, error);
         // In local dev, Inngest might not be running - that's okay for testing
         if (process.env.NODE_ENV === "development") {
-          console.warn(`[Inventory Sync Mesh] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`);
+          console.warn(
+            `[Inventory Sync Mesh] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
+          );
         }
         return {
           success: false,
@@ -151,9 +156,9 @@ export async function POST(request: NextRequest) {
         });
       }
     });
-    
+
     const allSuccessful = errors.length === 0;
-    
+
     // In production, log warnings but don't fail (events might be queued)
     if (errors.length > 0) {
       console.warn(`[Inventory Sync Mesh] ${errors.length} event(s) failed to send:`, errors);
@@ -174,9 +179,10 @@ export async function POST(request: NextRequest) {
             destination: e.destination,
             error: e.error,
           })),
-          note: process.env.NODE_ENV === "development"
-            ? "In development mode, events are queued but may not be processed until Inngest dev server is running. Run: npm run dev:inngest"
-            : undefined,
+          note:
+            process.env.NODE_ENV === "development"
+              ? "In development mode, events are queued but may not be processed until Inngest dev server is running. Run: npm run dev:inngest"
+              : undefined,
         }),
       },
       { status: allSuccessful ? 200 : 202 } // 202 Accepted if some events failed
@@ -196,7 +202,7 @@ export async function POST(request: NextRequest) {
 // GET endpoint for health check and documentation
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  
+
   if (searchParams.get("docs") === "true") {
     return NextResponse.json({
       name: "Inventory Sync Mesh API",
@@ -252,4 +258,3 @@ export async function GET(request: NextRequest) {
     version: "1.0.0",
   });
 }
-

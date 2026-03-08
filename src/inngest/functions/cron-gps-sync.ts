@@ -47,8 +47,8 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     // If no fulfilled orders, return with all statuses for visibility
     if (fulfilledOrders.length === 0) {
-      return { 
-        status: "success", 
+      return {
+        status: "success",
         message: "No fulfilled GPS orders found in configured time window",
         totalOrdersChecked: allOrderStatuses.length,
         allOrderStatuses, // Show all orders and their GPS statuses
@@ -59,16 +59,16 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     // STEP 2: Process fulfilled orders in batches with API rate limiting
     const processedBatches = [];
-    
+
     for (let i = 0; i < fulfilledOrders.length; i += BATCH_SIZE) {
       const chunk = fulfilledOrders.slice(i, i + BATCH_SIZE);
       const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-      
+
       const batchResult = await step.run(`process-fulfilled-batch-${batchNumber}`, async () => {
         return processFulfilledOrdersBatch(chunk);
       });
       processedBatches.push(batchResult);
-      
+
       // Add delay between batches to respect API rate limits
       if (i + BATCH_SIZE < fulfilledOrders.length) {
         await step.sleep("rate-limit-delay", "500ms");
@@ -156,14 +156,14 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   // Step 1: Get GPS order IDs from Shopify metafields (with order names for tracking)
   const orders = await shopify.getUnfulfilledOrders(250, 30);
   console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
-  
-  const gpsOrderData: Array<{ 
-    gpsOrderId: string; 
-    warehouse: string; 
+
+  const gpsOrderData: Array<{
+    gpsOrderId: string;
+    warehouse: string;
     shopifyOrderName: string;
     shopifyOrderId: string;
   }> = [];
-  
+
   for (const order of orders) {
     try {
       const gpsData = await shopify.getGpsOrderMetafield(order.id);
@@ -174,29 +174,34 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           shopifyOrderName: order.name,
           shopifyOrderId: order.id.toString(),
         });
-        console.log(`[GPS Sync] Found GPS order: ${gpsData.gpsOrderId} for Shopify order: ${order.name} (ID: ${order.id})`);
+        console.log(
+          `[GPS Sync] Found GPS order: ${gpsData.gpsOrderId} for Shopify order: ${order.name} (ID: ${order.id})`
+        );
       }
     } catch (error) {
       console.warn(`[GPS Sync] Failed to get GPS metafield for order ${order.id}: ${error}`);
     }
   }
-  
+
   console.log(`[GPS Sync] Found ${gpsOrderData.length} GPS order IDs to query`);
   if (gpsOrderData.length > 0) {
-    const orderNames = gpsOrderData.map(d => d.shopifyOrderName).join(", ");
+    const orderNames = gpsOrderData.map((d) => d.shopifyOrderName).join(", ");
     console.log(`[GPS Sync] Shopify orders with GPS: ${orderNames}`);
   }
-  
+
   if (gpsOrderData.length === 0) {
     return { fulfilledOrders: [], allOrderStatuses: [] };
   }
 
   // Step 2: Create mapping from GPS order ID to Shopify order data
-  const gpsOrderIdToShopifyData = new Map<string, {
-    shopifyOrderName: string;
-    shopifyOrderId: string;
-    warehouse: GpsWarehouseName;
-  }>();
+  const gpsOrderIdToShopifyData = new Map<
+    string,
+    {
+      shopifyOrderName: string;
+      shopifyOrderId: string;
+      warehouse: GpsWarehouseName;
+    }
+  >();
 
   for (const item of gpsOrderData) {
     const warehouse = item.warehouse as GpsWarehouseName;
@@ -232,7 +237,9 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
     const gpsOrderIds = warehouseGroups[warehouse];
     if (gpsOrderIds.length === 0) continue;
 
-    console.log(`[GPS Sync] [${warehouse}] Querying GPS for ${gpsOrderIds.length} orders in batches`);
+    console.log(
+      `[GPS Sync] [${warehouse}] Querying GPS for ${gpsOrderIds.length} orders in batches`
+    );
 
     // Query GPS in batches
     for (let i = 0; i < gpsOrderIds.length; i += BATCH_SIZE) {
@@ -241,10 +248,17 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
       const totalBatches = Math.ceil(gpsOrderIds.length / BATCH_SIZE);
 
       try {
-        console.log(`[GPS Sync] [${warehouse}] Querying batch ${batchNumber}/${totalBatches} with ${batch.length} orders`);
-        
+        console.log(
+          `[GPS Sync] [${warehouse}] Querying batch ${batchNumber}/${totalBatches} with ${batch.length} orders`
+        );
+
         // Simulate fulfillment for first order in first batch if simulation is enabled
-        if (config.features.enableGpsFulfillmentSimulation && batchNumber === 1 && i === 0 && batch.length > 0) {
+        if (
+          config.features.enableGpsFulfillmentSimulation &&
+          batchNumber === 1 &&
+          i === 0 &&
+          batch.length > 0
+        ) {
           const firstGpsOrderId = batch[0];
           const firstShopifyData = gpsOrderIdToShopifyData.get(firstGpsOrderId);
           if (firstShopifyData) {
@@ -258,14 +272,18 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
               warehouse: warehouse,
             };
             gpsSimulationStore.markFulfilled(testFulfillment);
-            console.log(`[GPS Sync] 🧪 SIMULATION: Marked first order ${firstShopifyData.shopifyOrderName} (GPS: ${firstGpsOrderId}, Shopify ID: ${firstShopifyData.shopifyOrderId}) as fulfilled`);
+            console.log(
+              `[GPS Sync] 🧪 SIMULATION: Marked first order ${firstShopifyData.shopifyOrderName} (GPS: ${firstGpsOrderId}, Shopify ID: ${firstShopifyData.shopifyOrderId}) as fulfilled`
+            );
           }
         }
-        
+
         const { response } = await gps.getOutboundOrdersDetails(batch, warehouse);
 
-      if (!response.data || response.code !== 200) {
-          console.error(`[GPS Sync] [${warehouse}] Batch ${batchNumber} API error: ${response.msg}`);
+        if (!response.data || response.code !== 200) {
+          console.error(
+            `[GPS Sync] [${warehouse}] Batch ${batchNumber} API error: ${response.msg}`
+          );
           continue;
         }
 
@@ -297,7 +315,8 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
         for (const gpsOrder of gpsData) {
           const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
           allOrderStatuses.push({
-            shopifyOrderName: shopifyData?.shopifyOrderName || gpsOrder.platformOrderNo || "Unknown",
+            shopifyOrderName:
+              shopifyData?.shopifyOrderName || gpsOrder.platformOrderNo || "Unknown",
             shopifyOrderId: shopifyData?.shopifyOrderId || "",
             gpsOrderId: gpsOrder.outboundOrderNo,
             gpsStatus: gpsOrder.status,
@@ -312,17 +331,17 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
         // Filter for fulfilled orders (status 3) within configured time window
         const fulfilledOrders = gpsData.filter((gpsOrder) => {
           if (gpsOrder.status !== GPS_STATUS.FULFILLED) return false;
-          
+
           // Get platformOrderNo from our mapping if GPS didn't return it
           const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
           const platformOrderNo = gpsOrder.platformOrderNo || shopifyData?.shopifyOrderName;
-          
+
           if (!platformOrderNo) return false;
           if (!gpsOrder.outboundTime) return false;
-          
+
           const outboundDate = new Date(gpsOrder.outboundTime);
           const isWithinTimeWindow = outboundDate >= timeWindowAgo;
-          
+
           return isWithinTimeWindow;
         });
 
@@ -330,19 +349,22 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           console.log(
             `[GPS Sync] [${warehouse}] Batch ${batchNumber}: Found ${fulfilledOrders.length} fulfilled orders in last ${hoursBack} hours`
           );
-          
+
           // Collect fulfilled orders with all shipment details
           for (const gpsOrder of fulfilledOrders) {
             // Get Shopify order data from mapping (use GPS order ID or platformOrderNo)
-            const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo) ||
+            const shopifyData =
+              gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo) ||
               Array.from(gpsOrderIdToShopifyData.values()).find(
-                d => d.shopifyOrderName === gpsOrder.platformOrderNo
+                (d) => d.shopifyOrderName === gpsOrder.platformOrderNo
               );
 
             if (!shopifyData) {
-              console.warn(`[GPS Sync] No Shopify data found for GPS order ${gpsOrder.outboundOrderNo} (${gpsOrder.platformOrderNo})`);
-        continue;
-      }
+              console.warn(
+                `[GPS Sync] No Shopify data found for GPS order ${gpsOrder.outboundOrderNo} (${gpsOrder.platformOrderNo})`
+              );
+              continue;
+            }
 
             allFulfilledOrders.push({
               platformOrderNo: gpsOrder.platformOrderNo || shopifyData.shopifyOrderName,
@@ -364,7 +386,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
 
   console.log(`[GPS Sync] Total orders checked: ${allOrderStatuses.length}`);
   console.log(`[GPS Sync] Total fulfilled orders: ${allFulfilledOrders.length}`);
-  
+
   return {
     fulfilledOrders: allFulfilledOrders,
     allOrderStatuses,
@@ -379,7 +401,15 @@ async function processFulfilledOrdersBatch(
   const errors: string[] = [];
 
   for (const fulfilledOrder of fulfilledOrders) {
-    const { platformOrderNo, shopifyOrderId, outboundOrderNo, logisticsTrackNo, logisticsCarrier, outboundTime, warehouse } = fulfilledOrder;
+    const {
+      platformOrderNo,
+      shopifyOrderId,
+      outboundOrderNo,
+      logisticsTrackNo,
+      logisticsCarrier,
+      outboundTime,
+      warehouse,
+    } = fulfilledOrder;
 
     try {
       // Use the Shopify order ID we already have (no need to search again)
@@ -390,32 +420,34 @@ async function processFulfilledOrdersBatch(
 
       // Get fulfillment orders from Shopify using the order ID
       const fulfillmentOrders = await shopify.getFulfillmentOrders(parseInt(shopifyOrderId));
-  const openFulfillment = fulfillmentOrders.find(
-    (fo) => fo.status === "open" || fo.status === "in_progress"
-  );
+      const openFulfillment = fulfillmentOrders.find(
+        (fo) => fo.status === "open" || fo.status === "in_progress"
+      );
 
       if (!openFulfillment) {
-        console.log(`[GPS Sync] No open fulfillment found for ${platformOrderNo} (ID: ${shopifyOrderId}), skipping`);
+        console.log(
+          `[GPS Sync] No open fulfillment found for ${platformOrderNo} (ID: ${shopifyOrderId}), skipping`
+        );
         continue;
       }
 
       // Create Shopify fulfillment with tracking info
       const trackingUrl = getTrackingUrl(logisticsCarrier, logisticsTrackNo);
-  
-  const lineItems = openFulfillment.line_items.map((item) => ({
-    id: item.id,
-    quantity: item.fulfillable_quantity,
-  }));
+
+      const lineItems = openFulfillment.line_items.map((item) => ({
+        id: item.id,
+        quantity: item.fulfillable_quantity,
+      }));
 
       const fulfillment = await shopify.createFulfillment(
-    openFulfillment.id,
-    {
+        openFulfillment.id,
+        {
           number: logisticsTrackNo,
           company: mapGpsCarrierToShopify(logisticsCarrier),
-      url: trackingUrl,
-    },
-    lineItems
-  );
+          url: trackingUrl,
+        },
+        lineItems
+      );
 
       // Get the full Shopify order to build fulfillment event
       const shopifyOrder = await shopify.getOrder(parseInt(shopifyOrderId));
@@ -426,7 +458,7 @@ async function processFulfilledOrdersBatch(
         const orderLineItem = shopifyOrder.line_items.find(
           (li) => li.id === fulfillmentOrderItem.line_item_id
         );
-        
+
         return {
           id: fulfillmentOrderItem.line_item_id,
           variant_id: orderLineItem?.variant_id || fulfillmentOrderItem.variant_id || 0,
@@ -448,28 +480,33 @@ async function processFulfilledOrdersBatch(
           shopifyStore: config.shopify.im8.shopDomain,
           orderJson: shopifyOrder as any,
           fromGpsSync: true, // Flag to allow GPS fulfillments to be processed
-          fulfillments: [{
-            id: fulfillment.id,
-            order_id: parseInt(shopifyOrderId),
-            status: "success",
-            created_at: outboundTime || new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            tracking_company: mapGpsCarrierToShopify(logisticsCarrier),
-            tracking_number: logisticsTrackNo,
-            tracking_numbers: [logisticsTrackNo],
-            tracking_url: trackingUrl,
-            tracking_urls: [trackingUrl],
-            location_id: warehouse === "GPS UK Warehouse" 
-              ? parseInt(config.shopify.im8.locations.gpsUk) 
-              : parseInt(config.shopify.im8.locations.gps),
-            line_items: fulfillmentLineItems,
-          } as ShopifyFulfillment],
+          fulfillments: [
+            {
+              id: fulfillment.id,
+              order_id: parseInt(shopifyOrderId),
+              status: "success",
+              created_at: outboundTime || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              tracking_company: mapGpsCarrierToShopify(logisticsCarrier),
+              tracking_number: logisticsTrackNo,
+              tracking_numbers: [logisticsTrackNo],
+              tracking_url: trackingUrl,
+              tracking_urls: [trackingUrl],
+              location_id:
+                warehouse === "GPS UK Warehouse"
+                  ? parseInt(config.shopify.im8.locations.gpsUk)
+                  : parseInt(config.shopify.im8.locations.gps),
+              line_items: fulfillmentLineItems,
+            } as ShopifyFulfillment,
+          ],
           receivedAt: new Date().toISOString(),
         },
       });
 
       fulfilled.push(platformOrderNo);
-      console.log(`[GPS Sync] Successfully processed fulfillment for ${platformOrderNo} (Shopify ID: ${shopifyOrderId})`);
+      console.log(
+        `[GPS Sync] Successfully processed fulfillment for ${platformOrderNo} (Shopify ID: ${shopifyOrderId})`
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       errors.push(`GPS order ${outboundOrderNo} (${platformOrderNo}): ${msg}`);
@@ -479,24 +516,32 @@ async function processFulfilledOrdersBatch(
   return { fulfilled, errors, skippedCount: 0 };
 }
 
-
 function getTrackingUrl(carrier: string, trackingNumber: string): string {
   const carrierLower = (carrier || "").toLowerCase();
-  if (carrierLower.includes("fedex")) return `https://www.fedex.com/apps/fedextrack/?tracknumbers=${trackingNumber}`;
+  if (carrierLower.includes("fedex"))
+    return `https://www.fedex.com/apps/fedextrack/?tracknumbers=${trackingNumber}`;
   if (carrierLower.includes("ups")) return `https://www.ups.com/track?tracknum=${trackingNumber}`;
-  if (carrierLower.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`;
-  if (carrierLower.includes("dhl")) return `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
-  if (carrierLower.includes("sf")) return `https://www.sf-express.com/en/dynamic_function/waybill/#search/bill-number/${trackingNumber}`;
+  if (carrierLower.includes("usps"))
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`;
+  if (carrierLower.includes("dhl"))
+    return `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
+  if (carrierLower.includes("sf"))
+    return `https://www.sf-express.com/en/dynamic_function/waybill/#search/bill-number/${trackingNumber}`;
   return `https://track.aftership.com/${trackingNumber}`;
 }
 
 function mapGpsCarrierToShopify(gpsCarrier: string): string {
   const carrierMap: Record<string, string> = {
-    "FEDEX-IP": "FedEx", "FEDEX-GROUND": "FedEx", "FEDEX": "FedEx",
-    "UPS-GROUND": "UPS", "UPS": "UPS",
-    "USPS": "USPS",
-    "DHL-EXPRESS": "DHL Express", "DHL": "DHL Express",
-    "SF-EXPRESS": "SF Express", "SF": "SF Express",
+    "FEDEX-IP": "FedEx",
+    "FEDEX-GROUND": "FedEx",
+    FEDEX: "FedEx",
+    "UPS-GROUND": "UPS",
+    UPS: "UPS",
+    USPS: "USPS",
+    "DHL-EXPRESS": "DHL Express",
+    DHL: "DHL Express",
+    "SF-EXPRESS": "SF Express",
+    SF: "SF Express",
   };
   return carrierMap[(gpsCarrier || "").toUpperCase()] || gpsCarrier;
 }

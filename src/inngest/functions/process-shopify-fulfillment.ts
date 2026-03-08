@@ -10,7 +10,11 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import type { ShopifyOrderPayload, ShopifyFulfillment, ShopifyFulfillmentLineItem } from "../events";
+import type {
+  ShopifyOrderPayload,
+  ShopifyFulfillment,
+  ShopifyFulfillmentLineItem,
+} from "../events";
 import {
   isDummyFulfillment,
   isGpsFulfillment,
@@ -63,7 +67,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     // But allow GPS fulfillments when explicitly triggered by cron-gps-sync (for D365 sync)
     const gpsOnly = fulfillmentSources.every((s: { isGps: boolean }) => s.isGps);
     const isFromGpsSync = (event.data as any).fromGpsSync === true;
-    
+
     if (gpsOnly && !isFromGpsSync) {
       return {
         status: "skipped_gps",
@@ -147,7 +151,7 @@ export const processShopifyFulfillment = inngest.createFunction(
         try {
           // Filter out dummy SKUs and map to D365 format
           const filteredItems = filterDummySkus<ShopifyFulfillmentLineItem>(fulfillment.line_items);
-          
+
           if (filteredItems.length === 0) {
             results.push({
               fulfillmentId: fulfillment.id,

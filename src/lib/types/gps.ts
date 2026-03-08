@@ -67,21 +67,21 @@ export interface IGpsIndividualFulfilment {
 
 export interface IGpsIndividualOrderData {
   // Order identifiers
-  outboundOrderNo: string;     // GPS internal order number, e.g., "OBS1632601170SM"
-  platformOrderNo: string;     // Shopify order name, e.g., "IM8-591560"
-  referOrderNo: string;        // D365 sales order number, e.g., "U001-SO-459898"
-  thirdOrderNo: string;        // Same as referOrderNo
+  outboundOrderNo: string; // GPS internal order number, e.g., "OBS1632601170SM"
+  platformOrderNo: string; // Shopify order name, e.g., "IM8-591560"
+  referOrderNo: string; // D365 sales order number, e.g., "U001-SO-459898"
+  thirdOrderNo: string; // Same as referOrderNo
 
   // Order status
-  status: number;              // 3 = shipped (已出库)
-  statusName: string;          // e.g., "已出库"
+  status: number; // 3 = shipped (已出库)
+  statusName: string; // e.g., "已出库"
 
   // Warehouse info
-  whCode: string;              // Warehouse code, e.g., "JFK01W"
+  whCode: string; // Warehouse code, e.g., "JFK01W"
 
   // Customer info
   email: string;
-  receiver: string;            // Customer name
+  receiver: string; // Customer name
   telephone: string;
   companyName: string;
 
@@ -93,8 +93,8 @@ export interface IGpsIndividualOrderData {
   provinceName: string;
   provinceCode: string;
   postCode: string;
-  countryRegionCode: string;   // ISO2 code, e.g., "AE"
-  countryRegionName: string;   // e.g., "United Arab Emirates"
+  countryRegionCode: string; // ISO2 code, e.g., "AE"
+  countryRegionName: string; // e.g., "United Arab Emirates"
   houseNum: string;
 
   // Products shipped
@@ -102,14 +102,14 @@ export interface IGpsIndividualOrderData {
 
   // Shipment/tracking info
   expressList: GpsExpressItem[];
-  logisticsCarrier: string;    // e.g., "GPS"
-  logisticsChannel: string;    // e.g., "GPS-IM8-STANDARD"
-  logisticsTrackNo: string;    // Primary tracking number
+  logisticsCarrier: string; // e.g., "GPS"
+  logisticsChannel: string; // e.g., "GPS-IM8-STANDARD"
+  logisticsTrackNo: string; // Primary tracking number
   logisticsTrackNos: string[]; // All tracking numbers
 
   // Timestamps
-  orderCreateTime: string;     // Format: "YYYY-MM-DD HH:mm:ss"
-  outboundTime: string;        // When shipped, Format: "YYYY-MM-DD HH:mm:ss"
+  orderCreateTime: string; // Format: "YYYY-MM-DD HH:mm:ss"
+  outboundTime: string; // When shipped, Format: "YYYY-MM-DD HH:mm:ss"
   canceledTime: string;
   exceptionTime: string;
   interceptTime: string;
@@ -117,12 +117,12 @@ export interface IGpsIndividualOrderData {
   // Cost info
   costItems: GpsCostItem[];
   costTotal: number;
-  costCurrencyCode: string;    // e.g., "USD"
+  costCurrencyCode: string; // e.g., "USD"
 
   // Order type
-  orderTypeName: string;       // e.g., "小包出库单"
+  orderTypeName: string; // e.g., "小包出库单"
   subOrderTypeName: string;
-  salesPlatform: string;       // e.g., "9"
+  salesPlatform: string; // e.g., "9"
 
   // Exception handling
   exceptionDesc: string;
@@ -132,40 +132,40 @@ export interface IGpsIndividualOrderData {
   taxNum: string;
   orderList: string;
   storeName: string;
-  needRelabel: number;         // 0 or 1
+  needRelabel: number; // 0 or 1
   appendixList: unknown[];
 }
 
 export interface GpsIndividualProductItem {
   sku: string;
-  skuId: string;               // e.g., "1082163IM8-FG-000010"
+  skuId: string; // e.g., "1082163IM8-FG-000010"
   fnsku: string;
   productName: string;
   productAliasName: string;
-  quantity: number;            // Ordered quantity
-  realQuantity: number;        // Actually shipped quantity
-  availableAmount: number;     // Stock available
+  quantity: number; // Ordered quantity
+  realQuantity: number; // Actually shipped quantity
+  availableAmount: number; // Stock available
   remark: string;
-  deleted: number;             // 0 or 1
-  createBy: string;            // e.g., "OPENAPI"
-  updateBy: string;            // e.g., "system"
+  deleted: number; // 0 or 1
+  createBy: string; // e.g., "OPENAPI"
+  updateBy: string; // e.g., "system"
   createTime: string;
   updateTime: string;
 }
 
 export interface GpsExpressItem {
-  trackNo: string;             // Tracking number
-  pkgSkuNumInfo: string;       // e.g., "IM8-FG-000010*2"
-  weight: number;              // kg
-  length: number;              // cm
-  width: number;               // cm
-  height: number;              // cm
-  fileUrl: string;             // Label URL if any
+  trackNo: string; // Tracking number
+  pkgSkuNumInfo: string; // e.g., "IM8-FG-000010*2"
+  weight: number; // kg
+  length: number; // cm
+  width: number; // cm
+  height: number; // cm
+  fileUrl: string; // Label URL if any
 }
 
 export interface GpsCostItem {
-  billItemName: string;        // e.g., "IM8-operation"
-  billItemTotal: number;       // Cost amount
+  billItemName: string; // e.g., "IM8-operation"
+  billItemTotal: number; // Cost amount
 }
 
 export interface IGpsGetOrderData {
@@ -173,12 +173,12 @@ export interface IGpsGetOrderData {
   status: number;
   logisticsTrackNo: string;
   logisticsCarrier: string;
-  platformOrderNo: string;      // Shopify order name like "IM8-5654"
-  outboundTime: string;         // ISO 8601 timestamp when order shipped
-  referOrderNo?: string;        // D365 sales order number (optional for backward compat)
+  platformOrderNo: string; // Shopify order name like "IM8-5654"
+  outboundTime: string; // ISO 8601 timestamp when order shipped
+  referOrderNo?: string; // D365 sales order number (optional for backward compat)
   thirdOrderNo?: string;
-  productList?: GpsIndividualProductItem[];  // Optional detailed product info
-  expressList?: GpsExpressItem[];            // Optional tracking details
+  productList?: GpsIndividualProductItem[]; // Optional detailed product info
+  expressList?: GpsExpressItem[]; // Optional tracking details
 }
 
 export interface IGpsManualProcessRequest {
@@ -187,8 +187,8 @@ export interface IGpsManualProcessRequest {
 }
 
 export enum GpsWarehouseNameEnum {
-  gpsUS = 'GPS Warehouse',
-  gpsUK = 'GPS UK Warehouse',
+  gpsUS = "GPS Warehouse",
+  gpsUK = "GPS UK Warehouse",
 }
 
 export interface IGpsProcessingOrder {

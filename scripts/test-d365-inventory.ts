@@ -13,19 +13,19 @@ async function getToken() {
     client_secret: D365_CLIENT_SECRET,
     scope: `${D365_BASE_URL}/.default`,
   });
-  
+
   console.log("Authenticating to D365...");
   const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
-  
+
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Auth failed: ${res.status} - ${err}`);
   }
-  
+
   const token = await res.json();
   console.log("✅ Authenticated, token expires in", token.expires_in, "seconds");
   return token.access_token;
@@ -35,22 +35,22 @@ async function getInventory(accessToken: string) {
   // Try InventorySitesOnHandV2 endpoint
   const url = `${D365_BASE_URL}/data/InventorySitesOnHandV2?cross-company=true&$top=5`;
   console.log("Fetching inventory from:", url);
-  
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       "OData-MaxVersion": "4.0",
       "OData-Version": "4.0",
     },
   });
-  
+
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Inventory fetch failed: ${res.status} - ${err.substring(0, 500)}`);
   }
-  
+
   const data = await res.json();
   console.log("✅ Inventory response:");
   console.log(JSON.stringify(data, null, 2));

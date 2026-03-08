@@ -14,9 +14,7 @@
       "fulfill_at": null,
       "fulfill_by": null,
 
-      "supported_actions": [
-        "create_fulfillment"
-      ],
+      "supported_actions": ["create_fulfillment"],
 
       "destination": {
         "id": 9876543210,

@@ -27,12 +27,12 @@ This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order a
 
 ## Key Endpoints
 
-| System | Direction | Endpoint | Description |
-|--------|-----------|----------|-------------|
-| Extensiv → battle-bus | Inbound | `POST /v1.0/extensiv/webhook` | Receives shipment confirmation |
-| battle-bus → Shopify | Outbound | `POST /admin/api/.../fulfillments.json` | Creates Shopify fulfillment |
-| battle-bus → Shopify | Outbound | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
-| battle-bus → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates Dynamics fulfillment |
+| System                | Direction | Endpoint                                     | Description                    |
+| --------------------- | --------- | -------------------------------------------- | ------------------------------ |
+| Extensiv → battle-bus | Inbound   | `POST /v1.0/extensiv/webhook`                | Receives shipment confirmation |
+| battle-bus → Shopify  | Outbound  | `POST /admin/api/.../fulfillments.json`      | Creates Shopify fulfillment    |
+| battle-bus → Shopify  | Outbound  | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders        |
+| battle-bus → Dynamics | Outbound  | `POST /api/services/.../fulfilment`          | Creates Dynamics fulfillment   |
 
 ---
 
@@ -44,6 +44,7 @@ This flow tests the fulfillment journey when Extensiv (3PL/WMS) ships an order a
    - Status: `processing`
 
 2. **Start the simulator:**
+
    ```bash
    npm run dev
    ```
@@ -178,6 +179,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 **Expected Response:**
+
 ```json
 {
   "id": "<uuid>",
@@ -231,19 +233,24 @@ curl -X POST http://localhost:3100/state/orders \
   "eventType": "order.shipped",
   "orderId": "EXT-12345",
   "referenceNumber": "IM8-1002",
-  "shipments": [{
-    "shipmentId": "SHIP-001",
-    "carrier": "DHL",
-    "trackingNumber": "DHL1234567890",
-    "lineItems": [{
-      "sku": "IM8-FG-000010",
-      "quantity": 1
-    }]
-  }]
+  "shipments": [
+    {
+      "shipmentId": "SHIP-001",
+      "carrier": "DHL",
+      "trackingNumber": "DHL1234567890",
+      "lineItems": [
+        {
+          "sku": "IM8-FG-000010",
+          "quantity": 1
+        }
+      ]
+    }
+  ]
 }
 ```
 
 **Expected Behavior:**
+
 - Shopify fulfillment created for shipped items only
 - Order `fulfillment_status` = `partial`
 - Second fulfillment created when remaining items ship
@@ -264,19 +271,20 @@ curl -X POST http://localhost:3100/state/orders \
       "shipmentId": "SHIP-001",
       "carrier": "DHL",
       "trackingNumber": "DHL1111111111",
-      "lineItems": [{"sku": "IM8-FG-000010", "quantity": 1}]
+      "lineItems": [{ "sku": "IM8-FG-000010", "quantity": 1 }]
     },
     {
       "shipmentId": "SHIP-002",
       "carrier": "DHL",
       "trackingNumber": "DHL2222222222",
-      "lineItems": [{"sku": "IM8-FG-000020", "quantity": 1}]
+      "lineItems": [{ "sku": "IM8-FG-000020", "quantity": 1 }]
     }
   ]
 }
 ```
 
 **Expected Behavior:**
+
 - Separate Shopify fulfillments for each tracking number
 - Or single fulfillment with multiple tracking numbers (depends on implementation)
 
@@ -284,15 +292,15 @@ curl -X POST http://localhost:3100/state/orders \
 
 ## Validation Checklist
 
-| Step | Check | Method |
-|------|-------|--------|
-| 1 | Extensiv webhook received | Check battle-bus logs |
-| 2 | SalesOrder found | Check internal DB |
-| 3 | Shopify fulfillment_orders fetched | Check Shopify API logs |
-| 4 | Shopify fulfillment created | Check `shopifyFulfilmentId` |
-| 5 | Dynamics fulfillment notification sent | Check Dynamics API logs |
-| 6 | Internal Fulfilment entity created | Check battle-bus DB |
-| 7 | Order status updated | `GET /state/orders/:id` |
+| Step | Check                                  | Method                      |
+| ---- | -------------------------------------- | --------------------------- |
+| 1    | Extensiv webhook received              | Check battle-bus logs       |
+| 2    | SalesOrder found                       | Check internal DB           |
+| 3    | Shopify fulfillment_orders fetched     | Check Shopify API logs      |
+| 4    | Shopify fulfillment created            | Check `shopifyFulfilmentId` |
+| 5    | Dynamics fulfillment notification sent | Check Dynamics API logs     |
+| 6    | Internal Fulfilment entity created     | Check battle-bus DB         |
+| 7    | Order status updated                   | `GET /state/orders/:id`     |
 
 ---
 
@@ -302,17 +310,21 @@ curl -X POST http://localhost:3100/state/orders \
 
 ```json
 {
-  "fulfillment_orders": [{
-    "id": 12345678,
-    "order_id": 98765432,
-    "status": "open",
-    "assigned_location_id": 61813039173,
-    "line_items": [{
-      "id": 111,
-      "quantity": 1,
-      "fulfillable_quantity": 1
-    }]
-  }]
+  "fulfillment_orders": [
+    {
+      "id": 12345678,
+      "order_id": 98765432,
+      "status": "open",
+      "assigned_location_id": 61813039173,
+      "line_items": [
+        {
+          "id": 111,
+          "quantity": 1,
+          "fulfillable_quantity": 1
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -326,11 +338,13 @@ curl -X POST http://localhost:3100/state/orders \
     "status": "success",
     "tracking_company": "DHL",
     "tracking_number": "DHL1234567890",
-    "line_items": [{
-      "id": 111,
-      "sku": "IM8-FG-000010",
-      "quantity": 1
-    }]
+    "line_items": [
+      {
+        "id": 111,
+        "sku": "IM8-FG-000010",
+        "quantity": 1
+      }
+    ]
   }
 }
 ```
@@ -355,6 +369,7 @@ curl -X POST http://localhost:3100/state/orders \
 **Trigger:** Extensiv webhook with unknown `referenceNumber`
 
 **Expected Behavior:**
+
 - Log warning
 - Return acknowledgment (to prevent retries)
 - Alert for manual investigation
@@ -364,6 +379,7 @@ curl -X POST http://localhost:3100/state/orders \
 **Trigger:** Shopify returns 429 (rate limit) or 5xx
 
 **Expected Behavior:**
+
 - Retry with exponential backoff
 - Do not send Dynamics fulfillment until Shopify succeeds
 - Log errors
@@ -373,6 +389,7 @@ curl -X POST http://localhost:3100/state/orders \
 **Trigger:** Dynamics returns error
 
 **Expected Behavior:**
+
 - Shopify fulfillment still succeeds
 - Log Dynamics error
 - May retry Dynamics notification
@@ -387,4 +404,3 @@ curl -X POST http://localhost:3100/state/orders \
 - The order of operations: Shopify fulfillment first, then Dynamics
 - `notifyShopifyFulfilmentFromExtensiv` handles the Shopify side
 - `fuflfilOrderToDynamics` handles the Dynamics side
-

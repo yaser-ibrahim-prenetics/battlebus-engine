@@ -288,7 +288,9 @@ export const processInventoryFullSync = inngest.createFunction(
 
         try {
           console.log("[InventoryFullSync] Shopify sync is de-emphasized");
-          console.log("[InventoryFullSync] Shopify doesn't track inventory (continues selling when OOS)");
+          console.log(
+            "[InventoryFullSync] Shopify doesn't track inventory (continues selling when OOS)"
+          );
 
           // Shopify sync is informational only - we don't actively push
           // because Shopify is not the source of truth for inventory
@@ -343,7 +345,9 @@ export const processInventoryFullSync = inngest.createFunction(
     // FINAL: Publish Result
     // ========================================================================
     const gpsStep = results.find((r) => r.step === "gps");
-    const d365Step = results.find((r) => r.step === "d365") as (StepResult & { driftCount?: number }) | undefined;
+    const d365Step = results.find((r) => r.step === "d365") as
+      | (StepResult & { driftCount?: number })
+      | undefined;
     const shopifyStep = results.find((r) => r.step === "shopify");
 
     const overallSuccess = results.every((r) => r.success);
@@ -382,7 +386,9 @@ export const processInventoryFullSync = inngest.createFunction(
     console.log(`[InventoryFullSync] Sync complete: ${syncId}`);
     console.log(`[InventoryFullSync] Success: ${overallSuccess}`);
     console.log(`[InventoryFullSync] Duration: ${totalDurationMs}ms`);
-    console.log(`[InventoryFullSync] Summary: GPS=${summary.gps.succeeded}, D365=${summary.d365.succeeded}, Shopify=${summary.shopify.succeeded}`);
+    console.log(
+      `[InventoryFullSync] Summary: GPS=${summary.gps.succeeded}, D365=${summary.d365.succeeded}, Shopify=${summary.shopify.succeeded}`
+    );
     console.log(`[InventoryFullSync] Drift detected: ${summary.totalDriftDetected}`);
     console.log(`[InventoryFullSync] ========================================`);
 

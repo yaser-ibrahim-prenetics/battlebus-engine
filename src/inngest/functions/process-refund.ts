@@ -129,11 +129,7 @@ export const processRefund = inngest.createFunction(
 
     // 6. Fulfill the Negative Line (Post it)
     const fulfillment = await step.run("fulfill-refund-line", async () => {
-      if (
-        !config.features.enableDynamicsSync ||
-        !d365Order ||
-        refundLine.status === "skipped"
-      ) {
+      if (!config.features.enableDynamicsSync || !d365Order || refundLine.status === "skipped") {
         return { status: "skipped" };
       }
 
@@ -150,8 +146,7 @@ export const processRefund = inngest.createFunction(
             quantity: -1,
             shippingSiteId: warehouseInfo.returnConfig.shippingSiteId,
             shippingWarehouseId: warehouseInfo.returnConfig.shippingWarehouseId,
-            shippingWarehouseLocationId:
-              warehouseInfo.returnConfig.shippingWarehouseLocationId,
+            shippingWarehouseLocationId: warehouseInfo.returnConfig.shippingWarehouseLocationId,
             lotId: refundLine.InventoryLotId,
             trackingNumber: "", // No tracking for financial refund
           },
@@ -175,7 +170,7 @@ export const processRefund = inngest.createFunction(
     // Determine if this is a full or partial refund based on Shopify order total
     const orderTotal = parseFloat(shopifyOrder.total_price || "0");
     const refundType = refundAmount >= orderTotal ? "full" : "partial";
-    
+
     // Send refund event to CS platform with financial status
     await csPlatform.sendOrderRefunded({
       orderId: shopifyOrderId,

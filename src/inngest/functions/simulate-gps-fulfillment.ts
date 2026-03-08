@@ -25,7 +25,8 @@ export const simulateGpsFulfillment = inngest.createFunction(
     if (!config.features.enableGpsFulfillmentSimulation) {
       return {
         status: "disabled",
-        message: "GPS fulfillment simulation is not enabled. Set ENABLE_GPS_FULFILLMENT_SIMULATION=true",
+        message:
+          "GPS fulfillment simulation is not enabled. Set ENABLE_GPS_FULFILLMENT_SIMULATION=true",
       };
     }
 
@@ -51,7 +52,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
       // Otherwise, get unfulfilled orders created in last N minutes
       const cutoffTime = new Date(Date.now() - minutesAgo * 60 * 1000);
       const unfulfilledOrders = await shopify.getUnfulfilledOrders(100);
-      
+
       return unfulfilledOrders.filter((order) => {
         const createdAt = new Date(order.created_at);
         return createdAt >= cutoffTime;
@@ -73,16 +74,18 @@ export const simulateGpsFulfillment = inngest.createFunction(
         try {
           // Get fulfillment orders to determine warehouse
           const fulfillmentOrders = await shopify.getFulfillmentOrders(order.id);
-          
+
           let warehouse: "GPS Warehouse" | "GPS UK Warehouse" | null = null;
 
           for (const fo of fulfillmentOrders) {
             if (fo.status !== "open" && fo.status !== "in_progress") continue;
-            
+
             // assigned_location_id is the direct property, assigned_location.location_id is nested
-            const locationId = fo.assigned_location_id || (fo.assigned_location ? fo.assigned_location.location_id : null);
+            const locationId =
+              fo.assigned_location_id ||
+              (fo.assigned_location ? fo.assigned_location.location_id : null);
             const detectedWarehouse = getGpsWarehouseFromLocation(locationId || "");
-            
+
             if (detectedWarehouse) {
               warehouse = detectedWarehouse;
               break;
@@ -101,7 +104,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
               console.warn(`[Simulation] Could not fetch D365 order for ${order.name}: ${error}`);
             }
           }
-          
+
           if (warehouse) {
             // Generate mock tracking data
             const trackingNumber = `SIM-${Date.now()}-${Math.random().toString(36).substring(7).toUpperCase()}`;
@@ -147,4 +150,3 @@ export const simulateGpsFulfillment = inngest.createFunction(
     };
   }
 );
-

@@ -7,6 +7,7 @@
 
 import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
+import { CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
 
 /**
  * Process Cancel Action
@@ -19,6 +20,7 @@ export const processActionCancel = inngest.createFunction(
     id: "process-action-cancel",
     name: "Process Hub Cancel Action",
     retries: 1,
+    concurrency: [{ ...CONCURRENCY_CONFIGS.CANCELLATION, key: "event.data.shopifyOrderId" }],
   },
   { event: "action/order.cancel" },
   async ({ event, step }: { event: any; step: any }) => {
@@ -70,10 +72,12 @@ export const processActionRefund = inngest.createFunction(
     id: "process-action-refund",
     name: "Process Hub Refund Action",
     retries: 1,
+    concurrency: [{ ...CONCURRENCY_CONFIGS.REFUND, key: "event.data.shopifyOrderId" }],
   },
   { event: "action/order.refund" },
   async ({ event, step }: { event: any; step: any }) => {
-    const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } = event.data;
+    const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } =
+      event.data;
 
     // Log the action
     await step.run("log-refund-action", async () => {
@@ -111,24 +115,27 @@ export const processActionFulfill = inngest.createFunction(
     id: "process-action-fulfill",
     name: "Process Hub Fulfill Action",
     retries: 1,
+    concurrency: [{ ...CONCURRENCY_CONFIGS.FULFILLMENT, key: "event.data.shopifyOrderId" }],
   },
   { event: "action/order.fulfill" },
   async ({ event, step }: { event: any; step: any }) => {
-    const { 
-      shopifyOrderId, 
-      shopifyOrderName, 
-      fulfillmentId, 
-      fulfillmentType, 
-      platform, 
-      trackingNumber, 
+    const {
+      shopifyOrderId,
+      shopifyOrderName,
+      fulfillmentId,
+      fulfillmentType,
+      platform,
+      trackingNumber,
       carrier,
-      source 
+      source,
     } = event.data;
 
     // Log the action
     await step.run("log-fulfill-action", async () => {
       console.log(`[Action] Fulfill action tracked: ${shopifyOrderName} (${shopifyOrderId})`);
-      console.log(`[Action] Fulfillment ID: ${fulfillmentId}, Type: ${fulfillmentType}, Platform: ${platform}`);
+      console.log(
+        `[Action] Fulfillment ID: ${fulfillmentId}, Type: ${fulfillmentType}, Platform: ${platform}`
+      );
       console.log(`[Action] Tracking: ${trackingNumber} via ${carrier}`);
       return { logged: true };
     });

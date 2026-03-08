@@ -13,10 +13,7 @@ interface OrderEvent {
 
 function generateSignature(payload: string): string {
   if (!config.csPlatform.webhookSecret) return "";
-  return crypto
-    .createHmac("sha256", config.csPlatform.webhookSecret)
-    .update(payload)
-    .digest("hex");
+  return crypto.createHmac("sha256", config.csPlatform.webhookSecret).update(payload).digest("hex");
 }
 
 export async function sendOrderEvent(event: OrderEvent): Promise<void> {
@@ -46,7 +43,7 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     } else if (event.event.startsWith("location.")) {
       webhookPath = "/api/webhooks/locations";
     }
-    
+
     const response = await fetch(`${config.csPlatform.baseUrl}${webhookPath}`, {
       method: "POST",
       headers: {
@@ -70,18 +67,18 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
 }
 
 export async function sendOrderCreated(
-  orderData: any, 
+  orderData: any,
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
 ): Promise<void> {
   // Extract sync statuses - these are derived from what processing has completed
   const syncStatuses: Record<string, string> = {};
-  
+
   // If we have D365 order number, Shopify import and D365 sync succeeded
   if (orderData.d365OrderNumber) {
     syncStatuses.shopifySyncStatus = "synced";
     syncStatuses.d365SyncStatus = "synced";
   }
-  
+
   // If we have GPS order ID, GPS sync succeeded
   if (orderData.gpsOrderId) {
     syncStatuses.gpsSyncStatus = "synced";
@@ -111,8 +108,8 @@ export async function sendOrderCreated(
 }
 
 export async function sendOrderUpdated(
-  orderData: any, 
-  changes?: string[], 
+  orderData: any,
+  changes?: string[],
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
 ): Promise<void> {
   await sendOrderEvent({
@@ -145,7 +142,7 @@ export async function sendOrderUpdate(
     errorType?: string;
     retryAt?: string;
     [key: string]: any;
-  }, 
+  },
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
 ): Promise<void> {
   await sendOrderEvent({
@@ -216,9 +213,10 @@ export async function sendOrderRefunded(orderData: {
   refundType?: "full" | "partial";
 }): Promise<void> {
   // Determine financial status based on refund type
-  const financialStatus = orderData.shopifyFinancialStatus || 
+  const financialStatus =
+    orderData.shopifyFinancialStatus ||
     (orderData.refundType === "partial" ? "partially_refunded" : "refunded");
-  
+
   await sendOrderEvent({
     event: "order.refunded",
     data: {
@@ -380,4 +378,3 @@ export async function sendLocationEvent(eventData: {
     },
   });
 }
-

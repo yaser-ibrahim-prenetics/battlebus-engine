@@ -10,7 +10,11 @@ export const config = {
     tenantId: process.env.D365_TENANT_ID || "fdea3f0c-62d4-40b7-bb83-017d9e8f6bd7",
     clientId: process.env.D365_CLIENT_ID || "740f1eb2-8f38-4c57-8150-81836a399a8e",
     clientSecret: process.env.D365_CLIENT_SECRET || "dEP8Q~WmFC9TWibaH3~rETToqmZDeh666zYEqcA3",
-    scope: process.env.D365_SCOPE || (process.env.D365_BASE_URL ? `${process.env.D365_BASE_URL}/.default` : "https://p-uat.sandbox.operations.dynamics.com/.default"),
+    scope:
+      process.env.D365_SCOPE ||
+      (process.env.D365_BASE_URL
+        ? `${process.env.D365_BASE_URL}/.default`
+        : "https://p-uat.sandbox.operations.dynamics.com/.default"),
     resource: process.env.D365_RESOURCE || "",
     dataAreaId: process.env.D365_DATA_AREA_ID || "U001",
   },
@@ -31,7 +35,10 @@ export const config = {
     // Fulfillment sync settings
     fulfillmentHoursBack: parseInt(process.env.GPS_FULFILLMENT_HOURS_BACK || "80", 10),
     // Inventory sync settings
-    inventorySyncIntervalMinutes: parseInt(process.env.GPS_INVENTORY_SYNC_INTERVAL_MINUTES || "120", 10),
+    inventorySyncIntervalMinutes: parseInt(
+      process.env.GPS_INVENTORY_SYNC_INTERVAL_MINUTES || "120",
+      10
+    ),
   },
 
   // GPS UK Warehouse Configuration
@@ -58,8 +65,10 @@ export const config = {
       charlotte: {
         name: "Charlotte Warehouse",
         grantType: "client_credentials",
-        clientId: process.env.EXTENSIV_CHARLOTTE_CLIENT_ID || "91ade825-a716-478b-9806-a484b613042a",
-        clientSecret: process.env.EXTENSIV_CHARLOTTE_CLIENT_SECRET || "Ll8c3Oswbhggog1Pu2x5+9QbhS259C0r",
+        clientId:
+          process.env.EXTENSIV_CHARLOTTE_CLIENT_ID || "91ade825-a716-478b-9806-a484b613042a",
+        clientSecret:
+          process.env.EXTENSIV_CHARLOTTE_CLIENT_SECRET || "Ll8c3Oswbhggog1Pu2x5+9QbhS259C0r",
         userLoginId: process.env.EXTENSIV_CHARLOTTE_USER_LOGIN_ID || "261",
         customerIdentifier: parseInt(process.env.EXTENSIV_CHARLOTTE_CUSTOMER_ID || "53", 10),
         facilityIdentifier: parseInt(process.env.EXTENSIV_CHARLOTTE_FACILITY_ID || "2", 10),
@@ -73,7 +82,9 @@ export const config = {
       shopDomain: process.env.SHOPIFY_IM8_SHOP_DOMAIN || "testing-im8store.myshopify.com",
       accessToken: process.env.SHOPIFY_IM8_ACCESS_TOKEN || "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",
       apiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
-      webhookSecret: process.env.SHOPIFY_IM8_WEBHOOK_SECRET || "95729db9968a6f279abb9e64a04db8ffea61682940db7314aa208f9a8749e8f0",
+      webhookSecret:
+        process.env.SHOPIFY_IM8_WEBHOOK_SECRET ||
+        "95729db9968a6f279abb9e64a04db8ffea61682940db7314aa208f9a8749e8f0",
       // Location IDs for routing fulfillment
       locations: {
         gps: process.env.SHOPIFY_LOCATION_GPS || "79527313640",
@@ -87,18 +98,23 @@ export const config = {
 
   // CS Platform (Battle Hub) Configuration
   csPlatform: {
-    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_CS_URL || "https://battle-hub-three.vercel.app",
+    baseUrl:
+      process.env.CS_PLATFORM_URL ||
+      process.env.BATTLE_CS_URL ||
+      "https://battle-hub-three.vercel.app",
     // HMAC secret for webhook signature verification
     // Must match BATTLE_BUS_WEBHOOK_SECRET in battle-cs platform
-    webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "e3221dc7cc4dd5aac7053df6bd8d094b9c148053cae5696a64d351bf35b1ab5b",
+    webhookSecret:
+      process.env.CS_PLATFORM_WEBHOOK_SECRET ||
+      "e3221dc7cc4dd5aac7053df6bd8d094b9c148053cae5696a64d351bf35b1ab5b",
     enabled: process.env.CS_PLATFORM_ENABLED !== "false", // Default to true, set to "false" to disable
   },
 
   // Slack Notification Channels
-   slack: {
-    applicationName: 'store',
-    appEnv: 'local',
-    integration: 'real',
+  slack: {
+    applicationName: "store",
+    appEnv: "local",
+    integration: "real",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
     channel: {
       order: process.env.SLACK_ORDER_CHANNEL,
@@ -215,7 +231,9 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
       errors.push("CS_PLATFORM_URL or BATTLE_CS_URL is required when CS Platform is enabled");
     }
     if (!config.csPlatform.webhookSecret) {
-      console.warn("CS_PLATFORM_WEBHOOK_SECRET is not set - webhooks will be sent without signature verification");
+      console.warn(
+        "CS_PLATFORM_WEBHOOK_SECRET is not set - webhooks will be sent without signature verification"
+      );
     }
   }
 

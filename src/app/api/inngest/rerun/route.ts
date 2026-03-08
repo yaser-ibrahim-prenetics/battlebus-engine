@@ -18,13 +18,13 @@ export async function POST(request: NextRequest) {
     if (orderName) {
       // Shopify order names include the # prefix (e.g., #IM8-14931)
       // Ensure we search with the correct format
-      const searchName = orderName.startsWith('#') ? orderName : `#${orderName}`;
+      const searchName = orderName.startsWith("#") ? orderName : `#${orderName}`;
       console.log(`[Inngest Rerun] Fetching order ${searchName} from Shopify for reprocess`);
-      
+
       // Fetch the full order from Shopify
       const orders = await searchOrdersByName(searchName);
       const shopifyOrder = orders?.[0];
-      
+
       if (!shopifyOrder) {
         return NextResponse.json(
           { error: `Order ${orderName} not found in Shopify` },
@@ -72,12 +72,12 @@ export async function POST(request: NextRequest) {
       // If orderName is in eventData, use that to fetch from Shopify
       // Shopify order names include the # prefix (e.g., #IM8-14931)
       const rawOrderName = eventData.orderName;
-      const shopifyOrderName = rawOrderName.startsWith('#') ? rawOrderName : `#${rawOrderName}`;
+      const shopifyOrderName = rawOrderName.startsWith("#") ? rawOrderName : `#${rawOrderName}`;
       console.log(`[Inngest Rerun] Fetching order ${shopifyOrderName} from Shopify`);
-      
+
       const orders = await searchOrdersByName(shopifyOrderName);
       const shopifyOrder = orders?.[0];
-      
+
       if (!shopifyOrder) {
         return NextResponse.json(
           { error: `Order ${shopifyOrderName} not found in Shopify` },
@@ -137,27 +137,21 @@ export async function POST(request: NextRequest) {
     // This requires the signing key for authentication
     if (runId) {
       const INNGEST_SIGNING_KEY = process.env.INNGEST_SIGNING_KEY;
-      
+
       if (!INNGEST_SIGNING_KEY) {
-        return NextResponse.json(
-          { error: "INNGEST_SIGNING_KEY not configured" },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: "INNGEST_SIGNING_KEY not configured" }, { status: 500 });
       }
 
-      const response = await fetch(
-        `https://api.inngest.com/v1/runs/${runId}/rerun`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${INNGEST_SIGNING_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ...(functionId && { function_id: functionId }),
-          }),
-        }
-      );
+      const response = await fetch(`https://api.inngest.com/v1/runs/${runId}/rerun`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${INNGEST_SIGNING_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(functionId && { function_id: functionId }),
+        }),
+      });
 
       if (!response.ok) {
         const error = await response.text();

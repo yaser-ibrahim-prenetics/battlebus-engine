@@ -61,25 +61,30 @@ export const processBackorder = inngest.createFunction(
 
     // Notify Battle Hub of backorder creation
     await step.run("notify-hub-backorder-created", async () => {
-      await csPlatform.sendOrderUpdate({
-        id: shopifyOrderId,
-        name: shopifyOrderName,
-        shopifyOrderId,
-        shopifyOrderName,
-        d365OrderNumber,
-        warehouse,
-        status: "backorder",
-        error: errorMessage,
-        errorType,
-        retryAt: new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString(),
-      }, {});
+      await csPlatform.sendOrderUpdate(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber,
+          warehouse,
+          status: "backorder",
+          error: errorMessage,
+          errorType,
+          retryAt: new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString(),
+        },
+        {}
+      );
     });
 
     // Retry loop
     while (retryCount < maxRetries) {
       retryCount++;
 
-      console.log(`[Backorder] Waiting for retry event or timeout (${waitTimeoutHours}h) - attempt ${retryCount}/${maxRetries}`);
+      console.log(
+        `[Backorder] Waiting for retry event or timeout (${waitTimeoutHours}h) - attempt ${retryCount}/${maxRetries}`
+      );
 
       // Wait for either:
       // 1. A manual retry event from Battle Hub (backorder/retry)
@@ -150,17 +155,20 @@ export const processBackorder = inngest.createFunction(
             `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
           );
 
-          await csPlatform.sendOrderUpdate({
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber,
-            warehouse,
-            status: "processing",
-            error: undefined,
-            errorType: undefined,
-          }, {});
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber,
+              warehouse,
+              status: "processing",
+              error: undefined,
+              errorType: undefined,
+            },
+            {}
+          );
         });
 
         // Emit resolved event
@@ -208,22 +216,26 @@ export const processBackorder = inngest.createFunction(
 
       // Update Battle Hub with retry status
       await step.run(`notify-hub-retry-${retryCount}`, async () => {
-        const nextRetryAt = retryCount < maxRetries
-          ? new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString()
-          : undefined;
+        const nextRetryAt =
+          retryCount < maxRetries
+            ? new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString()
+            : undefined;
 
-        await csPlatform.sendOrderUpdate({
-          id: shopifyOrderId,
-          name: shopifyOrderName,
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber,
-          warehouse,
-          status: "backorder",
-          error: retryResult.error,
-          errorType,
-          retryAt: nextRetryAt,
-        }, {});
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber,
+            warehouse,
+            status: "backorder",
+            error: retryResult.error,
+            errorType,
+            retryAt: nextRetryAt,
+          },
+          {}
+        );
       });
     }
 
@@ -234,25 +246,28 @@ export const processBackorder = inngest.createFunction(
       await slack.sendErrorMessage(
         "gpslow",
         `[Backorder EXHAUSTED] ${shopifyOrderName}\n` +
-        `Error: ${errorType} - ${errorMessage}\n` +
-        `SKUs: ${failedSkus.join(", ")}\n` +
-        `Warehouse: ${warehouse}\n` +
-        `D365: ${d365OrderNumber}\n` +
-        `Retried ${maxRetries} times over ${maxRetries * retryIntervalHours}h\n` +
-        `Action Required: Manual intervention needed`
+          `Error: ${errorType} - ${errorMessage}\n` +
+          `SKUs: ${failedSkus.join(", ")}\n` +
+          `Warehouse: ${warehouse}\n` +
+          `D365: ${d365OrderNumber}\n` +
+          `Retried ${maxRetries} times over ${maxRetries * retryIntervalHours}h\n` +
+          `Action Required: Manual intervention needed`
       );
 
-      await csPlatform.sendOrderUpdate({
-        id: shopifyOrderId,
-        name: shopifyOrderName,
-        shopifyOrderId,
-        shopifyOrderName,
-        d365OrderNumber,
-        warehouse,
-        status: "backorder_exhausted",
-        error: errorMessage,
-        errorType,
-      }, {});
+      await csPlatform.sendOrderUpdate(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber,
+          warehouse,
+          status: "backorder_exhausted",
+          error: errorMessage,
+          errorType,
+        },
+        {}
+      );
     });
 
     return {

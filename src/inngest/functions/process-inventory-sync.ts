@@ -74,7 +74,9 @@ export const processInventorySync = inngest.createFunction(
           `⚠️ Inventory sync issue for item ${inventoryItemId} at location ${locationId}\nAvailable: ${inventory.available}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`
         );
       }
-      console.log(`[InventorySync] Sync complete — D365: ${d365Result.message}, GPS: ${gpsResult.message}`);
+      console.log(
+        `[InventorySync] Sync complete — D365: ${d365Result.message}, GPS: ${gpsResult.message}`
+      );
     });
 
     const result = {
@@ -93,4 +95,3 @@ export const processInventorySync = inngest.createFunction(
     return result;
   }
 );
-

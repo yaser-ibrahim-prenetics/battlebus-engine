@@ -14,7 +14,7 @@ const D365_SCOPE = process.env.D365_SCOPE;
 
 async function getAuthToken(): Promise<string> {
   const tokenUrl = `https://login.microsoftonline.com/${D365_TENANT_ID}/oauth2/v2.0/token`;
-  
+
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -36,10 +36,10 @@ async function getAuthToken(): Promise<string> {
 
 async function listItems(searchTerm?: string) {
   const token = await getAuthToken();
-  
+
   // Query released products (items available for sale)
   let url = `${D365_BASE_URL}/data/ReleasedProducts?$top=50&$select=ItemNumber,ProductName,ProductDescription`;
-  
+
   if (searchTerm) {
     url += `&$filter=contains(ItemNumber,'${searchTerm}') or contains(ProductName,'${searchTerm}')`;
   }
@@ -59,13 +59,15 @@ async function listItems(searchTerm?: string) {
   }
 
   const data = await response.json();
-  
+
   console.log(`Found ${data.value.length} items:\n`);
   console.log("ItemNumber".padEnd(25) + "ProductName");
   console.log("-".repeat(80));
-  
+
   for (const item of data.value) {
-    console.log(`${(item.ItemNumber || "").padEnd(25)}${item.ProductName || item.ProductDescription || ""}`);
+    console.log(
+      `${(item.ItemNumber || "").padEnd(25)}${item.ProductName || item.ProductDescription || ""}`
+    );
   }
 
   return data.value;
@@ -73,7 +75,7 @@ async function listItems(searchTerm?: string) {
 
 async function searchServiceItems() {
   const token = await getAuthToken();
-  
+
   // Search for service items (SER in the name)
   const url = `${D365_BASE_URL}/data/ReleasedProducts?$filter=contains(ItemNumber,'SER') or contains(ItemNumber,'SERVICE') or contains(ProductName,'Service') or contains(ProductName,'Tax') or contains(ProductName,'Shipping')&$select=ItemNumber,ProductName,ProductDescription&$top=50`;
 
@@ -92,7 +94,7 @@ async function searchServiceItems() {
   }
 
   const data = await response.json();
-  
+
   if (data.value.length === 0) {
     console.log("No service items found. Listing all IM8 items instead...\n");
     return listItems("IM8");
@@ -101,9 +103,11 @@ async function searchServiceItems() {
   console.log(`Found ${data.value.length} service items:\n`);
   console.log("ItemNumber".padEnd(25) + "ProductName");
   console.log("-".repeat(80));
-  
+
   for (const item of data.value) {
-    console.log(`${(item.ItemNumber || "").padEnd(25)}${item.ProductName || item.ProductDescription || ""}`);
+    console.log(
+      `${(item.ItemNumber || "").padEnd(25)}${item.ProductName || item.ProductDescription || ""}`
+    );
   }
 
   return data.value;

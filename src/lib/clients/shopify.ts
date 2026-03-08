@@ -31,15 +31,15 @@ function buildUrl(endpoint: string): string {
  * Get inventory levels per location for an inventory item
  * Returns location-wise breakdown of inventory
  */
-export async function getInventoryLevelsByLocation(
-  inventoryItemId: number
-): Promise<Array<{
-  location_id: string;
-  location_name: string;
-  available: number;
-  reserved: number;
-  committed: number;
-}>> {
+export async function getInventoryLevelsByLocation(inventoryItemId: number): Promise<
+  Array<{
+    location_id: string;
+    location_name: string;
+    available: number;
+    reserved: number;
+    committed: number;
+  }>
+> {
   const url = buildUrl(`/inventory_levels.json?inventory_item_ids=${inventoryItemId}`);
 
   const response = await fetch(url, {
@@ -92,19 +92,21 @@ export async function getInventoryLevelsByLocation(
  * Get all locations from Shopify
  * Returns all active locations with their details
  */
-export async function getAllLocations(): Promise<Array<{
-  id: string;
-  name: string;
-  address1?: string;
-  address2?: string;
-  city?: string;
-  province?: string;
-  country?: string;
-  zip?: string;
-  phone?: string;
-  active: boolean;
-  fulfillment_service_id?: string;
-}>> {
+export async function getAllLocations(): Promise<
+  Array<{
+    id: string;
+    name: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    country?: string;
+    zip?: string;
+    phone?: string;
+    active: boolean;
+    fulfillment_service_id?: string;
+  }>
+> {
   const url = buildUrl(`/locations.json`);
 
   const response = await fetch(url, {
@@ -162,7 +164,7 @@ export async function getFulfillmentOrders(
   orderId: string | number
 ): Promise<IShopifyFulfillmentOrder[]> {
   if (config.features.enabledShopifyOrderMock) {
-    const mockData = await import('../mocks/shopify/fulfillments.json');
+    const mockData = await import("../mocks/shopify/fulfillments.json");
     console.log(`Using mock shopify fulfillment data for order ${orderId}`);
     return mockData.fulfillment_orders;
   }
@@ -198,7 +200,7 @@ export async function createFulfillment(
   platform?: string
 ): Promise<ShopifyFulfillment> {
   if (config.features.enabledShopifyCreateFulfillmentMock) {
-    const mockData = await import('../mocks/shopify/fulfillmentsCreate.json');
+    const mockData = await import("../mocks/shopify/fulfillmentsCreate.json");
     console.log(`Using mock shopify fulfillment data to create order ${fulfillmentOrderId}`);
     return mockData.fulfillment;
   }
@@ -210,7 +212,7 @@ export async function createFulfillment(
   const fulfillmentOrderEntry: any = {
     fulfillment_order_id: fulfillmentOrderId,
   };
-  
+
   // Only include fulfillment_order_line_items if lineItems is provided and not empty
   if (lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
     fulfillmentOrderEntry.fulfillment_order_line_items = lineItems;
@@ -258,7 +260,7 @@ export async function createFulfillment(
  * Get Unfulfilled Orders
  * Fetches orders that are not yet fulfilled (unfulfilled or partial)
  * Includes any status (open, closed, etc.) to catch all pending fulfillments
- * 
+ *
  * Note: Uses created_at_min to include orders from the last 30 days,
  * since the API returns orders in descending order by creation date
  * and older orders may be missed if we only use limit.
@@ -287,9 +289,7 @@ export async function getUnfulfilledOrders(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(
-      `Failed to get unfulfilled orders: ${response.status} - ${error}`
-    );
+    throw new Error(`Failed to get unfulfilled orders: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
@@ -300,11 +300,9 @@ export async function getUnfulfilledOrders(
 /**
  * Search Orders by Name (e.g., IM8-1001)
  */
-export async function searchOrdersByName(
-  orderName: string,
-): Promise<IShopifyOrder[]> {
+export async function searchOrdersByName(orderName: string): Promise<IShopifyOrder[]> {
   if (config.features.enabledShopifyOrderMock) {
-    const mockData = await import('../mocks/shopify/orders.json');
+    const mockData = await import("../mocks/shopify/orders.json");
     console.log(`Using mock shopify order data for order ${orderName}`);
     return mockData.orders;
   }
@@ -318,9 +316,7 @@ export async function searchOrdersByName(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(
-      `Failed to search orders by name: ${response.status} - ${error}`
-    );
+    throw new Error(`Failed to search orders by name: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
@@ -352,10 +348,7 @@ export async function getOrderTransactions(
 /**
  * Verify Shopify Webhook Signature
  */
-export function verifyWebhookSignature(
-  body: string,
-  hmacHeader: string
-): boolean {
+export function verifyWebhookSignature(body: string, hmacHeader: string): boolean {
   const hash = crypto
     .createHmac("sha256", config.shopify.im8.webhookSecret)
     .update(body, "utf8")
@@ -392,7 +385,7 @@ export async function setGpsOrderMetafield(
   data: GpsOrderMetafield
 ): Promise<void> {
   const url = buildUrl(`/orders/${orderId}/metafields.json`);
-  
+
   const body = {
     metafield: {
       namespace: GPS_METAFIELD_NAMESPACE,
@@ -438,7 +431,7 @@ export async function getGpsOrderMetafield(
 
   const data = await response.json();
   const metafields = data.metafields || [];
-  
+
   const gpsMetafield = metafields.find(
     (mf: any) => mf.namespace === GPS_METAFIELD_NAMESPACE && mf.key === GPS_METAFIELD_KEY
   );
@@ -464,7 +457,7 @@ export async function setFulfillmentMetadata(
   platform: string
 ): Promise<void> {
   const url = buildUrl(`/orders/${orderId}/metafields.json`);
-  
+
   const metadata = {
     fulfillmentId: fulfillmentId.toString(),
     fulfillmentType,
@@ -492,7 +485,9 @@ export async function setFulfillmentMetadata(
     console.warn(`[Shopify] Failed to set fulfillment metadata: ${response.status} - ${error}`);
     // Don't throw - this is optional metadata
   } else {
-    console.log(`[Shopify] Set fulfillment metadata on order ${orderId} for fulfillment ${fulfillmentId}`);
+    console.log(
+      `[Shopify] Set fulfillment metadata on order ${orderId} for fulfillment ${fulfillmentId}`
+    );
   }
 }
 
@@ -506,12 +501,12 @@ export async function getUnfulfilledGpsOrders(
 ): Promise<Array<ShopifyOrder & { gpsData: GpsOrderMetafield }>> {
   // Get unfulfilled orders
   const orders = await getUnfulfilledOrders(limit, daysBack);
-  
+
   console.log(`[Shopify] Checking ${orders.length} orders for GPS metafields...`);
-  
+
   // Fetch GPS metafields for each order
   const gpsOrders: Array<ShopifyOrder & { gpsData: GpsOrderMetafield }> = [];
-  
+
   for (const order of orders) {
     try {
       const gpsData = await getGpsOrderMetafield(order.id);
@@ -527,7 +522,7 @@ export async function getUnfulfilledGpsOrders(
       console.warn(`[Shopify] Failed to get GPS metafield for order ${order.id}: ${error}`);
     }
   }
-  
+
   console.log(`[Shopify] Found ${gpsOrders.length} orders with GPS metafields`);
   return gpsOrders;
 }
@@ -535,13 +530,11 @@ export async function getUnfulfilledGpsOrders(
 /**
  * Get Order Risk
  */
-export async function getOrderRisks(
-  orderId: string | number,
-): Promise<ShopifyFraudAnalysis[]> {
+export async function getOrderRisks(orderId: string | number): Promise<ShopifyFraudAnalysis[]> {
   if (!config.features.enabledShopifyRiskCheck) return [];
 
   if (config.features.enabledShopifyRiskMock) {
-    const mockData = await import('../mocks/shopify/risks.json');
+    const mockData = await import("../mocks/shopify/risks.json");
     console.log(`Using mock risk data for order ${orderId}`);
     return mockData.risks;
   }

@@ -69,14 +69,20 @@ async function main() {
   console.log("=".repeat(60));
   console.log("SUMMARY");
   console.log("=".repeat(60));
-  
+
   const detailCode = (detailResult.body as { code: number }).code;
   const createCode = (createResult.body as { code: number }).code;
   const invCode = (inventoryResult.body as { code: number }).code;
 
-  console.log(`outboundOrder/detail: code=${detailCode} ${detailCode === 200 || detailCode === 0 ? "✅ WORKS" : detailCode === 11008 ? "❌ NO PERMISSION" : "⚠️ OTHER ERROR"}`);
-  console.log(`outboundOrder/create: code=${createCode} ${createCode === 200 || createCode === 0 ? "✅ WORKS" : createCode === 11008 ? "❌ NO PERMISSION" : "⚠️ PARAM/OTHER ERROR (expected)"}`);
-  console.log(`inventory/list:       code=${invCode} ${invCode === 200 || invCode === 0 ? "✅ WORKS" : invCode === 11008 ? "❌ NO PERMISSION" : "⚠️ OTHER ERROR"}`);
+  console.log(
+    `outboundOrder/detail: code=${detailCode} ${detailCode === 200 || detailCode === 0 ? "✅ WORKS" : detailCode === 11008 ? "❌ NO PERMISSION" : "⚠️ OTHER ERROR"}`
+  );
+  console.log(
+    `outboundOrder/create: code=${createCode} ${createCode === 200 || createCode === 0 ? "✅ WORKS" : createCode === 11008 ? "❌ NO PERMISSION" : "⚠️ PARAM/OTHER ERROR (expected)"}`
+  );
+  console.log(
+    `inventory/list:       code=${invCode} ${invCode === 200 || invCode === 0 ? "✅ WORKS" : invCode === 11008 ? "❌ NO PERMISSION" : "⚠️ OTHER ERROR"}`
+  );
 }
 
 main().catch(console.error);

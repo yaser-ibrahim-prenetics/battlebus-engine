@@ -60,13 +60,9 @@
       }
     ],
     "tracking_number": "784497187118",
-    "tracking_numbers": [
-      "784497187118"
-    ],
+    "tracking_numbers": ["784497187118"],
     "tracking_url": "https://www.fedex.com/apps/fedextrack/?tracknumbers=784497187118",
-    "tracking_urls": [
-      "https://www.fedex.com/apps/fedextrack/?tracknumbers=784497187118"
-    ],
+    "tracking_urls": ["https://www.fedex.com/apps/fedextrack/?tracknumbers=784497187118"],
     "receipt": {},
     "name": "#591560.1",
     "admin_graphql_api_id": "gid://shopify/Fulfillment/7891234567891"

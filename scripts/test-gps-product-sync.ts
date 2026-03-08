@@ -1,14 +1,14 @@
 #!/usr/bin/env tsx
 /**
  * Test GPS Product Batch Create API
- * 
+ *
  * Tests the /openapi/v1/product/batchCreate endpoint
- * 
+ *
  * Required Environment Variables:
  * - GPS_BASE_URL (default: https://api.xlwms.com)
  * - GPS_API_KEY (your GPS appKey)
  * - GPS_API_SECRET (your GPS appSecret)
- * 
+ *
  * Optional:
  * - GPS_UK_API_KEY (for GPS UK Warehouse)
  * - GPS_UK_API_SECRET (for GPS UK Warehouse)
@@ -34,7 +34,7 @@ async function testGpsProductBatchCreate() {
   console.log("GPS PRODUCT BATCH CREATE API TEST");
   console.log("=".repeat(80));
   console.log();
-  
+
   // Check credentials
   console.log("📋 Configuration:");
   console.log(`   Base URL: ${GPS_BASE_URL}`);
@@ -84,7 +84,7 @@ async function testGpsProductBatchCreate() {
   // Build request payload
   const timestamp = epochInSeconds().toString();
   const productDataArray = [testProduct];
-  
+
   const payload = {
     appKey: GPS_API_KEY,
     data: productDataArray,
@@ -126,7 +126,7 @@ async function testGpsProductBatchCreate() {
     if (result.code === 200) {
       console.log("✅ SUCCESS!");
       console.log();
-      
+
       if (result.data && Array.isArray(result.data)) {
         console.log("📊 Product Results:");
         result.data.forEach((item: any, index: number) => {
@@ -145,7 +145,7 @@ async function testGpsProductBatchCreate() {
       console.error();
       console.error("Error Details:");
       console.error(JSON.stringify(result, null, 2));
-      
+
       // Common error codes from GPS documentation
       if (result.code === "100001") {
         console.error();
@@ -188,4 +188,3 @@ testGpsProductBatchCreate()
     console.error("Test failed:", error);
     process.exit(1);
   });
-

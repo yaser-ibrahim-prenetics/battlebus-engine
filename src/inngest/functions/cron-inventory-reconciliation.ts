@@ -19,7 +19,7 @@ import { config } from "@/lib/config";
 import * as inventorySync from "@/lib/services/inventory-sync";
 import type { InventoryDiff } from "@/lib/services/inventory-sync";
 import * as slack from "@/lib/clients/slack";
-import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
+import { THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
 
 // ============================================================================
 // CONFIGURATION
@@ -54,7 +54,8 @@ export const cronInventoryReconciliation = inngest.createFunction(
   {
     id: "cron-inventory-reconciliation",
     name: "3-Way Inventory Reconciliation",
-    concurrency: { limit: 1 }, // Only one reconciliation at a time
+    retries: RETRY_CONFIGS.CRON,
+    concurrency: { limit: 1 },
     throttle: THROTTLE_CONFIGS.CRON,
   },
   { cron: `*/${config.gps.inventorySyncIntervalMinutes || 120} * * * *` },
@@ -82,7 +83,9 @@ export const cronInventoryReconciliation = inngest.createFunction(
     // Note: Inngest serializes Date to string, so we use a looser type here
     const results: {
       warehouse: string;
-      reconciliation: Omit<inventorySync.ReconciliationResult, "timestamp"> & { timestamp: Date | string };
+      reconciliation: Omit<inventorySync.ReconciliationResult, "timestamp"> & {
+        timestamp: Date | string;
+      };
     }[] = [];
 
     // STEP 1: Run reconciliation for each warehouse
@@ -197,7 +200,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
     name: "Trigger Inventory Reconciliation",
   },
   { event: "inventory/reconciliation.requested" },
-  async ({ step, event }: { step: any, event: any }) => {
+  async ({ step, event }: { step: any; event: any }) => {
     const { skus, warehouse, autoSync = false } = event.data;
 
     console.log(
@@ -232,10 +235,11 @@ export const syncSkuInventory = inngest.createFunction(
   {
     id: "sync-sku-inventory",
     name: "Sync SKU Inventory",
-    retries: 3,
+    retries: RETRY_CONFIGS.STANDARD,
+    concurrency: { limit: 2 },
   },
   { event: "inventory/sku.sync.requested" },
-  async ({ step, event }: { step: any, event: any }) => {
+  async ({ step, event }: { step: any; event: any }) => {
     const { sku, source, destination, warehouse } = event.data;
 
     console.log(

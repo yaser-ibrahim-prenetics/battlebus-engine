@@ -33,13 +33,15 @@ export const processProductSync = inngest.createFunction(
     const product = productJson as ShopifyProductPayload;
 
     console.log(`[ProductSync] ========================================`);
-    console.log(`[ProductSync] Processing product: ${productTitle} (${productId}) from ${shopifyStore}`);
+    console.log(
+      `[ProductSync] Processing product: ${productTitle} (${productId}) from ${shopifyStore}`
+    );
     console.log(`[ProductSync] Event: ${event.name}`);
-    
+
     // Handle deletion
     if (event.name === "shopify/product.deleted") {
       console.log(`[ProductSync] Product deletion detected - syncing to D365 and GPS`);
-      
+
       // Step 1: Delete from D365
       const d365Result = await step.run("delete-product-from-d365", async () => {
         console.log(`[ProductSync] Deleting product from D365...`);
@@ -130,13 +132,16 @@ export const processProductSync = inngest.createFunction(
 
     // Step 3: Fetch location-wise inventory from Shopify
     const inventoryLevelsByVariant = await step.run("fetch-shopify-inventory-levels", async () => {
-      const levelsMap: Record<number, Array<{
-        location_id: string;
-        location_name: string;
-        available: number;
-        reserved: number;
-        committed: number;
-      }>> = {};
+      const levelsMap: Record<
+        number,
+        Array<{
+          location_id: string;
+          location_name: string;
+          available: number;
+          reserved: number;
+          committed: number;
+        }>
+      > = {};
 
       for (const variant of variants) {
         if (variant.inventory_item_id) {
@@ -197,7 +202,10 @@ export const processProductSync = inngest.createFunction(
     await step.run("notify-product-sync", async () => {
       const isCreate = event.name === "shopify/product.created";
       const action = isCreate ? "created" : "updated";
-      const skus = variants.map((v) => v.sku).filter(Boolean).join(", ");
+      const skus = variants
+        .map((v) => v.sku)
+        .filter(Boolean)
+        .join(", ");
       await slack.sendOrderMessage(
         SlackChannelEnum.SHOPIFY,
         `Product ${action}: ${productTitle} (${productId})\nSKUs: ${skus || "none"}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`
@@ -220,4 +228,3 @@ export const processProductSync = inngest.createFunction(
     return result;
   }
 );
-

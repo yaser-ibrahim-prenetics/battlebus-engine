@@ -10,12 +10,12 @@
 
 Every week, our Slack channels are filled with messages like:
 
-| Message | Impact |
-|---------|--------|
-| *"Can we rerun the sync?"* | Engineering time wasted |
-| *"4000 orders still not fulfilled"* | 17-day backlog |
-| *"Order created Dec 18 just synced Jan 2"* | 15-day delay |
-| *"Please investigate this order"* | Manual investigation |
+| Message                                    | Impact                  |
+| ------------------------------------------ | ----------------------- |
+| _"Can we rerun the sync?"_                 | Engineering time wasted |
+| _"4000 orders still not fulfilled"_        | 17-day backlog          |
+| _"Order created Dec 18 just synced Jan 2"_ | 15-day delay            |
+| _"Please investigate this order"_          | Manual investigation    |
 
 **The root cause:** Spock Store processes orders **one at a time** with a 10-second polling interval.
 
@@ -81,30 +81,34 @@ Battle Bus:  1,000 orders = 2 minutes (concurrent)
 ## Why Battle Bus + Hub?
 
 ### For Ops Team
-| Before (Spock Store) | After (Battle Bus + Hub) |
-|----------------------|--------------------------|
-| "Can we rerun the sync?" | One-click bulk retry in Hub |
-| Manual order investigation | Order Lifecycle Tracker |
-| No warning before stockout | Proactive inventory alerts |
-| OOS orders need manual replay | Automatic OOS retry queue |
+
+| Before (Spock Store)          | After (Battle Bus + Hub)    |
+| ----------------------------- | --------------------------- |
+| "Can we rerun the sync?"      | One-click bulk retry in Hub |
+| Manual order investigation    | Order Lifecycle Tracker     |
+| No warning before stockout    | Proactive inventory alerts  |
+| OOS orders need manual replay | Automatic OOS retry queue   |
 
 ### For CS Team
-| Before | After |
-|--------|-------|
+
+| Before                           | After                     |
+| -------------------------------- | ------------------------- |
 | Ask Engineering for order status | Self-service Order Lookup |
-| Can't see where order is stuck | Visual lifecycle pipeline |
+| Can't see where order is stuck   | Visual lifecycle pipeline |
 
 ### For Finance Team
-| Before | After |
-|--------|-------|
-| Manual reconciliation | Automated daily reports |
+
+| Before                    | After                           |
+| ------------------------- | ------------------------------- |
+| Manual reconciliation     | Automated daily reports         |
 | Order count discrepancies | Automatic discrepancy detection |
 
 ### For Management
-| Before | After |
-|--------|-------|
+
+| Before                             | After                          |
+| ---------------------------------- | ------------------------------ |
 | Find out about problems from Slack | Proactive alerts before crises |
-| No visibility into system health | Real-time dashboard |
+| No visibility into system health   | Real-time dashboard            |
 
 ---
 
@@ -112,12 +116,12 @@ Battle Bus:  1,000 orders = 2 minutes (concurrent)
 
 ### The Math
 
-| Scenario | Spock Store | Battle Bus | Improvement |
-|----------|-------------|------------|-------------|
-| Daily Skio burst (1,375 orders) | ~80 minutes | ~2.5 minutes | **32x faster** |
-| January 8th resync (1,847 orders) | 3h 35m | ~3 minutes | **69x faster** |
-| 7,000 order OOS backlog | 6h 48m | ~12 minutes | **34x faster** |
-| December backlog (4,000 orders) | 17 days | ~7 minutes | **3,500x faster** |
+| Scenario                          | Spock Store | Battle Bus   | Improvement       |
+| --------------------------------- | ----------- | ------------ | ----------------- |
+| Daily Skio burst (1,375 orders)   | ~80 minutes | ~2.5 minutes | **32x faster**    |
+| January 8th resync (1,847 orders) | 3h 35m      | ~3 minutes   | **69x faster**    |
+| 7,000 order OOS backlog           | 6h 48m      | ~12 minutes  | **34x faster**    |
+| December backlog (4,000 orders)   | 17 days     | ~7 minutes   | **3,500x faster** |
 
 ### Why?
 
@@ -142,15 +146,19 @@ Rate: ~6 orders/minute               Rate: ~600 orders/minute
 ## Key Features
 
 ### 1. Concurrent Processing
+
 ```typescript
 // Battle Bus processes multiple orders simultaneously
-concurrency: [{ 
-  limit: 3,  // 3 orders per country at once
-  key: "event.data.orderJson.shipping_address.country_code" 
-}]
+concurrency: [
+  {
+    limit: 3, // 3 orders per country at once
+    key: "event.data.orderJson.shipping_address.country_code",
+  },
+];
 ```
 
 ### 2. Automatic OOS Retry
+
 ```typescript
 // No more manual replays - system handles it
 if (error instanceof OutOfStockError) {
@@ -160,12 +168,14 @@ if (error instanceof OutOfStockError) {
 ```
 
 ### 3. Built-in Idempotency
+
 ```typescript
 // Duplicate webhooks? No problem.
-idempotency: "event.data.shopifyOrderId"
+idempotency: "event.data.shopifyOrderId";
 ```
 
 ### 4. Durable Execution
+
 ```typescript
 // Each step is checkpointed - resume from failure
 const d365Header = await step.run("create-d365-header", ...);
@@ -174,6 +184,7 @@ const d365Lines = await step.run("create-d365-lines", ...);
 ```
 
 ### 5. Visual Observability
+
 - See every order's journey through the pipeline
 - Click to see exact step that failed
 - One-click retry from Inngest dashboard
@@ -182,17 +193,18 @@ const d365Lines = await step.run("create-d365-lines", ...);
 
 ## The Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Battle Hub** | Next.js + Shadcn/ui | Operations dashboard |
-| **Battle Bus** | Inngest + Vercel | Event processing engine |
-| **Auth** | Firebase | User management |
-| **Database** | PostgreSQL | Order state & lifecycle |
-| **Notifications** | Slack API | Proactive alerts |
+| Component         | Technology          | Purpose                 |
+| ----------------- | ------------------- | ----------------------- |
+| **Battle Hub**    | Next.js + Shadcn/ui | Operations dashboard    |
+| **Battle Bus**    | Inngest + Vercel    | Event processing engine |
+| **Auth**          | Firebase            | User management         |
+| **Database**      | PostgreSQL          | Order state & lifecycle |
+| **Notifications** | Slack API           | Proactive alerts        |
 
 ### Why Vercel + Inngest?
 
 Used by industry leaders:
+
 - **Vercel**: The Washington Post, eBay, GitHub, Notion
 - **Inngest**: SoundCloud, Resend, Clerk
 
@@ -215,6 +227,7 @@ Used by industry leaders:
 ```
 
 ### Happy Path
+
 1. Customer orders on Shopify
 2. Webhook triggers Battle Bus instantly
 3. D365 sales order created (with checkpointing)
@@ -224,6 +237,7 @@ Used by industry leaders:
 7. Customer gets tracking email
 
 ### Error Recovery
+
 1. Step fails (network error, timeout, etc.)
 2. Inngest auto-retries (up to 5 times)
 3. If still failing, visible in dashboard
@@ -234,19 +248,20 @@ Used by industry leaders:
 
 ## Inngest Functions
 
-| Function | Trigger | Description |
-|----------|---------|-------------|
-| `process-shopify-order` | `shopify/order.created` | Creates D365 SO, sends to warehouse |
-| `process-refund` | `shopify/refund.created` | Creates D365 credit note |
-| `process-gps-fulfilment` | `gps/fulfilment.received` | Updates Shopify + D365 |
-| `process-stord-fulfilment` | `stord/fulfilment.received` | Updates Shopify + D365 |
-| `process-cancellation` | `shopify/order.cancelled` | Cancels in GPS + D365 |
+| Function                   | Trigger                     | Description                         |
+| -------------------------- | --------------------------- | ----------------------------------- |
+| `process-shopify-order`    | `shopify/order.created`     | Creates D365 SO, sends to warehouse |
+| `process-refund`           | `shopify/refund.created`    | Creates D365 credit note            |
+| `process-gps-fulfilment`   | `gps/fulfilment.received`   | Updates Shopify + D365              |
+| `process-stord-fulfilment` | `stord/fulfilment.received` | Updates Shopify + D365              |
+| `process-cancellation`     | `shopify/order.cancelled`   | Cancels in GPS + D365               |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
+
 - Node.js 18+
 - Vercel account
 - Inngest account
@@ -279,6 +294,7 @@ npx cloudflared tunnel --url http://localhost:3000
 ```
 
 Visit:
+
 - App: http://localhost:3000
 - Inngest Dev UI: http://localhost:8288
 
@@ -365,26 +381,28 @@ src/
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE_EXPLAINED.md](docs/ARCHITECTURE_EXPLAINED.md) | Deep dive into system architecture |
-| [BATTLE_HUB_POC_ROADMAP.md](docs/BATTLE_HUB_POC_ROADMAP.md) | Complete feature specifications |
-| [BATTLE_HUB_SIMPLE_OVERVIEW.md](docs/BATTLE_HUB_SIMPLE_OVERVIEW.md) | Non-technical overview |
-| [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md) | Detailed performance comparison |
-| [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md) | Demo presentation script |
-| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Development progress |
+| Document                                                            | Description                        |
+| ------------------------------------------------------------------- | ---------------------------------- |
+| [ARCHITECTURE_EXPLAINED.md](docs/ARCHITECTURE_EXPLAINED.md)         | Deep dive into system architecture |
+| [BATTLE_HUB_POC_ROADMAP.md](docs/BATTLE_HUB_POC_ROADMAP.md)         | Complete feature specifications    |
+| [BATTLE_HUB_SIMPLE_OVERVIEW.md](docs/BATTLE_HUB_SIMPLE_OVERVIEW.md) | Non-technical overview             |
+| [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md)             | Detailed performance comparison    |
+| [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md)                       | Demo presentation script           |
+| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)                         | Development progress               |
 
 ---
 
 ## The Bottom Line
 
 **No more:**
+
 - ❌ "Can we rerun the sync?"
 - ❌ "Please investigate this order"
 - ❌ "4000 orders still not fulfilled"
 - ❌ "Order created Dec 18 just synced Jan 2"
 
 **Instead:**
+
 - ✅ Self-service bulk operations
 - ✅ Visual order lifecycle tracking
 - ✅ Automatic OOS retry
@@ -395,16 +413,19 @@ src/
 ## Migration from Spock Store
 
 ### Phase 1: Shadow Mode
+
 - Deploy Battle Bus with `DRY_RUN_MODE=true`
 - Capture same webhooks as Spock Store
 - Compare processing times
 
 ### Phase 2: Parallel Run
+
 - Enable Battle Bus for non-critical flows
 - Monitor for issues
 - Validate idempotency
 
 ### Phase 3: Cutover
+
 - Point primary webhooks to Battle Bus
 - Disable Spock Store polling
 - Monitor via Battle Hub dashboard
@@ -413,13 +434,13 @@ src/
 
 ## Success Metrics
 
-| Metric | Spock Store | Battle Bus Target |
-|--------|-------------|-------------------|
-| Order processing time | ~10s per order | <1s per order |
-| Daily Skio burst | ~80 minutes | <3 minutes |
-| Manual retries/week | 15-20 hours | <1 hour |
-| OOS resolution | Manual next-day | Automatic 4-hour |
-| Visibility | Check database | Real-time dashboard |
+| Metric                | Spock Store     | Battle Bus Target   |
+| --------------------- | --------------- | ------------------- |
+| Order processing time | ~10s per order  | <1s per order       |
+| Daily Skio burst      | ~80 minutes     | <3 minutes          |
+| Manual retries/week   | 15-20 hours     | <1 hour             |
+| OOS resolution        | Manual next-day | Automatic 4-hour    |
+| Visibility            | Check database  | Real-time dashboard |
 
 ---
 

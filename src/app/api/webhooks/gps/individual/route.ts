@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { inngest } from '@/inngest/client';
+import { NextRequest, NextResponse } from "next/server";
+import { inngest } from "@/inngest/client";
 
-import { errorResponse, successResponse } from '@/lib/utils/response';
-import { isValidGpsWarehouse } from '@/lib/helpers/warehouse';
-import { GpsWarehouseNameEnum, IGpsManualProcessRequest } from '@/lib/types/gps';
-import { IResponse } from '@/lib/types';
-import * as gps from '@/lib/clients/gps';
+import { errorResponse, successResponse } from "@/lib/utils/response";
+import { isValidGpsWarehouse } from "@/lib/helpers/warehouse";
+import { GpsWarehouseNameEnum, IGpsManualProcessRequest } from "@/lib/types/gps";
+import { IResponse } from "@/lib/types";
+import * as gps from "@/lib/clients/gps";
 
 /**
  * POST - Process GPS orders by batch and process it individually
@@ -13,8 +13,8 @@ import * as gps from '@/lib/clients/gps';
 export async function POST(request: NextRequest): Promise<NextResponse<IResponse<any>>> {
   try {
     const body = await request.text();
-    const signature = request.headers.get('x-signature');
-    const timestamp = request.headers.get('x-timestamp');
+    const signature = request.headers.get("x-signature");
+    const timestamp = request.headers.get("x-timestamp");
 
     // Parse payload
     const payload: IGpsManualProcessRequest = JSON.parse(body);
@@ -22,20 +22,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
 
     // Verify webhook signature
     if (signature && timestamp && !gps.verifyWebhookSignature(body, signature, timestamp)) {
-      return errorResponse('Invalid signature', 401);
+      return errorResponse("Invalid signature", 401);
     }
 
     // Validate gps order IDs
     if (!gpsOrderIds || !Array.isArray(gpsOrderIds) || gpsOrderIds.length === 0) {
-      return errorResponse('GPS order id is required and must be a non-empty array', 400);
+      return errorResponse("GPS order id is required and must be a non-empty array", 400);
     }
 
     // Filter out invalid order IDs
     const validOrderIds = gpsOrderIds.filter(
-      (id) => id && typeof id === 'string' && id.trim().length > 0
+      (id) => id && typeof id === "string" && id.trim().length > 0
     );
     if (validOrderIds.length === 0) {
-      return errorResponse('No valid GPS order IDs provided', 400);
+      return errorResponse("No valid GPS order IDs provided", 400);
     }
 
     // Validate warehouse
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
     const batchId = `GPSB${Date.now()}`;
     await inngest.send({
       id: batchId,
-      name: 'gps/batch.process',
+      name: "gps/batch.process",
       data: {
         gpsOrderIds: validOrderIds,
         warehouse: warehouse as GpsWarehouseNameEnum,
@@ -57,11 +57,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
       },
     });
 
-    console.log('[GPS Individual] Processing GPS orders by batch');
-    return successResponse(
-      'Procesing GPS orders batch',
-      { warehouse, totalValidOrder: validOrderIds.length },
-    );
+    console.log("[GPS Individual] Processing GPS orders by batch");
+    return successResponse("Procesing GPS orders batch", {
+      warehouse,
+      totalValidOrder: validOrderIds.length,
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return errorResponse(`Error processing request: ${errorMessage}`, 500);

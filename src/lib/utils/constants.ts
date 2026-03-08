@@ -94,9 +94,29 @@ export const RATE_LIMIT_CONFIGS = {
 // RETRY CONFIGURATIONS
 // ============================================================================
 // Inngest accepts retries as 0-20 (literal union). Clamp env values and cast.
-type InngestRetries = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20;
-const clampRetries = (n: number): InngestRetries =>
-  Math.min(20, Math.max(0, n)) as InngestRetries;
+type InngestRetries =
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 5
+  | 6
+  | 7
+  | 8
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15
+  | 16
+  | 17
+  | 18
+  | 19
+  | 20;
+const clampRetries = (n: number): InngestRetries => Math.min(20, Math.max(0, n)) as InngestRetries;
 
 export const RETRY_CONFIGS = {
   DEFAULT: clampRetries(envInt("RETRY_DEFAULT", 5)),

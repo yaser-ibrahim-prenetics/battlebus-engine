@@ -1,60 +1,60 @@
-import { NonRetriableError } from 'inngest';
-import { inngest } from '../client';
-import { config } from '@/lib/config';
+import { NonRetriableError } from "inngest";
+import { inngest } from "../client";
+import { config } from "@/lib/config";
 import {
   extractGpsFulfilmentData,
   getDataAreaId,
   isValidGpsWarehouse,
-} from '@/lib/helpers/warehouse';
-import { filterDummySkus } from '@/lib/utils/validation';
+} from "@/lib/helpers/warehouse";
+import { filterDummySkus } from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
-} from '@/lib/utils/constants';
-import { getTrackingUrl, mapGpsCarrierToShopify } from '@/lib/helpers/tracking';
+} from "@/lib/utils/constants";
+import { getTrackingUrl, mapGpsCarrierToShopify } from "@/lib/helpers/tracking";
 
 // Interfaces
-import { isGpsIndividualFulfilmentPayload } from '@/lib/types/gps';
-import { SlackChannelEnum } from '@/lib/types/slack';
-import type { IFulfillmentOrderLineItem, ILineItem } from '@/lib/types/shopify';
+import { isGpsIndividualFulfilmentPayload } from "@/lib/types/gps";
+import { SlackChannelEnum } from "@/lib/types/slack";
+import type { IFulfillmentOrderLineItem, ILineItem } from "@/lib/types/shopify";
 
 // API Calls
-import * as slack from '@/lib/clients/slack';
-import * as shopify from '@/lib/clients/shopify';
-import * as dynamics from '@/lib/clients/dynamics';
+import * as slack from "@/lib/clients/slack";
+import * as shopify from "@/lib/clients/shopify";
+import * as dynamics from "@/lib/clients/dynamics";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
-  id: 'process-gps-individual',
-  name: 'Process GPS Individual',
-  idempotency: 'event.data.outboundOrderNo',
+  id: "process-gps-individual",
+  name: "Process GPS Individual",
+  idempotency: "event.data.outboundOrderNo",
   retries: RETRY_CONFIGS.DEFAULT,
   throttle: {
     ...THROTTLE_CONFIGS.GPS,
-    key: 'event.data.warehouse',
+    key: "event.data.warehouse",
   },
   concurrency: CONCURRENCY_CONFIGS.FULFILLMENT,
   rateLimit: {
     ...RATE_LIMIT_CONFIGS.FULFILLMENT,
-    key: 'event.data.outboundOrderNo',
+    key: "event.data.outboundOrderNo",
   },
 });
 
 export const processGpsIndividual = inngest.createFunction(
   processGpsIndividualConfig,
-  { event: 'gps/individual.fulfilment' },
+  { event: "gps/individual.fulfilment" },
   async ({ event, step }: { event: any; step: any }) => {
     const { fulfilmentPayload, warehouse } = event.data;
 
     // Step 1: Validate and extract fulfilment data
-    const fulfilmentData = await step.run('validate-fulfilment-payload', async () => {
+    const fulfilmentData = await step.run("validate-fulfilment-payload", async () => {
       console.log(`[GPS Individual] Processing fulfilment for warehouse: ${warehouse}`);
 
       // Validate payload structure
       if (!isGpsIndividualFulfilmentPayload(fulfilmentPayload)) {
-        throw new NonRetriableError('Invalid GPS individual fulfilment payload structure');
+        throw new NonRetriableError("Invalid GPS individual fulfilment payload structure");
       }
 
       // Validate warehouse
@@ -81,14 +81,10 @@ export const processGpsIndividual = inngest.createFunction(
         );
       }
       if (!data.trackingNumber) {
-        throw new NonRetriableError(
-          `GPS order ${data.gpsOrderNo} is missing tracking number`
-        );
+        throw new NonRetriableError(`GPS order ${data.gpsOrderNo} is missing tracking number`);
       }
       if (!data.shippedAt) {
-        throw new NonRetriableError(
-          `GPS order ${data.gpsOrderNo} is missing outboundTime`
-        );
+        throw new NonRetriableError(`GPS order ${data.gpsOrderNo} is missing outboundTime`);
       }
 
       console.log(
@@ -99,8 +95,10 @@ export const processGpsIndividual = inngest.createFunction(
     });
 
     // Step 2: Find Shopify order by name
-    const shopifyOrder = await step.run('get-shopify-order', async () => {
-      console.log(`[GPS Individual] Searching for Shopify order: ${fulfilmentData.shopifyOrderName}`);
+    const shopifyOrder = await step.run("get-shopify-order", async () => {
+      console.log(
+        `[GPS Individual] Searching for Shopify order: ${fulfilmentData.shopifyOrderName}`
+      );
 
       const orders = await shopify.searchOrdersByName(fulfilmentData.shopifyOrderName);
       if (!orders || orders.length === 0) {
@@ -113,17 +111,21 @@ export const processGpsIndividual = inngest.createFunction(
     });
 
     // Step 3: Get Shopify fulfillment orders
-    const fulfillmentOrder = await step.run('get-fulfillment-orders', async () => {
-      console.log(`[GPS Individual] Getting fulfillment orders for Shopify order: ${shopifyOrder.id}`);
+    const fulfillmentOrder = await step.run("get-fulfillment-orders", async () => {
+      console.log(
+        `[GPS Individual] Getting fulfillment orders for Shopify order: ${shopifyOrder.id}`
+      );
       const fulfillmentOrders = await shopify.getFulfillmentOrders(shopifyOrder.id);
 
       // Find open or in_progress fulfillment order
       const openFulfillment = fulfillmentOrders.find(
-        (fo) => fo.status === 'open' || fo.status === 'in_progress'
+        (fo) => fo.status === "open" || fo.status === "in_progress"
       );
 
       if (!openFulfillment) {
-        console.log(`[GPS Individual] No open fulfillment orders found - order may already be fulfilled`);
+        console.log(
+          `[GPS Individual] No open fulfillment orders found - order may already be fulfilled`
+        );
         return null;
       }
 
@@ -132,13 +134,15 @@ export const processGpsIndividual = inngest.createFunction(
     });
 
     // Step 4: Create Shopify fulfillment
-    const shopifyFulfillment = await step.run('create-shopify-fulfillment', async () => {
+    const shopifyFulfillment = await step.run("create-shopify-fulfillment", async () => {
       if (!fulfillmentOrder) {
         console.log(`[GPS Individual] Skip Shopify fulfillment since no open fulfillment order`);
-        return { skipped: true, reason: 'No open fulfillment order' };
+        return { skipped: true, reason: "No open fulfillment order" };
       }
 
-      console.log(`[GPS Individual] Creating Shopify fulfillment with tracking: ${fulfilmentData.trackingNumber}`);
+      console.log(
+        `[GPS Individual] Creating Shopify fulfillment with tracking: ${fulfilmentData.trackingNumber}`
+      );
       const trackingUrl = getTrackingUrl(fulfilmentData.carrier, fulfilmentData.trackingNumber);
       const carrierName = mapGpsCarrierToShopify(fulfilmentData.carrier);
 
@@ -162,10 +166,10 @@ export const processGpsIndividual = inngest.createFunction(
     });
 
     // Step 5: Sync to D365 (create packing slip)
-    const dynamicRecord = await step.run('sync-to-d365', async () => {
+    const dynamicRecord = await step.run("sync-to-d365", async () => {
       if (!config.features.enableDynamicsSync) {
         console.log(`[GPS Individual] D365 sync is disabled`);
-        return { skipped: true, reason: 'D365 sync is disabled' };
+        return { skipped: true, reason: "D365 sync is disabled" };
       }
 
       // Determine data area from warehouse
@@ -178,9 +182,7 @@ export const processGpsIndividual = inngest.createFunction(
         dataAreaId
       );
       if (!d365Order?.SalesOrderNumber) {
-        console.log(
-          `[GPS Individual] D365 order not found for ${fulfilmentData.shopifyOrderName}`
-        );
+        console.log(`[GPS Individual] D365 order not found for ${fulfilmentData.shopifyOrderName}`);
         return { skipped: true, reason: `D365 order not found ${fulfilmentData.shopifyOrderName}` };
       }
       console.log(`[GPS Individual] Found D365 order: ${d365Order.SalesOrderNumber}`);
@@ -189,27 +191,28 @@ export const processGpsIndividual = inngest.createFunction(
       const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items);
       if (lineItemsFiltered.length === 0) {
         console.log(`[GPS Individual] No valid line items`);
-        return { skipped: true, reason: 'No valid line items' };
+        return { skipped: true, reason: "No valid line items" };
       }
 
       // Get lotId mapping from D365 sales order lines
       const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
-      const shippedDate = fulfilmentData.shippedAt?.split(' ')[0] || new Date().toISOString().split('T')[0];
+      const shippedDate =
+        fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
 
       // Create fulfilment (packing slip)
       await dynamics.createFulfilment({
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
-        type: 'PackingSlip',
+        type: "PackingSlip",
         confirmedShippedDate: shippedDate,
         lines: (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => ({
           itemNumber: item.sku,
           quantity: item.quantity,
           trackingNumber: fulfilmentData.trackingNumber,
-          shippingSiteId: '',
-          shippingWarehouseId: '',
-          shippingWarehouseLocationId: '',
-          lotId: lotIdMap[item.sku] || '',
+          shippingSiteId: "",
+          shippingWarehouseId: "",
+          shippingWarehouseLocationId: "",
+          lotId: lotIdMap[item.sku] || "",
         })),
       });
 
@@ -222,19 +225,20 @@ export const processGpsIndividual = inngest.createFunction(
     });
 
     // Step 6: Send completion notification
-    await step.run('send-completion-notification', async () => {
-      const shopifyStatus = shopifyFulfillment.skipped ? 'skipped' : 'success';
-      const d365Status = dynamicRecord.skipped ? 'skipped' : 'success';
+    await step.run("send-completion-notification", async () => {
+      const shopifyStatus = shopifyFulfillment.skipped ? "skipped" : "success";
+      const d365Status = dynamicRecord.skipped ? "skipped" : "success";
 
-      const message = `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
+      const message =
+        `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
         `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
-      
+
       console.log(message);
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
     });
 
     return {
-      status: 'success',
+      status: "success",
       gpsOrderNo: fulfilmentData.gpsOrderNo,
       shopifyOrderName: fulfilmentData.shopifyOrderName,
       trackingNumber: fulfilmentData.trackingNumber,

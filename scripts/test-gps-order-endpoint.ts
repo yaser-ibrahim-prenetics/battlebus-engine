@@ -24,10 +24,10 @@ async function main() {
   console.log("Testing GPS Order Detail endpoint (known working)...\n");
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  
+
   // Test with outboundOrder/detail which is used in spock-store
   const data = {
-    outboundOrderNoList: ["TEST-ORDER-123"]
+    outboundOrderNoList: ["TEST-ORDER-123"],
   };
 
   const authCode = generateAuthCode(API_KEY, API_SECRET, timestamp, data);

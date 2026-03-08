@@ -15,10 +15,7 @@ export async function POST(request: NextRequest) {
     const { orderId, orderName, reason, email, refund } = body ?? {};
 
     if (!orderId && !orderName) {
-      return NextResponse.json(
-        { error: "orderId or orderName is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "orderId or orderName is required" }, { status: 400 });
     }
 
     const shopDomain = config.shopify.im8.shopDomain;
@@ -33,9 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Helper to actually call Shopify cancel for a numeric order ID
-    const cancelByNumericId = async (
-      numericOrderId: number
-    ): Promise<Response> => {
+    const cancelByNumericId = async (numericOrderId: number): Promise<Response> => {
       return fetch(
         `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/cancel.json`,
         {
@@ -58,9 +53,7 @@ export async function POST(request: NextRequest) {
 
     // 1. If we have a numeric orderId, try cancelling directly first.
     const numericIdFromOrderId =
-      orderId != null && Number.isFinite(Number(orderId))
-        ? Number(orderId)
-        : null;
+      orderId != null && Number.isFinite(Number(orderId)) ? Number(orderId) : null;
 
     if (numericIdFromOrderId != null) {
       response = await cancelByNumericId(numericIdFromOrderId);
@@ -70,7 +63,7 @@ export async function POST(request: NextRequest) {
       if (response.ok) {
         const orderData = result.order ?? result;
         const eventId = `action-cancel-${numericIdFromOrderId}-${Date.now()}`;
-        
+
         // Send Inngest event for real-time tracking
         await inngest.send({
           id: eventId,
@@ -115,10 +108,7 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        return NextResponse.json(
-          { error: `Order ${orderName} not found` },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: `Order ${orderName} not found` }, { status: 404 });
       }
 
       const numericFromName = orders[0].id;
@@ -137,7 +127,7 @@ export async function POST(request: NextRequest) {
 
       const orderData = result.order ?? result;
       const eventId = `action-cancel-${numericFromName}-${Date.now()}`;
-      
+
       // Send Inngest event for real-time tracking
       await inngest.send({
         id: eventId,
@@ -180,5 +170,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-

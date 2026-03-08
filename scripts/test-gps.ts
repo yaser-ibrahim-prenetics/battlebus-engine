@@ -1,9 +1,9 @@
 /**
  * Test script to verify GPS OMS sandbox connection
- * 
+ *
  * Usage:
  *   npx tsx scripts/test-gps.ts
- * 
+ *
  * This will:
  *   1. Load environment variables from .env.local
  *   2. Generate a GPS auth code
@@ -61,8 +61,7 @@ function generateAuthCode(
 
   for (const [key, value] of resultMap.entries()) {
     const lowerKey = key.toLowerCase();
-    if (["authcode", "appkey", "appsecret", "reqtime"].includes(lowerKey))
-      continue;
+    if (["authcode", "appkey", "appsecret", "reqtime"].includes(lowerKey)) continue;
 
     if (key === "data") {
       dataMap[lowerKey] = deepSortKeys(value);
@@ -75,10 +74,7 @@ function generateAuthCode(
   let concatenatedStr = "";
 
   for (const key of sortedKeys) {
-    const val =
-      typeof dataMap[key] === "string"
-        ? dataMap[key]
-        : JSON.stringify(dataMap[key]);
+    const val = typeof dataMap[key] === "string" ? dataMap[key] : JSON.stringify(dataMap[key]);
     concatenatedStr += val;
   }
 
@@ -114,7 +110,7 @@ async function testGpsConnection() {
 
   // Test 2: Try to query order details (empty list - just to test auth)
   console.log("📡 Test 2: Testing GPS API Connection...");
-  
+
   const requestData = {
     outboundOrderNoList: [],
   };
@@ -140,10 +136,10 @@ async function testGpsConnection() {
     );
 
     const result = await response.json();
-    
+
     console.log(`   Status: ${response.status}`);
     console.log(`   Response: ${JSON.stringify(result, null, 2)}`);
-    
+
     if (response.status === 200 || result.code === 200) {
       console.log("\n   ✅ GPS API connection successful!");
     } else if (result.code === 401 || result.msg?.includes("auth")) {
@@ -159,7 +155,7 @@ async function testGpsConnection() {
   console.log("\n" + "=".repeat(50));
   console.log("📦 Sample Order Payload (for reference):");
   console.log("=".repeat(50));
-  
+
   const sampleOrder = {
     platformOrderNo: "IM8-TEST-" + Date.now(),
     thirdOrderNo: "SHOPIFY-123456",
@@ -176,13 +172,11 @@ async function testGpsConnection() {
     postCode: "90001",
     telephone: "+1234567890",
     email: "test@example.com",
-    productList: [
-      { sku: "IM8-FG-000010", quantity: 1 },
-    ],
+    productList: [{ sku: "IM8-FG-000010", quantity: 1 }],
   };
 
   console.log(JSON.stringify(sampleOrder, null, 2));
-  
+
   console.log("\n" + "=".repeat(50));
   console.log("✅ GPS sandbox is configured and ready!");
   console.log("=".repeat(50));

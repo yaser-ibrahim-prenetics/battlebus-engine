@@ -256,9 +256,5 @@ export function getCountry(order: {
   shipping_address?: { country?: string } | null;
   billing_address?: { country?: string } | null;
 }): string {
-  return (
-    order.shipping_address?.country ||
-    order.billing_address?.country ||
-    ""
-  );
+  return order.shipping_address?.country || order.billing_address?.country || "";
 }

@@ -12,7 +12,7 @@ function SimulationPanel() {
   const simulateOrder = async () => {
     setLoading(true);
     setResult(null);
-    
+
     try {
       const response = await fetch("/api/webhooks/shopify", {
         method: "POST",
@@ -101,7 +101,7 @@ function SimulationPanel() {
         <span className="w-2 h-2 rounded-full bg-amber-400" />
         Test Simulation
       </h2>
-      
+
       <div className="space-y-4">
         <div>
           <label className="text-sm text-slate-400 block mb-2">Order Name</label>
@@ -112,7 +112,7 @@ function SimulationPanel() {
             className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-indigo-500"
           />
         </div>
-        
+
         <button
           onClick={simulateOrder}
           disabled={loading}
@@ -120,17 +120,22 @@ function SimulationPanel() {
         >
           {loading ? "Sending..." : "Simulate orders/paid Webhook"}
         </button>
-        
+
         {result && (
           <div className="mt-4 p-4 bg-slate-800 rounded-lg">
             <p className="text-xs text-slate-400 mb-2">Response:</p>
             <pre className="text-xs text-emerald-400 font-mono overflow-auto">{result}</pre>
           </div>
         )}
-        
+
         <p className="text-xs text-slate-500">
           This sends a test webhook to the local endpoint. Check the{" "}
-          <a href="http://localhost:8288" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
+          <a
+            href="http://localhost:8288"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-400 hover:underline"
+          >
             Inngest Dev Server
           </a>{" "}
           to see the event being processed.
@@ -145,7 +150,7 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-950">
       {/* Animated background grid */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(99,102,241,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(99,102,241,0.03)_1px,transparent_1px)] bg-[size:64px_64px]" />
-      
+
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen p-8">
         {/* Logo/Icon */}
         <div className="mb-8 relative">
@@ -171,11 +176,9 @@ export default function Home() {
         <h1 className="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-200 to-purple-200 mb-4 tracking-tight">
           Battle Bus
         </h1>
-        
-        <p className="text-xl text-indigo-200/70 mb-2 font-light">
-          IM8 Order Orchestration Engine
-        </p>
-        
+
+        <p className="text-xl text-indigo-200/70 mb-2 font-light">IM8 Order Orchestration Engine</p>
+
         <p className="text-sm text-indigo-300/50 mb-12 max-w-md text-center">
           Durable execution for Shopify → D365 → Warehouse integrations
         </p>
@@ -190,7 +193,12 @@ export default function Home() {
             status="Connected"
             icon={
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
               </svg>
             }
           />
@@ -199,7 +207,12 @@ export default function Home() {
             status="6 Endpoints"
             icon={
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
+                />
               </svg>
             }
           />
@@ -208,7 +221,12 @@ export default function Home() {
             status="4 Active"
             icon={
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+                />
               </svg>
             }
           />

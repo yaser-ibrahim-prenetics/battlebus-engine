@@ -19,10 +19,7 @@ export async function POST(request: NextRequest) {
     const identifier = orderName || orderId;
 
     if (!identifier) {
-      return NextResponse.json(
-        { error: "orderName or orderId is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "orderName or orderId is required" }, { status: 400 });
     }
 
     // Try to parse as numeric ID first
@@ -38,10 +35,7 @@ export async function POST(request: NextRequest) {
       // It's an order name (e.g., "#1234"), search by name
       const orders = await shopify.searchOrdersByName(identifier);
       if (!orders || orders.length === 0) {
-        return NextResponse.json(
-          { error: `Order ${identifier} not found` },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: `Order ${identifier} not found` }, { status: 404 });
       }
       order = orders[0];
       actualOrderId = order.id;
@@ -51,10 +45,7 @@ export async function POST(request: NextRequest) {
     try {
       gpsMetafield = await shopify.getGpsOrderMetafield(actualOrderId);
     } catch (err) {
-      console.warn(
-        "[Shopify Order Details] Failed to load GPS metafield:",
-        err
-      );
+      console.warn("[Shopify Order Details] Failed to load GPS metafield:", err);
     }
 
     return NextResponse.json(
@@ -78,5 +69,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-

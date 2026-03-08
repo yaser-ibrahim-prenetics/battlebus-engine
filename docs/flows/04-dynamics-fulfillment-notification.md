@@ -23,11 +23,11 @@ This flow tests when Dynamics 365 is the **source of truth** for fulfillment and
 
 ## Key Endpoints
 
-| System | Direction | Endpoint | Description |
-|--------|-----------|----------|-------------|
-| Dynamics → spock-store | Inbound | `POST /v1.0/dynamics/fulfilment/notification` | Receives fulfillment notification |
-| spock-store → Shopify | Outbound | `POST /admin/api/.../fulfillments.json` | Creates Shopify fulfillment |
-| spock-store → Shopify | Outbound | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
+| System                 | Direction | Endpoint                                      | Description                       |
+| ---------------------- | --------- | --------------------------------------------- | --------------------------------- |
+| Dynamics → spock-store | Inbound   | `POST /v1.0/dynamics/fulfilment/notification` | Receives fulfillment notification |
+| spock-store → Shopify  | Outbound  | `POST /admin/api/.../fulfillments.json`       | Creates Shopify fulfillment       |
+| spock-store → Shopify  | Outbound  | `GET /admin/api/.../fulfillment_orders.json`  | Gets fulfillment orders           |
 
 ---
 
@@ -38,6 +38,7 @@ This flow tests when Dynamics 365 is the **source of truth** for fulfillment and
    - Status: `processing`
 
 2. **Start the simulator:**
+
    ```bash
    npm run dev
    ```
@@ -103,6 +104,7 @@ curl -X POST http://localhost:3100/webhooks/dynamics/fulfillment \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "order": {
@@ -165,14 +167,15 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
    - Validate `dataAreaId`
 
 2. **Create Task:**
+
    ```javascript
    Task.create({
-     type: 'dynamics',
+     type: "dynamics",
      detail: {
-       topic: 'fulfilment',
-       body: payload
-     }
-   })
+       topic: "fulfilment",
+       body: payload,
+     },
+   });
    ```
 
 3. **Process Task (`processDynamicsEvent`):**
@@ -210,6 +213,7 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
 ```
 
 **Expected Behavior:**
+
 - spock-store identifies return by negative quantity or `type: 'return'`
 - May create refund/negative fulfillment logic
 - Business rules determine Shopify action (refund vs. return label)
@@ -242,6 +246,7 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
 ```
 
 **Expected Behavior:**
+
 - `completed: false` indicates partial shipment
 - Shopify fulfillment created for shipped items only
 - Order `fulfillment_status` = `partial`
@@ -281,22 +286,22 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
 
 ```typescript
 interface DynamicsFulfilmentRequest {
-  customerAccount: string;           // e.g., "IM8-SHOPIFY"
-  type: 'shipment' | 'return';
-  salesOrderNumber: string;          // Dynamics SO number
-  dataAreaId: 'U001' | 'H007';       // US or UK
-  completed: boolean;                 // Full or partial shipment
-  confirmedShippedDate: string;      // MM/DD/YYYY format
+  customerAccount: string; // e.g., "IM8-SHOPIFY"
+  type: "shipment" | "return";
+  salesOrderNumber: string; // Dynamics SO number
+  dataAreaId: "U001" | "H007"; // US or UK
+  completed: boolean; // Full or partial shipment
+  confirmedShippedDate: string; // MM/DD/YYYY format
   lines: DynamicsFulfilmentLine[];
 }
 
 interface DynamicsFulfilmentLine {
-  quantity: number;                   // Negative for returns
-  itemNumber: string;                 // SKU
+  quantity: number; // Negative for returns
+  itemNumber: string; // SKU
   trackingNumber?: string;
-  shippingSiteId: string;            // e.g., "GPS-US", "GPS-UK"
-  ModeOfDelivery: string;            // e.g., "STANDARD"
-  returnReason?: string;             // For returns
+  shippingSiteId: string; // e.g., "GPS-US", "GPS-UK"
+  ModeOfDelivery: string; // e.g., "STANDARD"
+  returnReason?: string; // For returns
 }
 ```
 
@@ -304,27 +309,27 @@ interface DynamicsFulfilmentLine {
 
 ## Validation Checklist
 
-| Step | Check | Method |
-|------|-------|--------|
-| 1 | Request authenticated (API key) | Check request headers |
-| 2 | customerAccount validated | Verify Shopify-origin |
-| 3 | dataAreaId is valid | Check U001 or H007 |
-| 4 | SalesOrder found | Query by SO number |
-| 5 | Task created | Check spock-store DB |
-| 6 | Shopify fulfillment created | Check Shopify API call |
-| 7 | Fulfillment entity updated | Check spock-store DB |
+| Step | Check                           | Method                 |
+| ---- | ------------------------------- | ---------------------- |
+| 1    | Request authenticated (API key) | Check request headers  |
+| 2    | customerAccount validated       | Verify Shopify-origin  |
+| 3    | dataAreaId is valid             | Check U001 or H007     |
+| 4    | SalesOrder found                | Query by SO number     |
+| 5    | Task created                    | Check spock-store DB   |
+| 6    | Shopify fulfillment created     | Check Shopify API call |
+| 7    | Fulfillment entity updated      | Check spock-store DB   |
 
 ---
 
 ## Response Codes
 
-| Status | Meaning |
-|--------|---------|
-| 200 | Success - notification processed |
-| 400 | Bad request - invalid payload |
-| 401 | Unauthorized - invalid API key |
-| 404 | Not found - sales order not found |
-| 500 | Server error |
+| Status | Meaning                           |
+| ------ | --------------------------------- |
+| 200    | Success - notification processed  |
+| 400    | Bad request - invalid payload     |
+| 401    | Unauthorized - invalid API key    |
+| 404    | Not found - sales order not found |
+| 500    | Server error                      |
 
 ---
 
@@ -352,6 +357,7 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
 **Trigger:** `salesOrderNumber` doesn't match any order
 
 **Expected Behavior:**
+
 - Log warning
 - Return acknowledgment (prevent retries)
 - May need manual investigation
@@ -381,23 +387,23 @@ curl -X POST http://localhost:8080/v1.0/dynamics/fulfilment/notification \
 
 ### Dynamics → Shopify Fulfillment
 
-| Dynamics Field | Shopify Fulfillment Field |
-|----------------|---------------------------|
-| `lines[].trackingNumber` | `tracking_info.number` |
+| Dynamics Field           | Shopify Fulfillment Field        |
+| ------------------------ | -------------------------------- |
+| `lines[].trackingNumber` | `tracking_info.number`           |
 | `lines[].ModeOfDelivery` | `tracking_info.company` (mapped) |
-| `lines[].quantity` | `line_items[].quantity` |
-| `lines[].itemNumber` | `line_items[].sku` |
-| `confirmedShippedDate` | `created_at` |
+| `lines[].quantity`       | `line_items[].quantity`          |
+| `lines[].itemNumber`     | `line_items[].sku`               |
+| `confirmedShippedDate`   | `created_at`                     |
 
 ### Carrier Mapping
 
-| Dynamics ModeOfDelivery | Shopify Carrier |
-|-------------------------|-----------------|
-| STANDARD | "Standard Shipping" |
-| EXPRESS | "Express Shipping" |
-| DHL | "DHL" |
-| FEDEX | "FedEx" |
-| ROYALMAIL | "Royal Mail" |
+| Dynamics ModeOfDelivery | Shopify Carrier     |
+| ----------------------- | ------------------- |
+| STANDARD                | "Standard Shipping" |
+| EXPRESS                 | "Express Shipping"  |
+| DHL                     | "DHL"               |
+| FEDEX                   | "FedEx"             |
+| ROYALMAIL               | "Royal Mail"        |
 
 ---
 
@@ -424,6 +430,7 @@ curl -X POST http://localhost:3100/webhooks/dynamics/fulfillment \
 ```
 
 This will:
+
 1. Find the order in simulator state
 2. Build a proper Dynamics notification payload
 3. Send to spock-store's `/v1.0/dynamics/fulfilment/notification` endpoint
@@ -438,4 +445,3 @@ This will:
 - Dynamics may send multiple notifications for same order (idempotency needed)
 - Returns with negative quantities trigger different logic than shipments
 - `completed: true` vs `false` affects Shopify `fulfillment_status`
-

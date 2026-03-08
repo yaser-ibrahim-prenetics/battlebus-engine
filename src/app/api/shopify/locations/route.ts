@@ -47,16 +47,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all locations from Shopify
-    const response = await fetch(
-      `https://${shopDomain}/admin/api/${apiVersion}/locations.json`,
-      {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-      }
-    );
+    const response = await fetch(`https://${shopDomain}/admin/api/${apiVersion}/locations.json`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+    });
 
     if (!response.ok) {
       const error = await response.text();

@@ -38,6 +38,7 @@ Dynamics 365 (with correct DataAreaId)
    - Falls back to config-based mappings if API unavailable
 
 **Why this approach?**
+
 - ✅ Single source of truth (Supabase)
 - ✅ Can be updated via Battle Hub UI
 - ✅ Battle Bus doesn't need direct database access
@@ -97,6 +98,7 @@ if (inventory.locationId) {
 **Method:** GET
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -118,15 +120,18 @@ if (inventory.locationId) {
 ## Mapping Examples
 
 ### DataAreaId U001 (US)
+
 - GPS Warehouse (Shopify Location ID: 79527313640)
 - Charlotte Warehouse
 - STORD ATL Location
 
 ### DataAreaId H007 (UK/HK)
+
 - GPS UK Warehouse (Shopify Location ID: 82997936360)
 - HK Warehouse
 
 ### DataAreaId H001 (CircleDNA)
+
 - Primary Circle Warehouse
 - TH Circle Warehouse
 - HK Circle Warehouse
@@ -136,16 +141,19 @@ if (inventory.locationId) {
 ## Sync Direction
 
 ### ✅ One-Way: Locations → Dynamics
+
 - **Why**: Dynamics uses common DataAreaId for multiple locations
 - **How**: Use `getDataAreaIdForLocation()` to route inventory from specific location to correct DataAreaId
 - **Use case**: Inventory sync from Shopify locations to Dynamics
 
 ### ❌ Not Supported: Dynamics → Locations
+
 - **Why**: Dynamics doesn't know which specific Shopify location to update
 - **Reason**: Multiple locations share the same DataAreaId
 - **Alternative**: Sync from location-specific sources (Shopify, GPS) instead
 
 ### ✅ One-Way: Locations → Shopify
+
 - **Why**: Can sync inventory from specific location to Shopify
 - **How**: Use location ID to update specific Shopify location inventory
 - **Use case**: Inventory sync from GPS/Dynamics to specific Shopify location
@@ -163,4 +171,3 @@ if (inventory.locationId) {
 2. **Location groups**: Group locations by warehouse type
 3. **Routing rules**: Custom routing rules based on order attributes
 4. **Real-time updates**: Webhook from Battle Hub to invalidate cache
-

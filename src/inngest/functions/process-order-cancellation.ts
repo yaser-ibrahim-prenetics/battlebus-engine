@@ -83,8 +83,7 @@ export const processOrderCancellation = inngest.createFunction(
 
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
       const isGpsCancelled =
-        gpsCancellation.status === "cancelled" ||
-        gpsCancellation.status === "skipped";
+        gpsCancellation.status === "cancelled" || gpsCancellation.status === "skipped";
 
       if (isGpsCancelled) {
         // Case A: GPS Cancelled -> Cancel D365 Order
@@ -101,7 +100,9 @@ export const processOrderCancellation = inngest.createFunction(
       } else {
         // Case B: GPS Failed (Likely Shipped) -> Create Return Order in D365
         // This is the "Return" flow from spock-store
-        console.log(`[Cancellation] GPS cancel failed, initiating Return Order flow for ${shopifyOrderName}`);
+        console.log(
+          `[Cancellation] GPS cancel failed, initiating Return Order flow for ${shopifyOrderName}`
+        );
 
         // 3a. Get Shopify Order Details (for address/warehouse)
         const shopifyOrder = await shopify.getOrder(shopifyOrderId);
@@ -110,41 +111,49 @@ export const processOrderCancellation = inngest.createFunction(
         const countryCode = shopifyOrder.shipping_address?.country_code || "US";
         const warehouseName = warehouseHelper.determineWarehouse(countryCode);
         const returnConfig = warehouseHelper.getReturnConfig(warehouseName);
-        const orderingCustomerAccountNumber = warehouseHelper.getOrderingCustomerAccountNumber(warehouseName);
+        const orderingCustomerAccountNumber =
+          warehouseHelper.getOrderingCustomerAccountNumber(warehouseName);
 
         // 3c. Get D365 Original Lines (to link Lot IDs)
         const d365Lines = await dynamics.getSalesOrderLines(d365Order.SalesOrderNumber!);
-        const skuToLotIdMap = d365Lines.reduce((acc, line) => {
-          acc[line.ItemNumber] = line.InventoryLotId;
-          return acc;
-        }, {} as Record<string, string | undefined>);
+        const skuToLotIdMap = d365Lines.reduce(
+          (acc, line) => {
+            acc[line.ItemNumber] = line.InventoryLotId;
+            return acc;
+          },
+          {} as Record<string, string | undefined>
+        );
 
         // 3d. Create Return Order Header
-        const { SalesOrderNumber: returnOrderNumber } = await dynamics.createSalesOrderHeadersV3ForReturn({
-          customerId: shopifyOrder.customer?.id.toString() || "",
-          orderId: shopifyOrder.id.toString(),
-          dataAreaId,
-          orderingCustomerAccountNumber,
-          defaultLedgerDimensionDisplayValue: warehouseHelper.toDefaultLedgerDimensionDisplayValue(warehouseName),
-          customerOrderReference: shopifyOrder.name,
-          email: shopifyOrder.email,
-          name: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim(),
-          shopifyReference: shopifyOrder.name,
-        });
+        const { SalesOrderNumber: returnOrderNumber } =
+          await dynamics.createSalesOrderHeadersV3ForReturn({
+            customerId: shopifyOrder.customer?.id.toString() || "",
+            orderId: shopifyOrder.id.toString(),
+            dataAreaId,
+            orderingCustomerAccountNumber,
+            defaultLedgerDimensionDisplayValue:
+              warehouseHelper.toDefaultLedgerDimensionDisplayValue(warehouseName),
+            customerOrderReference: shopifyOrder.name,
+            email: shopifyOrder.email,
+            name: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim(),
+            shopifyReference: shopifyOrder.name,
+          });
 
         // 3e. Create Return Order Lines
         const returnLinesResult = [];
         for (const item of shopifyOrder.line_items) {
           const originalLotId = skuToLotIdMap[item.sku];
           if (!originalLotId) {
-            console.warn(`[Cancellation] Original LotId not found for SKU ${item.sku} in D365 order ${d365Order.SalesOrderNumber}`);
+            console.warn(
+              `[Cancellation] Original LotId not found for SKU ${item.sku} in D365 order ${d365Order.SalesOrderNumber}`
+            );
             continue;
           }
 
           // In return order, quantity is negative (wait, spock-store toSalesOrderLinesForReturn sets quantity -1 ?)
           // Let's check spock-store logic again.
           // spock-store: quantity: -1, price: price (positive), discount: discount
-          
+
           await dynamics.createSalesOrderLineForReturn({
             salesOrderNumber: returnOrderNumber,
             quantity: -1 * item.quantity, // Return all
@@ -172,7 +181,10 @@ export const processOrderCancellation = inngest.createFunction(
     });
 
     const result = {
-      status: d365Cancellation.status === "success" || d365Cancellation.status === "not_implemented" ? "success" : "partial",
+      status:
+        d365Cancellation.status === "success" || d365Cancellation.status === "not_implemented"
+          ? "success"
+          : "partial",
       shopifyOrderId,
       shopifyOrderName,
       cancelReason,

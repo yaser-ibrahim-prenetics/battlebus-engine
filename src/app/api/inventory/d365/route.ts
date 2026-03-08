@@ -16,7 +16,7 @@ import { getInventory, getAllInventory, type D365InventoryItem } from "@/lib/cli
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    
+
     const dataAreaId = searchParams.get("dataAreaId") || undefined;
     const itemNumber = searchParams.get("itemNumber") || undefined;
     const top = parseInt(searchParams.get("top") || "100", 10);
@@ -46,22 +46,25 @@ export async function GET(request: NextRequest) {
     }
 
     // Aggregate by ItemNumber (sum across data areas)
-    const aggregated = new Map<string, {
-      itemNumber: string;
-      productName: string;
-      totalOnHand: number;
-      totalAvailable: number;
-      totalReserved: number;
-      totalOrdered: number;
-      dataAreas: Array<{
-        dataAreaId: string;
-        siteId: string;
-        onHand: number;
-        available: number;
-        reserved: number;
-        ordered: number;
-      }>;
-    }>();
+    const aggregated = new Map<
+      string,
+      {
+        itemNumber: string;
+        productName: string;
+        totalOnHand: number;
+        totalAvailable: number;
+        totalReserved: number;
+        totalOrdered: number;
+        dataAreas: Array<{
+          dataAreaId: string;
+          siteId: string;
+          onHand: number;
+          available: number;
+          reserved: number;
+          ordered: number;
+        }>;
+      }
+    >();
 
     for (const item of items) {
       const existing = aggregated.get(item.ItemNumber);
@@ -117,7 +120,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     const dataAreaId = body.dataAreaId || undefined;
     const itemNumber = body.itemNumber || undefined;
     const top = body.top || 100;

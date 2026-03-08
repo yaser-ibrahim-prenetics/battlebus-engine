@@ -73,4 +73,3 @@ class GpsSimulationStore {
 // Singleton instance
 export const gpsSimulationStore = new GpsSimulationStore();
 export type { SimulatedFulfillment };
-

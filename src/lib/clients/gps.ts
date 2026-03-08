@@ -60,8 +60,7 @@ export function generateAuthCode(
 
   for (const [key, value] of resultMap.entries()) {
     const lowerKey = key.toLowerCase();
-    if (["authcode", "appkey", "appsecret", "reqtime"].includes(lowerKey))
-      continue;
+    if (["authcode", "appkey", "appsecret", "reqtime"].includes(lowerKey)) continue;
 
     if (key === "data") {
       dataMap[lowerKey] = deepSortKeys(value);
@@ -74,10 +73,7 @@ export function generateAuthCode(
   let concatenatedStr = "";
 
   for (const key of sortedKeys) {
-    const val =
-      typeof dataMap[key] === "string"
-        ? dataMap[key]
-        : JSON.stringify(dataMap[key]);
+    const val = typeof dataMap[key] === "string" ? dataMap[key] : JSON.stringify(dataMap[key]);
     concatenatedStr += val;
   }
 
@@ -221,9 +217,7 @@ export async function createOutboundOrder(
   console.log(`[GPS] Creating outbound order: ${JSON.stringify(payload)}`);
 
   if (config.features.dryRunMode) {
-    console.log(
-      `[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`
-    );
+    console.log(`[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`);
     return {
       response: {
         code: 200,
@@ -243,16 +237,13 @@ export async function createOutboundOrder(
 
   const authCode = generateAuthCode(data, timestamp, appKey, appSecret);
 
-  const response = await fetch(
-    `${baseUrl}/openapi/v1/outboundOrder/create?authcode=${authCode}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    }
-  );
+  const response = await fetch(`${baseUrl}/openapi/v1/outboundOrder/create?authcode=${authCode}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
 
   const result: GpsCreateOrderResponse = await response.json();
 
@@ -277,7 +268,7 @@ export async function createOutboundOrder(
         `GPS inventory error for ${orderData.platformOrderNo}: ${orderResult.msg}`
       );
     }
-    
+
     // Check if it's a logistics channel error - try fallback channel (only once)
     if (
       !isRetry &&
@@ -289,16 +280,16 @@ export async function createOutboundOrder(
       console.warn(
         `[GPS] Logistics channel error: ${orderResult.msg}. Retrying with fallback channel "No_Shipping_Service"...`
       );
-      
+
       // Retry with fallback channel
       const fallbackOrderData = {
         ...orderData,
         logisticsChannel: "No_Shipping_Service",
       };
-      
+
       return createOutboundOrder(fallbackOrderData, warehouseName, true);
     }
-    
+
     throw new Error(`GPS order failed: ${orderResult.msg}`);
   }
 
@@ -313,12 +304,12 @@ export async function getOutboundOrdersDetails(
   warehouseName: GpsWarehouseName = "GPS Warehouse"
 ): Promise<{ response: GpsGetOrdersDetailResponse }> {
   if (config.features.enabledGpsOutboundMock) {
-    const mockData = await import('../mocks/gps/outboundOrders.json');
+    const mockData = await import("../mocks/gps/outboundOrders.json");
     console.log(`Using mock GPS outbound data for order ${orderIds}`);
     return {
       response: {
         code: 200,
-        msg: '操作成功',
+        msg: "操作成功",
         data: mockData.default,
       },
     };
@@ -362,16 +353,13 @@ export async function getOutboundOrdersDetails(
 
   const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
 
-  const response = await fetch(
-    `${baseUrl}/openapi/v1/outboundOrder/detail?authcode=${authCode}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    }
-  );
+  const response = await fetch(`${baseUrl}/openapi/v1/outboundOrder/detail?authcode=${authCode}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
 
   const result: GpsGetOrdersDetailResponse = await response.json();
   return { response: result };
@@ -405,22 +393,20 @@ export function verifyWebhookSignature(
   signature: string,
   timestamp: string
 ): boolean {
-  const expectedSignature = sha256Hmac(
-    `${timestamp}${payload}`,
-    config.gps.apiSecret
-  );
+  const expectedSignature = sha256Hmac(`${timestamp}${payload}`, config.gps.apiSecret);
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
   } catch {
     return false;
   }
 }
 
 // GPS inventory error types
-export type GpsInventoryErrorType = "out_of_stock" | "unmaintained_product" | "gps_error" | "inventory_insufficient";
+export type GpsInventoryErrorType =
+  | "out_of_stock"
+  | "unmaintained_product"
+  | "gps_error"
+  | "inventory_insufficient";
 
 /**
  * Detect GPS inventory-related errors from error messages.
@@ -440,7 +426,7 @@ export function isGpsInventoryError(msg: string | undefined): boolean {
     msg.includes("库存不足") ||
     msg.includes("未维护新品") ||
     lower.includes("cannot be reserved") ||
-    lower.includes("inventory") && lower.includes("error")
+    (lower.includes("inventory") && lower.includes("error"))
   );
 }
 
@@ -449,7 +435,11 @@ export function isGpsInventoryError(msg: string | undefined): boolean {
  */
 export function classifyGpsError(msg: string | undefined): GpsInventoryErrorType {
   if (!msg) return "gps_error";
-  if (msg.includes("库存不足") || msg.toLowerCase().includes("out of stock") || msg.toLowerCase().includes("insufficient")) {
+  if (
+    msg.includes("库存不足") ||
+    msg.toLowerCase().includes("out of stock") ||
+    msg.toLowerCase().includes("insufficient")
+  ) {
     return "out_of_stock";
   }
   if (msg.includes("未维护新品")) {
@@ -553,7 +543,9 @@ export async function getInventory(
     data: requestData,
   };
 
-  console.log(`[GPS] Fetching inventory: page ${requestData.pageNum}, size ${requestData.pageSize}`);
+  console.log(
+    `[GPS] Fetching inventory: page ${requestData.pageNum}, size ${requestData.pageSize}`
+  );
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would fetch inventory`);
@@ -592,7 +584,9 @@ export async function getInventory(
     throw new Error(`GPS Inventory API error: ${result.code} - ${result.msg}`);
   }
 
-  console.log(`[GPS] Inventory fetched: ${result.data.records.length} items (page ${result.data.page}/${result.data.pages}, total ${result.data.total})`);
+  console.log(
+    `[GPS] Inventory fetched: ${result.data.records.length} items (page ${result.data.page}/${result.data.pages}, total ${result.data.total})`
+  );
 
   return { response: result, items: result.data.records };
 }
@@ -638,15 +632,20 @@ export async function getAllInventory(
  * Uses GPS /openapi/v1/product/batchCreate API to register products (supports up to 200 products per batch)
  * API Documentation: https://api.xlwms.com
  */
-export async function syncProduct(product: {
-  productId: string;
-  title: string;
-  variants: { sku: string; barcode: string | null; weight: number; weight_unit: string }[];
-}, warehouseName: GpsWarehouseName = "GPS Warehouse"): Promise<{ success: boolean; message: string }> {
+export async function syncProduct(
+  product: {
+    productId: string;
+    title: string;
+    variants: { sku: string; barcode: string | null; weight: number; weight_unit: string }[];
+  },
+  warehouseName: GpsWarehouseName = "GPS Warehouse"
+): Promise<{ success: boolean; message: string }> {
   console.log(`[GPS] 🔄 syncProduct called for "${product.title}" (${product.productId})`);
   console.log(`[GPS]   Variants: ${product.variants.length}`);
   for (const v of product.variants) {
-    console.log(`[GPS]   - SKU: ${v.sku}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`);
+    console.log(
+      `[GPS]   - SKU: ${v.sku}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`
+    );
   }
 
   if (config.features.dryRunMode) {
@@ -668,8 +667,8 @@ export async function syncProduct(product: {
   const productDataArray: any[] = [];
 
   // Filter out invalid variants and process valid ones
-  const validVariants = product.variants.filter((v) => v && typeof v === 'object');
-  
+  const validVariants = product.variants.filter((v) => v && typeof v === "object");
+
   if (validVariants.length === 0) {
     console.log(`[GPS] ⚠️  No valid variants to sync for product ${product.productId}`);
     return { success: false, message: "No valid variants to sync" };
@@ -682,11 +681,12 @@ export async function syncProduct(product: {
     }
 
     // Convert weight to kg if needed (GPS requires kg)
-    const weightInKg = variant.weight && variant.weight > 0
-      ? (variant.weight_unit?.toLowerCase() === "kg" 
-          ? variant.weight 
-          : variant.weight * 0.453592) // Convert lb to kg
-      : 0.001; // Minimum weight required by GPS (0.001 kg)
+    const weightInKg =
+      variant.weight && variant.weight > 0
+        ? variant.weight_unit?.toLowerCase() === "kg"
+          ? variant.weight
+          : variant.weight * 0.453592 // Convert lb to kg
+        : 0.001; // Minimum weight required by GPS (0.001 kg)
 
     // Build GPS product payload according to API documentation
     const gpsProduct: any = {
@@ -716,9 +716,7 @@ export async function syncProduct(product: {
 
     // Add optional barcode lists if available
     if (variant.barcode && variant.barcode !== variant.sku) {
-      gpsProduct.otherCodeList = [
-        { otherCode: variant.barcode }
-      ];
+      gpsProduct.otherCodeList = [{ otherCode: variant.barcode }];
     }
 
     productDataArray.push(gpsProduct);
@@ -726,18 +724,21 @@ export async function syncProduct(product: {
 
   // Check if we had any variants with SKUs to process
   const variantsWithSkus = product.variants.filter((v) => v.sku && v.sku.trim() !== "");
-  
+
   if (variantsWithSkus.length === 0) {
     return { success: false, message: "No variants with SKUs to sync" };
   }
 
   if (productDataArray.length === 0) {
-    return { success: false, message: `No valid variants to sync (${variantsWithSkus.length} variant(s) had SKUs but were filtered out)` };
+    return {
+      success: false,
+      message: `No valid variants to sync (${variantsWithSkus.length} variant(s) had SKUs but were filtered out)`,
+    };
   }
 
   try {
     const timestamp = epochInSeconds().toString();
-    
+
     // Build GPS batch create payload
     const payload = {
       appKey,
@@ -748,18 +749,17 @@ export async function syncProduct(product: {
     // Generate authcode using GPS signature algorithm
     const authCode = generateAuthCode(productDataArray, timestamp, appKey, appSecret);
 
-    console.log(`[GPS] Batch creating ${productDataArray.length} product(s) via /openapi/v1/product/batchCreate`);
-
-    const response = await fetch(
-      `${baseUrl}/openapi/v1/product/batchCreate?authcode=${authCode}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
+    console.log(
+      `[GPS] Batch creating ${productDataArray.length} product(s) via /openapi/v1/product/batchCreate`
     );
+
+    const response = await fetch(`${baseUrl}/openapi/v1/product/batchCreate?authcode=${authCode}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
 
     const result: any = await response.json();
 
@@ -770,7 +770,9 @@ export async function syncProduct(product: {
 
       if (failedProducts.length > 0) {
         console.log(`[GPS] ⚠️  Some products failed:`, failedProducts);
-        const errorMessages = failedProducts.map((p: any) => `${p.sku}: ${p.message || "Unknown error"}`).join(", ");
+        const errorMessages = failedProducts
+          .map((p: any) => `${p.sku}: ${p.message || "Unknown error"}`)
+          .join(", ");
         return {
           success: successProducts.length > 0,
           message: `Synced ${successProducts.length}/${productDataArray.length} product(s) to GPS. Failures: ${errorMessages}`,
@@ -810,7 +812,9 @@ export async function syncInventoryLevel(inventory: {
   sku?: string;
 }): Promise<{ success: boolean; message: string }> {
   console.log(`[GPS] 🔄 syncInventoryLevel called for item ${inventory.inventoryItemId}`);
-  console.log(`[GPS]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}`);
+  console.log(
+    `[GPS]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}`
+  );
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId}`);

@@ -39,10 +39,7 @@ export async function POST(request: NextRequest) {
     if (!config.extensiv.disableWebhookVerification) {
       if (!signature) {
         console.error(`[Extensiv Webhook] [${requestId}] Missing signature header`);
-        return NextResponse.json(
-          { error: "Missing signature", requestId },
-          { status: 401 }
-        );
+        return NextResponse.json({ error: "Missing signature", requestId }, { status: 401 });
       }
 
       const publicKey = await getPublicKey();
@@ -50,10 +47,7 @@ export async function POST(request: NextRequest) {
 
       if (!isValid) {
         console.error(`[Extensiv Webhook] [${requestId}] Invalid signature`);
-        return NextResponse.json(
-          { error: "Invalid signature", requestId },
-          { status: 401 }
-        );
+        return NextResponse.json({ error: "Invalid signature", requestId }, { status: 401 });
       }
 
       console.log(`[Extensiv Webhook] [${requestId}] Signature verified`);
@@ -65,7 +59,9 @@ export async function POST(request: NextRequest) {
     const event = extensiv.parseWebhookEvent(JSON.parse(rawBody));
     const { wmsEventId, eventType, resource } = event;
 
-    console.log(`[Extensiv Webhook] [${requestId}] Event type: ${eventType}, WMS Event ID: ${wmsEventId}`);
+    console.log(
+      `[Extensiv Webhook] [${requestId}] Event type: ${eventType}, WMS Event ID: ${wmsEventId}`
+    );
 
     // Route based on event type
     switch (eventType) {
@@ -155,4 +151,3 @@ export async function GET() {
     verificationEnabled: !config.extensiv.disableWebhookVerification,
   });
 }
-

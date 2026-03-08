@@ -67,15 +67,15 @@
 
 ## Function Categories
 
-| Category | Functions | Purpose |
-|----------|-----------|---------|
-| **Order Processing** | 5 | Handle order creation, updates, cancellations, refunds |
-| **Inventory Management** | 4 | Sync inventory across Shopify, D365, GPS |
-| **Product Management** | 1 | Sync product data across systems |
-| **Fulfillment** | 4 | Process fulfillments from warehouses |
-| **Battle Hub Actions** | 3 | Handle manual actions from dashboard |
-| **Location Management** | 1 | Sync location/warehouse mappings |
-| **Cron Jobs** | 1 | Scheduled GPS fulfillment polling |
+| Category                 | Functions | Purpose                                                |
+| ------------------------ | --------- | ------------------------------------------------------ |
+| **Order Processing**     | 5         | Handle order creation, updates, cancellations, refunds |
+| **Inventory Management** | 4         | Sync inventory across Shopify, D365, GPS               |
+| **Product Management**   | 1         | Sync product data across systems                       |
+| **Fulfillment**          | 4         | Process fulfillments from warehouses                   |
+| **Battle Hub Actions**   | 3         | Handle manual actions from dashboard                   |
+| **Location Management**  | 1         | Sync location/warehouse mappings                       |
+| **Cron Jobs**            | 1         | Scheduled GPS fulfillment polling                      |
 
 **Total: 19 Functions**
 
@@ -86,7 +86,8 @@
 ### 1. `process-shopify-order`
 
 **Function ID**: `process-shopify-order`  
-**Trigger Events**: 
+**Trigger Events**:
+
 - `shopify/order.created`
 - `shopify/order.paid`
 
@@ -146,6 +147,7 @@
 - ✅ Graceful error handling (continues on GPS failure)
 
 **Output Events**:
+
 - `order:${shopifyOrderName}` channel (Inngest Realtime)
 - CS Platform order created event
 
@@ -192,6 +194,7 @@
 - **Concurrency**: 1 per order
 
 **Output Events**:
+
 - CS Platform refund event
 
 ---
@@ -228,9 +231,11 @@
 - **Concurrency**: 1 per order
 
 **Known Limitations**:
+
 - D365 order cancellation not yet implemented (returns "not_implemented" status)
 
 **Output Events**:
+
 - CS Platform cancellation event
 
 ---
@@ -268,6 +273,7 @@
 - **Retries**: 3 attempts
 
 **Output Events**:
+
 - CS Platform order updated event
 
 ---
@@ -306,6 +312,7 @@
 - **Throttle**: Dynamics API rate limits
 
 **Output Events**:
+
 - CS Platform fulfillment event
 - Slack notifications (Stord channel)
 
@@ -343,6 +350,7 @@
 - **Concurrency**: 5 simultaneous syncs
 
 **Output Events**:
+
 - Slack warnings on sync failures
 
 ---
@@ -380,6 +388,7 @@
 - ✅ Battle Hub callback integration
 
 **Supported Routes**:
+
 - `shopify → dynamics → shopify` (automatic cascade)
 - `dynamics → shopify`
 - `warehouse → dynamics → shopify`
@@ -428,6 +437,7 @@
 - ✅ Dry run mode
 
 **Output Events**:
+
 - Real-time status updates to Battle Hub
 - Final summary with drift counts
 
@@ -435,7 +445,7 @@
 
 ### 9. `process-inventory-mesh` (Duplicate Entry)
 
-*Note: This function is listed twice in the index. The mesh function handles both individual syncs and routing.*
+_Note: This function is listed twice in the index. The mesh function handles both individual syncs and routing._
 
 ---
 
@@ -445,6 +455,7 @@
 
 **Function ID**: `process-product-sync`  
 **Trigger Events**:
+
 - `shopify/product.created`
 - `shopify/product.updated`
 - `shopify/product.deleted`
@@ -480,9 +491,11 @@
 - **Concurrency**: 5 simultaneous syncs
 
 **Known Limitations**:
+
 - Product deletion not yet implemented (returns placeholder)
 
 **Output Events**:
+
 - CS Platform product created/updated/deleted events
 - Slack notifications
 
@@ -531,6 +544,7 @@
 - ✅ All order status visibility (not just fulfilled)
 
 **Output Events**:
+
 - `shopify/order.fulfilled` (for D365 sync)
 - Slack summary notifications
 
@@ -543,7 +557,7 @@
 
 **Purpose**: Process fulfillments from Extensiv warehouse
 
-**Status**: *Implementation details not fully reviewed in current codebase*
+**Status**: _Implementation details not fully reviewed in current codebase_
 
 ---
 
@@ -554,7 +568,7 @@
 
 **Purpose**: Handle receiver confirmation from Extensiv
 
-**Status**: *Implementation details not fully reviewed in current codebase*
+**Status**: _Implementation details not fully reviewed in current codebase_
 
 ---
 
@@ -565,7 +579,7 @@
 
 **Purpose**: Simulate GPS fulfillments for testing
 
-**Status**: *Testing utility function*
+**Status**: _Testing utility function_
 
 ---
 
@@ -576,7 +590,7 @@
 
 **Purpose**: Process GPS orders in batch mode
 
-**Status**: *Implementation details not fully reviewed in current codebase*
+**Status**: _Implementation details not fully reviewed in current codebase_
 
 ---
 
@@ -587,7 +601,7 @@
 
 **Purpose**: Process individual GPS orders
 
-**Status**: *Implementation details not fully reviewed in current codebase*
+**Status**: _Implementation details not fully reviewed in current codebase_
 
 ---
 
@@ -616,6 +630,7 @@
 - **Note**: Actual Shopify cancellation is handled by API route, this function provides tracking
 
 **Output Events**:
+
 - CS Platform cancellation event
 
 ---
@@ -643,6 +658,7 @@
 - **Note**: Actual Shopify refund is handled by API route, this function provides tracking
 
 **Output Events**:
+
 - None (tracking only)
 
 ---
@@ -670,6 +686,7 @@
 - **Note**: Actual Shopify fulfillment is handled by API route, this function provides tracking
 
 **Output Events**:
+
 - None (tracking only)
 
 ---
@@ -680,6 +697,7 @@
 
 **Function ID**: `process-location-sync`  
 **Trigger Events**:
+
 - `shopify/location.created`
 - `shopify/location.updated`
 - `shopify/location.deleted`
@@ -706,6 +724,7 @@
 - **Concurrency**: 5 simultaneous syncs
 
 **Output Events**:
+
 - CS Platform location events
 
 ---
@@ -717,6 +736,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
 ### Critical Missing Features
 
 #### 1. **Order Lifecycle Tracker**
+
 - **Status**: ❌ Not Implemented
 - **Priority**: 🔴 Critical
 - **Description**: Visual representation of order journey through all systems
@@ -732,6 +752,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `POST /api/orders/:id/retry` - Retry failed step
 
 #### 2. **Bulk Operations Center**
+
 - **Status**: ❌ Not Implemented
 - **Priority**: 🔴 Critical
 - **Description**: Mass retry/resync operations with progress tracking
@@ -749,6 +770,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `GET /api/bulk-operations/preview` - Preview matching orders
 
 #### 3. **OOS (Out of Stock) Auto-Retry Queue**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🔴 Critical
 - **Description**: Automatic retry for OOS orders with configurable intervals
@@ -770,6 +792,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `DELETE /api/oos-queue/:id` - Remove from queue
 
 #### 4. **Inventory Health Dashboard**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🔴 Critical
 - **Description**: Proactive inventory monitoring with alerts
@@ -790,6 +813,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `PUT /api/inventory/thresholds` - Update thresholds
 
 #### 5. **Fulfillment Sync Monitor**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🟡 High
 - **Description**: Track fulfillment status across GPS → D365 → Shopify pipeline
@@ -807,6 +831,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
 ### High Priority Missing Features
 
 #### 6. **Real-Time Alerts & Notifications**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🟡 High
 - **Description**: Proactive Slack notifications for issues
@@ -825,6 +850,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `GET /api/alerts/history` - Get alert history
 
 #### 7. **Finance Reconciliation Reports**
+
 - **Status**: ❌ Not Implemented
 - **Priority**: 🟢 Medium
 - **Description**: Automated daily/weekly/monthly reconciliation reports
@@ -840,6 +866,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
 ### Medium Priority Missing Features
 
 #### 8. **CS Order Lookup Enhancement**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🟢 Medium
 - **Description**: Enhanced order lookup with lifecycle view
@@ -850,6 +877,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - Enhanced search
 
 #### 9. **System Health Dashboard**
+
 - **Status**: ⚠️ Partially Implemented
 - **Priority**: 🟢 Medium
 - **Description**: Real-time visibility into integration health
@@ -861,6 +889,7 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
   - `GET /api/health/integrations` - Get integration status
 
 #### 10. **Demo Replay Feature**
+
 - **Status**: ❌ Not Implemented
 - **Priority**: 🔴 Critical (for POC)
 - **Description**: Replay historical orders to demonstrate performance
@@ -987,16 +1016,16 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
 
 ### Function Coverage
 
-| Category | Implemented | Missing | Total Required |
-|----------|-------------|---------|---------------|
-| Order Processing | 5 | 0 | 5 |
-| Inventory Management | 4 | 0 | 4 |
-| Product Management | 1 | 0 | 1 |
-| Fulfillment | 4 | 0 | 4 |
-| Battle Hub Actions | 3 | 0 | 3 |
-| Location Management | 1 | 0 | 1 |
-| **Core Functions** | **18** | **0** | **18** |
-| **Missing Features** | **0** | **~15** | **~15** |
+| Category             | Implemented | Missing | Total Required |
+| -------------------- | ----------- | ------- | -------------- |
+| Order Processing     | 5           | 0       | 5              |
+| Inventory Management | 4           | 0       | 4              |
+| Product Management   | 1           | 0       | 1              |
+| Fulfillment          | 4           | 0       | 4              |
+| Battle Hub Actions   | 3           | 0       | 3              |
+| Location Management  | 1           | 0       | 1              |
+| **Core Functions**   | **18**      | **0**   | **18**         |
+| **Missing Features** | **0**       | **~15** | **~15**        |
 
 ### Missing Feature Breakdown
 
@@ -1016,6 +1045,5 @@ Based on the Battle Hub POC Roadmap and current implementation, the following fu
 
 ---
 
-*Last Updated: 2026-01-08*
-*Document Version: 1.0*
-
+_Last Updated: 2026-01-08_
+_Document Version: 1.0_

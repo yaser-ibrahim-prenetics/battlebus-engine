@@ -25,7 +25,9 @@ export const processLocationSync = inngest.createFunction(
     const { locationId, locationName, shopifyStore, locationJson } = event.data;
 
     console.log(`[LocationSync] ========================================`);
-    console.log(`[LocationSync] Processing location: ${locationName} (${locationId}) from ${shopifyStore}`);
+    console.log(
+      `[LocationSync] Processing location: ${locationName} (${locationId}) from ${shopifyStore}`
+    );
     console.log(`[LocationSync] Event: ${event.name}`);
 
     // Handle deletion
@@ -106,4 +108,3 @@ export const processLocationSync = inngest.createFunction(
     return result;
   }
 );
-

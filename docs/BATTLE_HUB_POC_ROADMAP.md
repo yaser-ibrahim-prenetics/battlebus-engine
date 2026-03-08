@@ -15,14 +15,14 @@ This document outlines the complete feature set required to transform Battle Hub
 
 ## Pain Points Addressed
 
-| Slack Quote | Date | Battle Hub Solution |
-|-------------|------|---------------------|
-| "4000 orders still not fulfilled... some go as far back as 1 Dec" | Dec 18 | Bulk Operations Center + Real-time Alerts |
-| "2400 orders fulfilled but not synced to Shopify. Can we rerun?" | Dec 23 | Fulfillment Sync Monitor + Auto-retry |
-| "Order created 18 Dec was just synced to D365 on 2 Jan" | Jan 3 | Order Lifecycle Tracker |
-| "task reran for 114 orders due to insufficient inventory" | Jan 2 | OOS Auto-Retry Queue |
-| "Pls help replenish these SKUs" | Multiple | Inventory Health Dashboard |
-| "Can you check this order?" | Multiple | CS Order Lookup |
+| Slack Quote                                                       | Date     | Battle Hub Solution                       |
+| ----------------------------------------------------------------- | -------- | ----------------------------------------- |
+| "4000 orders still not fulfilled... some go as far back as 1 Dec" | Dec 18   | Bulk Operations Center + Real-time Alerts |
+| "2400 orders fulfilled but not synced to Shopify. Can we rerun?"  | Dec 23   | Fulfillment Sync Monitor + Auto-retry     |
+| "Order created 18 Dec was just synced to D365 on 2 Jan"           | Jan 3    | Order Lifecycle Tracker                   |
+| "task reran for 114 orders due to insufficient inventory"         | Jan 2    | OOS Auto-Retry Queue                      |
+| "Pls help replenish these SKUs"                                   | Multiple | Inventory Health Dashboard                |
+| "Can you check this order?"                                       | Multiple | CS Order Lookup                           |
 
 ---
 
@@ -35,6 +35,7 @@ This document outlines the complete feature set required to transform Battle Hub
 **Stakeholders**: Ops, Management
 
 #### Purpose
+
 Proactive inventory monitoring across all systems (Shopify, D365, GPS, Stord, Extensiv) with automated alerts before stockouts cause order failures.
 
 #### UI Components
@@ -72,8 +73,8 @@ interface InventoryItem {
     extensiv: number | null;
   };
   thresholds: {
-    critical: number;  // default: 10
-    low: number;       // default: 50
+    critical: number; // default: 10
+    low: number; // default: 50
   };
   lastSynced: Date;
   discrepancies: InventoryDiscrepancy[];
@@ -90,22 +91,22 @@ interface InventoryDiscrepancy {
 
 #### Inngest Functions
 
-| Function | Event | Description |
-|----------|-------|-------------|
-| `inventory/check.scheduled` | Cron: `0 * * * *` (hourly) | Poll all warehouses, compare quantities |
-| `inventory/alert.low-stock` | `inventory/threshold.breached` | Send Slack notification to #tech-ops |
-| `inventory/sync.requested` | `inventory/sync.manual` | Sync specific SKU across systems |
-| `inventory/discrepancy.detected` | `inventory/mismatch.found` | Log, alert, auto-reconcile if configured |
+| Function                         | Event                          | Description                              |
+| -------------------------------- | ------------------------------ | ---------------------------------------- |
+| `inventory/check.scheduled`      | Cron: `0 * * * *` (hourly)     | Poll all warehouses, compare quantities  |
+| `inventory/alert.low-stock`      | `inventory/threshold.breached` | Send Slack notification to #tech-ops     |
+| `inventory/sync.requested`       | `inventory/sync.manual`        | Sync specific SKU across systems         |
+| `inventory/discrepancy.detected` | `inventory/mismatch.found`     | Log, alert, auto-reconcile if configured |
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/inventory` | List all inventory with filters |
-| GET | `/api/inventory/:sku` | Get specific SKU details |
-| POST | `/api/inventory/sync` | Trigger manual sync for SKU(s) |
-| POST | `/api/inventory/bulk-sync` | Sync all selected SKUs |
-| PUT | `/api/inventory/thresholds` | Update alert thresholds |
+| Method | Endpoint                    | Description                     |
+| ------ | --------------------------- | ------------------------------- |
+| GET    | `/api/inventory`            | List all inventory with filters |
+| GET    | `/api/inventory/:sku`       | Get specific SKU details        |
+| POST   | `/api/inventory/sync`       | Trigger manual sync for SKU(s)  |
+| POST   | `/api/inventory/bulk-sync`  | Sync all selected SKUs          |
+| PUT    | `/api/inventory/thresholds` | Update alert thresholds         |
 
 #### Files to Create/Modify
 
@@ -151,6 +152,7 @@ src/
 **Stakeholders**: Ops, CS, Management
 
 #### Purpose
+
 Visual representation of every order's journey through all systems with real-time status updates and stuck order detection.
 
 #### UI Components
@@ -193,21 +195,21 @@ interface OrderLifecycle {
   updatedAt: Date;
 }
 
-type OrderStage = 
-  | 'webhook_received'
-  | 'inngest_triggered'
-  | 'd365_created'
-  | 'warehouse_sent'      // GPS, Stord, or Extensiv
-  | 'warehouse_fulfilled'
-  | 'd365_fulfilled'
-  | 'shopify_fulfilled'
-  | 'completed'
-  | 'failed'
-  | 'oos_queued';
+type OrderStage =
+  | "webhook_received"
+  | "inngest_triggered"
+  | "d365_created"
+  | "warehouse_sent" // GPS, Stord, or Extensiv
+  | "warehouse_fulfilled"
+  | "d365_fulfilled"
+  | "shopify_fulfilled"
+  | "completed"
+  | "failed"
+  | "oos_queued";
 
 interface OrderStageRecord {
   stage: OrderStage;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+  status: "pending" | "in_progress" | "completed" | "failed" | "skipped";
   startedAt: Date | null;
   completedAt: Date | null;
   durationMs: number | null;
@@ -216,9 +218,9 @@ interface OrderStageRecord {
 }
 
 interface OrderAlert {
-  type: 'stuck' | 'failed' | 'oos' | 'discrepancy';
+  type: "stuck" | "failed" | "oos" | "discrepancy";
   message: string;
-  severity: 'info' | 'warning' | 'critical';
+  severity: "info" | "warning" | "critical";
   createdAt: Date;
   acknowledgedAt: Date | null;
 }
@@ -226,19 +228,19 @@ interface OrderAlert {
 
 #### Inngest Functions
 
-| Function | Event | Description |
-|----------|-------|-------------|
-| `order/lifecycle.track` | All order events | Update lifecycle state after each step |
-| `order/stale.check` | Cron: `*/15 * * * *` | Find orders stuck > threshold |
-| `order/stale.alert` | `order/stale.detected` | Slack alert with order details |
+| Function                | Event                  | Description                            |
+| ----------------------- | ---------------------- | -------------------------------------- |
+| `order/lifecycle.track` | All order events       | Update lifecycle state after each step |
+| `order/stale.check`     | Cron: `*/15 * * * *`   | Find orders stuck > threshold          |
+| `order/stale.alert`     | `order/stale.detected` | Slack alert with order details         |
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/orders/:id/lifecycle` | Get full lifecycle for order |
-| GET | `/api/orders/stuck` | List all stuck orders |
-| POST | `/api/orders/:id/retry` | Retry failed step |
+| Method | Endpoint                    | Description                  |
+| ------ | --------------------------- | ---------------------------- |
+| GET    | `/api/orders/:id/lifecycle` | Get full lifecycle for order |
+| GET    | `/api/orders/stuck`         | List all stuck orders        |
+| POST   | `/api/orders/:id/retry`     | Retry failed step            |
 
 #### Files to Create/Modify
 
@@ -280,6 +282,7 @@ src/
 **Stakeholders**: Ops
 
 #### Purpose
+
 Enable mass retry/resync operations with progress tracking, eliminating the need for manual task replays.
 
 #### UI Components
@@ -320,14 +323,14 @@ Enable mass retry/resync operations with progress tracking, eliminating the need
 ```typescript
 interface BulkOperation {
   id: string;
-  type: 'retry' | 'resync_d365' | 'resync_shopify' | 'resync_warehouse';
+  type: "retry" | "resync_d365" | "resync_shopify" | "resync_warehouse";
   filters: BulkOperationFilters;
   orderIds: string[];
   totalCount: number;
   processedCount: number;
   successCount: number;
   failedCount: number;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
   startedAt: Date;
   completedAt: Date | null;
   startedBy: string;
@@ -344,7 +347,7 @@ interface BulkOperationFilters {
 
 interface BulkOperationResult {
   orderId: string;
-  status: 'success' | 'failed' | 'skipped';
+  status: "success" | "failed" | "skipped";
   error?: string;
   processedAt: Date;
 }
@@ -352,21 +355,21 @@ interface BulkOperationResult {
 
 #### Inngest Functions
 
-| Function | Event | Description |
-|----------|-------|-------------|
-| `bulk/operation.execute` | `bulk/operation.started` | Fan-out to individual order retries |
-| `bulk/operation.process-order` | `bulk/order.retry` | Process single order in bulk op |
-| `bulk/operation.complete` | All orders done | Send Slack summary |
+| Function                       | Event                    | Description                         |
+| ------------------------------ | ------------------------ | ----------------------------------- |
+| `bulk/operation.execute`       | `bulk/operation.started` | Fan-out to individual order retries |
+| `bulk/operation.process-order` | `bulk/order.retry`       | Process single order in bulk op     |
+| `bulk/operation.complete`      | All orders done          | Send Slack summary                  |
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/bulk-operations` | List all bulk operations |
-| GET | `/api/bulk-operations/:id` | Get operation details + progress |
-| POST | `/api/bulk-operations` | Start new bulk operation |
-| POST | `/api/bulk-operations/:id/cancel` | Cancel running operation |
-| GET | `/api/bulk-operations/preview` | Preview orders matching filters |
+| Method | Endpoint                          | Description                      |
+| ------ | --------------------------------- | -------------------------------- |
+| GET    | `/api/bulk-operations`            | List all bulk operations         |
+| GET    | `/api/bulk-operations/:id`        | Get operation details + progress |
+| POST   | `/api/bulk-operations`            | Start new bulk operation         |
+| POST   | `/api/bulk-operations/:id/cancel` | Cancel running operation         |
+| GET    | `/api/bulk-operations/preview`    | Preview orders matching filters  |
 
 #### Files to Create/Modify
 
@@ -410,6 +413,7 @@ src/
 **Stakeholders**: Ops, Management
 
 #### Purpose
+
 Automatically retry orders that failed due to inventory issues, with configurable retry intervals and max attempts.
 
 #### UI Components
@@ -451,13 +455,13 @@ interface OOSQueueItem {
   orderId: string;
   shopifyOrderName: string;
   sku: string;
-  warehouse: 'GPS_US' | 'GPS_UK' | 'GPS_CN' | 'STORD' | 'EXTENSIV';
+  warehouse: "GPS_US" | "GPS_UK" | "GPS_CN" | "STORD" | "EXTENSIV";
   retryCount: number;
   maxRetries: number;
   lastRetryAt: Date | null;
   nextRetryAt: Date;
   error: string;
-  status: 'queued' | 'retrying' | 'resolved' | 'exhausted' | 'cancelled';
+  status: "queued" | "retrying" | "resolved" | "exhausted" | "cancelled";
   queuedAt: Date;
   resolvedAt: Date | null;
 }
@@ -472,23 +476,23 @@ interface OOSConfig {
 
 #### Inngest Functions
 
-| Function | Event | Description |
-|----------|-------|-------------|
-| `oos/order.detected` | `order/oos.detected` | Add order to OOS queue |
-| `oos/retry.scheduled` | Cron: `0 */4 * * *` | Process due retries |
-| `oos/retry.success` | `order/oos.resolved` | Remove from queue, notify |
-| `oos/retry.exhausted` | Max retries reached | Alert Ops, escalate |
+| Function              | Event                | Description               |
+| --------------------- | -------------------- | ------------------------- |
+| `oos/order.detected`  | `order/oos.detected` | Add order to OOS queue    |
+| `oos/retry.scheduled` | Cron: `0 */4 * * *`  | Process due retries       |
+| `oos/retry.success`   | `order/oos.resolved` | Remove from queue, notify |
+| `oos/retry.exhausted` | Max retries reached  | Alert Ops, escalate       |
 
 #### API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/oos-queue` | List OOS queue with filters |
-| GET | `/api/oos-queue/stats` | Queue statistics |
-| POST | `/api/oos-queue/:id/retry` | Force immediate retry |
-| POST | `/api/oos-queue/retry-all` | Retry all due orders |
-| PUT | `/api/oos-queue/config` | Update OOS config |
-| DELETE | `/api/oos-queue/:id` | Remove from queue |
+| Method | Endpoint                   | Description                 |
+| ------ | -------------------------- | --------------------------- |
+| GET    | `/api/oos-queue`           | List OOS queue with filters |
+| GET    | `/api/oos-queue/stats`     | Queue statistics            |
+| POST   | `/api/oos-queue/:id/retry` | Force immediate retry       |
+| POST   | `/api/oos-queue/retry-all` | Retry all due orders        |
+| PUT    | `/api/oos-queue/config`    | Update OOS config           |
+| DELETE | `/api/oos-queue/:id`       | Remove from queue           |
 
 #### Files to Create/Modify
 
@@ -536,6 +540,7 @@ src/
 **Stakeholders**: Ops
 
 #### Purpose
+
 Track fulfillment status across GPS → D365 → Shopify pipeline with automatic detection of sync failures.
 
 #### UI Components
@@ -586,7 +591,7 @@ interface FulfillmentSync {
 }
 
 interface SyncStage {
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  status: "pending" | "in_progress" | "completed" | "failed";
   completedAt: Date | null;
   error: string | null;
   retryCount: number;
@@ -595,13 +600,13 @@ interface SyncStage {
 
 #### Inngest Functions
 
-| Function | Event | Description |
-|----------|-------|-------------|
-| `fulfillment/gps.received` | `gps/fulfillment.received` | Update GPS status, trigger D365 |
-| `fulfillment/stord.received` | `stord/fulfillment.received` | Update Stord status, trigger D365 |
-| `fulfillment/d365.sync` | `fulfillment/d365.requested` | Push to D365 |
-| `fulfillment/shopify.sync` | `fulfillment/shopify.requested` | Update Shopify |
-| `fulfillment/orphan.check` | Cron: `0 * * * *` | Find fulfilled but not synced |
+| Function                     | Event                           | Description                       |
+| ---------------------------- | ------------------------------- | --------------------------------- |
+| `fulfillment/gps.received`   | `gps/fulfillment.received`      | Update GPS status, trigger D365   |
+| `fulfillment/stord.received` | `stord/fulfillment.received`    | Update Stord status, trigger D365 |
+| `fulfillment/d365.sync`      | `fulfillment/d365.requested`    | Push to D365                      |
+| `fulfillment/shopify.sync`   | `fulfillment/shopify.requested` | Update Shopify                    |
+| `fulfillment/orphan.check`   | Cron: `0 * * * *`               | Find fulfilled but not synced     |
 
 #### Files to Create/Modify
 
@@ -641,20 +646,21 @@ src/
 **Stakeholders**: Ops, Management
 
 #### Purpose
+
 Proactive Slack notifications for issues before they become crises.
 
 #### Alert Rules
 
-| Condition | Channel | Severity | Default |
-|-----------|---------|----------|---------|
-| Order stuck > 1 hour | #tech-ops | Warning | On |
-| Order stuck > 4 hours | #tech-ops | Critical | On |
-| Inventory < 10 units | #tech-ops | Critical | On |
-| Inventory < 50 units | #tech-ops | Warning | On |
-| Fulfillment sync failed 3x | #tech-ops | Critical | On |
-| Bulk operation complete | #tech-ops | Info | On |
-| Daily summary | #ops-daily | Info | On |
-| OOS queue > 50 orders | #tech-ops | Warning | On |
+| Condition                  | Channel    | Severity | Default |
+| -------------------------- | ---------- | -------- | ------- |
+| Order stuck > 1 hour       | #tech-ops  | Warning  | On      |
+| Order stuck > 4 hours      | #tech-ops  | Critical | On      |
+| Inventory < 10 units       | #tech-ops  | Critical | On      |
+| Inventory < 50 units       | #tech-ops  | Warning  | On      |
+| Fulfillment sync failed 3x | #tech-ops  | Critical | On      |
+| Bulk operation complete    | #tech-ops  | Info     | On      |
+| Daily summary              | #ops-daily | Info     | On      |
+| OOS queue > 50 orders      | #tech-ops  | Warning  | On      |
 
 #### Slack Message Format
 
@@ -703,6 +709,7 @@ src/
 **Stakeholders**: Finance
 
 #### Purpose
+
 Automated daily/weekly/monthly reconciliation reports comparing orders across all systems.
 
 #### UI Components
@@ -761,9 +768,11 @@ src/
 **Stakeholders**: CS
 
 #### Purpose
+
 Self-service order lookup for Customer Service team with full system status visibility.
 
 #### Current State
+
 - Basic order table exists
 - Order detail dialog exists
 - Needs: search, lifecycle view, action buttons
@@ -789,6 +798,7 @@ src/
 **Stakeholders**: Ops, Management
 
 #### Purpose
+
 Real-time visibility into all integration health and throughput.
 
 #### UI Components
@@ -844,6 +854,7 @@ src/
 **Stakeholders**: Management (demo)
 
 #### Purpose
+
 Replay historical orders through Battle Bus to demonstrate performance vs Spock Store.
 
 #### UI Components
@@ -907,31 +918,35 @@ src/
 ## Implementation Priority
 
 ### Phase 1: POC Demo (Days 1-2)
-| Feature | Priority | Effort |
-|---------|----------|--------|
-| Demo Replay Feature | 🔴 Critical | Low |
+
+| Feature                 | Priority    | Effort |
+| ----------------------- | ----------- | ------ |
+| Demo Replay Feature     | 🔴 Critical | Low    |
 | Order Lifecycle Tracker | 🔴 Critical | Medium |
-| System Health Dashboard | 🟢 Medium | Low |
+| System Health Dashboard | 🟢 Medium   | Low    |
 
 ### Phase 2: Core Operations (Days 3-4)
-| Feature | Priority | Effort |
-|---------|----------|--------|
-| Bulk Operations Center | 🔴 Critical | Medium |
-| OOS Auto-Retry Queue | 🔴 Critical | Low-Medium |
-| Real-Time Alerts | 🟡 High | Low |
+
+| Feature                | Priority    | Effort     |
+| ---------------------- | ----------- | ---------- |
+| Bulk Operations Center | 🔴 Critical | Medium     |
+| OOS Auto-Retry Queue   | 🔴 Critical | Low-Medium |
+| Real-Time Alerts       | 🟡 High     | Low        |
 
 ### Phase 3: Monitoring & Reporting (Day 5)
-| Feature | Priority | Effort |
-|---------|----------|--------|
-| Inventory Health Dashboard | 🔴 Critical | Medium |
-| Fulfillment Sync Monitor | 🟡 High | Medium |
-| CS Order Lookup (Enhancement) | 🟢 Medium | Low |
+
+| Feature                       | Priority    | Effort |
+| ----------------------------- | ----------- | ------ |
+| Inventory Health Dashboard    | 🔴 Critical | Medium |
+| Fulfillment Sync Monitor      | 🟡 High     | Medium |
+| CS Order Lookup (Enhancement) | 🟢 Medium   | Low    |
 
 ### Phase 4: Finance & Polish (Week 2)
-| Feature | Priority | Effort |
-|---------|----------|--------|
+
+| Feature                        | Priority  | Effort |
+| ------------------------------ | --------- | ------ |
 | Finance Reconciliation Reports | 🟢 Medium | Medium |
-| SKU Mapping Center | 🟢 Medium | Medium |
+| SKU Mapping Center             | 🟢 Medium | Medium |
 
 ---
 
@@ -1016,29 +1031,31 @@ CREATE TABLE alert_history (
 
 ## Inngest Function Summary
 
-| Category | Count | Functions |
-|----------|-------|-----------|
-| Order Processing | 5 | Existing + lifecycle tracking |
-| Inventory | 4 | check, alert, sync, discrepancy |
-| OOS Handling | 4 | detected, scheduled, success, exhausted |
-| Fulfillment | 5 | gps, stord, d365, shopify, orphan-check |
-| Bulk Operations | 3 | execute, process-order, complete |
-| Alerts | 4 | stuck-orders, low-inventory, daily-summary, sync-failed |
-| Reports | 2 | reconciliation-generate, export |
-| Demo | 1 | demo-replay |
-| **Total** | **28** | Enterprise-grade coverage |
+| Category         | Count  | Functions                                               |
+| ---------------- | ------ | ------------------------------------------------------- |
+| Order Processing | 5      | Existing + lifecycle tracking                           |
+| Inventory        | 4      | check, alert, sync, discrepancy                         |
+| OOS Handling     | 4      | detected, scheduled, success, exhausted                 |
+| Fulfillment      | 5      | gps, stord, d365, shopify, orphan-check                 |
+| Bulk Operations  | 3      | execute, process-order, complete                        |
+| Alerts           | 4      | stuck-orders, low-inventory, daily-summary, sync-failed |
+| Reports          | 2      | reconciliation-generate, export                         |
+| Demo             | 1      | demo-replay                                             |
+| **Total**        | **28** | Enterprise-grade coverage                               |
 
 ---
 
 ## Success Metrics
 
 ### POC Demo Success
+
 - [ ] Process 1,847 orders in < 5 minutes (vs 3h 35m Spock Store)
 - [ ] Show real-time progress visualization
 - [ ] Display order lifecycle for any order
 - [ ] Show system health dashboard
 
 ### Production Success
+
 - [ ] Zero "can we rerun the sync?" Slack messages
 - [ ] Zero "please investigate this order" requests
 - [ ] 100% automated OOS retry (no manual replays)
@@ -1058,4 +1075,4 @@ CREATE TABLE alert_history (
 
 ---
 
-*This document serves as the complete specification for Battle Hub POC. Every feature directly addresses a real pain point from production operations.*
+_This document serves as the complete specification for Battle Hub POC. Every feature directly addresses a real pain point from production operations._

@@ -37,12 +37,12 @@ This flow tests the GPS fulfillment journey which is **pull-based** (unlike Exte
 
 ## Key Endpoints
 
-| System | Direction | Endpoint | Description |
-|--------|-----------|----------|-------------|
-| spock-store → GPS | Outbound | `POST /openapi/v1/outboundOrder/detail` | Gets order status |
-| spock-store → Shopify | Outbound | `POST /admin/api/.../fulfillments.json` | Creates fulfillment |
-| spock-store → Shopify | Outbound | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
-| spock-store → Dynamics | Outbound | `POST /api/services/.../fulfilment` | Creates fulfillment |
+| System                 | Direction | Endpoint                                     | Description             |
+| ---------------------- | --------- | -------------------------------------------- | ----------------------- |
+| spock-store → GPS      | Outbound  | `POST /openapi/v1/outboundOrder/detail`      | Gets order status       |
+| spock-store → Shopify  | Outbound  | `POST /admin/api/.../fulfillments.json`      | Creates fulfillment     |
+| spock-store → Shopify  | Outbound  | `GET /admin/api/.../fulfillment_orders.json` | Gets fulfillment orders |
+| spock-store → Dynamics | Outbound  | `POST /api/services/.../fulfilment`          | Creates fulfillment     |
 
 ---
 
@@ -105,11 +105,13 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 ```
 
 **Verify GPS order was created:**
+
 ```bash
 curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 Expected fields:
+
 - `gpsOrderId`: populated
 - `gpsStatus`: 1 (processing)
 - `dynamicsSalesOrderNumber`: populated
@@ -127,6 +129,7 @@ curl -X PATCH http://localhost:3100/state/orders/IM8-1001/gps-fulfill \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "id": "<uuid>",
@@ -154,18 +157,21 @@ curl -X POST http://localhost:3100/gps/openapi/v1/outboundOrder/detail \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "code": 200,
   "msg": "操作成功",
-  "data": [{
-    "outboundOrderNo": "<gpsOrderId>",
-    "status": 3,
-    "logisticsTrackNo": "DHL1234567890",
-    "logisticsCarrier": "DHL",
-    "platformOrderNo": "IM8-1001",
-    "outboundTime": "2024-01-15T10:30:00.000Z"
-  }]
+  "data": [
+    {
+      "outboundOrderNo": "<gpsOrderId>",
+      "status": 3,
+      "logisticsTrackNo": "DHL1234567890",
+      "logisticsCarrier": "DHL",
+      "platformOrderNo": "IM8-1001",
+      "outboundTime": "2024-01-15T10:30:00.000Z"
+    }
+  ]
 }
 ```
 
@@ -174,25 +180,29 @@ curl -X POST http://localhost:3100/gps/openapi/v1/outboundOrder/detail \
 **What spock-store's scheduled task does:**
 
 1. **Query unfulfilled orders:**
+
    ```sql
-   SELECT * FROM SalesOrder 
-   WHERE gpsOrderId IS NOT NULL 
-   AND (Fulfilment.shopifyFulfilmentId IS NULL 
+   SELECT * FROM SalesOrder
+   WHERE gpsOrderId IS NOT NULL
+   AND (Fulfilment.shopifyFulfilmentId IS NULL
         OR Fulfilment.shopifyFulfilmentId != '00000000000000')
    ```
 
 2. **Batch fetch GPS details:**
+
    ```
    POST /openapi/v1/outboundOrder/detail
    { "data": { "outboundOrderNoList": ["GPS1234ABCD", "GPS5678EFGH"] } }
    ```
 
 3. **For status === 3 orders, create individual tasks:**
+
    ```javascript
-   processIndividualGpsOrder(taskId, orderData, warehouse)
+   processIndividualGpsOrder(taskId, orderData, warehouse);
    ```
 
 4. **Notify Shopify:**
+
    ```
    POST /admin/api/.../fulfillments.json
    ```
@@ -222,6 +232,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 **Expected:**
+
 ```json
 {
   "status": "fulfilled",
@@ -272,6 +283,7 @@ curl -X POST http://localhost:3100/state/orders \
 ```
 
 **Validation Points:**
+
 - `gpsUKOrderId` should be populated (not `gpsOrderId`)
 - `dataAreaId` should be `H007`
 - Carrier might be "Royal Mail" for UK orders
@@ -295,6 +307,7 @@ npm run flow:order -- --template usGpsOrder --fulfill --tracking fedex
 ```
 
 **CLI Output Example:**
+
 ```
 🚀 Starting Order Flow Simulation
    Template: usGpsOrder
@@ -356,28 +369,28 @@ npm run gps:fulfill -- --orderId IM8-1001 --preset royalMail
 
 ## GPS Status Codes
 
-| Status | Meaning | spock-store Action |
-|--------|---------|-------------------|
-| 0 | Created | Skip |
-| 1 | Processing | Skip |
-| 2 | Ready to Ship | Skip |
-| 3 | Shipped | Create fulfillment |
-| 4 | Delivered | Already processed |
-| 5 | Exception | Alert/investigate |
+| Status | Meaning       | spock-store Action |
+| ------ | ------------- | ------------------ |
+| 0      | Created       | Skip               |
+| 1      | Processing    | Skip               |
+| 2      | Ready to Ship | Skip               |
+| 3      | Shipped       | Create fulfillment |
+| 4      | Delivered     | Already processed  |
+| 5      | Exception     | Alert/investigate  |
 
 ---
 
 ## Validation Checklist
 
-| Step | Check | Method |
-|------|-------|--------|
-| 1 | Order created with GPS ID | `GET /state/orders/:id` |
-| 2 | GPS returns status 3 | `POST /gps/.../detail` |
-| 3 | Tracking info present | Check `logisticsTrackNo` |
-| 4 | Shopify fulfillment created | Check spock-store logs |
-| 5 | Dynamics fulfillment sent | Check spock-store logs |
-| 6 | Order status = fulfilled | `GET /state/orders/:id` |
-| 7 | Not re-processed on next poll | Run polling again |
+| Step | Check                         | Method                   |
+| ---- | ----------------------------- | ------------------------ |
+| 1    | Order created with GPS ID     | `GET /state/orders/:id`  |
+| 2    | GPS returns status 3          | `POST /gps/.../detail`   |
+| 3    | Tracking info present         | Check `logisticsTrackNo` |
+| 4    | Shopify fulfillment created   | Check spock-store logs   |
+| 5    | Dynamics fulfillment sent     | Check spock-store logs   |
+| 6    | Order status = fulfilled      | `GET /state/orders/:id`  |
+| 7    | Not re-processed on next poll | Run polling again        |
 
 ---
 
@@ -425,6 +438,7 @@ Orders are **excluded** from GPS polling if:
 **Trigger:** GPS doesn't respond within timeout
 
 **Expected Behavior:**
+
 - Log timeout error
 - Retry on next scheduled run
 - Don't mark as failed
@@ -434,6 +448,7 @@ Orders are **excluded** from GPS polling if:
 **Trigger:** GPS status=3 but `logisticsTrackNo` empty
 
 **Expected Behavior:**
+
 - Log warning
 - May still create fulfillment with empty tracking
 - Or skip until tracking available (depends on config)
@@ -443,6 +458,7 @@ Orders are **excluded** from GPS polling if:
 **Trigger:** GPS returns `platformOrderNo` not matching any SalesOrder
 
 **Expected Behavior:**
+
 - Log warning
 - Skip this order
 - May need manual investigation
@@ -452,6 +468,7 @@ Orders are **excluded** from GPS polling if:
 **Trigger:** Same order processed twice
 
 **Expected Behavior:**
+
 - Second attempt should be blocked by existence of `shopifyFulfilmentId`
 - Shopify may also reject duplicate fulfillment
 
@@ -459,13 +476,13 @@ Orders are **excluded** from GPS polling if:
 
 ## Differences: US vs UK GPS
 
-| Aspect | US (U001) | UK (H007) |
-|--------|-----------|-----------|
-| Field | `gpsOrderId` | `gpsUKOrderId` |
-| Warehouse | GPS US | GPS UK |
-| Typical Carriers | DHL, FedEx, UPS | Royal Mail, DHL, Hermes |
-| Logistics Channel | US-specific | UK-specific |
-| Query Function | `findSalesOrdersByUnfulfilledGps` | `findSalesOrdersByUnfulfilledGpsUK` |
+| Aspect            | US (U001)                         | UK (H007)                           |
+| ----------------- | --------------------------------- | ----------------------------------- |
+| Field             | `gpsOrderId`                      | `gpsUKOrderId`                      |
+| Warehouse         | GPS US                            | GPS UK                              |
+| Typical Carriers  | DHL, FedEx, UPS                   | Royal Mail, DHL, Hermes             |
+| Logistics Channel | US-specific                       | UK-specific                         |
+| Query Function    | `findSalesOrdersByUnfulfilledGps` | `findSalesOrdersByUnfulfilledGpsUK` |
 
 ---
 
@@ -477,4 +494,3 @@ Orders are **excluded** from GPS polling if:
 - Status 3 is the trigger for fulfillment creation
 - Always verify `outboundTime` is present before processing
 - The `'00000000000000'` ID is reserved for cancelled orders to prevent re-polling
-

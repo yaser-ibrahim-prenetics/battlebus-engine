@@ -3,12 +3,14 @@
 ## Overview
 
 The Inventory Sync Mesh is a centralized routing system that synchronizes inventory and product data between multiple platforms:
+
 - **Shopify** (e-commerce)
 - **Dynamics 365** (ERP)
 - **GPS Warehouse** (3PL)
 - **Other Warehouse Systems** (Stord, Extensiv, etc.)
 
 The mesh acts as the "brain" that:
+
 - Knows where data is coming from (source)
 - Knows where it needs to go (destination)
 - Transforms data between platform formats
@@ -39,11 +41,13 @@ The mesh acts as the "brain" that:
 
 **Endpoint**: `POST /api/inventory/sync`
 
-**Base URL**: 
+**Base URL**:
+
 - Production: `https://battle-bus.vercel.app`
 - Local: `http://localhost:7000`
 
 **Query Parameters**:
+
 - `from` (optional): Source platform. If not provided, inferred from request body or defaults to `shopify`
   - Valid values: `shopify`, `dynamics`, `gps`, `warehouse`, `stord`, `extensiv`
 - `to` (optional): Comma-separated destination platforms. If not provided, syncs to all platforms except source
@@ -51,11 +55,13 @@ The mesh acts as the "brain" that:
   - Example: `?from=shopify&to=dynamics,gps`
 
 **Request Headers**:
+
 ```
 Content-Type: application/json
 ```
 
 **Request Body Schema**:
+
 ```typescript
 {
   // Product/Variant Identification (at least one required)
@@ -94,6 +100,7 @@ Content-Type: application/json
 ```
 
 **Success Response** (200 OK):
+
 ```json
 {
   "success": true,
@@ -106,6 +113,7 @@ Content-Type: application/json
 
 **Partial Success Response** (202 Accepted):
 When Inngest is not available (e.g., in local dev without dev server):
+
 ```json
 {
   "success": false,
@@ -126,6 +134,7 @@ When Inngest is not available (e.g., in local dev without dev server):
 **Error Responses**:
 
 **400 Bad Request** - Missing required fields:
+
 ```json
 {
   "error": "sku, inventoryItemId, or variantId is required"
@@ -133,6 +142,7 @@ When Inngest is not available (e.g., in local dev without dev server):
 ```
 
 **400 Bad Request** - Missing productId for delete:
+
 ```json
 {
   "error": "productId or variantId is required for delete action"
@@ -140,6 +150,7 @@ When Inngest is not available (e.g., in local dev without dev server):
 ```
 
 **500 Internal Server Error**:
+
 ```json
 {
   "error": "Internal server error",
@@ -213,6 +224,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync" \
 **Endpoint**: `GET /api/inventory/sync`
 
 **Health Check Response** (200 OK):
+
 ```json
 {
   "status": "ok",
@@ -224,6 +236,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync" \
 **Endpoint**: `GET /api/inventory/sync?docs=true`
 
 **Documentation Response** (200 OK):
+
 ```json
 {
   "name": "Inventory Sync Mesh API",
@@ -272,10 +285,12 @@ The system automatically handles Shopify webhooks for product and inventory chan
 **Webhook Endpoint**: `POST /api/webhooks/shopify`
 
 **Base URL**:
+
 - Production: `https://battle-bus.vercel.app/api/webhooks/shopify`
 - Local: `http://localhost:7000/api/webhooks/shopify`
 
 **Required Headers** (from Shopify):
+
 ```
 x-shopify-topic: products/create | products/update | products/delete | inventory_levels/update
 x-shopify-shop-domain: im8-store.myshopify.com
@@ -289,10 +304,12 @@ x-shopify-api-version: <api-version>
 #### 1. Product Events
 
 **`products/create`** - New product created
+
 - **Event Sent**: `shopify/product.created`
 - **Inngest Function**: `process-product-sync`
 - **Sync Destinations**: Dynamics 365, GPS Warehouse
 - **Payload Example**:
+
 ```json
 {
   "id": 123456789,
@@ -316,16 +333,19 @@ x-shopify-api-version: <api-version>
 ```
 
 **`products/update`** - Product updated
+
 - **Event Sent**: `shopify/product.updated`
 - **Inngest Function**: `process-product-sync`
 - **Sync Destinations**: Dynamics 365, GPS Warehouse
 - **Payload**: Same structure as `products/create`
 
 **`products/delete`** - Product deleted
+
 - **Event Sent**: `shopify/product.deleted`
 - **Inngest Function**: `process-product-sync`
 - **Sync Destinations**: Dynamics 365, GPS Warehouse (deletion)
 - **Payload Example**:
+
 ```json
 {
   "id": 123456789,
@@ -336,10 +356,12 @@ x-shopify-api-version: <api-version>
 #### 2. Inventory Events
 
 **`inventory_levels/update`** - Inventory level changed
+
 - **Event Sent**: `inventory/sync` (via mesh)
 - **Inngest Function**: `process-inventory-mesh`
 - **Sync Destinations**: Dynamics 365, GPS Warehouse
 - **Payload Example**:
+
 ```json
 {
   "inventory_item_id": 123456789,
@@ -350,6 +372,7 @@ x-shopify-api-version: <api-version>
 ```
 
 **Webhook Flow**:
+
 1. Shopify sends webhook to `/api/webhooks/shopify`
 2. Webhook handler verifies HMAC signature
 3. Handler sends Inngest event based on topic:
@@ -358,17 +381,20 @@ x-shopify-api-version: <api-version>
 4. Inngest functions process events and sync to destinations
 
 **Webhook Verification**:
+
 - HMAC SHA256 signature verification (required in production)
 - Signature validation can be disabled in development mode
 - Invalid signatures return `401 Unauthorized`
 
 **Response Codes**:
+
 - `200 OK`: Webhook received and processed
 - `401 Unauthorized`: Invalid HMAC signature
 - `400 Bad Request`: Invalid payload
 - `500 Internal Server Error`: Processing error
 
 **Example Webhook Test** (local development):
+
 ```bash
 curl -X POST "http://localhost:7000/api/webhooks/shopify" \
   -H "Content-Type: application/json" \
@@ -394,6 +420,7 @@ Processes `inventory/sync` events and routes inventory changes to destination pl
 **Event**: `inventory/sync`
 
 **Data Structure**:
+
 ```typescript
 {
   source: "shopify" | "dynamics" | "gps" | "warehouse",
@@ -415,6 +442,7 @@ Processes `inventory/sync` events and routes inventory changes to destination pl
 Processes Shopify product create/update/delete events.
 
 **Events**:
+
 - `shopify/product.created`
 - `shopify/product.updated`
 - `shopify/product.deleted`
@@ -422,16 +450,19 @@ Processes Shopify product create/update/delete events.
 ## Supported Platforms
 
 ### Shopify
+
 - **Inventory Updates**: Uses `inventory_levels/set` API
 - **Product Sync**: Full product + variant data
 - **Location Mapping**: Maps location IDs to warehouse IDs
 
 ### Dynamics 365
+
 - **Inventory Sync**: Uses `syncInventoryLevel()` function
 - **Product Sync**: Uses `syncProduct()` function
 - **Warehouse Mapping**: Maps to `dataAreaId` (H007, etc.)
 
 ### GPS Warehouse
+
 - **Inventory Sync**: Uses `syncInventoryLevel()` function
 - **Product Sync**: Uses `syncProduct()` function
 - **Warehouse Mapping**: Maps to GPS warehouse names
@@ -498,16 +529,19 @@ dynamics: {
 ### API Error Handling
 
 **Client Errors (4xx)**:
+
 - **400 Bad Request**: Invalid request body, missing required fields
 - **401 Unauthorized**: Invalid webhook signature (for webhooks)
 - **404 Not Found**: Invalid endpoint
 
 **Server Errors (5xx)**:
+
 - **500 Internal Server Error**: Unexpected server error
 - **502 Bad Gateway**: Upstream service unavailable
 - **503 Service Unavailable**: Service temporarily unavailable
 
 **Partial Success (202 Accepted)**:
+
 - When Inngest is not available (local dev without dev server)
 - Events are queued but not processed
 - Response includes warnings about failed events
@@ -556,7 +590,7 @@ dynamics: {
 Currently, the Inventory Sync Mesh API does not require authentication for direct API calls. However:
 
 - **Webhook Authentication**: Shopify webhooks require valid HMAC SHA256 signatures
-- **Production Recommendations**: 
+- **Production Recommendations**:
   - Consider adding API key authentication for production use
   - Use HTTPS only in production
   - Implement rate limiting per IP/client
@@ -564,12 +598,14 @@ Currently, the Inventory Sync Mesh API does not require authentication for direc
 ### Webhook Security
 
 **Shopify Webhook Verification**:
+
 - HMAC SHA256 signature verification
 - Signature calculated from request body + webhook secret
 - Invalid signatures return `401 Unauthorized`
 - Can be disabled in development mode (`NODE_ENV !== "production"`)
 
 **Webhook Secret**:
+
 - Stored in environment variable: `SHOPIFY_WEBHOOK_SECRET`
 - Must match Shopify webhook configuration
 - Never expose in client-side code or logs
@@ -623,24 +659,29 @@ Currently, there are no explicit rate limits on the API. However:
 ### Common Issues
 
 **1. "Inngest API Error: 401 Event key not found"**
+
 - **Cause**: Inngest dev server not running
 - **Solution**: Run `npm run dev:inngest` or `npm run dev:all`
 - **Workaround**: API still returns 202 with warnings (events queued)
 
 **2. "sku, inventoryItemId, or variantId is required"**
+
 - **Cause**: Missing product identification in request
 - **Solution**: Include at least one identifier field
 
 **3. "productId or variantId is required for delete action"**
+
 - **Cause**: Delete action requires product/variant ID
 - **Solution**: Include `productId` or `variantId` in request
 
 **4. Events not processing**
+
 - **Check**: Inngest dev server running (http://localhost:8288)
 - **Check**: Function registered in `src/inngest/functions/index.ts`
 - **Check**: Event name matches function trigger
 
 **5. Sync not reaching destination**
+
 - **Check**: Destination platform configuration in `config.ts`
 - **Check**: Platform-specific sync functions implemented
 - **Check**: Inngest function logs for errors
@@ -665,11 +706,13 @@ Currently, there are no explicit rate limits on the API. However:
 ### Local Testing
 
 **Prerequisites**:
+
 1. Start Next.js dev server: `npm run dev` (runs on port 7000)
 2. (Optional) Start Inngest dev server: `npm run dev:inngest` (for event processing)
 3. Or run both: `npm run dev:all`
 
 **Test Scripts**:
+
 ```bash
 # Run comprehensive test suite
 ./scripts/test-inventory-mesh.sh
@@ -750,6 +793,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=d
 ### Testing Webhooks
 
 **Simulate Shopify Inventory Webhook**:
+
 ```bash
 curl -X POST "http://localhost:7000/api/webhooks/shopify" \
   -H "Content-Type: application/json" \
@@ -766,7 +810,7 @@ curl -X POST "http://localhost:7000/api/webhooks/shopify" \
 ```
 
 **View Inngest Events** (when dev server is running):
+
 - Open http://localhost:8288 to see event processing in Inngest dashboard
 - View function runs, retries, and errors
 - Debug event payloads and function execution
-

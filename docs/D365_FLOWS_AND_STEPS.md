@@ -11,6 +11,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED**
 
 ### Steps:
+
 1. **Validate Order** (test orders, high-risk, etc.)
 2. **Check Existing D365 Order**
    - `dynamics.getSalesOrderByShopifyId(shopifyOrderId)`
@@ -31,6 +32,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 8. **Send to GPS** (if applicable, separate flow)
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=THK_ShopifyReference eq '...'` (check existing)
 - `POST /data/SalesOrderHeadersV3` (create header)
 - `POST /data/SalesOrderLines` (create lines, one per item)
@@ -46,6 +48,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED**
 
 ### Steps:
+
 1. **Skip GPS Fulfillments** (handled by cron)
 2. **Get D365 Order**
    - `dynamics.getSalesOrderByShopifyId(shopifyOrderId, dataAreaId)`
@@ -56,6 +59,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
      - `dynamics.createFulfilment({ type: "PackingSlip", ... })`
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get order)
 - `POST /api/services/.../fulfilment` (create packing slip)
 
@@ -68,6 +72,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED**
 
 ### Steps:
+
 1. **Get Unfulfilled Orders from Shopify** (batch of 50)
 2. **Group by GPS Warehouse** (US vs UK)
 3. **Check GPS Status** (for each warehouse batch)
@@ -80,6 +85,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
      - `dynamics.createFulfilment({ type: "PackingSlip", ... })`
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get order)
 - `POST /api/services/.../fulfilment` (create packing slip)
 
@@ -92,6 +98,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED** (needs verification)
 
 ### Steps:
+
 1. **Verify Webhook Signature**
 2. **Get Shopify Order**
 3. **Create Shopify Fulfillment**
@@ -101,6 +108,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
    - `dynamics.createFulfilment({ type: "PackingSlip", ... })`
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get order)
 - `POST /api/services/.../fulfilment` (create packing slip)
 
@@ -113,6 +121,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED**
 
 ### Steps:
+
 1. **Get D365 Order**
    - `dynamics.getSalesOrderByShopifyId(shopifyOrderId)`
 2. **Try Cancel GPS Order**
@@ -132,6 +141,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
        - `dynamics.confirmSalesOrder(returnOrderNumber, dataAreaId)`
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get original order)
 - `GET /data/SalesOrderLines?$filter=...` (get original lines)
 - `POST /data/SalesOrderHeadersV3` (create return header)
@@ -147,12 +157,14 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ⚠️ **PARTIALLY IMPLEMENTED** (lookup only, no update API)
 
 ### Steps:
+
 1. **Get D365 Order**
    - `dynamics.getSalesOrderByShopifyId(shopifyOrderId)`
 2. **Determine Update Actions** (shipping address, notes, customer)
 3. **Update D365** (NOT IMPLEMENTED - no D365 update API in clients)
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get order only)
 
 **Missing:** D365 update/patch API for modifying existing orders
@@ -166,6 +178,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 **Status:** ✅ **FULLY IMPLEMENTED**
 
 ### Steps:
+
 1. **Get D365 Order**
    - `dynamics.getSalesOrderByShopifyId(shopifyOrderId)`
 2. **Get D365 Original Lines**
@@ -178,6 +191,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
    - `dynamics.confirmSalesOrder(returnOrderNumber, dataAreaId)`
 
 **D365 API Calls:**
+
 - `GET /data/SalesOrderHeadersV3?$filter=...` (get original order)
 - `GET /data/SalesOrderLines?$filter=...` (get original lines)
 - `POST /data/SalesOrderHeadersV3` (create return header)
@@ -188,26 +202,27 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 
 ## 📋 **Summary: All D365 Operations Used**
 
-| Operation | Function | Endpoint | Status |
-|-----------|----------|----------|--------|
-| **Authenticate** | `authenticate()` | `POST /oauth2/v2.0/token` | ✅ |
-| **Get Order by Shopify ID** | `getSalesOrderByShopifyId()` | `GET /data/SalesOrderHeadersV3?$filter=...` | ✅ |
-| **Get Order Lines** | `getSalesOrderLines()` | `GET /data/SalesOrderLines?$filter=...` | ✅ |
-| **Create Order Header** | `createSalesOrderHeaderV3()` | `POST /data/SalesOrderHeadersV3` | ✅ |
-| **Create Order Line** | `createSalesOrderLine()` | `POST /data/SalesOrderLines` | ✅ |
-| **Confirm Order** | `confirmSalesOrder()` | `POST /api/services/.../confirmSO` | ✅ |
-| **Create Prepayment** | `createPrepayment()` | `POST /api/services/.../PostPrepayment` | ✅ |
-| **Create Fulfilment** | `createFulfilment()` | `POST /api/services/.../fulfilment` | ✅ |
-| **Create Return Header** | `createSalesOrderHeadersV3ForReturn()` | `POST /data/SalesOrderHeadersV3` | ✅ |
-| **Create Return Line** | `createSalesOrderLineForReturn()` | `POST /data/SalesOrderLines` | ✅ |
-| **Update Order** | ❌ | ❌ | ❌ **NOT IMPLEMENTED** |
-| **Cancel Order** | ❌ | ❌ | ❌ **NOT IMPLEMENTED** (logged only) |
+| Operation                   | Function                               | Endpoint                                    | Status                               |
+| --------------------------- | -------------------------------------- | ------------------------------------------- | ------------------------------------ |
+| **Authenticate**            | `authenticate()`                       | `POST /oauth2/v2.0/token`                   | ✅                                   |
+| **Get Order by Shopify ID** | `getSalesOrderByShopifyId()`           | `GET /data/SalesOrderHeadersV3?$filter=...` | ✅                                   |
+| **Get Order Lines**         | `getSalesOrderLines()`                 | `GET /data/SalesOrderLines?$filter=...`     | ✅                                   |
+| **Create Order Header**     | `createSalesOrderHeaderV3()`           | `POST /data/SalesOrderHeadersV3`            | ✅                                   |
+| **Create Order Line**       | `createSalesOrderLine()`               | `POST /data/SalesOrderLines`                | ✅                                   |
+| **Confirm Order**           | `confirmSalesOrder()`                  | `POST /api/services/.../confirmSO`          | ✅                                   |
+| **Create Prepayment**       | `createPrepayment()`                   | `POST /api/services/.../PostPrepayment`     | ✅                                   |
+| **Create Fulfilment**       | `createFulfilment()`                   | `POST /api/services/.../fulfilment`         | ✅                                   |
+| **Create Return Header**    | `createSalesOrderHeadersV3ForReturn()` | `POST /data/SalesOrderHeadersV3`            | ✅                                   |
+| **Create Return Line**      | `createSalesOrderLineForReturn()`      | `POST /data/SalesOrderLines`                | ✅                                   |
+| **Update Order**            | ❌                                     | ❌                                          | ❌ **NOT IMPLEMENTED**               |
+| **Cancel Order**            | ❌                                     | ❌                                          | ❌ **NOT IMPLEMENTED** (logged only) |
 
 ---
 
 ## 🧪 **How to Test Each Flow**
 
 ### **Flow 1: Create New Order**
+
 ```bash
 # Send test order webhook
 curl -X POST <NGROK_URL>/api/webhooks/shopify \
@@ -222,6 +237,7 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 ```
 
 ### **Flow 2: STORD/HK Fulfillment**
+
 ```bash
 # Send fulfillment webhook
 curl -X POST <NGROK_URL>/api/webhooks/shopify \
@@ -234,10 +250,12 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 ```
 
 ### **Flow 3: GPS Fulfillment (Cron)**
+
 - Wait for cron to run (or trigger manually in Inngest Dev UI)
 - Check logs for GPS sync results
 
 ### **Flow 4: Extensiv Fulfillment**
+
 ```bash
 # Send Extensiv webhook
 curl -X POST <NGROK_URL>/api/webhooks/extensiv \
@@ -245,6 +263,7 @@ curl -X POST <NGROK_URL>/api/webhooks/extensiv \
 ```
 
 ### **Flow 5: Cancellation**
+
 ```bash
 # Send cancellation webhook
 curl -X POST <NGROK_URL>/api/webhooks/shopify \
@@ -257,6 +276,7 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 ```
 
 ### **Flow 7: Refund**
+
 ```bash
 # Send refund webhook
 curl -X POST <NGROK_URL>/api/webhooks/shopify \
@@ -269,8 +289,8 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 ## ✅ **All Flows Are Implemented!**
 
 Every D365 operation from `spock-store` has been ported to `battle-bus-inngest`. The only missing pieces are:
+
 - **Update Order API** (not in spock-store either - D365 doesn't support patching orders easily)
 - **Cancel Order API** (logged but not implemented - may need custom D365 service)
 
 All flows use the **same authentication** with the **same scope**, so fixing the scope issue fixes all flows! 🎉
-

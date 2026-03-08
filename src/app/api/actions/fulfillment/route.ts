@@ -35,7 +35,9 @@ export async function POST(request: NextRequest) {
     // Support both orderName and orderId for backward compatibility
     // If platform is 'shopify', try orderId first, then fallback to orderName
     let numericOrderId: number | undefined;
-    let resolvedFulfillmentOrderId: number | undefined = fulfillmentOrderId ? Number(fulfillmentOrderId) : undefined;
+    let resolvedFulfillmentOrderId: number | undefined = fulfillmentOrderId
+      ? Number(fulfillmentOrderId)
+      : undefined;
 
     // Try to resolve order ID with fallback logic (same as cancel/refund)
     if (orderId) {
@@ -43,7 +45,7 @@ export async function POST(request: NextRequest) {
       if (Number.isFinite(numericId) && !isNaN(numericId)) {
         // It's a valid numeric ID, try to use it
         numericOrderId = numericId;
-      } else if (platform === 'shopify' && orderName) {
+      } else if (platform === "shopify" && orderName) {
         // orderId is not numeric (e.g., "shopify-12346"), try orderName instead
         const orders = await shopify.searchOrdersByName(orderName);
         if (orders && orders.length > 0) {
@@ -56,10 +58,7 @@ export async function POST(request: NextRequest) {
     if (!numericOrderId && orderName) {
       const orders = await shopify.searchOrdersByName(orderName);
       if (!orders || orders.length === 0) {
-        return NextResponse.json(
-          { error: `Order ${orderName} not found` },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: `Order ${orderName} not found` }, { status: 404 });
       }
       numericOrderId = orders[0].id;
     }
@@ -74,13 +73,13 @@ export async function POST(request: NextRequest) {
     // Fetch fulfillment orders to resolve fulfillmentOrderId and map line items
     let fulfillmentOrders: any[] = [];
     let openFulfillmentOrder: any = null;
-    
+
     try {
       fulfillmentOrders = await shopify.getFulfillmentOrders(numericOrderId);
       openFulfillmentOrder = fulfillmentOrders.find(
         (fo: any) => fo.status === "open" || fo.status === "in_progress"
       );
-      
+
       // If fulfillmentOrderId not provided but we have an open fulfillment order, use it
       if (!resolvedFulfillmentOrderId && openFulfillmentOrder) {
         resolvedFulfillmentOrderId = openFulfillmentOrder.id;
@@ -97,9 +96,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the specific fulfillment order we're using
-    let targetFulfillmentOrder = fulfillmentOrders.find(
-      (fo: any) => fo.id === resolvedFulfillmentOrderId
-    ) || openFulfillmentOrder;
+    let targetFulfillmentOrder =
+      fulfillmentOrders.find((fo: any) => fo.id === resolvedFulfillmentOrderId) ||
+      openFulfillmentOrder;
 
     if (!targetFulfillmentOrder) {
       return NextResponse.json(
@@ -117,22 +116,27 @@ export async function POST(request: NextRequest) {
         );
         if (freshTargetFulfillmentOrder) {
           targetFulfillmentOrder = freshTargetFulfillmentOrder;
-          console.log(`[Actions] Re-fetched fulfillment order ${resolvedFulfillmentOrderId} for line item mapping`);
+          console.log(
+            `[Actions] Re-fetched fulfillment order ${resolvedFulfillmentOrderId} for line item mapping`
+          );
         }
       } catch (err) {
-        console.warn("[Actions] Failed to re-fetch fulfillment orders for line item mapping, using cached data:", err);
+        console.warn(
+          "[Actions] Failed to re-fetch fulfillment orders for line item mapping, using cached data:",
+          err
+        );
       }
     }
 
     // Build tracking info based on fulfillment type
     let trackingInfo: { number: string; company: string; url?: string };
-    
-    if (fulfillmentType === 'gps') {
+
+    if (fulfillmentType === "gps") {
       // For GPS fulfillment, fetch tracking info from GPS API
       try {
         // Get GPS order metafield from Shopify order
         const gpsMetafield = await shopify.getGpsOrderMetafield(numericOrderId);
-        
+
         if (!gpsMetafield) {
           return NextResponse.json(
             { error: "GPS order metafield not found. Order may not be a GPS order." },
@@ -154,11 +158,13 @@ export async function POST(request: NextRequest) {
         }
 
         const gpsOrder = gpsResponse.data[0];
-        
+
         // Check if GPS order is fulfilled (status 3)
         if (gpsOrder.status !== 3) {
           return NextResponse.json(
-            { error: `GPS order ${gpsMetafield.gpsOrderId} is not fulfilled yet (status: ${gpsOrder.status})` },
+            {
+              error: `GPS order ${gpsMetafield.gpsOrderId} is not fulfilled yet (status: ${gpsOrder.status})`,
+            },
             { status: 400 }
           );
         }
@@ -166,7 +172,7 @@ export async function POST(request: NextRequest) {
         // Use tracking info from GPS
         const gpsTrackingNumber = gpsOrder.logisticsTrackNo || "";
         const gpsCarrier = gpsOrder.logisticsCarrier || "Other";
-        
+
         if (!gpsTrackingNumber) {
           return NextResponse.json(
             { error: "GPS order is fulfilled but tracking number is not available yet" },
@@ -180,11 +186,16 @@ export async function POST(request: NextRequest) {
           url: getTrackingUrl(gpsCarrier, gpsTrackingNumber),
         };
 
-        console.log(`[Actions] Fetched GPS tracking info: ${gpsTrackingNumber} (${gpsCarrier}) for order ${numericOrderId}`);
+        console.log(
+          `[Actions] Fetched GPS tracking info: ${gpsTrackingNumber} (${gpsCarrier}) for order ${numericOrderId}`
+        );
       } catch (error) {
         console.error("[Actions] Error fetching GPS tracking info:", error);
         return NextResponse.json(
-          { error: "Failed to fetch GPS tracking information", message: error instanceof Error ? error.message : String(error) },
+          {
+            error: "Failed to fetch GPS tracking information",
+            message: error instanceof Error ? error.message : String(error),
+          },
           { status: 500 }
         );
       }
@@ -196,7 +207,7 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      
+
       trackingInfo = {
         number: trackingNumber as string,
         company: carrier || "Other",
@@ -208,53 +219,80 @@ export async function POST(request: NextRequest) {
     // The lineItems from battle-cs contain order line item IDs, but we need fulfillment order line item IDs
     // Following spock-store pattern: if we can't map correctly, omit line items and let Shopify fulfill all
     let fulfillmentLineItems: Array<{ id: number; quantity: number }> | undefined;
-    
+
     if (Array.isArray(lineItems) && lineItems.length > 0) {
       if (!targetFulfillmentOrder?.line_items || targetFulfillmentOrder.line_items.length === 0) {
-        console.warn(`[Actions] Fulfillment order ${resolvedFulfillmentOrderId} has no line items, will fulfill all items`);
+        console.warn(
+          `[Actions] Fulfillment order ${resolvedFulfillmentOrderId} has no line items, will fulfill all items`
+        );
         fulfillmentLineItems = undefined;
       } else {
         fulfillmentLineItems = [];
-        
-        console.log(`[Actions] Mapping ${lineItems.length} requested line items to fulfillment order line items`);
+
+        console.log(
+          `[Actions] Mapping ${lineItems.length} requested line items to fulfillment order line items`
+        );
         console.log(`[Actions] Requested line items:`, JSON.stringify(lineItems));
-        console.log(`[Actions] Fulfillment order has ${targetFulfillmentOrder.line_items.length} line items`);
-        console.log(`[Actions] Fulfillment order line items:`, JSON.stringify(targetFulfillmentOrder.line_items.map((li: any) => ({ id: li.id, line_item_id: li.line_item_id, fulfillable_quantity: li.fulfillable_quantity }))));
-        
+        console.log(
+          `[Actions] Fulfillment order has ${targetFulfillmentOrder.line_items.length} line items`
+        );
+        console.log(
+          `[Actions] Fulfillment order line items:`,
+          JSON.stringify(
+            targetFulfillmentOrder.line_items.map((li: any) => ({
+              id: li.id,
+              line_item_id: li.line_item_id,
+              fulfillable_quantity: li.fulfillable_quantity,
+            }))
+          )
+        );
+
         for (const requestedItem of lineItems) {
           // Convert to numbers for comparison (handle string/number mismatches)
           const requestedId = Number(requestedItem.id);
-          
+
           // Find the fulfillment order line item that matches this order line item
           // Match by line_item_id (which is the order line item ID)
           const fulfillmentLineItem = targetFulfillmentOrder.line_items.find(
             (foItem: any) => Number(foItem.line_item_id) === requestedId
           );
-          
+
           if (fulfillmentLineItem) {
-            const fulfillableQty = fulfillmentLineItem.fulfillable_quantity || fulfillmentLineItem.quantity || 0;
+            const fulfillableQty =
+              fulfillmentLineItem.fulfillable_quantity || fulfillmentLineItem.quantity || 0;
             const requestedQty = Number(requestedItem.quantity) || 1;
             const finalQty = Math.min(requestedQty, fulfillableQty);
-            
+
             fulfillmentLineItems.push({
               id: Number(fulfillmentLineItem.id), // Use fulfillment order line item ID (must be numeric)
               quantity: finalQty,
             });
-            
-            console.log(`[Actions] Mapped order line item ${requestedId} to fulfillment line item ${fulfillmentLineItem.id} (qty: ${finalQty})`);
+
+            console.log(
+              `[Actions] Mapped order line item ${requestedId} to fulfillment line item ${fulfillmentLineItem.id} (qty: ${finalQty})`
+            );
           } else {
-            console.warn(`[Actions] Order line item ${requestedId} not found in fulfillment order ${resolvedFulfillmentOrderId}`);
-            console.warn(`[Actions] Available line_item_ids in fulfillment order:`, targetFulfillmentOrder.line_items.map((li: any) => li.line_item_id));
+            console.warn(
+              `[Actions] Order line item ${requestedId} not found in fulfillment order ${resolvedFulfillmentOrderId}`
+            );
+            console.warn(
+              `[Actions] Available line_item_ids in fulfillment order:`,
+              targetFulfillmentOrder.line_items.map((li: any) => li.line_item_id)
+            );
           }
         }
-        
+
         // If we couldn't map all requested items correctly, omit line items entirely
         // This follows spock-store pattern: let Shopify fulfill all items in the fulfillment order
         if (fulfillmentLineItems.length !== lineItems.length) {
-          console.warn(`[Actions] Could not map all line items (${fulfillmentLineItems.length}/${lineItems.length}), omitting line items to fulfill all items in fulfillment order`);
+          console.warn(
+            `[Actions] Could not map all line items (${fulfillmentLineItems.length}/${lineItems.length}), omitting line items to fulfill all items in fulfillment order`
+          );
           fulfillmentLineItems = undefined; // Let Shopify fulfill all items
         } else {
-          console.log(`[Actions] Successfully mapped all ${fulfillmentLineItems.length} line items`);
+          console.log(
+            `[Actions] Successfully mapped all ${fulfillmentLineItems.length} line items`
+          );
         }
       }
     }
@@ -263,8 +301,10 @@ export async function POST(request: NextRequest) {
     // Create fulfillment with tracking info, fulfillmentType, and platform
     // Always send tracking info (even if empty for GPS - can be updated later)
     // Only send line items if we successfully mapped them all
-    console.log(`[Actions] Creating fulfillment with ${fulfillmentLineItems ? fulfillmentLineItems.length : 'all'} line items`);
-    
+    console.log(
+      `[Actions] Creating fulfillment with ${fulfillmentLineItems ? fulfillmentLineItems.length : "all"} line items`
+    );
+
     const fulfillment = await shopify.createFulfillment(
       resolvedFulfillmentOrderId,
       trackingInfo,
@@ -290,7 +330,7 @@ export async function POST(request: NextRequest) {
 
     // Send Inngest event for real-time tracking
     const eventId = `action-fulfill-${numericOrderId}-${Date.now()}`;
-    
+
     await inngest.send({
       id: eventId,
       name: "action/order.fulfill",
@@ -329,5 +369,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-

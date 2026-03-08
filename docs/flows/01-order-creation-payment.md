@@ -27,24 +27,26 @@ This flow tests the complete order creation journey from when a customer places 
 
 ## Key Endpoints
 
-| System | Direction | Endpoint | Description |
-|--------|-----------|----------|-------------|
-| Shopify → battle-bus | Inbound | `POST /v1.0/shopify/webhook` | Receives order webhook |
-| battle-bus → Dynamics | Outbound | `POST /data/SalesOrderHeadersV3` | Creates SO header |
-| battle-bus → Dynamics | Outbound | `POST /data/SalesOrderLines` | Creates SO lines |
-| battle-bus → GPS | Outbound | `POST /openapi/v1/outboundOrder/create` | Creates GPS order |
+| System                | Direction | Endpoint                                | Description            |
+| --------------------- | --------- | --------------------------------------- | ---------------------- |
+| Shopify → battle-bus  | Inbound   | `POST /v1.0/shopify/webhook`            | Receives order webhook |
+| battle-bus → Dynamics | Outbound  | `POST /data/SalesOrderHeadersV3`        | Creates SO header      |
+| battle-bus → Dynamics | Outbound  | `POST /data/SalesOrderLines`            | Creates SO lines       |
+| battle-bus → GPS      | Outbound  | `POST /openapi/v1/outboundOrder/create` | Creates GPS order      |
 
 ---
 
 ## Prerequisites
 
 1. **Start the simulator:**
+
    ```bash
    cd /path/to/simulation
    npm run dev
    ```
 
 2. **Configure battle-bus** to point to simulator:
+
    ```json
    {
      "shopify": { "baseUrl": "http://localhost:3100/shopify" },
@@ -99,6 +101,7 @@ curl -X POST http://localhost:3100/state/orders \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "id": "<uuid>",
@@ -120,6 +123,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 ```
 
 **Expected Response:**
+
 ```json
 {
   "order": {
@@ -137,6 +141,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 #### Step 3: Verify battle-bus Processing
 
 **What battle-bus should do:**
+
 1. Parse webhook and validate HMAC signature
 2. Create `Task` of type `shopify` with `topic: 'orders/paid'`
 3. Fetch latest order from Shopify API (optional)
@@ -152,6 +157,7 @@ curl http://localhost:3100/state/orders/IM8-1001
 ```
 
 **Expected Response (after battle-bus processing):**
+
 ```json
 {
   "id": "<uuid>",
@@ -204,6 +210,7 @@ curl -X POST http://localhost:3100/state/orders \
 ```
 
 **Validation Points:**
+
 - `dataAreaId` should be `H007`
 - GPS UK order ID stored in `gpsUKOrderId`
 - Dynamics SalesOrderHeader contains UK-specific data
@@ -219,6 +226,7 @@ npm run flow:order -- --template multiItemOrder
 ```
 
 **Validation Points:**
+
 - All line items appear in Shopify webhook
 - Dynamics creates SalesOrderLines for each item
 - GPS receives all SKUs in the outbound order
@@ -245,14 +253,14 @@ npm run flow:order -- --help
 
 ## Validation Checklist
 
-| Step | Check | Method |
-|------|-------|--------|
-| 1 | Order created in simulator | `GET /state/orders` |
-| 2 | Webhook sent with correct headers | Check webhook response |
-| 3 | battle-bus received webhook | Check battle-bus logs |
-| 4 | Dynamics SO created | Check `dynamicsSalesOrderNumber` |
-| 5 | GPS order created | Check `gpsOrderId` or `gpsUKOrderId` |
-| 6 | Order status is `processing` | `GET /state/orders/:id` |
+| Step | Check                             | Method                               |
+| ---- | --------------------------------- | ------------------------------------ |
+| 1    | Order created in simulator        | `GET /state/orders`                  |
+| 2    | Webhook sent with correct headers | Check webhook response               |
+| 3    | battle-bus received webhook       | Check battle-bus logs                |
+| 4    | Dynamics SO created               | Check `dynamicsSalesOrderNumber`     |
+| 5    | GPS order created                 | Check `gpsOrderId` or `gpsUKOrderId` |
+| 6    | Order status is `processing`      | `GET /state/orders/:id`              |
 
 ---
 
@@ -260,21 +268,21 @@ npm run flow:order -- --help
 
 ### Shopify Order → Dynamics SalesOrderHeader
 
-| Shopify Field | Dynamics Field |
-|---------------|----------------|
-| `name` (IM8-1001) | `THK_ShopifyReference` |
-| `name` | `CustomerOrderReference` |
+| Shopify Field                   | Dynamics Field                  |
+| ------------------------------- | ------------------------------- |
+| `name` (IM8-1001)               | `THK_ShopifyReference`          |
+| `name`                          | `CustomerOrderReference`        |
 | `shipping_address.country_code` | `dataAreaId` (US→U001, GB→H007) |
-| `customer.email` | Customer lookup |
+| `customer.email`                | Customer lookup                 |
 
 ### Shopify Order → GPS Outbound Order
 
-| Shopify Field | GPS Field |
-|---------------|-----------|
-| `name` (IM8-1001) | `platformOrderNo` |
-| Dynamics SO Number | `thirdOrderNo` |
-| Line items | `skuList` |
-| Address | `receiverInfo` |
+| Shopify Field      | GPS Field         |
+| ------------------ | ----------------- |
+| `name` (IM8-1001)  | `platformOrderNo` |
+| Dynamics SO Number | `thirdOrderNo`    |
+| Line items         | `skuList`         |
+| Address            | `receiverInfo`    |
 
 ---
 
@@ -298,6 +306,7 @@ curl -X POST http://localhost:8080/v1.0/shopify/webhook \
 Simulate by stopping the Dynamics simulator or returning errors.
 
 **Expected Behavior:** battle-bus should:
+
 - Log error
 - Retry (if configured)
 - Not create GPS order until Dynamics succeeds
@@ -310,4 +319,3 @@ Simulate by stopping the Dynamics simulator or returning errors.
 - battle-bus may refetch the order from Shopify API to get the latest state
 - Dynamics order must be created before GPS order (need SO number)
 - US orders use `dataAreaId: 'U001'`, UK orders use `H007`
-

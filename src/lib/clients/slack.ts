@@ -6,13 +6,13 @@ type SlackChannel = keyof typeof config.slack.channel;
 
 const slackSender = async (
   channel: keyof typeof config.slack.channel,
-  attachments: ISlackAttachment[],
+  attachments: ISlackAttachment[]
 ) => {
   const webhookUrl = config.slack.channel[channel];
   if (!webhookUrl) throw new Error(`Slack webhook URL not configured for channel: ${channel}`);
 
   const response = await fetch(webhookUrl, {
-    method: 'POST',
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
@@ -27,15 +27,12 @@ const slackSender = async (
   return response;
 };
 
-const sendSlackInfoMessage = async (
-  type: keyof typeof config.slack.channel,
-  msg: string,
-) => {
+const sendSlackInfoMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
   try {
     await slackSender(type, [
       {
         fallback: msg,
-        color: '#36a64f',
+        color: "#36a64f",
         title: `:white_check_mark: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} info`,
         text: msg,
         footer: config.slack.applicationName,
@@ -48,15 +45,12 @@ const sendSlackInfoMessage = async (
   }
 };
 
-const sendSlackWarningMessage = async (
-  type: keyof typeof config.slack.channel,
-  msg: string,
-) => {
+const sendSlackWarningMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
   try {
     await slackSender(type, [
       {
         fallback: msg,
-        color: '#ffcc00',
+        color: "#ffcc00",
         title: `:warning: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} warning`,
         text: msg,
         footer: config.slack.applicationName,
@@ -69,15 +63,12 @@ const sendSlackWarningMessage = async (
   }
 };
 
-const sendSlackErrorMessage = async (
-  type: keyof typeof config.slack.channel,
-  msg: string,
-) => {
+const sendSlackErrorMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
   try {
     await slackSender(type, [
       {
         fallback: msg,
-        color: 'danger',
+        color: "danger",
         title: `:no_entry_sign: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} error`,
         text: msg,
         footer: config.slack.applicationName,
@@ -90,15 +81,12 @@ const sendSlackErrorMessage = async (
   }
 };
 
-const sendSlackOrderMessage = async (
-  type: keyof typeof config.slack.channel,
-  msg: string,
-) => {
+const sendSlackOrderMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
   try {
     await slackSender(type, [
       {
         fallback: msg,
-        color: '#36a64f',
+        color: "#36a64f",
         title: `:white_check_mark: Order Placement`,
         text: msg,
         footer: config.slack.applicationName,
@@ -112,36 +100,28 @@ const sendSlackOrderMessage = async (
 };
 
 export const sendInfoMessage =
-  config.slack.integration === 'real'
+  config.slack.integration === "real"
     ? sendSlackInfoMessage
-    : async (
-        type: keyof typeof config.slack.channel,
-        msg: string,
-      ) => console.log(`[INFO][${type}] ${msg}`);
+    : async (type: keyof typeof config.slack.channel, msg: string) =>
+        console.log(`[INFO][${type}] ${msg}`);
 
 export const sendWarningMessage =
-  config.slack.integration === 'real'
+  config.slack.integration === "real"
     ? sendSlackWarningMessage
-    : async (
-        type: keyof typeof config.slack.channel,
-        msg: string,
-      ) => console.log(`[WARNING][${type}] ${msg}`);
+    : async (type: keyof typeof config.slack.channel, msg: string) =>
+        console.log(`[WARNING][${type}] ${msg}`);
 
 export const sendErrorMessage =
-  config.slack.integration === 'real'
+  config.slack.integration === "real"
     ? sendSlackErrorMessage
-    : async (
-        type: keyof typeof config.slack.channel,
-        msg: string,
-      ) => console.log(`[ERROR][${type}] ${msg}`);
+    : async (type: keyof typeof config.slack.channel, msg: string) =>
+        console.log(`[ERROR][${type}] ${msg}`);
 
 export const sendOrderMessage =
-  config.slack.integration === 'real'
+  config.slack.integration === "real"
     ? sendSlackOrderMessage
-    : async (
-        type: keyof typeof config.slack.channel,
-        msg: string,
-      ) => console.log(`[ORDER][${type}] ${msg}`);
+    : async (type: keyof typeof config.slack.channel, msg: string) =>
+        console.log(`[ORDER][${type}] ${msg}`);
 
 export function determineErrorChannel(
   error: Error | string,

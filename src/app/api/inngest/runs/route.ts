@@ -2,7 +2,7 @@
 // INNGEST RUNS API (Battle Bus)
 // ============================================================================
 // Fetches run status and details from Inngest API for monitoring in Battle Hub
-// 
+//
 // Response format includes:
 // - run_id (or id): The unique run identifier for /runs/ URLs
 // - event_id: The internal event ID for /events/ URLs (NOT the idempotency key)
@@ -22,26 +22,20 @@ export async function GET(request: NextRequest) {
     const eventId = searchParams.get("eventId");
 
     if (!INNGEST_SIGNING_KEY) {
-      return NextResponse.json(
-        { error: "INNGEST_SIGNING_KEY not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "INNGEST_SIGNING_KEY not configured" }, { status: 500 });
     }
 
     // If eventId provided, fetch runs for that event
     // NOTE: eventId must be the INTERNAL event ID (e.g., "01KGWYGF2KP7NBD9F7M2A51J65")
     // NOT the idempotency key (e.g., "shopify-order-paid-xxx")
     if (eventId) {
-      const response = await fetch(
-        `${INNGEST_API_URL}/v1/events/${eventId}/runs`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${INNGEST_SIGNING_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      const response = await fetch(`${INNGEST_API_URL}/v1/events/${eventId}/runs`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${INNGEST_SIGNING_KEY}`,
+          "Content-Type": "application/json",
+        },
+      });
 
       if (!response.ok) {
         const error = await response.text();
@@ -77,14 +71,15 @@ export async function GET(request: NextRequest) {
       }
 
       const data = await response.json();
-      
+
       // Log the raw response to debug what fields are available
       console.log(`[Inngest Runs] Raw run response for ${runId}:`, JSON.stringify(data, null, 2));
-      
+
       // The event_id might be nested in the event object or as a direct field
       // Try multiple locations for the event ID
-      const eventId = data.event_id || data.event?.internal_id || data.event?.id || data.trigger?.event_id;
-      
+      const eventId =
+        data.event_id || data.event?.internal_id || data.event?.id || data.trigger?.event_id;
+
       // Normalize the response - ensure both id/run_id and event_id are present
       const normalizedRun = {
         ...data,
@@ -92,9 +87,12 @@ export async function GET(request: NextRequest) {
         run_id: data.run_id || data.id,
         event_id: eventId,
       };
-      
-      console.log(`[Inngest Runs] Normalized run:`, { runId: normalizedRun.run_id, eventId: normalizedRun.event_id });
-      
+
+      console.log(`[Inngest Runs] Normalized run:`, {
+        runId: normalizedRun.run_id,
+        eventId: normalizedRun.event_id,
+      });
+
       return NextResponse.json({ data: [normalizedRun] });
     }
 

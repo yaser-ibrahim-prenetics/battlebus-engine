@@ -122,8 +122,8 @@ export interface D365ReturnSalesOrderHeadersV3Request {
 export interface D365ReturnSalesOrderLineRequest {
   inventTransIdReturn: string;
   shippingSiteId: string;
-  salesOrderNumber: string,
-  quantity: number,
+  salesOrderNumber: string;
+  quantity: number;
   itemNumber: string;
   price: number;
   discount?: number;
@@ -220,7 +220,7 @@ export interface D365PrepaymentRequest {
 }
 
 export interface D365ReturnOrderInvoiceRequest {
-  salesOrderNumber: string,
-  dataAreaId: string,
-  invoiceDate: Date,
+  salesOrderNumber: string;
+  dataAreaId: string;
+  invoiceDate: Date;
 }

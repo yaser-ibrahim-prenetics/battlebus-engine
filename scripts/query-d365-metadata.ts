@@ -30,7 +30,7 @@ async function getAuthToken(): Promise<string> {
 
 async function queryMetadata() {
   const token = await getAuthToken();
-  
+
   // Try to get metadata for ReleasedProductsV2
   console.log("Querying ReleasedProductsV2 metadata...");
   const metadataUrl = `${D365_BASE_URL}/data/$metadata#ReleasedProductsV2`;
@@ -40,7 +40,7 @@ async function queryMetadata() {
       Accept: "application/xml",
     },
   });
-  
+
   if (response.ok) {
     const xml = await response.text();
     console.log("Metadata (first 2000 chars):");
@@ -49,7 +49,7 @@ async function queryMetadata() {
     console.log(`Failed: ${response.status}`);
     console.log(await response.text());
   }
-  
+
   // Try to query an existing product to see what fields are returned
   console.log("\n\nQuerying existing product to see fields...");
   const queryUrl = `${D365_BASE_URL}/data/ReleasedProductsV2?$top=1`;
@@ -59,7 +59,7 @@ async function queryMetadata() {
       "Content-Type": "application/json",
     },
   });
-  
+
   if (queryResponse.ok) {
     const data = await queryResponse.json();
     if (data.value && data.value.length > 0) {

@@ -38,13 +38,10 @@ export function getShopifyToDynamicsMapping(): Record<string, string> {
  * Get the reverse merge mapping (D365 SKU -> Shopify SKU)
  */
 export function getDynamicsToShopifyMapping(): Record<string, string> {
-  return Object.entries(mappings.merge).reduce<Record<string, string>>(
-    (result, [key, value]) => {
-      result[value] = key;
-      return result;
-    },
-    {}
-  );
+  return Object.entries(mappings.merge).reduce<Record<string, string>>((result, [key, value]) => {
+    result[value] = key;
+    return result;
+  }, {});
 }
 
 /**
@@ -74,14 +71,14 @@ export function mapShopifySkuToDynamics(shopifySku: string): string {
     console.log(`[SKU] Refill mapping: ${shopifySku} -> ${refillMapping[shopifySku]}`);
     return refillMapping[shopifySku];
   }
-  
+
   // Then check merge mapping
   const mergeMapping = getShopifyToDynamicsMapping();
   if (mergeMapping[shopifySku]) {
     console.log(`[SKU] Merge mapping: ${shopifySku} -> ${mergeMapping[shopifySku]}`);
     return mergeMapping[shopifySku];
   }
-  
+
   return shopifySku;
 }
 
@@ -89,17 +86,14 @@ export function mapShopifySkuToDynamics(shopifySku: string): string {
  * Map a D365 SKU back to Shopify SKU
  * Applies reverse merge mapping if exists
  */
-export function mapDynamicsSkuToShopify(
-  dynamicsSku: string,
-  originalShopifySku?: string
-): string {
+export function mapDynamicsSkuToShopify(dynamicsSku: string, originalShopifySku?: string): string {
   const mergeMapping = getShopifyToDynamicsMapping();
-  
+
   // If we have the original Shopify SKU and it maps to this D365 SKU, use it
   if (originalShopifySku && mergeMapping[originalShopifySku] === dynamicsSku) {
     return originalShopifySku;
   }
-  
+
   // Otherwise try reverse lookup
   const reverseMapping = getDynamicsToShopifyMapping();
   return reverseMapping[dynamicsSku] || dynamicsSku;
@@ -126,9 +120,7 @@ export function createShopifyToDynamicsLineTransformer() {
 /**
  * Map a single order line SKU
  */
-export function mapToSku<L extends OrderLine>(
-  skuMapping: Record<string, string>
-) {
+export function mapToSku<L extends OrderLine>(skuMapping: Record<string, string>) {
   return (line: L): L => {
     const mapped = skuMapping[line.itemNumber];
     if (mapped) {
@@ -163,9 +155,7 @@ export function mergeGpsDuplicateSkuLines(
 
   for (const line of lines) {
     if (merged[line.itemNumber]) {
-      console.log(
-        `[SKU] Found duplicate SKU ${line.itemNumber}, merging quantities`
-      );
+      console.log(`[SKU] Found duplicate SKU ${line.itemNumber}, merging quantities`);
       merged[line.itemNumber].quantity += line.quantity || 0;
     } else {
       merged[line.itemNumber] = {

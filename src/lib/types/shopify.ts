@@ -199,46 +199,42 @@ export interface IFulfillmentOrdersResponse {
 }
 
 // Utility types for specific use cases
-export type FulfillmentOrderStatus = 
-  | 'open'
-  | 'in_progress'
-  | 'cancelled'
-  | 'incomplete'
-  | 'closed'
-  | 'scheduled';
+export type FulfillmentOrderStatus =
+  | "open"
+  | "in_progress"
+  | "cancelled"
+  | "incomplete"
+  | "closed"
+  | "scheduled";
 
-export type FulfillmentOrderRequestStatus = 
-  | 'unsubmitted'
-  | 'submitted'
-  | 'accepted'
-  | 'rejected'
-  | 'cancellation_requested'
-  | 'cancellation_accepted'
-  | 'cancellation_rejected'
-  | 'closed';
+export type FulfillmentOrderRequestStatus =
+  | "unsubmitted"
+  | "submitted"
+  | "accepted"
+  | "rejected"
+  | "cancellation_requested"
+  | "cancellation_accepted"
+  | "cancellation_rejected"
+  | "closed";
 
-export type FulfillmentOrderSupportedAction = 
-  | 'create_fulfillment'
-  | 'request_fulfillment'
-  | 'cancel_fulfillment_order'
-  | 'request_cancellation'
-  | 'mark_as_open'
-  | 'release_hold'
-  | 'move'
-  | 'external';
+export type FulfillmentOrderSupportedAction =
+  | "create_fulfillment"
+  | "request_fulfillment"
+  | "cancel_fulfillment_order"
+  | "request_cancellation"
+  | "mark_as_open"
+  | "release_hold"
+  | "move"
+  | "external";
 
 // Utility types for specific use cases
-export type OrderFinancialStatus = 
-  | 'pending'
-  | 'authorized'
-  | 'partially_paid'
-  | 'paid'
-  | 'partially_refunded'
-  | 'refunded'
-  | 'voided';
+export type OrderFinancialStatus =
+  | "pending"
+  | "authorized"
+  | "partially_paid"
+  | "paid"
+  | "partially_refunded"
+  | "refunded"
+  | "voided";
 
-export type OrderFulfillmentStatus = 
-  | null
-  | 'fulfilled'
-  | 'partial'
-  | 'restocked';
+export type OrderFulfillmentStatus = null | "fulfilled" | "partial" | "restocked";

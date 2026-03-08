@@ -17,10 +17,7 @@ import { config } from "../config";
 import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
 import * as shopify from "../clients/shopify";
-import {
-  mapShopifySkuToDynamics,
-  mapDynamicsSkuToShopify,
-} from "../transformers/sku";
+import { mapShopifySkuToDynamics, mapDynamicsSkuToShopify } from "../transformers/sku";
 
 // ============================================================================
 // TYPES
@@ -97,9 +94,7 @@ const WAREHOUSE_MAPPINGS: WarehouseMapping[] = [
   },
 ];
 
-export function getWarehouseMapping(
-  identifier: string
-): WarehouseMapping | undefined {
+export function getWarehouseMapping(identifier: string): WarehouseMapping | undefined {
   return WAREHOUSE_MAPPINGS.find(
     (m) =>
       m.gpsName === identifier ||
@@ -147,9 +142,7 @@ export async function queryGpsWarehouseInventory(
   warehouseName: string,
   skus?: string[]
 ): Promise<Map<string, InventoryLevel>> {
-  console.log(
-    `[InventorySync] Querying GPS inventory for warehouse: ${warehouseName}`
-  );
+  console.log(`[InventorySync] Querying GPS inventory for warehouse: ${warehouseName}`);
 
   const mapping = getWarehouseMapping(warehouseName);
   if (!mapping) {
@@ -182,9 +175,7 @@ export async function queryGpsWarehouseInventory(
     });
   }
 
-  console.log(
-    `[InventorySync] Found ${result.size} inventory items for ${warehouseName}`
-  );
+  console.log(`[InventorySync] Found ${result.size} inventory items for ${warehouseName}`);
   return result;
 }
 
@@ -200,9 +191,7 @@ export async function queryD365Inventory(
   skus: string[],
   dataAreaId: string = config.dynamics.dataAreaId
 ): Promise<Map<string, InventoryLevel>> {
-  console.log(
-    `[InventorySync] Querying D365 inventory for ${skus.length} SKUs`
-  );
+  console.log(`[InventorySync] Querying D365 inventory for ${skus.length} SKUs`);
 
   // Map Shopify SKUs to D365 ItemNumbers
   const d365Skus = skus.map((sku) => mapShopifySkuToDynamics(sku));
@@ -231,9 +220,7 @@ export async function queryD365Inventory(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(
-      `D365 inventory query failed: ${response.status} - ${error}`
-    );
+    throw new Error(`D365 inventory query failed: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
@@ -244,8 +231,7 @@ export async function queryD365Inventory(
   for (const item of items) {
     const d365Sku = item.ItemNumber;
     // Map back to original SKU for consistency
-    const originalSku =
-      skus.find((s) => mapShopifySkuToDynamics(s) === d365Sku) || d365Sku;
+    const originalSku = skus.find((s) => mapShopifySkuToDynamics(s) === d365Sku) || d365Sku;
 
     result.set(originalSku, {
       sku: originalSku,
@@ -272,9 +258,7 @@ export async function queryShopifyInventory(
   skus: string[],
   locationId?: string
 ): Promise<Map<string, InventoryLevel>> {
-  console.log(
-    `[InventorySync] Querying Shopify inventory for ${skus.length} SKUs`
-  );
+  console.log(`[InventorySync] Querying Shopify inventory for ${skus.length} SKUs`);
 
   // Build GraphQL query for product variants by SKU
   const skuQuery = skus.map((sku) => `sku:${sku}`).join(" OR ");
@@ -331,9 +315,7 @@ export async function queryShopifyInventory(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(
-      `Shopify inventory query failed: ${response.status} - ${error}`
-    );
+    throw new Error(`Shopify inventory query failed: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
@@ -355,8 +337,7 @@ export async function queryShopifyInventory(
     let totalReserved = 0;
     let totalIncoming = 0;
 
-    for (const { node: level } of variant.inventoryItem?.inventoryLevels
-      ?.edges || []) {
+    for (const { node: level } of variant.inventoryItem?.inventoryLevels?.edges || []) {
       // Filter by location if specified
       if (locationId && level.location.id !== locationId) continue;
 
@@ -396,13 +377,8 @@ export async function queryShopifyInventory(
  * Sync inventory from GPS to D365
  * Used when GPS inventory changes (physical counts, receipts, shipments)
  */
-export async function syncGpsToD365(
-  sku: string,
-  warehouseName: string
-): Promise<SyncResult> {
-  console.log(
-    `[InventorySync] Syncing GPS -> D365: ${sku} in ${warehouseName}`
-  );
+export async function syncGpsToD365(sku: string, warehouseName: string): Promise<SyncResult> {
+  console.log(`[InventorySync] Syncing GPS -> D365: ${sku} in ${warehouseName}`);
 
   const mapping = getWarehouseMapping(warehouseName);
   if (!mapping) {
@@ -418,9 +394,7 @@ export async function syncGpsToD365(
 
   try {
     // Get GPS inventory level
-    const gpsInventoryMap = await queryGpsWarehouseInventory(warehouseName, [
-      sku,
-    ]);
+    const gpsInventoryMap = await queryGpsWarehouseInventory(warehouseName, [sku]);
     const gpsLevel = gpsInventoryMap.get(sku);
 
     if (!gpsLevel) {
@@ -438,10 +412,7 @@ export async function syncGpsToD365(
     const d365Sku = mapShopifySkuToDynamics(sku);
 
     // Get current D365 level for comparison
-    const d365InventoryMap = await queryD365Inventory(
-      [sku],
-      mapping.d365DataAreaId
-    );
+    const d365InventoryMap = await queryD365Inventory([sku], mapping.d365DataAreaId);
     const d365Level = d365InventoryMap.get(sku);
     const previousLevel = d365Level?.available || 0;
 
@@ -460,18 +431,14 @@ export async function syncGpsToD365(
       };
     }
 
-    console.log(
-      `[InventorySync] D365 adjustment needed: ${adjustment} for ${d365Sku}`
-    );
+    console.log(`[InventorySync] D365 adjustment needed: ${adjustment} for ${d365Sku}`);
 
     // TODO: Create D365 inventory adjustment journal
     // This requires THK custom API or Inventory Adjustment Journal posting
     // For now, log the adjustment that would be made
 
     if (config.features.dryRunMode) {
-      console.log(
-        `[InventorySync] DRY RUN - Would adjust D365 inventory by ${adjustment}`
-      );
+      console.log(`[InventorySync] DRY RUN - Would adjust D365 inventory by ${adjustment}`);
       return {
         success: true,
         message: `DRY RUN - Would adjust D365 by ${adjustment}`,
@@ -496,8 +463,7 @@ export async function syncGpsToD365(
       newLevel: gpsLevel.available,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[InventorySync] GPS -> D365 sync error: ${errorMessage}`);
     return {
       success: false,
@@ -537,9 +503,7 @@ export async function syncD365ToShopify(
     }
 
     // Get warehouse mapping for location
-    const warehouseMapping = WAREHOUSE_MAPPINGS.find(
-      (m) => m.d365DataAreaId === dataAreaId
-    );
+    const warehouseMapping = WAREHOUSE_MAPPINGS.find((m) => m.d365DataAreaId === dataAreaId);
 
     const locationId = warehouseMapping?.shopifyLocationId;
 
@@ -563,14 +527,10 @@ export async function syncD365ToShopify(
       };
     }
 
-    console.log(
-      `[InventorySync] Shopify adjustment needed: ${adjustment} for ${sku}`
-    );
+    console.log(`[InventorySync] Shopify adjustment needed: ${adjustment} for ${sku}`);
 
     if (config.features.dryRunMode) {
-      console.log(
-        `[InventorySync] DRY RUN - Would adjust Shopify inventory by ${adjustment}`
-      );
+      console.log(`[InventorySync] DRY RUN - Would adjust Shopify inventory by ${adjustment}`);
       return {
         success: true,
         message: `DRY RUN - Would adjust Shopify by ${adjustment}`,
@@ -615,8 +575,7 @@ export async function syncD365ToShopify(
       newLevel: d365Level.available,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[InventorySync] D365 -> Shopify sync error: ${errorMessage}`);
     return {
       success: false,
@@ -646,9 +605,7 @@ export async function calculateDiscrepancies(
 
   // Query all three systems in parallel
   const [gpsInventory, d365Inventory, shopifyInventory] = await Promise.all([
-    warehouseName
-      ? queryGpsWarehouseInventory(warehouseName, skus)
-      : queryGpsInventory(skus),
+    warehouseName ? queryGpsWarehouseInventory(warehouseName, skus) : queryGpsInventory(skus),
     queryD365Inventory(skus),
     queryShopifyInventory(skus),
   ]);
@@ -658,13 +615,10 @@ export async function calculateDiscrepancies(
     const d365Level = d365Inventory.get(sku)?.available ?? null;
     const shopifyLevel = shopifyInventory.get(sku)?.available ?? null;
 
-    const gpsToD365Diff =
-      gpsLevel !== null && d365Level !== null ? gpsLevel - d365Level : null;
+    const gpsToD365Diff = gpsLevel !== null && d365Level !== null ? gpsLevel - d365Level : null;
 
     const d365ToShopifyDiff =
-      d365Level !== null && shopifyLevel !== null
-        ? d365Level - shopifyLevel
-        : null;
+      d365Level !== null && shopifyLevel !== null ? d365Level - shopifyLevel : null;
 
     const needsSync =
       (gpsToD365Diff !== null && gpsToD365Diff !== 0) ||
@@ -717,9 +671,7 @@ export async function runReconciliation(
     result.discrepanciesFound = discrepancies.length;
 
     if (!autoSync) {
-      console.log(
-        `[InventorySync] Auto-sync disabled, returning discrepancies only`
-      );
+      console.log(`[InventorySync] Auto-sync disabled, returning discrepancies only`);
       return result;
     }
 
@@ -727,10 +679,7 @@ export async function runReconciliation(
     for (const diff of discrepancies) {
       // GPS -> D365 sync if GPS has newer data
       if (diff.gpsToD365Diff !== null && diff.gpsToD365Diff !== 0) {
-        const syncResult = await syncGpsToD365(
-          diff.sku,
-          warehouseName || "GPS Warehouse"
-        );
+        const syncResult = await syncGpsToD365(diff.sku, warehouseName || "GPS Warehouse");
         result.syncActions.push(syncResult);
 
         if (!syncResult.success && syncResult.error) {
@@ -753,8 +702,7 @@ export async function runReconciliation(
       `[InventorySync] Reconciliation complete: ${result.syncActions.length} actions, ${result.errors.length} errors`
     );
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     result.errors.push(`Reconciliation failed: ${errorMessage}`);
     console.error(`[InventorySync] Reconciliation error: ${errorMessage}`);
   }

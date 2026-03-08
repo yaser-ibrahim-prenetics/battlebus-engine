@@ -11,18 +11,21 @@ Battle Bus is an event-driven replacement for spock-store, handling the Shopify 
 ## ✅ Core Components (Complete)
 
 ### Infrastructure
+
 - [x] Next.js 15 with App Router
 - [x] Inngest SDK integration
 - [x] TypeScript configuration
 - [x] Environment-based configuration
 
 ### Webhook Endpoints
+
 - [x] `/api/webhooks/shopify` - Orders, refunds, cancellations
 - [x] `/api/webhooks/gps` - GPS fulfilment notifications
 - [x] `/api/webhooks/stord` - STORD fulfilment notifications
 - [x] `/api/inngest` - Inngest function handler
 
 ### Inngest Functions
+
 - [x] `process-shopify-order` - Full order flow with OOS retry
 - [x] `process-refund` - Refund/credit note handling
 - [x] `process-gps-fulfilment` - GPS → Shopify → D365 fulfilment
@@ -30,11 +33,13 @@ Battle Bus is an event-driven replacement for spock-store, handling the Shopify 
 - [x] `process-order-cancellation` - Order cancellation flow
 
 ### API Clients
+
 - [x] D365 client with THK API endpoints (V3 headers, confirm, prepayment, fulfilment)
 - [x] GPS client with correct auth code algorithm (sorted-key HMAC)
 - [x] Shopify client (orders, fulfillments, webhooks)
 
 ### Business Logic
+
 - [x] SKU mappings (refill, reward, merge)
 - [x] Warehouse configuration (GPS US, GPS UK, STORD, HK)
 - [x] Address transformer (UAE/SA postal code handling)
@@ -61,6 +66,7 @@ npx inngest-cli@latest dev
 ```
 
 **Verify:**
+
 - [ ] Webhook endpoint returns 200
 - [ ] Event appears in Inngest Dev UI (http://localhost:8288)
 - [ ] Function executes with DRY_RUN_MODE=true
@@ -71,12 +77,14 @@ npx inngest-cli@latest dev
 **Goal:** Receive real webhooks from test store
 
 **Setup:**
+
 1. Create Cloudflare tunnel: `npx cloudflared tunnel --url http://localhost:3000`
 2. Add webhook in Shopify test store:
    - URL: `https://<tunnel-url>/api/webhooks/shopify`
    - Topics: orders/create, orders/paid, refunds/create, orders/cancelled
 
 **Test Cases:**
+
 - [ ] Place test order → verify event received
 - [ ] Cancel test order → verify cancellation event
 - [ ] Create refund → verify refund event
@@ -86,6 +94,7 @@ npx inngest-cli@latest dev
 **Goal:** Verify D365 integration with sandbox credentials
 
 **Environment:**
+
 ```
 DRY_RUN_MODE=false
 D365_BASE_URL=<sandbox-url>
@@ -96,6 +105,7 @@ ENABLE_GPS_SYNC=false  # Disable GPS for this phase
 ```
 
 **Test Cases:**
+
 - [ ] Order creates D365 header with THK fields
 - [ ] Order lines created correctly
 - [ ] Order confirmed via THK API
@@ -107,6 +117,7 @@ ENABLE_GPS_SYNC=false  # Disable GPS for this phase
 **Goal:** Verify GPS integration
 
 **Environment:**
+
 ```
 DRY_RUN_MODE=false
 GPS_BASE_URL=<sandbox-or-prod>
@@ -116,6 +127,7 @@ ENABLE_DYNAMICS_SYNC=false  # Test GPS in isolation
 ```
 
 **Test Cases:**
+
 - [ ] Auth code generates correctly
 - [ ] Order submitted to GPS
 - [ ] OOS error triggers sleep + retry
@@ -126,11 +138,13 @@ ENABLE_DYNAMICS_SYNC=false  # Test GPS in isolation
 **Goal:** Run parallel to spock-store without writes
 
 **Setup:**
+
 1. Deploy to Vercel preview branch
 2. Add Battle Bus as second webhook in production Shopify
 3. Set `DRY_RUN_MODE=true`
 
 **Monitor:**
+
 - [ ] All production orders received
 - [ ] Transformations match spock-store output
 - [ ] No errors in Inngest dashboard
@@ -141,6 +155,7 @@ ENABLE_DYNAMICS_SYNC=false  # Test GPS in isolation
 **Goal:** Process real orders through Battle Bus
 
 **Rollout:**
+
 1. Enable D365 sync first (`ENABLE_DYNAMICS_SYNC=true`)
 2. Monitor for 24 hours
 3. Enable GPS sync (`ENABLE_GPS_SYNC=true`)
@@ -152,32 +167,36 @@ ENABLE_DYNAMICS_SYNC=false  # Test GPS in isolation
 ## 📋 Test Checklist
 
 ### Webhook Tests
-| Test | Command | Expected |
-|------|---------|----------|
-| Shopify order | `./scripts/test-webhook.sh` | 200 + event in Inngest |
-| Invalid signature | curl with wrong HMAC | 401 Unauthorized |
-| Malformed JSON | curl with bad body | 500 error logged |
+
+| Test              | Command                     | Expected               |
+| ----------------- | --------------------------- | ---------------------- |
+| Shopify order     | `./scripts/test-webhook.sh` | 200 + event in Inngest |
+| Invalid signature | curl with wrong HMAC        | 401 Unauthorized       |
+| Malformed JSON    | curl with bad body          | 500 error logged       |
 
 ### Order Flow Tests
-| Test | Trigger | Expected |
-|------|---------|----------|
-| New order | Shopify order webhook | D365 header + lines + confirm + prepay + GPS |
-| Duplicate order | Same webhook twice | Second run skipped (idempotency) |
-| Out of stock | GPS returns OOS | Sleep 4h then retry |
-| Order cancellation | Cancel in Shopify | GPS cancel + D365 cancel |
+
+| Test               | Trigger               | Expected                                     |
+| ------------------ | --------------------- | -------------------------------------------- |
+| New order          | Shopify order webhook | D365 header + lines + confirm + prepay + GPS |
+| Duplicate order    | Same webhook twice    | Second run skipped (idempotency)             |
+| Out of stock       | GPS returns OOS       | Sleep 4h then retry                          |
+| Order cancellation | Cancel in Shopify     | GPS cancel + D365 cancel                     |
 
 ### Fulfilment Tests
-| Test | Trigger | Expected |
-|------|---------|----------|
-| GPS shipped | GPS webhook | Shopify fulfillment + D365 packing slip |
+
+| Test          | Trigger       | Expected                                |
+| ------------- | ------------- | --------------------------------------- |
+| GPS shipped   | GPS webhook   | Shopify fulfillment + D365 packing slip |
 | STORD shipped | STORD webhook | Shopify fulfillment + D365 packing slip |
 
 ### Error Handling Tests
-| Test | Trigger | Expected |
-|------|---------|----------|
-| D365 auth failure | Invalid credentials | Retry with backoff |
-| GPS timeout | Network issue | Retry with backoff |
-| Inngest crash mid-step | Kill process | Resume from checkpoint |
+
+| Test                   | Trigger             | Expected               |
+| ---------------------- | ------------------- | ---------------------- |
+| D365 auth failure      | Invalid credentials | Retry with backoff     |
+| GPS timeout            | Network issue       | Retry with backoff     |
+| Inngest crash mid-step | Kill process        | Resume from checkpoint |
 
 ---
 
@@ -215,21 +234,25 @@ OOS_RETRY_HOURS=4
 ## 📊 Success Criteria
 
 ### Phase 1-2 (Local + Shopify)
+
 - [ ] 100% of test webhooks processed
 - [ ] No unhandled exceptions
 - [ ] Events visible in Inngest UI
 
 ### Phase 3-4 (D365 + GPS)
+
 - [ ] Orders created in sandbox D365
 - [ ] Orders submitted to GPS
 - [ ] Idempotency working (no duplicates)
 
 ### Phase 5 (Shadow)
+
 - [ ] 24 hours with no errors
 - [ ] All production orders received
 - [ ] Transformation output matches spock-store
 
 ### Phase 6 (Canary)
+
 - [ ] First 10 orders successful
 - [ ] First 100 orders successful
 - [ ] 24 hours stable
@@ -241,13 +264,13 @@ OOS_RETRY_HOURS=4
 
 These are NOT required for launch:
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| Gift card audit trail | Low | Tracks gift card usage in D365 comments |
-| Tracking URL generation | Low | UX enhancement for customers |
-| Return order creation | Low | For physical returns |
-| Daily reconciliation cron | Medium | Automated discrepancy detection |
-| Slack notifications | Low | Alert on errors |
+| Feature                   | Priority | Notes                                   |
+| ------------------------- | -------- | --------------------------------------- |
+| Gift card audit trail     | Low      | Tracks gift card usage in D365 comments |
+| Tracking URL generation   | Low      | UX enhancement for customers            |
+| Return order creation     | Low      | For physical returns                    |
+| Daily reconciliation cron | Medium   | Automated discrepancy detection         |
+| Slack notifications       | Low      | Alert on errors                         |
 
 ---
 

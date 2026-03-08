@@ -31,14 +31,15 @@ const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-const supabase = supabaseUrl && supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    })
-  : null;
+const supabase =
+  supabaseUrl && supabaseServiceKey
+    ? createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      })
+    : null;
 
 /**
  * Fetch location mappings directly from Supabase
@@ -183,10 +184,7 @@ export async function getDataAreaIdForLocation(
   const locationId = String(shopifyLocationId);
 
   const mapping = mappings.find(
-    (m) =>
-      m.shopifyLocationId === locationId &&
-      m.store === store &&
-      m.active
+    (m) => m.shopifyLocationId === locationId && m.store === store && m.active
   );
 
   if (mapping && mapping.dynamicsDataAreaId) {
@@ -209,10 +207,7 @@ export async function getWarehouseNameForLocation(
   const locationId = String(shopifyLocationId);
 
   const mapping = mappings.find(
-    (m) =>
-      m.shopifyLocationId === locationId &&
-      m.store === store &&
-      m.active
+    (m) => m.shopifyLocationId === locationId && m.store === store && m.active
   );
 
   return mapping?.warehouseName || null;
@@ -228,10 +223,7 @@ export async function getLocationsForDataAreaId(
 ): Promise<LocationMapping[]> {
   const mappings = await getLocationMappings();
   return mappings.filter(
-    (m) =>
-      m.dynamicsDataAreaId === dataAreaId &&
-      m.store === store &&
-      m.active
+    (m) => m.dynamicsDataAreaId === dataAreaId && m.store === store && m.active
   );
 }
 

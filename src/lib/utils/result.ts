@@ -22,4 +22,3 @@ export function isSuccess<T, E>(result: Result<T, E>): result is { success: true
 export function isFailure<T, E>(result: Result<T, E>): result is { success: false; error: E } {
   return result.success === false;
 }
-

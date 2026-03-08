@@ -1,9 +1,9 @@
 /**
  * Test script to send a mock Shopify order event to Inngest
- * 
+ *
  * Usage:
  *   npx tsx scripts/test-order.ts
- * 
+ *
  * Prerequisites:
  *   1. Next.js server running: npm run dev
  *   2. Inngest dev server running: npx inngest-cli@latest dev
@@ -126,7 +126,7 @@ async function sendTestEvent() {
     } else {
       const text = await response.text();
       console.log("❌ Failed to send event:", response.status, text);
-      
+
       // Try alternative endpoint
       console.log("\n🔄 Trying alternative method...");
       const altResponse = await fetch("http://localhost:8288/v1/events", {
@@ -136,7 +136,7 @@ async function sendTestEvent() {
         },
         body: JSON.stringify([TEST_ORDER]),
       });
-      
+
       if (altResponse.ok) {
         console.log("✅ Event sent via alternative endpoint!");
         console.log("\n📺 Open http://localhost:8288 to see the function run");

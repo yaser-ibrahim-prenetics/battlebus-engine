@@ -7,6 +7,7 @@ To use the GPS Product Batch Create API (`/openapi/v1/product/batchCreate`), you
 ### Environment Variables
 
 #### For GPS Warehouse (US):
+
 ```bash
 GPS_BASE_URL=https://api.xlwms.com
 GPS_API_KEY=your_app_key_here
@@ -14,6 +15,7 @@ GPS_API_SECRET=your_app_secret_here
 ```
 
 #### For GPS UK Warehouse:
+
 ```bash
 GPS_UK_BASE_URL=https://api.xlwms.com  # Optional, defaults to GPS_BASE_URL
 GPS_UK_API_KEY=your_uk_app_key_here
@@ -57,11 +59,13 @@ npm run tsx scripts/test-gps-product-sync.ts
 ```
 
 Or directly:
+
 ```bash
 tsx scripts/test-gps-product-sync.ts
 ```
 
 This will:
+
 - ✅ Check if credentials are configured
 - ✅ Create a test product with unique SKU
 - ✅ Call the GPS API
@@ -113,11 +117,13 @@ PAYLOAD='{
 ## API Endpoint Details
 
 ### Endpoint
+
 ```
 POST /openapi/v1/product/batchCreate?authcode=<generated_authcode>
 ```
 
 ### Request Body
+
 ```json
 {
   "appKey": "your_app_key",
@@ -143,6 +149,7 @@ POST /openapi/v1/product/batchCreate?authcode=<generated_authcode>
 ```
 
 ### Response
+
 ```json
 {
   "code": 200,
@@ -159,20 +166,21 @@ POST /openapi/v1/product/batchCreate?authcode=<generated_authcode>
 
 ## Common Error Codes
 
-| Code | Description | Solution |
-|------|-------------|----------|
-| 100001 | authcode is empty | Check authcode generation |
-| 100002 | Request timeout | Timestamp must be within 5 minutes |
-| 100004 | Timestamp is empty | Ensure reqTime is set |
-| 100005 | appKey is empty | Set GPS_API_KEY |
-| 100006 | appSecret is empty | Set GPS_API_SECRET |
-| 100007 | authcode verification failed | Check API secret matches |
-| 100008 | Missing parameters | Check all required fields |
-| 100010 | No API permission | Contact GPS support to enable API access |
+| Code   | Description                  | Solution                                 |
+| ------ | ---------------------------- | ---------------------------------------- |
+| 100001 | authcode is empty            | Check authcode generation                |
+| 100002 | Request timeout              | Timestamp must be within 5 minutes       |
+| 100004 | Timestamp is empty           | Ensure reqTime is set                    |
+| 100005 | appKey is empty              | Set GPS_API_KEY                          |
+| 100006 | appSecret is empty           | Set GPS_API_SECRET                       |
+| 100007 | authcode verification failed | Check API secret matches                 |
+| 100008 | Missing parameters           | Check all required fields                |
+| 100010 | No API permission            | Contact GPS support to enable API access |
 
 ## Required Product Fields
 
 ### Mandatory Fields:
+
 - `sku` - Product SKU (alphanumeric, max 100 chars)
 - `productCode` - EAN/UPC barcode (max 50 chars)
 - `productName` - Product name (max 255 chars)
@@ -188,6 +196,7 @@ POST /openapi/v1/product/batchCreate?authcode=<generated_authcode>
 - `dangerousCargo` - Dangerous goods type (1-8, default: 1)
 
 ### Optional Fields:
+
 - `productAliasName` - Product alias (max 255 chars)
 - `productDescription` - Product description (max 255 chars)
 - `imageUrl` - Product image URL
@@ -215,21 +224,24 @@ POST /openapi/v1/product/batchCreate?authcode=<generated_authcode>
 ## Troubleshooting
 
 ### "authcode verification failed" (100007)
+
 - Verify GPS_API_SECRET matches the one in GPS OMS portal
 - Check that authcode generation algorithm matches GPS requirements
 - Ensure timestamp is current (within 5 minutes)
 
 ### "No API permission" (100010)
+
 - Contact GPS support to enable API access for your account
 - Verify your account has product creation permissions
 
 ### "Missing parameters" (100008)
+
 - Check all required fields are present
 - Verify field names match GPS API documentation exactly
 - Ensure numeric fields are strings (e.g., "10" not 10)
 
 ### Product not appearing in GPS
+
 - Check GPS OMS portal for product approval status
 - Products may need manual approval before use
 - Verify product was created successfully (check response.data[].success)
-

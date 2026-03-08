@@ -1,7 +1,7 @@
 /**
  * Test Inventory Age endpoints specifically
  * Based on OMS documentation showing inventory age features
- * 
+ *
  * Run with: npx tsx scripts/test-inventory-age-endpoints.ts
  */
 
@@ -49,43 +49,43 @@ async function main() {
     "/openapi/v1/product/inventoryAge",
     "/openapi/v1/productInventoryAge/list",
     "/openapi/v1/productInventoryAge/query",
-    
+
     // Box/Container Age (from docs: Inventory - Box Age)
     "/openapi/v1/inventory/boxAge",
     "/openapi/v1/inventory/box/age",
     "/openapi/v1/inventoryAge/box",
     "/openapi/v1/boxAge/list",
     "/openapi/v1/containerAge/list",
-    
+
     // Returns Inventory Age (from docs: Inventory - Returns Inventory Age)
     "/openapi/v1/inventory/returnAge",
     "/openapi/v1/inventory/returns/age",
     "/openapi/v1/inventoryAge/return",
     "/openapi/v1/returnInventoryAge/list",
-    
+
     // General inventory age
     "/openapi/v1/inventoryAge/list",
     "/openapi/v1/inventoryAge/query",
     "/openapi/v1/inventory/age/list",
     "/openapi/v1/inventory/age/query",
-    
+
     // Stock age variations
     "/openapi/v1/stockAge/list",
     "/openapi/v1/stock/age/list",
-    
+
     // Report endpoints (inventory reports)
     "/openapi/v1/report/inventoryAge",
     "/openapi/v1/report/productInventoryAge",
     "/openapi/v1/report/stockAge",
-    
+
     // Statistics endpoints
     "/openapi/v1/statistics/inventory",
     "/openapi/v1/statistics/inventoryAge",
-    
+
     // Data endpoints
     "/openapi/v1/data/inventoryAge",
     "/openapi/v1/data/inventory",
-    
+
     // Warehouse inventory
     "/openapi/v1/warehouse/inventory",
     "/openapi/v1/warehouse/stock",
@@ -101,7 +101,7 @@ async function main() {
   for (const ep of endpoints) {
     process.stdout.write(`${ep.padEnd(50)} `);
     const result = await testEndpoint(ep, baseData);
-    
+
     const code = result.code;
     if (code === 200 || code === 0) {
       console.log(`✅ SUCCESS! - ${JSON.stringify(result).slice(0, 80)}`);
@@ -122,7 +122,9 @@ async function main() {
   console.log("\nIf all endpoints show 'NO PERMISSION' (11008), it means:");
   console.log("  1. The endpoints EXIST on the API");
   console.log("  2. Your App Key doesn't have permission to access them");
-  console.log("  3. You need to contact GPS support OR check the ERP tab for different credentials");
+  console.log(
+    "  3. You need to contact GPS support OR check the ERP tab for different credentials"
+  );
 }
 
 main().catch(console.error);

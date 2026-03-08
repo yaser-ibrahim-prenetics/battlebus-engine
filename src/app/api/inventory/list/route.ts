@@ -25,7 +25,7 @@ type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    
+
     const sku = searchParams.get("sku") || undefined;
     const warehouseName = (searchParams.get("warehouse") || "GPS Warehouse") as GpsWarehouseName;
     const whCode = searchParams.get("whCode") || undefined;
@@ -77,21 +77,24 @@ export async function GET(request: NextRequest) {
     }
 
     // Aggregate inventory by SKU (sum across warehouses)
-    const aggregated = new Map<string, {
-      sku: string;
-      productName: string;
-      totalAvailable: number;
-      totalLocked: number;
-      totalTransport: number;
-      warehouses: Array<{
-        whCode: string;
-        whName: string;
-        available: number;
-        locked: number;
-        transport: number;
-        total: number;
-      }>;
-    }>();
+    const aggregated = new Map<
+      string,
+      {
+        sku: string;
+        productName: string;
+        totalAvailable: number;
+        totalLocked: number;
+        totalTransport: number;
+        warehouses: Array<{
+          whCode: string;
+          whName: string;
+          available: number;
+          locked: number;
+          transport: number;
+          total: number;
+        }>;
+      }
+    >();
 
     for (const item of items) {
       const existing = aggregated.get(item.sku);
@@ -144,7 +147,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     const sku = body.sku || undefined;
     const warehouseName = (body.warehouse || "GPS Warehouse") as GpsWarehouseName;
     const whCode = body.whCode || undefined;

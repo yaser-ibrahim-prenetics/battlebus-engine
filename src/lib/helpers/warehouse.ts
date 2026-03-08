@@ -4,7 +4,7 @@
 // Ported from spock-store src/component/warehouse.ts
 
 import warehouseConfig from "../mappings/warehouse-config.json";
-import { IGpsIndividualFulfilment } from '../types/gps';
+import { IGpsIndividualFulfilment } from "../types/gps";
 
 // ============================================================================
 // Types
@@ -99,12 +99,12 @@ export function getDataAreaId(warehouseName: string): string {
  */
 export function getOrderingCustomerAccountNumber(warehouseName: string): string {
   const config = getWarehouseConfig(warehouseName);
-  
+
   // If explicitly set in config, use it
   if (config.orderingCustomerAccountNumber) {
-  return config.orderingCustomerAccountNumber;
+    return config.orderingCustomerAccountNumber;
   }
-  
+
   // Otherwise, derive from dataAreaId
   return deriveCustomerAccountNumber(config.dataAreaId);
 }
@@ -119,11 +119,11 @@ export function getOrderingCustomerAccountNumber(warehouseName: string): string 
 function deriveCustomerAccountNumber(dataAreaId: string): string {
   // Map data area to customer account suffix
   const customerAccountSuffix: Record<string, string> = {
-    "U001": "C000000006", // US
-    "H007": "C000000001", // UK
-    "H005": "C000000001", // HK
+    U001: "C000000006", // US
+    H007: "C000000001", // UK
+    H005: "C000000001", // HK
   };
-  
+
   const suffix = customerAccountSuffix[dataAreaId] || "C000000001"; // Default fallback
   return `${dataAreaId}-${suffix}`;
 }
@@ -133,9 +133,7 @@ function deriveCustomerAccountNumber(dataAreaId: string): string {
  * Format: ~{dimensionValue}~{project}~~{customerAccountNumber}
  * Ported from spock-store toDefaultLedgerDimensionDisplayValue
  */
-export function toDefaultLedgerDimensionDisplayValue(
-  warehouseName: string
-): string {
+export function toDefaultLedgerDimensionDisplayValue(warehouseName: string): string {
   const config = getWarehouseConfig(warehouseName);
   const { dimensionValue, project } = config;
   const orderingCustomerAccountNumber = getOrderingCustomerAccountNumber(warehouseName);
@@ -150,15 +148,32 @@ export function toDefaultLedgerDimensionDisplayValue(
  * Determine warehouse based on shipping country
  * Simplified routing logic - can be extended based on business rules
  */
-export function determineWarehouse(
-  shippingCountryCode: string
-): WarehouseName {
+export function determineWarehouse(shippingCountryCode: string): WarehouseName {
   // UK/EU orders go to GPS UK
   const ukEuCountries = [
-    "GB", "UK", "IE", "FR", "DE", "IT", "ES", "NL", "BE", "AT", "PT",
-    "PL", "SE", "DK", "FI", "NO", "CH", "CZ", "GR", "HU", "RO"
+    "GB",
+    "UK",
+    "IE",
+    "FR",
+    "DE",
+    "IT",
+    "ES",
+    "NL",
+    "BE",
+    "AT",
+    "PT",
+    "PL",
+    "SE",
+    "DK",
+    "FI",
+    "NO",
+    "CH",
+    "CZ",
+    "GR",
+    "HU",
+    "RO",
   ];
-  
+
   if (ukEuCountries.includes(shippingCountryCode?.toUpperCase())) {
     return "GPS UK Warehouse";
   }
@@ -255,7 +270,7 @@ export function shouldSkipFulfilmentNotification(warehouseName: string): boolean
  * Check valid warehouse
  */
 export function isValidGpsWarehouse(warehouseName: string): boolean {
-  const validWarehouses = ['GPS Warehouse', 'GPS UK Warehouse'];
+  const validWarehouses = ["GPS Warehouse", "GPS UK Warehouse"];
   return validWarehouses.includes(warehouseName);
 }
 
@@ -264,29 +279,29 @@ export function isValidGpsWarehouse(warehouseName: string): boolean {
  */
 export function extractGpsFulfilmentData(payload: IGpsIndividualFulfilment) {
   const { orderData, warehouse } = payload;
-  
+
   return {
     // Identifiers
     gpsOrderNo: orderData.outboundOrderNo,
     shopifyOrderName: orderData.platformOrderNo,
     d365SalesOrderNumber: orderData.referOrderNo,
-    
+
     // Tracking
     trackingNumber: orderData.logisticsTrackNo,
     trackingNumbers: orderData.logisticsTrackNos,
     carrier: orderData.logisticsCarrier,
-    
+
     // Status
     status: orderData.status,
     isFulfilled: orderData.status === 3,
-    
+
     // Timestamps
     shippedAt: orderData.outboundTime,
-    
+
     // Warehouse
     warehouse,
     warehouseCode: orderData.whCode,
-    
+
     // Items
     items: orderData.productList.map((item) => ({
       sku: item.sku,

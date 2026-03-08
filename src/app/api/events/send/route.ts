@@ -18,10 +18,7 @@ export async function POST(request: NextRequest) {
     const { name, data } = body;
 
     if (!name) {
-      return NextResponse.json(
-        { error: "Event name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Event name is required" }, { status: 400 });
     }
 
     console.log(`[send-event] Receiving event: ${name}`);

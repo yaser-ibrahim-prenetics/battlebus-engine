@@ -8,13 +8,13 @@
 
 ## Demo Structure Overview
 
-| Part | Topic | Duration |
-|------|-------|----------|
-| 1 | The Problem | 3 min |
-| 2 | Live Race - Daily Skio Burst | 5 min |
-| 3 | The OOS Nightmare Scenario | 5 min |
-| 4 | Battle Hub - Ops/CS/Finance View | 3 min |
-| 5 | Q&A / Next Steps | 2 min |
+| Part | Topic                            | Duration |
+| ---- | -------------------------------- | -------- |
+| 1    | The Problem                      | 3 min    |
+| 2    | Live Race - Daily Skio Burst     | 5 min    |
+| 3    | The OOS Nightmare Scenario       | 5 min    |
+| 4    | Battle Hub - Ops/CS/Finance View | 3 min    |
+| 5    | Q&A / Next Steps                 | 2 min    |
 
 ---
 
@@ -23,6 +23,7 @@
 ### Slide 1: "The 12pm Problem"
 
 **Talking Points:**
+
 > "Every day at 12pm, Skio fires ~1,375 subscription orders simultaneously. These are our most valuable customers - recurring revenue.
 >
 > Let me show you what happens today in Spock Store..."
@@ -69,6 +70,7 @@
 ```
 
 **Transition:**
+
 > "But don't take my word for it. Let me show you with real production data."
 
 ---
@@ -78,6 +80,7 @@
 ### Open Demo Dashboard
 
 **Talking Points:**
+
 > "This is real data. On [DATE], Skio sent 1,375 orders at 12:00 PM.
 >
 > I captured every order payload AND extracted the actual processing times from Spock Store's database.
@@ -126,6 +129,7 @@
 ```
 
 **While watching (2-3 minutes):**
+
 > "Watch the numbers. Battle Bus is processing 9 orders per second while respecting D365's rate limits.
 >
 > Spock Store is processing one order every 3.5 seconds.
@@ -147,6 +151,7 @@
 ### Slide: "The 7,000 Order Backlog"
 
 **Talking Points:**
+
 > "Now let me show you a real scenario we've faced. Out of Stock situations.
 >
 > When GPS returns an inventory error, orders get scheduled for retry. Sometimes we accumulate 7,000+ orders waiting for stock.
@@ -220,6 +225,7 @@
 ```
 
 **Talking Points:**
+
 > "With Spock Store, a 7,000 order backlog takes nearly 7 hours to clear.
 >
 > If that happens at 9 AM, and Skio burst hits at noon, those subscription customers - our most valuable customers - are waiting until 5:30 PM for their orders to process.
@@ -262,6 +268,7 @@
 ```
 
 **For Ops:**
+
 > "Ops can see at a glance: how many orders today, what's pending, what failed. No more guessing. No more log diving."
 
 ### Screen 2: Order Lookup (For CS)
@@ -297,6 +304,7 @@
 ```
 
 **For CS:**
+
 > "Customer calls: 'Where's my order?' CS types the order number, sees exactly where it is in the flow. GPS is out of stock, retry scheduled for tomorrow.
 >
 > CS can tell the customer: 'Your order is confirmed, waiting for stock replenishment, will ship tomorrow.'
@@ -332,6 +340,7 @@
 ```
 
 **For Finance:**
+
 > "Finance gets automated reconciliation. Shopify orders match D365 sales orders. Revenue matches. No more manual investigation. Month-end close becomes predictable."
 
 ---
@@ -403,41 +412,41 @@
 
 ### For Operations
 
-| Today (Spock Store) | With Battle Bus |
-|---------------------|-----------------|
-| 80 min uncertainty daily | 2.5 min processing |
+| Today (Spock Store)            | With Battle Bus     |
+| ------------------------------ | ------------------- |
+| 80 min uncertainty daily       | 2.5 min processing  |
 | Manual monitoring during lunch | Real-time dashboard |
-| Log diving to debug | Visual order flow |
-| Manual retries | One-click rerun |
-| **340 hours/year monitoring** | **5 min/day check** |
+| Log diving to debug            | Visual order flow   |
+| Manual retries                 | One-click rerun     |
+| **340 hours/year monitoring**  | **5 min/day check** |
 
 ### For Finance
 
-| Today (Spock Store) | With Battle Bus |
-|---------------------|-----------------|
-| 80 min reconciliation gap | Real-time sync |
-| Manual order investigation | Automated reports |
-| Month-end close delays | Predictable close |
-| Audit trail gaps | Complete timestamps |
+| Today (Spock Store)        | With Battle Bus     |
+| -------------------------- | ------------------- |
+| 80 min reconciliation gap  | Real-time sync      |
+| Manual order investigation | Automated reports   |
+| Month-end close delays     | Predictable close   |
+| Audit trail gaps           | Complete timestamps |
 
 ### For Customer Service
 
-| Today (Spock Store) | With Battle Bus |
-|---------------------|-----------------|
-| "System is processing..." | Exact order status |
-| Cross-system checking | Single dashboard lookup |
-| Escalate to engineering | Self-service rerun |
-| 3-5 min per inquiry | 30 seconds per inquiry |
-| **90% reduction in escalations** | |
+| Today (Spock Store)              | With Battle Bus         |
+| -------------------------------- | ----------------------- |
+| "System is processing..."        | Exact order status      |
+| Cross-system checking            | Single dashboard lookup |
+| Escalate to engineering          | Self-service rerun      |
+| 3-5 min per inquiry              | 30 seconds per inquiry  |
+| **90% reduction in escalations** |                         |
 
 ### For IM8 (The Business)
 
-| Today (Spock Store) | With Battle Bus |
-|---------------------|-----------------|
-| Can't handle 2x growth | Ready for 10x growth |
-| Subscription customers wait 80 min | Wait 2 min |
-| Same-day shipping at risk | 77 min buffer |
-| Firefighting mode | Monitoring mode |
+| Today (Spock Store)                | With Battle Bus      |
+| ---------------------------------- | -------------------- |
+| Can't handle 2x growth             | Ready for 10x growth |
+| Subscription customers wait 80 min | Wait 2 min           |
+| Same-day shipping at risk          | 77 min buffer        |
+| Firefighting mode                  | Monitoring mode      |
 
 ---
 
@@ -451,7 +460,7 @@
 ### Spock Store Timing Query
 
 ```sql
-SELECT 
+SELECT
   json_agg(
     json_build_object(
       'taskId', task_id,
@@ -463,7 +472,7 @@ SELECT
       'processingMs', end_time - start_time
     ) ORDER BY datetime
   ) as spock_timings
-FROM task 
+FROM task
 WHERE type = 'shopify'
   AND detail->>'topic' = 'orders/paid'
   AND datetime >= CURRENT_DATE + INTERVAL '12 hours'
@@ -473,13 +482,13 @@ WHERE type = 'shopify'
 
 ### Evidence Timeline
 
-| Time | Action |
-|------|--------|
-| 12:00 PM | Screenshot: Orders arriving |
-| 12:05 PM | Screenshot: Still unfulfilled |
-| 12:30 PM | Screenshot: Progress check |
-| 1:20 PM | Screenshot: Finally complete |
-| After | Query Spock DB for exact timings |
+| Time     | Action                           |
+| -------- | -------------------------------- |
+| 12:00 PM | Screenshot: Orders arriving      |
+| 12:05 PM | Screenshot: Still unfulfilled    |
+| 12:30 PM | Screenshot: Progress check       |
+| 1:20 PM  | Screenshot: Finally complete     |
+| After    | Query Spock DB for exact timings |
 
 ---
 
@@ -516,6 +525,7 @@ When Battle Bus finishes 1,375 orders and Spock Store is on order #41:
 ## Appendix: Technical Details
 
 See [PERFORMANCE_ANALYSIS.md](./PERFORMANCE_ANALYSIS.md) for:
+
 - Detailed architecture comparison
 - Code-level analysis
 - Mathematical breakdown

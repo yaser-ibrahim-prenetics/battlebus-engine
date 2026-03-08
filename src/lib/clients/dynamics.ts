@@ -38,11 +38,7 @@ export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
  */
 export async function authenticate(): Promise<D365AuthToken> {
   // Check if we have a valid cached token
-  if (
-    tokenCache &&
-    tokenCache.expires_at &&
-    Date.now() < tokenCache.expires_at - 60000
-  ) {
+  if (tokenCache && tokenCache.expires_at && Date.now() < tokenCache.expires_at - 60000) {
     return tokenCache;
   }
 
@@ -141,9 +137,7 @@ export async function createSalesOrderHeaderV3(
     DeliveryAddressZipCode: shippingAddress?.addressZipCode,
     DeliveryAddressStreet: shippingAddress?.addressStreet,
     DeliveryAddressCity: shippingAddress?.addressCity,
-    ...(shippingWarehouseId
-      ? { DefaultShippingWarehouseId: shippingWarehouseId }
-      : {}),
+    ...(shippingWarehouseId ? { DefaultShippingWarehouseId: shippingWarehouseId } : {}),
     ...(skipFulfillmentNotification
       ? { THK_SkipFulfillmentNotification: skipFulfillmentNotification }
       : {}),
@@ -160,17 +154,14 @@ export async function createSalesOrderHeaderV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
-    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -222,63 +213,55 @@ export async function updateSalesOrderHeaderV3(
   // Build the update body - only include fields that are provided
   const body: Record<string, any> = {};
 
-  if (req.orderingCustomerAccountNumber !== undefined) 
+  if (req.orderingCustomerAccountNumber !== undefined)
     body.OrderingCustomerAccountNumber = orderingCustomerAccountNumber;
-  if (req.defaultLedgerDimensionDisplayValue !== undefined) 
+  if (req.defaultLedgerDimensionDisplayValue !== undefined)
     body.DefaultLedgerDimensionDisplayValue = defaultLedgerDimensionDisplayValue;
-  if (req.customerOrderReference !== undefined) 
+  if (req.customerOrderReference !== undefined)
     body.CustomersOrderReference = customerOrderReference;
-  if (currency !== undefined) 
-    body.CurrencyCode = currency;
+  if (currency !== undefined) body.CurrencyCode = currency;
 
   // THK Custom Fields
-  if (shopifyReference !== undefined) 
-    body.THK_ShopifyReference = shopifyReference;
-  if (name !== undefined) 
-    body.THK_ShopifyCustName = name;
-  if (email !== undefined) 
-    body.THK_ShopifyCustomerEmail = email;
-  if (comment !== undefined) 
-    body.THK_Comments = comment;
-  if (paymentId !== undefined) 
-    body.THK_ShopifyPaymentReference = paymentId;
-  if (skipFulfillmentNotification !== undefined) 
+  if (shopifyReference !== undefined) body.THK_ShopifyReference = shopifyReference;
+  if (name !== undefined) body.THK_ShopifyCustName = name;
+  if (email !== undefined) body.THK_ShopifyCustomerEmail = email;
+  if (comment !== undefined) body.THK_Comments = comment;
+  if (paymentId !== undefined) body.THK_ShopifyPaymentReference = paymentId;
+  if (skipFulfillmentNotification !== undefined)
     body.THK_SkipFulfillmentNotification = skipFulfillmentNotification;
 
   // Billing Address
   if (billingAddress) {
-    if (billingAddress.addressLine !== undefined) 
-      body.THK_BillingName = billingAddress.addressLine;
-    if (billingAddress.addressCountryCode !== undefined) 
+    if (billingAddress.addressLine !== undefined) body.THK_BillingName = billingAddress.addressLine;
+    if (billingAddress.addressCountryCode !== undefined)
       body.THK_BillingAddressCountryRegionId = billingAddress.addressCountryCode;
-    if (billingAddress.addressZipCode !== undefined) 
+    if (billingAddress.addressZipCode !== undefined)
       body.THK_BillingAddressZipCode = billingAddress.addressZipCode;
-    if (billingAddress.addressStreet !== undefined) 
+    if (billingAddress.addressStreet !== undefined)
       body.THK_BillingAddressStreet = billingAddress.addressStreet;
-    if (billingAddress.addressCity !== undefined) 
+    if (billingAddress.addressCity !== undefined)
       body.THK_BillingAddressCity = billingAddress.addressCity;
-    if (billingAddress.addressPhone !== undefined) 
+    if (billingAddress.addressPhone !== undefined)
       body.THK_ShopifyCustomerPhonenum = billingAddress.addressPhone;
   }
 
   // Delivery Address
   if (shippingAddress) {
-    if (shippingAddress.addressName !== undefined) 
+    if (shippingAddress.addressName !== undefined)
       body.DeliveryAddressName = shippingAddress.addressName;
-    if (shippingAddress.addressLine !== undefined) 
+    if (shippingAddress.addressLine !== undefined)
       body.DeliveryAddressDescription = shippingAddress.addressLine;
-    if (shippingAddress.addressCountryCode !== undefined) 
+    if (shippingAddress.addressCountryCode !== undefined)
       body.DeliveryAddressCountryRegionId = shippingAddress.addressCountryCode;
-    if (shippingAddress.addressZipCode !== undefined) 
+    if (shippingAddress.addressZipCode !== undefined)
       body.DeliveryAddressZipCode = shippingAddress.addressZipCode;
-    if (shippingAddress.addressStreet !== undefined) 
+    if (shippingAddress.addressStreet !== undefined)
       body.DeliveryAddressStreet = shippingAddress.addressStreet;
-    if (shippingAddress.addressCity !== undefined) 
+    if (shippingAddress.addressCity !== undefined)
       body.DeliveryAddressCity = shippingAddress.addressCity;
   }
 
-  if (shippingWarehouseId !== undefined) 
-    body.DefaultShippingWarehouseId = shippingWarehouseId;
+  if (shippingWarehouseId !== undefined) body.DefaultShippingWarehouseId = shippingWarehouseId;
 
   console.log(`[D365] Updating sales order header ${salesOrderNumber}: ${JSON.stringify(body)}`);
   if (config.features.dryRunMode) {
@@ -326,19 +309,19 @@ export async function updateSalesOrderHeaderV3(
  * Cancel a SalesOrder in D365 using SalesOrderHeadersV3
  * Ported from spock-store - uses THK custom fields
  */
-export async function deleteSalesOrderHeaderV3(
-  dataAreaId: string,
-  salesOrderNumber: string
-) {
+export async function deleteSalesOrderHeaderV3(dataAreaId: string, salesOrderNumber: string) {
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'OData-Version': '4.0',
-      'OData-MaxVersion': '4.0'
+  const response = await fetch(
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "OData-Version": "4.0",
+        "OData-MaxVersion": "4.0",
+      },
     }
-  });
+  );
 
   if (!response.ok) {
     const error = await response.text();
@@ -388,17 +371,14 @@ export async function createReturnSalesOrderHeaderV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
-    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -448,7 +428,9 @@ export async function createSalesOrderLine(
     ItemNumber: itemNumber,
     OrderedSalesQuantity: quantity,
     SalesPrice: price,
-    ...(discount != null && discount !== undefined && !isNaN(discount) ? { LineDiscountAmount: discount } : {}),
+    ...(discount != null && discount !== undefined && !isNaN(discount)
+      ? { LineDiscountAmount: discount }
+      : {}),
     THK_DiscountType: giftCardNumber,
     THK_PromotionCode: discountCode && discountCode.length > 0 ? discountCode[0] : "",
     ...(shippingWarehouseId ? { ShippingWarehouseId: shippingWarehouseId } : {}),
@@ -466,17 +448,14 @@ export async function createSalesOrderLine(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
-    `${config.dynamics.baseUrl}/data/SalesOrderLines`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -527,9 +506,7 @@ export async function createReturnSalesOrderLineV3(
   console.log(`[D365] Creating return order line: ${JSON.stringify(body)}`);
 
   if (config.features.dryRunMode) {
-    console.log(
-      `[D365] DRY RUN - Would create return line for ${salesOrderNumber}`
-    );
+    console.log(`[D365] DRY RUN - Would create return line for ${salesOrderNumber}`);
     return {
       InventoryLotId: `DRY-RUN-LOT-${Date.now()}`,
       request: body,
@@ -557,9 +534,7 @@ export async function createReturnSalesOrderLineV3(
   }
 
   const result = await response.json();
-  console.log(
-    `[D365] Created return order line: ${result.InventoryLotId} for ${salesOrderNumber}`
-  );
+  console.log(`[D365] Created return order line: ${result.InventoryLotId} for ${salesOrderNumber}`);
 
   return {
     InventoryLotId: result.InventoryLotId,
@@ -602,14 +577,10 @@ export async function createSalesOrderHeadersV3ForReturn(
     THK_ShopifyCustomerEmail: email,
   };
 
-  console.log(
-    `[D365] Creating return sales order header: ${JSON.stringify(body)}`
-  );
+  console.log(`[D365] Creating return sales order header: ${JSON.stringify(body)}`);
 
   if (config.features.dryRunMode) {
-    console.log(
-      `[D365] DRY RUN - Would create return sales order for ${orderId}`
-    );
+    console.log(`[D365] DRY RUN - Would create return sales order for ${orderId}`);
     return {
       SalesOrderNumber: `DRY-RUN-RETURN-${Date.now()}`,
       request: body,
@@ -617,17 +588,14 @@ export async function createSalesOrderHeadersV3ForReturn(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
-    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -669,19 +637,17 @@ export async function createSalesOrderLineForReturn(
     ItemNumber: itemNumber,
     OrderedSalesQuantity: quantity,
     SalesPrice: price,
-    ...(discount != null && discount !== undefined && !isNaN(discount) ? { LineDiscountAmount: discount } : {}),
+    ...(discount != null && discount !== undefined && !isNaN(discount)
+      ? { LineDiscountAmount: discount }
+      : {}),
     InventTransIdReturn: inventTransIdReturn,
     ShippingSiteId: shippingSiteId,
   };
 
-  console.log(
-    `[D365] Creating return sales order line: ${JSON.stringify(body)}`
-  );
+  console.log(`[D365] Creating return sales order line: ${JSON.stringify(body)}`);
 
   if (config.features.dryRunMode) {
-    console.log(
-      `[D365] DRY RUN - Would create return line for ${salesOrderNumber}`
-    );
+    console.log(`[D365] DRY RUN - Would create return line for ${salesOrderNumber}`);
     return {
       InventoryLotId: `DRY-RUN-RETURN-LOT-${Date.now()}`,
       request: body,
@@ -689,17 +655,14 @@ export async function createSalesOrderLineForReturn(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
-    `${config.dynamics.baseUrl}/data/SalesOrderLines`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -709,9 +672,7 @@ export async function createSalesOrderLineForReturn(
   }
 
   const result = await response.json();
-  console.log(
-    `[D365] Created return sales order line with lot ID: ${result.InventoryLotId}`
-  );
+  console.log(`[D365] Created return sales order line with lot ID: ${result.InventoryLotId}`);
 
   return {
     InventoryLotId: result.InventoryLotId,
@@ -776,9 +737,7 @@ export async function confirmSalesOrder(
   const result: D365ThkApiResponse = await response.json();
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
-    throw new Error(
-      `[D365] THK API failed to confirm ${salesOrderNumber}: ${result.Message}`
-    );
+    throw new Error(`[D365] THK API failed to confirm ${salesOrderNumber}: ${result.Message}`);
   }
 
   console.log(`[D365] Confirmed sales order: ${salesOrderNumber}`);
@@ -942,7 +901,7 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
   const body = {
     salesOrderNumber,
     dataAreaId,
-    invoiceDate: invoiceDate ?? new Date().toISOString().split('T')[0],
+    invoiceDate: invoiceDate ?? new Date().toISOString().split("T")[0],
   };
 
   console.log(`[D365] Posting return order invoice: ${JSON.stringify(body)}`);
@@ -1003,7 +962,7 @@ export async function getSalesOrderLines(
 
   const token = await getAuthToken();
   const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
-  const select = 'ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount';
+  const select = "ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount";
   const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
   const response = await fetch(url, {
@@ -1024,7 +983,10 @@ export async function getSalesOrderLines(
 
   console.log(`[D365] Found ${lines.length} lines for ${salesOrderNumber}`);
   if (lines.length > 0) {
-    console.log(`[D365] Line items with lotIds:`, lines.map(l => ({ item: l.ItemNumber, lotId: l.InventoryLotId })));
+    console.log(
+      `[D365] Line items with lotIds:`,
+      lines.map((l) => ({ item: l.ItemNumber, lotId: l.InventoryLotId }))
+    );
   }
 
   return lines;
@@ -1039,14 +1001,14 @@ export async function getLotIdMap(
   dataAreaId: string = config.dynamics.dataAreaId
 ): Promise<Record<string, string>> {
   const lines = await getSalesOrderLines(salesOrderNumber, dataAreaId);
-  
+
   const lotIdMap: Record<string, string> = {};
   for (const line of lines) {
     if (line.ItemNumber && line.InventoryLotId) {
       lotIdMap[line.ItemNumber] = line.InventoryLotId;
     }
   }
-  
+
   console.log(`[D365] LotId map for ${salesOrderNumber}:`, lotIdMap);
   return lotIdMap;
 }
@@ -1102,11 +1064,11 @@ export async function getSalesOrderByShopifyId(
 
 /**
  * Sync a Shopify product to D365 as a Released Product
- * 
+ *
  * IMPORTANT: D365 OData API does not support direct product creation.
  * Products must be created through D365 UI or custom D365 services.
  * This function only checks if products exist and logs what would be synced.
- * 
+ *
  * For actual product creation, use:
  * - D365 Product Information Management UI
  * - Custom D365 service actions (if configured)
@@ -1115,22 +1077,36 @@ export async function getSalesOrderByShopifyId(
 export async function syncProduct(product: {
   productId: string;
   title: string;
-  variants: { sku: string; price: string; barcode: string | null; weight: number; weight_unit: string }[];
+  variants: {
+    sku: string;
+    price: string;
+    barcode: string | null;
+    weight: number;
+    weight_unit: string;
+  }[];
   vendor: string;
   productType: string;
   tags: string;
   status: string;
 }): Promise<{ success: boolean; message: string; d365ItemNumbers?: string[] }> {
   console.log(`[D365] 🔄 syncProduct called for "${product.title}" (${product.productId})`);
-  console.log(`[D365]   Vendor: ${product.vendor}, Type: ${product.productType}, Status: ${product.status}`);
+  console.log(
+    `[D365]   Vendor: ${product.vendor}, Type: ${product.productType}, Status: ${product.status}`
+  );
   console.log(`[D365]   Variants: ${product.variants.length}`);
   for (const v of product.variants) {
-    console.log(`[D365]   - SKU: ${v.sku}, Price: ${v.price}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`);
+    console.log(
+      `[D365]   - SKU: ${v.sku}, Price: ${v.price}, Barcode: ${v.barcode}, Weight: ${v.weight}${v.weight_unit}`
+    );
   }
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would sync product ${product.title}`);
-    return { success: true, message: "DRY RUN - Product sync", d365ItemNumbers: product.variants.map((v) => v.sku) };
+    return {
+      success: true,
+      message: "DRY RUN - Product sync",
+      d365ItemNumbers: product.variants.map((v) => v.sku),
+    };
   }
 
   if (!product.variants || product.variants.length === 0) {
@@ -1152,7 +1128,7 @@ export async function syncProduct(product: {
 
     const itemNumber = variant.sku;
     const productName = product.title || itemNumber;
-    
+
     try {
       // Check if product already exists using ReleasedProductsV2 (read-only endpoint)
       const checkUrl = `${baseUrl}/data/ReleasedProductsV2?$filter=ItemNumber eq '${itemNumber}' and dataAreaId eq '${dataAreaId}'&$top=1`;
@@ -1183,17 +1159,22 @@ export async function syncProduct(product: {
         // Products must be created through D365 UI or custom services
         console.log(`[D365] ⚠️  Product ${itemNumber} does not exist in D365`);
         console.log(`[D365]    Product creation via OData is not supported.`);
-        console.log(`[D365]    Please create product "${productName}" (SKU: ${itemNumber}) manually in D365:`);
-        console.log(`[D365]    1. Go to Product Information Management → Products → Released products`);
+        console.log(
+          `[D365]    Please create product "${productName}" (SKU: ${itemNumber}) manually in D365:`
+        );
+        console.log(
+          `[D365]    1. Go to Product Information Management → Products → Released products`
+        );
         console.log(`[D365]    2. Create new product with Item Number: ${itemNumber}`);
         console.log(`[D365]    3. Set Product Name: ${productName}`);
         if (variant.barcode) {
           console.log(`[D365]    4. Set Barcode: ${variant.barcode}`);
         }
         if (variant.weight && variant.weight > 0) {
-          const weightInKg = variant.weight_unit?.toLowerCase() === "kg" 
-            ? variant.weight 
-            : variant.weight * 0.453592;
+          const weightInKg =
+            variant.weight_unit?.toLowerCase() === "kg"
+              ? variant.weight
+              : variant.weight * 0.453592;
           console.log(`[D365]    5. Set Weight: ${weightInKg} kg`);
         }
         // Don't add to d365ItemNumbers since it wasn't actually created
@@ -1206,7 +1187,7 @@ export async function syncProduct(product: {
 
   // Check if we had any variants with SKUs to process
   const variantsWithSkus = product.variants.filter((v) => v.sku && v.sku.trim() !== "");
-  
+
   if (variantsWithSkus.length === 0) {
     return {
       success: false,
@@ -1267,7 +1248,7 @@ export async function getInventory(
 
   // Build OData query
   let url = `${config.dynamics.baseUrl}/data/InventorySitesOnHandV2?cross-company=true`;
-  
+
   // Add filters
   const filters: string[] = [];
   if (dataAreaId) {
@@ -1277,18 +1258,18 @@ export async function getInventory(
     filters.push(`ItemNumber eq '${itemNumber}'`);
   }
   if (filters.length > 0) {
-    url += `&$filter=${filters.join(' and ')}`;
+    url += `&$filter=${filters.join(" and ")}`;
   }
-  
+
   // Add pagination
   url += `&$top=${top}&$skip=${skip}`;
-  
+
   console.log(`[D365] Fetching inventory from: ${url}`);
 
   const response = await fetch(url, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       "OData-MaxVersion": "4.0",
       "OData-Version": "4.0",
@@ -1302,9 +1283,9 @@ export async function getInventory(
 
   const data = await response.json();
   const items = data.value || [];
-  
+
   console.log(`[D365] Fetched ${items.length} inventory items`);
-  
+
   return { items, count: items.length };
 }
 
@@ -1312,26 +1293,26 @@ export async function getInventory(
  * Fetch ALL inventory from D365 (paginated, fetches all pages)
  */
 export async function getAllInventory(
-  options: Omit<D365GetInventoryOptions, 'top' | 'skip'> = {}
+  options: Omit<D365GetInventoryOptions, "top" | "skip"> = {}
 ): Promise<D365InventoryItem[]> {
   const allItems: D365InventoryItem[] = [];
   let skip = 0;
   const pageSize = 1000; // D365 max is typically 1000
   let hasMore = true;
-  
+
   console.log(`[D365] Fetching all inventory...`);
-  
+
   while (hasMore) {
     const { items } = await getInventory({ ...options, top: pageSize, skip });
     allItems.push(...items);
-    
+
     if (items.length < pageSize) {
       hasMore = false;
     } else {
       skip += pageSize;
     }
   }
-  
+
   console.log(`[D365] Total inventory fetched: ${allItems.length} items`);
   return allItems;
 }
@@ -1349,10 +1330,14 @@ export async function syncInventoryLevel(inventory: {
 }): Promise<{ success: boolean; message: string }> {
   const dataAreaId = inventory.dataAreaId || config.dynamics.dataAreaId;
   console.log(`[D365] 🔄 syncInventoryLevel called for item ${inventory.inventoryItemId}`);
-  console.log(`[D365]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}, DataAreaId: ${dataAreaId}`);
+  console.log(
+    `[D365]   Location: ${inventory.locationId}, Available: ${inventory.available}, SKU: ${inventory.sku || "N/A"}, DataAreaId: ${dataAreaId}`
+  );
 
   if (config.features.dryRunMode) {
-    console.log(`[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId} to ${dataAreaId}`);
+    console.log(
+      `[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId} to ${dataAreaId}`
+    );
     return { success: true, message: `DRY RUN - Inventory sync placeholder (${dataAreaId})` };
   }
 

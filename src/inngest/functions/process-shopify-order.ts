@@ -25,7 +25,10 @@ import {
 } from "@/lib/transformers/order";
 import { getDataAreaId } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
-import { getDataAreaIdForLocation, getWarehouseNameForLocation } from "@/lib/services/location-routing";
+import {
+  getDataAreaIdForLocation,
+  getWarehouseNameForLocation,
+} from "@/lib/services/location-routing";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -157,16 +160,22 @@ export const processShopifyOrder = inngest.createFunction(
 
     // Wait 5 minutes and refetch order to ensure tags are available
     // Tags may not be immediately available when order is created
-    await publishStatus("wait-for-tags", "running", "Waiting 5 minutes for order tags to be available");
-    
+    await publishStatus(
+      "wait-for-tags",
+      "running",
+      "Waiting 5 minutes for order tags to be available"
+    );
+
     // Wait 5 minutes using Inngest step.sleep (must be outside step.run)
     await step.sleep("wait-for-tags", "5m");
-    
+
     // Refetch order from Shopify to get latest tags
     const refreshedOrder = await step.run("refetch-order-after-delay", async () => {
       const { getOrder } = await import("@/lib/clients/shopify");
       const freshOrder = await getOrder(shopifyOrderId);
-      console.log(`[Order] Refetched order ${shopifyOrderName} after 5min delay. Tags: ${freshOrder.tags || "none"}`);
+      console.log(
+        `[Order] Refetched order ${shopifyOrderName} after 5min delay. Tags: ${freshOrder.tags || "none"}`
+      );
       return freshOrder;
     });
     await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
@@ -201,7 +210,9 @@ export const processShopifyOrder = inngest.createFunction(
           `[Battle Bus] Skip high risk order for ${shopifyOrderId}`
         );
       } else if (validation.status === "cancelled") {
-        const cancelReason = CancelReasonEnum[validation.cancelReason as keyof typeof CancelReasonEnum] || validation.cancelReason;
+        const cancelReason =
+          CancelReasonEnum[validation.cancelReason as keyof typeof CancelReasonEnum] ||
+          validation.cancelReason;
         console.log(`[Battle Bus] Order was cancelled due to ${cancelReason}`);
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
@@ -232,7 +243,7 @@ export const processShopifyOrder = inngest.createFunction(
     const routingResult = await step.run("determine-warehouse-routing", async () => {
       let warehouseName: string;
       let dataAreaId: string;
-      
+
       // Try to get fulfillment location from fulfillment orders
       let fulfillmentLocationId: number | null = null;
       try {
@@ -253,19 +264,30 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Use location-based routing if fulfillment location is available
       if (fulfillmentLocationId) {
-        dataAreaId = await getDataAreaIdForLocation(fulfillmentLocationId, "im8") || config.dynamics.dataAreaId;
-        const warehouseNameFromLocation = await getWarehouseNameForLocation(fulfillmentLocationId, "im8");
-        warehouseName = warehouseNameFromLocation || determineWarehouse(
-          order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+        dataAreaId =
+          (await getDataAreaIdForLocation(fulfillmentLocationId, "im8")) ||
+          config.dynamics.dataAreaId;
+        const warehouseNameFromLocation = await getWarehouseNameForLocation(
+          fulfillmentLocationId,
+          "im8"
         );
-        console.log(`[Order Routing] Using location-based routing: ${warehouseName} → ${dataAreaId}`);
+        warehouseName =
+          warehouseNameFromLocation ||
+          determineWarehouse(
+            order.shipping_address?.country_code || order.billing_address?.country_code || "US"
+          );
+        console.log(
+          `[Order Routing] Using location-based routing: ${warehouseName} → ${dataAreaId}`
+        );
       } else {
         // Fallback to country-based warehouse determination
         warehouseName = determineWarehouse(
           order.shipping_address?.country_code || order.billing_address?.country_code || "US"
         );
         dataAreaId = getDataAreaId(warehouseName);
-        console.log(`[Order Routing] Using country-based routing: ${warehouseName} → ${dataAreaId}`);
+        console.log(
+          `[Order Routing] Using country-based routing: ${warehouseName} → ${dataAreaId}`
+        );
       }
 
       return { warehouseName, dataAreaId };
@@ -286,13 +308,20 @@ export const processShopifyOrder = inngest.createFunction(
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
           return null;
         }
-        console.log(`[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`);
+        console.log(
+          `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
+        );
         return dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
       });
       await publishStatus("d365.check-existing", "completed", "No existing order found");
 
       if (existingOrder) {
-        await publishStatus("d365.check-existing", "completed", `Existing order found: ${existingOrder.SalesOrderNumber}`, { d365OrderNumber: existingOrder.SalesOrderNumber });
+        await publishStatus(
+          "d365.check-existing",
+          "completed",
+          `Existing order found: ${existingOrder.SalesOrderNumber}`,
+          { d365OrderNumber: existingOrder.SalesOrderNumber }
+        );
         return {
           status: "already_exists",
           d365OrderNumber: existingOrder.SalesOrderNumber,
@@ -301,7 +330,7 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       await publishStatus("create-d365-order", "running", "Creating D365 sales order");
-      
+
       // 2a. Create D365 Header
       await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
       const d365Header = await step.run("create-d365-header", async () => {
@@ -315,31 +344,44 @@ export const processShopifyOrder = inngest.createFunction(
       });
 
       const salesOrderNumber = d365Header.SalesOrderNumber;
-      await publishStatus("d365.create-header", "completed", `Header created: ${salesOrderNumber}`, { d365OrderNumber: salesOrderNumber });
+      await publishStatus(
+        "d365.create-header",
+        "completed",
+        `Header created: ${salesOrderNumber}`,
+        { d365OrderNumber: salesOrderNumber }
+      );
 
       // 2b. Create D365 Lines - OPTIMIZED: Parallel creation instead of sequential
       const lineItems = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
       // Update all line items with the correct dataAreaId from location routing
-      lineItems.forEach(item => {
+      lineItems.forEach((item) => {
         item.dataAreaId = dataAreaId;
       });
-      await publishStatus("d365.create-lines", "running", `Creating ${lineItems.length} line items`, { totalLines: lineItems.length });
+      await publishStatus(
+        "d365.create-lines",
+        "running",
+        `Creating ${lineItems.length} line items`,
+        { totalLines: lineItems.length }
+      );
       await step.run("create-d365-lines", async () => {
         if (skipD365) {
           return lineItems;
         }
 
         // OPTIMIZATION: Create all lines in parallel instead of sequential loop
-        // This reduces N API calls from N * latency to max(latency) 
+        // This reduces N API calls from N * latency to max(latency)
         // For 5 items: ~5s sequential → ~1s parallel
         await Promise.all(
-          lineItems.map(line => 
-            dynamics.createSalesOrderLine({ ...line, salesOrderNumber })
-          )
+          lineItems.map((line) => dynamics.createSalesOrderLine({ ...line, salesOrderNumber }))
         );
         return lineItems;
       });
-      await publishStatus("d365.create-lines", "completed", `Created ${lineItems.length} line items`, { totalLines: lineItems.length });
+      await publishStatus(
+        "d365.create-lines",
+        "completed",
+        `Created ${lineItems.length} line items`,
+        { totalLines: lineItems.length }
+      );
 
       // 2c. Confirm D365 Order - OPTIMIZED: Smart retry replaces fixed 5s wait
       // Instead of always waiting 5s, we try immediately and only wait on "not found" errors
@@ -354,12 +396,17 @@ export const processShopifyOrder = inngest.createFunction(
         // Typical success: 1st or 2nd attempt (0-1s total)
         // Worst case: 500ms + 1000ms + 2000ms = 3.5s (still faster than old 5s + 3s*3)
         const backoffMs = [500, 1000, 2000];
-        
+
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             await dynamics.confirmSalesOrder(salesOrderNumber, dataAreaId);
             if (attempt > 1) {
-              await publishStatus("d365.confirm-order", "running", `Confirmed on attempt ${attempt}`, { attempt });
+              await publishStatus(
+                "d365.confirm-order",
+                "running",
+                `Confirmed on attempt ${attempt}`,
+                { attempt }
+              );
             }
             return;
           } catch (error) {
@@ -367,7 +414,12 @@ export const processShopifyOrder = inngest.createFunction(
               error instanceof Error && error.message.includes("does not exist");
             if (isNotFoundError && attempt < 3) {
               const waitMs = backoffMs[attempt - 1];
-              await publishStatus("d365.confirm-order", "running", `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`, { attempt, maxAttempts: 3, waitMs });
+              await publishStatus(
+                "d365.confirm-order",
+                "running",
+                `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`,
+                { attempt, maxAttempts: 3, waitMs }
+              );
               await new Promise((resolve) => setTimeout(resolve, waitMs));
             } else {
               throw error;
@@ -382,14 +434,20 @@ export const processShopifyOrder = inngest.createFunction(
       const prepaymentAmount = calculatePrepaymentAmount(order);
       // Only sync to GPS if warehouse is actually a GPS warehouse
       // Stord orders are already syncing via Shopify app, so skip GPS sync for Stord
-      const shouldSendToRealGps = shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
-      
+      const shouldSendToRealGps =
+        shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
+
       // Start both operations simultaneously
       if (prepaymentAmount > 0) {
-        await publishStatus("d365.create-prepayment", "running", `Creating prepayment: $${prepaymentAmount.toFixed(2)}`, { amount: prepaymentAmount });
+        await publishStatus(
+          "d365.create-prepayment",
+          "running",
+          `Creating prepayment: $${prepaymentAmount.toFixed(2)}`,
+          { amount: prepaymentAmount }
+        );
       }
       await publishStatus("gps.build-payload", "running", "Transforming order to GPS format");
-      
+
       // Run prepayment and GPS payload building in parallel using Promise.all with step.run
       const [prepaymentResult, gpsOrderPayload] = await Promise.all([
         // 3. Create Prepayment (runs in parallel)
@@ -397,62 +455,66 @@ export const processShopifyOrder = inngest.createFunction(
           if (skipD365 || prepaymentAmount <= 0) {
             return { success: true, amount: prepaymentAmount };
           }
-          
+
           try {
             await dynamics.createPrepayment(salesOrderNumber, dataAreaId);
             return { success: true, amount: prepaymentAmount };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            const isNumberSequenceError = 
-              errorMessage.includes("Number sequence") && 
+            const isNumberSequenceError =
+              errorMessage.includes("Number sequence") &&
               errorMessage.includes("has been exceeded");
-            
+
             if (isNumberSequenceError) {
               // D365 number sequence exceeded - this is a configuration issue
               // Log as skipped and continue processing (prepayment is not critical for fulfillment)
               await publishStatus(
-                "d365.create-prepayment", 
-                "skipped", 
+                "d365.create-prepayment",
+                "skipped",
                 `Prepayment skipped: D365 number sequence exceeded. Order will continue without prepayment.`,
-                { 
+                {
                   amount: prepaymentAmount,
                   error: "number_sequence_exceeded",
-                  salesOrderNumber 
+                  salesOrderNumber,
                 }
               );
-              
+
               await slack.sendWarningMessage(
                 SlackChannelEnum.SHOPIFY,
                 `⚠️ [D365] Number sequence exceeded for prepayment\n` +
-                `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
-                `Error: ${errorMessage}\n` +
-                `Action Required: Extend number sequence U001-JBN in D365`
+                  `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
+                  `Error: ${errorMessage}\n` +
+                  `Action Required: Extend number sequence U001-JBN in D365`
               );
-              
-              return { success: false, amount: prepaymentAmount, error: "number_sequence_exceeded" };
+
+              return {
+                success: false,
+                amount: prepaymentAmount,
+                error: "number_sequence_exceeded",
+              };
             }
-            
+
             // For other prepayment errors, still log but don't fail the order
             await publishStatus(
-              "d365.create-prepayment", 
-              "skipped", 
+              "d365.create-prepayment",
+              "skipped",
               `Prepayment failed: ${errorMessage}. Order will continue without prepayment.`,
-              { 
+              {
                 amount: prepaymentAmount,
                 error: errorMessage,
-                salesOrderNumber 
+                salesOrderNumber,
               }
             );
-            
+
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
               `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNumber}): ${errorMessage}`
             );
-            
+
             return { success: false, amount: prepaymentAmount, error: errorMessage };
           }
         }),
-        
+
         // 4a. Build GPS payload (runs in parallel with prepayment)
         step.run("build-gps-payload", async () => {
           try {
@@ -466,26 +528,41 @@ export const processShopifyOrder = inngest.createFunction(
           }
         }),
       ]);
-      
+
       // Publish results after parallel completion
       if (prepaymentAmount > 0) {
         if (prepaymentResult.success) {
-          await publishStatus("d365.create-prepayment", "completed", `Prepayment created: $${prepaymentAmount.toFixed(2)}`, { amount: prepaymentAmount });
+          await publishStatus(
+            "d365.create-prepayment",
+            "completed",
+            `Prepayment created: $${prepaymentAmount.toFixed(2)}`,
+            { amount: prepaymentAmount }
+          );
         }
         // If prepayment failed, status was already published in the step.run catch block
       }
-      
+
       if (gpsOrderPayload) {
         const itemCount = gpsOrderPayload.productList?.length || 0;
-        await publishStatus("gps.build-payload", "completed", `Payload built with ${itemCount} items`, { 
-          itemCount, 
-          warehouse: warehouseName 
-        });
+        await publishStatus(
+          "gps.build-payload",
+          "completed",
+          `Payload built with ${itemCount} items`,
+          {
+            itemCount,
+            warehouse: warehouseName,
+          }
+        );
       } else {
         await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
       }
-      
-      await publishStatus("create-d365-order", "completed", `D365 order created: ${salesOrderNumber}`, { d365OrderNumber: salesOrderNumber });
+
+      await publishStatus(
+        "create-d365-order",
+        "completed",
+        `D365 order created: ${salesOrderNumber}`,
+        { d365OrderNumber: salesOrderNumber }
+      );
 
       // 4. Send to GPS (if applicable)
       // Only GPS warehouses need syncing - Stord has its own Shopify app
@@ -495,12 +572,19 @@ export const processShopifyOrder = inngest.createFunction(
       // OPTIMIZATION: Consolidated GPS send + metafield store into one step
       // This eliminates ~4s of Inngest step overhead
       if (shouldSendToRealGps && gpsOrderPayload) {
-        await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, { warehouse: warehouseName });
+        await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
+          warehouse: warehouseName,
+        });
       } else if (!shouldSendToRealGps) {
         // Skip GPS sync for non-GPS warehouses (e.g., Stord - handled by Shopify app)
-        await publishStatus("gps.send-order", "skipped", `GPS sync not required - ${warehouseName} uses Shopify app`, { warehouse: warehouseName });
+        await publishStatus(
+          "gps.send-order",
+          "skipped",
+          `GPS sync not required - ${warehouseName} uses Shopify app`,
+          { warehouse: warehouseName }
+        );
       }
-      
+
       const gpsResult = await step.run("send-to-gps-and-store-metafield", async () => {
         // If GPS is enabled and we have a payload, make the real call
         if (shouldSendToRealGps && gpsOrderPayload) {
@@ -509,7 +593,7 @@ export const processShopifyOrder = inngest.createFunction(
               gpsOrderPayload,
               warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
             );
-            
+
             // OPTIMIZATION: Store metafield immediately after GPS success (same step)
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
             if (gpsOrderNo) {
@@ -519,21 +603,23 @@ export const processShopifyOrder = inngest.createFunction(
                 d365OrderNumber: salesOrderNumber,
                 createdAt: new Date().toISOString(),
               });
-              console.log(`[Shopify] Stored GPS metafield for order ${shopifyOrderName}: ${gpsOrderNo}`);
+              console.log(
+                `[Shopify] Stored GPS metafield for order ${shopifyOrderName}: ${gpsOrderNo}`
+              );
             }
-            
+
             return { type: "real", result, metafieldStored: !!gpsOrderNo };
           } catch (error) {
             if (error instanceof OutOfStockError) {
               console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
               return { type: "out_of_stock", error: error.message };
             }
-            
+
             // Handle other GPS errors gracefully - don't fail the entire order
             // The order has already been created in D365, so we log the error and continue
             const errorMessage = error instanceof Error ? error.message : String(error);
             const isGpsApiError = errorMessage.includes("GPS API error");
-            
+
             await publishStatus(
               "gps.send-order",
               "failed",
@@ -544,36 +630,49 @@ export const processShopifyOrder = inngest.createFunction(
                 salesOrderNumber,
               }
             );
-            
+
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
               `⚠️ [GPS] Failed to create outbound order\n` +
-              `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
-              `Warehouse: ${warehouseName}\n` +
-              `Error: ${errorMessage}\n` +
-              `D365 order created successfully, but GPS sync failed.`
+                `Order: ${shopifyOrderName} (${salesOrderNumber})\n` +
+                `Warehouse: ${warehouseName}\n` +
+                `Error: ${errorMessage}\n` +
+                `D365 order created successfully, but GPS sync failed.`
             );
-            
+
             return { type: "failed", error: errorMessage };
           }
         }
 
         // Skip if GPS not enabled or not a GPS warehouse
         if (!shouldSendToRealGps) {
-          return { type: "skipped", reason: `GPS sync not required - ${warehouseName} uses Shopify app` };
+          return {
+            type: "skipped",
+            reason: `GPS sync not required - ${warehouseName} uses Shopify app`,
+          };
         }
         return { type: "skipped", reason: "GPS sync disabled or no payload" };
       });
-      
+
       // Publish GPS result
       if (gpsResult.type === "real" && "result" in gpsResult) {
         const gpsOrderNo = gpsResult.result?.response?.data?.[0]?.orderNo;
-        await publishStatus("gps.send-order", "completed", `GPS order created: ${gpsOrderNo || 'OK'}`, { 
-          gpsOrderNo, 
-          warehouse: warehouseName 
-        });
+        await publishStatus(
+          "gps.send-order",
+          "completed",
+          `GPS order created: ${gpsOrderNo || "OK"}`,
+          {
+            gpsOrderNo,
+            warehouse: warehouseName,
+          }
+        );
         if (gpsOrderNo) {
-          await publishStatus("gps.store-metafield", "completed", `Metafield stored: ${gpsOrderNo}`, { gpsOrderNo });
+          await publishStatus(
+            "gps.store-metafield",
+            "completed",
+            `Metafield stored: ${gpsOrderNo}`,
+            { gpsOrderNo }
+          );
         }
       } else if (gpsResult.type === "failed") {
         // Status already published in the catch block above
@@ -587,7 +686,10 @@ export const processShopifyOrder = inngest.createFunction(
         const oosError = "error" in gpsResult ? gpsResult.error : "Unknown";
         const { classifyGpsError } = await import("@/lib/clients/gps");
         const errorType = classifyGpsError(oosError);
-        const failedSkus = gpsOrderPayload.productList?.map((p: { sku?: string; itemNumber?: string }) => p.sku || p.itemNumber || "unknown") || [];
+        const failedSkus =
+          gpsOrderPayload.productList?.map(
+            (p: { sku?: string; itemNumber?: string }) => p.sku || p.itemNumber || "unknown"
+          ) || [];
 
         await publishStatus(
           "gps.send-order",
@@ -621,20 +723,25 @@ export const processShopifyOrder = inngest.createFunction(
         });
 
         // Notify Battle Hub
-        await csPlatform.sendOrderUpdate({
-          id: shopifyOrderId,
-          name: shopifyOrderName,
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber: salesOrderNumber,
-          warehouse: warehouseName,
-          status: "backorder",
-          error: oosError,
-          errorType,
-        }, { inngestIdempotencyKey, inngestRunId });
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber: salesOrderNumber,
+            warehouse: warehouseName,
+            status: "backorder",
+            error: oosError,
+            errorType,
+          },
+          { inngestIdempotencyKey, inngestRunId }
+        );
       }
 
-      await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", { gpsResult });
+      await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", {
+        gpsResult,
+      });
 
       await slack.sendOrderMessage(
         SlackChannelEnum.SHOPIFY,
@@ -652,38 +759,44 @@ export const processShopifyOrder = inngest.createFunction(
       };
 
       // Publish final success result
-      await publishResult("success", { d365OrderNumber: salesOrderNumber, warehouse: warehouseName });
+      await publishResult("success", {
+        d365OrderNumber: salesOrderNumber,
+        warehouse: warehouseName,
+      });
 
       // Send order created event to CS platform (Battle Hub)
       let gpsOrderId: string | undefined;
       const gpsSkipped = gpsResult?.type === "skipped";
-      
+
       if (gpsResult?.type === "real" && "result" in gpsResult) {
         const gpsData = gpsResult.result?.response?.data;
         if (Array.isArray(gpsData) && gpsData.length > 0) {
           gpsOrderId = (gpsData[0] as any)?.outboundOrderNo || (gpsData[0] as any)?.orderNo;
         }
       }
-      
-      await csPlatform.sendOrderCreated({
-        id: shopifyOrderId,
-        name: shopifyOrderName,
-        shopifyOrderId,
-        shopifyOrderName,
-        d365OrderNumber: salesOrderNumber,
-        warehouse: warehouseName,
-        gpsOrderId,
-        gpsSkipped, // Pass GPS skip status for sync tracking
-        orderJson: order,
-      }, { inngestIdempotencyKey, inngestRunId });
+
+      await csPlatform.sendOrderCreated(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: salesOrderNumber,
+          warehouse: warehouseName,
+          gpsOrderId,
+          gpsSkipped, // Pass GPS skip status for sync tracking
+          orderJson: order,
+        },
+        { inngestIdempotencyKey, inngestRunId }
+      );
 
       return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      
+
       // Publish failure result
       await publishResult("failed", { error: errorMsg });
-      
+
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(
         channel,

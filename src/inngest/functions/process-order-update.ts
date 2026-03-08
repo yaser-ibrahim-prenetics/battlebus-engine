@@ -94,7 +94,10 @@ export const processOrderUpdate = inngest.createFunction(
     };
 
     // Send order updated event to CS platform
-    await csPlatform.sendOrderUpdated(order, changedFields, { inngestIdempotencyKey, inngestRunId });
+    await csPlatform.sendOrderUpdated(order, changedFields, {
+      inngestIdempotencyKey,
+      inngestRunId,
+    });
 
     return result;
   }
