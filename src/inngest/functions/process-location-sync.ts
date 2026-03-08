@@ -24,21 +24,22 @@ import {
   upsertLocation,
   deactivateLocation,
 } from "@/lib/services/location-routing";
-import { resolveCountryRouting, getDataAreaId } from "@/lib/helpers/warehouse";
+import { resolveCountryRouting } from "@/lib/helpers/warehouse";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
-// ============================================================================
-// Name-based heuristics (no hardcoded IDs)
-// ============================================================================
+// Location name from Shopify is the warehouse (no separate warehouse field).
+// We only auto-detect a default dataAreaId for new rows; user sets data area in Hub.
 
-function inferWarehouseFromName(name: string): string | null {
+function inferDataAreaFromNameAndCountry(name: string, countryCode: string | null): string | null {
   const n = (name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) {
-    return "GPS UK Warehouse";
+  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) return "H007";
+  if (n.includes("gps")) return "U001";
+  if (n.includes("stord")) return "U001";
+  if (n.includes("hk") || n.includes("hong kong")) return "H005";
+  if (countryCode) {
+    const routing = resolveCountryRouting(countryCode);
+    return routing.dataAreaId;
   }
-  if (n.includes("gps")) return "GPS Warehouse";
-  if (n.includes("stord")) return "STORD ATL Location";
-  if (n.includes("hk") || n.includes("hong kong")) return "HK Warehouse";
   return null;
 }
 
@@ -90,53 +91,15 @@ export const processLocationSync = inngest.createFunction(
       return { status: "deleted", locationId, locationName, processedAt: new Date().toISOString() };
     }
 
-    // =========================================================================
-    // AUTO-DETECT warehouse + dataAreaId
-    // Priority:
-    //   1. Location name string (e.g. "GPS UK Warehouse" → GPS UK)
-    //   2. Country code from the Shopify location payload → warehouse config
-    //
-    // No env-var location IDs.  The user configures routing manually in Hub
-    // when auto-detection is uncertain.
-    // =========================================================================
-    const detectedWarehouseName = await step.run("detect-warehouse", async () => {
-      // 1. Name heuristic
-      const byName = inferWarehouseFromName(locationName || "");
-      if (byName) {
-        console.log(`[LocationSync] Name heuristic → "${byName}"`);
-        return byName;
-      }
-
-      // 2. Country code
-      const countryCode =
-        locationJson?.country_code ||
-        locationJson?.country ||
-        null;
-      if (countryCode) {
-        const routing = resolveCountryRouting(countryCode);
-        console.log(
-          `[LocationSync] Country "${countryCode}" → warehouse "${routing.warehouseName}"`
-        );
-        return routing.warehouseName;
-      }
-
-      console.log("[LocationSync] Could not auto-detect warehouse — user must set in Hub");
-      return null;
-    });
-
+    // Location itself is the warehouse — use location name. Only auto-detect default dataAreaId.
+    const countryCode =
+      locationJson?.country_code || locationJson?.country || null;
     const detectedDataAreaId = await step.run("detect-data-area-id", async () => {
-      if (detectedWarehouseName) {
-        try {
-          return getDataAreaId(detectedWarehouseName);
-        } catch {
-          // warehouse not in config — fall through
-        }
-      }
-      return null;
+      return inferDataAreaFromNameAndCountry(locationName || "", countryCode);
     });
 
     console.log(
-      `[LocationSync] Auto-detected: warehouse="${detectedWarehouseName}", dataAreaId="${detectedDataAreaId}"`
+      `[LocationSync] Location="${locationName}" (warehouse = location). Default dataAreaId="${detectedDataAreaId}"`
     );
 
     // =========================================================================
@@ -157,7 +120,7 @@ export const processLocationSync = inngest.createFunction(
         fulfillmentServiceId: locationJson?.fulfillment_service_id
           ? String(locationJson.fulfillment_service_id)
           : null,
-        defaultWarehouseName: detectedWarehouseName,
+        defaultWarehouseName: locationName, // location itself is the warehouse
         defaultDataAreaId: detectedDataAreaId,
         isCreate,
       });
@@ -174,7 +137,7 @@ export const processLocationSync = inngest.createFunction(
             id: locationId,
             name: locationName,
             shopify_location_id: locationId,
-            warehouse_name: detectedWarehouseName,
+            warehouse_name: locationName,
             dynamics_data_area_id: detectedDataAreaId,
             address_line1: locationJson?.address1 ?? null,
             address_line2: locationJson?.address2 ?? null,
@@ -198,7 +161,6 @@ export const processLocationSync = inngest.createFunction(
       status: "success",
       locationId,
       locationName,
-      warehouseName: detectedWarehouseName,
       dataAreaId: detectedDataAreaId,
       event: event.name,
       processedAt: new Date().toISOString(),

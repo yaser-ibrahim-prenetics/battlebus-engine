@@ -18,33 +18,15 @@ import {
 } from "@/lib/services/location-routing";
 import { resolveCountryRouting, getDataAreaId } from "@/lib/helpers/warehouse";
 
-// ============================================================================
-// Helpers (mirrors logic in process-location-sync.ts — no shared dep needed)
-// ============================================================================
-
-function inferWarehouseFromName(name: string): string | null {
-  const n = (name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) {
-    return "GPS UK Warehouse";
-  }
-  if (n.includes("gps")) return "GPS Warehouse";
-  if (n.includes("stord")) return "STORD ATL Location";
-  if (n.includes("hk") || n.includes("hong kong")) return "HK Warehouse";
+// Location name is the warehouse. We only auto-detect a default dataAreaId for new rows.
+function inferDataAreaId(loc: { name: string; country?: string | null }): string | null {
+  const n = (loc.name || "").toLowerCase();
+  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) return "H007";
+  if (n.includes("gps")) return "U001";
+  if (n.includes("stord")) return "U001";
+  if (n.includes("hk") || n.includes("hong kong")) return "H005";
+  if (loc.country) return resolveCountryRouting(loc.country).dataAreaId;
   return null;
-}
-
-function autoDetect(loc: { name: string; country?: string | null }) {
-  const byName = inferWarehouseFromName(loc.name);
-  const warehouseName = byName ?? (loc.country ? resolveCountryRouting(loc.country).warehouseName : null);
-  let dataAreaId: string | null = null;
-  if (warehouseName) {
-    try {
-      dataAreaId = getDataAreaId(warehouseName);
-    } catch {
-      dataAreaId = null;
-    }
-  }
-  return { warehouseName, dataAreaId };
 }
 
 // ============================================================================
@@ -101,10 +83,7 @@ export async function POST(req: NextRequest) {
     }> = [];
 
     for (const loc of shopifyLocations) {
-      const { warehouseName, dataAreaId } = autoDetect({
-        name: loc.name,
-        country: loc.country ?? null,
-      });
+      const dataAreaId = inferDataAreaId({ name: loc.name, country: loc.country ?? null });
 
       await upsertLocation({
         shopifyLocationId: loc.id,
@@ -118,16 +97,13 @@ export async function POST(req: NextRequest) {
         phone: loc.phone ?? null,
         active: loc.active,
         fulfillmentServiceId: loc.fulfillment_service_id ?? null,
-        defaultWarehouseName: warehouseName,
+        defaultWarehouseName: loc.name,
         defaultDataAreaId: dataAreaId,
-        // isCreate=false so existing routing config is preserved on re-seed
         isCreate: false,
       });
 
-      results.push({ id: loc.id, name: loc.name, status: "upserted", warehouseName, dataAreaId });
-      console.log(
-        `[LocationSeed] Upserted "${loc.name}" (${loc.id}) → ${warehouseName} / ${dataAreaId}`
-      );
+      results.push({ id: loc.id, name: loc.name, status: "upserted", warehouseName: loc.name, dataAreaId });
+      console.log(`[LocationSeed] Upserted "${loc.name}" (${loc.id}) → dataAreaId=${dataAreaId}`);
     }
 
     // Force routing cache refresh
