@@ -14,6 +14,28 @@
 import crypto from "crypto";
 import { config } from "../config";
 
+// Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
+const OMS_MIN_INTERVAL_MS = Math.max(
+  0,
+  parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10)
+);
+let omsLastRequestAt = 0;
+
+async function pacedFetch(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Promise<Response> {
+  if (OMS_MIN_INTERVAL_MS > 0) {
+    const now = Date.now();
+    const waitMs = Math.max(0, omsLastRequestAt + OMS_MIN_INTERVAL_MS - now);
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    omsLastRequestAt = Date.now();
+  }
+  return fetch(input, init);
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -166,7 +188,7 @@ export async function queryOmsInventory(options: {
       const url = `${creds.baseUrl}${endpoint}?authcode=${authCode}`;
       console.log(`[GPS-Inventory] Trying endpoint: ${endpoint}`);
 
-      const response = await fetch(url, {
+      const response = await pacedFetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -241,7 +263,7 @@ export async function queryProductInventory(options: {
   const url = `${creds.baseUrl}/openapi/v1/product/list?authcode=${authCode}`;
 
   try {
-    const response = await fetch(url, {
+    const response = await pacedFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -465,7 +487,7 @@ export async function testInventoryConnection(region: "US" | "UK" = "UK"): Promi
     try {
       const url = `${creds.baseUrl}${endpoint}?authcode=${authCode}`;
 
-      const response = await fetch(url, {
+      const response = await pacedFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),

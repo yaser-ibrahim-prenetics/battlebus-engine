@@ -34,6 +34,7 @@ import {
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
+  retryWithBackoff,
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
@@ -344,12 +345,14 @@ export const processShopifyOrder = inngest.createFunction(
       await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
       const d365Header = await step.run("create-d365-header", async () => {
         const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
-        // Override dataAreaId in header request with location-based routing result
         headerRequest.dataAreaId = dataAreaId;
         if (skipD365) {
           return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
         }
-        return dynamics.createSalesOrderHeaderV3(headerRequest);
+        return retryWithBackoff(
+          () => dynamics.createSalesOrderHeaderV3(headerRequest),
+          { label: `D365 header ${shopifyOrderName}` }
+        );
       });
 
       const salesOrderNumber = d365Header.SalesOrderNumber;
@@ -377,11 +380,13 @@ export const processShopifyOrder = inngest.createFunction(
           return lineItems;
         }
 
-        // OPTIMIZATION: Create all lines in parallel instead of sequential loop
-        // This reduces N API calls from N * latency to max(latency)
-        // For 5 items: ~5s sequential → ~1s parallel
         await Promise.all(
-          lineItems.map((line) => dynamics.createSalesOrderLine({ ...line, salesOrderNumber }))
+          lineItems.map((line) =>
+            retryWithBackoff(
+              () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber }),
+              { label: `D365 line ${line.itemNumber}` }
+            )
+          )
         );
         return lineItems;
       });

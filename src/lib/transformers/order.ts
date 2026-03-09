@@ -26,6 +26,7 @@ import {
   mergeGpsDuplicateSkuLines,
   filterServiceSkus,
   filterDummySkus,
+  explodeBundleLines,
 } from "./sku";
 import {
   getWarehouseConfig,
@@ -178,7 +179,7 @@ export function toD365SalesOrderLines(
   }
 
   for (const item of lineItems) {
-    if (item.gift_card) continue; // Skip gift card purchases
+    if (item.gift_card) continue;
 
     const line = toD365SalesOrderLine(
       item,
@@ -191,6 +192,10 @@ export function toD365SalesOrderLines(
     const transformedLine = skuTransformer(line);
     lines.push(transformedLine);
   }
+
+  const explodedLines = explodeBundleLines(lines);
+  lines.length = 0;
+  lines.push(...explodedLines);
 
   // Add shipping line
   // NOTE: Temporarily disabled - IM8-SER-* SKUs don't exist in D365 sandbox yet
@@ -271,8 +276,9 @@ export function toGpsOutboundOrder(
     }))
     .map(skuTransformer);
 
-  // Filter service/dummy SKUs and merge duplicates
-  const filteredLines = filterDummySkus(filterServiceSkus(productLines));
+  // Explode bundles, filter service/dummy SKUs, and merge duplicates
+  const explodedProductLines = explodeBundleLines(productLines);
+  const filteredLines = filterDummySkus(filterServiceSkus(explodedProductLines));
   const productList = mergeGpsDuplicateSkuLines(filteredLines);
 
   return {

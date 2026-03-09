@@ -8,6 +8,50 @@ import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 
+function validateWebhookPayload(topic: string | null, payload: any): string | null {
+  if (!topic) return "Missing x-shopify-topic header";
+  if (!payload || typeof payload !== "object") return "Invalid JSON payload";
+
+  const hasStringOrNumber = (v: unknown) =>
+    typeof v === "string" ? v.trim().length > 0 : typeof v === "number";
+
+  switch (topic) {
+    case "orders/create":
+    case "orders/paid":
+    case "orders/updated":
+    case "orders/cancelled":
+      if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
+      if (!hasStringOrNumber(payload.name))
+        return "Missing required field: name";
+      if (!Array.isArray(payload.line_items))
+        return "Missing required field: line_items[]";
+      break;
+    case "refunds/create":
+      if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
+      if (!hasStringOrNumber(payload.order_id))
+        return "Missing required field: order_id";
+      break;
+    case "locations/create":
+    case "locations/update":
+    case "locations/delete":
+      if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
+      if (!hasStringOrNumber(payload.name))
+        return "Missing required field: name";
+      break;
+    case "inventory_levels/update":
+      if (!hasStringOrNumber(payload.inventory_item_id))
+        return "Missing required field: inventory_item_id";
+      if (!hasStringOrNumber(payload.location_id))
+        return "Missing required field: location_id";
+      break;
+    default:
+      // unknown topics are handled by default switch branch later
+      return null;
+  }
+
+  return null;
+}
+
 // Helper function to send Inngest events with error handling
 async function sendInngestEvent(
   event: Parameters<typeof inngest.send>[0],
@@ -105,7 +149,27 @@ export async function POST(request: NextRequest) {
     console.log(`[Webhook] [${requestId}] Raw body (first 500 chars):`, body.substring(0, 500));
 
     // Parse the webhook body
-    const payload = JSON.parse(body);
+    let payload: any;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      console.error(`[Webhook] [${requestId}] ❌ Malformed JSON payload`);
+      return NextResponse.json(
+        { error: "Malformed JSON payload", requestId },
+        { status: 400 }
+      );
+    }
+
+    const payloadError = validateWebhookPayload(topic, payload);
+    if (payloadError) {
+      console.error(
+        `[Webhook] [${requestId}] ❌ Invalid webhook payload: ${payloadError}`
+      );
+      return NextResponse.json(
+        { error: payloadError, requestId },
+        { status: 400 }
+      );
+    }
 
     // =========================================================================
     // LOG: Payload details

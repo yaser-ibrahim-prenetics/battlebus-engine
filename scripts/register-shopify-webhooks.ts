@@ -23,6 +23,11 @@ const WEBHOOKS_TO_REGISTER = [
     format: "json",
   },
   {
+    topic: "orders/paid",
+    address: `${DEPLOYMENT_URL}/api/webhooks/shopify`,
+    format: "json",
+  },
+  {
     topic: "orders/updated",
     address: `${DEPLOYMENT_URL}/api/webhooks/shopify`,
     format: "json",
@@ -176,6 +181,7 @@ async function registerWebhooks() {
     console.log("=".repeat(60));
     console.log("\nYour Battle Bus deployment will now receive:");
     console.log("  • orders/create     - New orders");
+    console.log("  • orders/paid       - Paid orders");
     console.log("  • orders/updated    - Order updates");
     console.log("  • orders/cancelled  - Cancellations");
     console.log("  • orders/fulfilled  - Fulfillments (STORD/HK)");

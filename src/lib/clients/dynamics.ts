@@ -28,6 +28,32 @@ let tokenCache: D365AuthToken | null = null;
 // THK API success status code
 export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
 
+// Client-side pacing layer (in addition to Inngest throttle/rateLimit)
+// This protects D365 from short bursts when multiple functions run concurrently.
+const D365_MIN_INTERVAL_MS = Math.max(
+  0,
+  parseInt(process.env.D365_CLIENT_MIN_INTERVAL_MS || "80", 10)
+);
+let d365LastRequestAt = 0;
+
+async function pacedFetch(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Promise<Response> {
+  if (D365_MIN_INTERVAL_MS > 0) {
+    const now = Date.now();
+    const waitMs = Math.max(
+      0,
+      d365LastRequestAt + D365_MIN_INTERVAL_MS - now
+    );
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    d365LastRequestAt = Date.now();
+  }
+  return fetch(input, init);
+}
+
 // ============================================================================
 // AUTHENTICATION
 // ============================================================================
@@ -53,7 +79,7 @@ export async function authenticate(): Promise<D365AuthToken> {
 
   console.log(`[D365] Authenticating to ${tokenUrl}`);
 
-  const response = await fetch(tokenUrl, {
+  const response = await pacedFetch(tokenUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -154,7 +180,7 @@ export async function createSalesOrderHeaderV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+  const response = await pacedFetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -274,7 +300,7 @@ export async function updateSalesOrderHeaderV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`,
     {
       method: "PATCH",
@@ -311,7 +337,7 @@ export async function updateSalesOrderHeaderV3(
  */
 export async function deleteSalesOrderHeaderV3(dataAreaId: string, salesOrderNumber: string) {
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3(dataAreaId='${dataAreaId}',SalesOrderNumber='${salesOrderNumber}')`,
     {
       method: "DELETE",
@@ -371,7 +397,7 @@ export async function createReturnSalesOrderHeaderV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+  const response = await pacedFetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -448,7 +474,7 @@ export async function createSalesOrderLine(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
+  const response = await pacedFetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -514,7 +540,7 @@ export async function createReturnSalesOrderLineV3(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/data/SalesOrderLines`, // Note: SalesOrderLines, not V3
     {
       method: "POST",
@@ -588,7 +614,7 @@ export async function createSalesOrderHeadersV3ForReturn(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
+  const response = await pacedFetch(`${config.dynamics.baseUrl}/data/SalesOrderHeadersV3`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -655,7 +681,7 @@ export async function createSalesOrderLineForReturn(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
+  const response = await pacedFetch(`${config.dynamics.baseUrl}/data/SalesOrderLines`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -715,7 +741,7 @@ export async function confirmSalesOrder(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/confirmSO`,
     {
       method: "POST",
@@ -776,7 +802,7 @@ export async function createPrepayment(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/PostPrepayment`,
     {
       method: "POST",
@@ -864,7 +890,7 @@ export async function createFulfilment(
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`,
     {
       method: "POST",
@@ -914,7 +940,7 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
   }
 
   const token = await getAuthToken();
-  const response = await fetch(
+  const response = await pacedFetch(
     `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_SalesOrderService/postReturnOrderInvoice`,
     {
       method: "POST",
@@ -965,7 +991,7 @@ export async function getSalesOrderLines(
   const select = "ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount";
   const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
-  const response = await fetch(url, {
+  const response = await pacedFetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1031,7 +1057,7 @@ export async function getSalesOrderByShopifyId(
   const filter = `dataAreaId eq '${dataAreaId}' and THK_ShopifyReference eq '${shopifyOrderId}'`;
   const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(filter)}`;
 
-  const response = await fetch(url, {
+  const response = await pacedFetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1132,7 +1158,7 @@ export async function syncProduct(product: {
     try {
       // Check if product already exists using ReleasedProductsV2 (read-only endpoint)
       const checkUrl = `${baseUrl}/data/ReleasedProductsV2?$filter=ItemNumber eq '${itemNumber}' and dataAreaId eq '${dataAreaId}'&$top=1`;
-      const checkResponse = await fetch(checkUrl, {
+      const checkResponse = await pacedFetch(checkUrl, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1266,7 +1292,7 @@ export async function getInventory(
 
   console.log(`[D365] Fetching inventory from: ${url}`);
 
-  const response = await fetch(url, {
+  const response = await pacedFetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,

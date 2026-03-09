@@ -37,6 +37,7 @@ import {
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
+  retryWithBackoff,
 } from "@/lib/utils/constants";
 import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
@@ -273,7 +274,10 @@ export const processSubscriptionOrder = inngest.createFunction(
       const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName);
       headerPayload.dataAreaId = dataAreaId;
 
-      const result = await dynamics.createSalesOrderHeaderV3(headerPayload);
+      const result = await retryWithBackoff(
+        () => dynamics.createSalesOrderHeaderV3(headerPayload),
+        { label: `D365 sub header ${shopifyOrderName}` }
+      );
       console.log(
         `[Subscription] ✅ D365 header created: ${result.SalesOrderNumber} for ${shopifyOrderName}`
       );
@@ -294,9 +298,14 @@ export const processSubscriptionOrder = inngest.createFunction(
 
       const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName);
 
-      for (const line of lines) {
-        await dynamics.createSalesOrderLine(line);
-      }
+      await Promise.all(
+        lines.map((line) =>
+          retryWithBackoff(
+            () => dynamics.createSalesOrderLine(line),
+            { label: `D365 sub line ${line.itemNumber}` }
+          )
+        )
+      );
 
       console.log(
         `[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`
@@ -309,7 +318,10 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     await step.run("confirm-d365-order", async () => {
       if (!config.features.enableDynamicsSync) return { status: "skipped" };
-      await dynamics.confirmSalesOrder(d365OrderNumber, dataAreaId);
+      await retryWithBackoff(
+        () => dynamics.confirmSalesOrder(d365OrderNumber, dataAreaId),
+        { label: `D365 sub confirm ${d365OrderNumber}` }
+      );
       console.log(`[Subscription] ✅ D365 order confirmed: ${d365OrderNumber}`);
       return { status: "confirmed" };
     });
@@ -318,7 +330,10 @@ export const processSubscriptionOrder = inngest.createFunction(
       if (!config.features.enableDynamicsSync) return { status: "skipped" };
       const prepayAmount = calculatePrepaymentAmount(order);
       if (prepayAmount <= 0) return { status: "skipped", reason: "zero amount" };
-      await dynamics.createPrepayment(d365OrderNumber, dataAreaId);
+      await retryWithBackoff(
+        () => dynamics.createPrepayment(d365OrderNumber, dataAreaId),
+        { label: `D365 sub prepay ${d365OrderNumber}` }
+      );
       console.log(
         `[Subscription] ✅ D365 prepayment created: ${prepayAmount} ${order.currency}`
       );
@@ -330,10 +345,10 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     const gpsResult = await step.run("create-gps-order", async () => {
       if (!config.features.enableGpsSync) return { status: "skipped" as const, reason: "GPS sync disabled", gpsOrderId: undefined };
-      if (!shouldSendToGps(warehouseName)) return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
+      if (!shouldSendToGps(order, warehouseName)) return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
 
       try {
-        const gpsOrder = toGpsOutboundOrder(order, warehouseName, d365OrderNumber);
+        const gpsOrder = toGpsOutboundOrder(order, d365OrderNumber, warehouseName);
         const result = await gps.createOutboundOrder(
           gpsOrder,
           warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -379,6 +394,11 @@ export const processSubscriptionOrder = inngest.createFunction(
           warehouse: warehouseName,
           errorMessage: gpsResult.reason || "OOS",
           errorType: "out_of_stock" as const,
+          failedSkus: order.line_items
+            ?.filter((i: any) => i.requires_shipping && !i.gift_card)
+            .map((i: any) => i.sku)
+            .filter(Boolean) || [],
+          maxRetries: 7,
           retryCount: 0,
           createdAt: new Date().toISOString(),
         },

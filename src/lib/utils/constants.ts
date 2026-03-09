@@ -130,6 +130,71 @@ export const RETRY_CONFIGS = {
 // BACKORDER CONFIGURATIONS
 // ============================================================================
 
+// ============================================================================
+// STEP-LEVEL RETRY WITH BACKOFF HELPER
+// ============================================================================
+// Use this inside an Inngest step.run() to retry a downstream API call
+// with exponential backoff before throwing and letting Inngest retry the step.
+
+export interface RetryWithBackoffOptions {
+  /** Human-readable label for logs */
+  label: string;
+  /** Max attempts *within* this single step execution (not Inngest retries) */
+  maxAttempts?: number;
+  /** Base delay in ms (doubles each attempt) */
+  baseDelayMs?: number;
+  /** Maximum delay cap in ms */
+  maxDelayMs?: number;
+  /** Which HTTP status codes to retry on (in addition to network errors) */
+  retryableStatuses?: number[];
+}
+
+const DEFAULT_RETRY_OPTS: Required<Omit<RetryWithBackoffOptions, "label">> = {
+  maxAttempts: 3,
+  baseDelayMs: envInt("STEP_BACKOFF_BASE_MS", 500),
+  maxDelayMs: envInt("STEP_BACKOFF_MAX_MS", 8000),
+  retryableStatuses: [429, 500, 502, 503, 504],
+};
+
+/**
+ * Retry a function call with exponential backoff.
+ * Meant to be called *inside* a `step.run()` to handle transient downstream failures
+ * before the error propagates up to Inngest's function-level retry.
+ */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: RetryWithBackoffOptions
+): Promise<T> {
+  const {
+    maxAttempts = DEFAULT_RETRY_OPTS.maxAttempts,
+    baseDelayMs = DEFAULT_RETRY_OPTS.baseDelayMs,
+    maxDelayMs = DEFAULT_RETRY_OPTS.maxDelayMs,
+  } = opts;
+
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      if (attempt === maxAttempts) break;
+
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+      console.warn(
+        `[RetryBackoff] ${opts.label} attempt ${attempt}/${maxAttempts} failed: ${err?.message || err}. Retrying in ${delay}ms…`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  throw lastError;
+}
+
+// ============================================================================
+// BACKORDER CONFIGURATIONS
+// ============================================================================
+
 export const BACKORDER_CONFIGS = {
   // Max retry attempts before escalation (spock-store uses 7 days)
   maxRetries: envInt("BACKORDER_MAX_RETRIES", 7),

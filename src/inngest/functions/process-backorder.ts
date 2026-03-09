@@ -45,10 +45,13 @@ export const processBackorder = inngest.createFunction(
       warehouse,
       errorMessage,
       errorType,
-      failedSkus,
     } = event.data;
 
-    const maxRetries = BACKORDER_CONFIGS.maxRetries;
+    const failedSkus: string[] = Array.isArray(event.data.failedSkus)
+      ? event.data.failedSkus
+      : [];
+
+    const maxRetries = event.data.maxRetries || BACKORDER_CONFIGS.maxRetries;
     const retryIntervalHours = BACKORDER_CONFIGS.retryIntervalHours;
     const waitTimeoutHours = BACKORDER_CONFIGS.waitForEventTimeoutHours;
     let retryCount = event.data.retryCount || 0;
@@ -56,7 +59,7 @@ export const processBackorder = inngest.createFunction(
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
     console.log(`[Backorder] Error: ${errorType} - ${errorMessage}`);
-    console.log(`[Backorder] Failed SKUs: ${failedSkus.join(", ")}`);
+    console.log(`[Backorder] Failed SKUs: ${failedSkus.length > 0 ? failedSkus.join(", ") : "(all lines)"}`);
     console.log(`[Backorder] Retry ${retryCount}/${maxRetries}`);
 
     // Notify Battle Hub of backorder creation
