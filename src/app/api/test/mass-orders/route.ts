@@ -4,21 +4,12 @@
 // Generates synthetic Shopify order payloads using:
 //  - Real locations pulled live from Shopify
 //  - Real products / variants / SKUs pulled live from Shopify
-//  - Faker-generated customer data localised to the location's country
+//  - Deterministic dummy customer data for supported store markets
 //
 // GET /api/test/mass-orders            → { locations, products }  (for UI setup)
 // POST /api/test/mass-orders           → dispatch N test orders into Inngest
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  Faker,
-  en_GB,
-  en_HK,
-  en_AU,
-  en_US,
-  de,
-  // SG uses en_HK as the closest English-Asia locale
-} from "@faker-js/faker";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 
@@ -27,20 +18,82 @@ import { config } from "@/lib/config";
 // Any Shopify location whose country_code is not in this map will be skipped
 // in the test run (not dispatched), unless you add it explicitly.
 
-const MARKET_FAKER: Record<string, Faker> = {
-  GB: new Faker({ locale: [en_GB] }),
-  HK: new Faker({ locale: [en_HK] }),
-  AU: new Faker({ locale: [en_AU] }),
-  NZ: new Faker({ locale: [en_AU] }), // closest locale for NZ
-  US: new Faker({ locale: [en_US] }),
-  CA: new Faker({ locale: [en_US] }), // closest locale for CA
-  DE: new Faker({ locale: [de] }),
-  // Singapore uses en_HK — same English-Asia style
-  SG: new Faker({ locale: [en_HK] }),
-};
+const CUSTOMER_PRESETS = {
+  GB: {
+    firstNames: ["James", "Oliver", "Amelia", "Sophia", "George", "Isla"],
+    lastNames: ["Smith", "Jones", "Taylor", "Brown", "Wilson", "Evans"],
+    streets: ["Baker Street", "Kings Road", "High Street", "Victoria Road"],
+    city: "London",
+    province: "England",
+    zipPrefix: "SW1A",
+    phonePrefix: "+44 7700",
+  },
+  HK: {
+    firstNames: ["Jason", "Chloe", "Ryan", "Emily", "Marcus", "Hannah"],
+    lastNames: ["Chan", "Wong", "Lee", "Lau", "Cheung", "Lam"],
+    streets: ["Queens Road Central", "Nathan Road", "Hennessy Road", "Des Voeux Road"],
+    city: "Hong Kong",
+    province: "Hong Kong",
+    zipPrefix: "000",
+    phonePrefix: "+852 5",
+  },
+  AU: {
+    firstNames: ["Liam", "Noah", "Charlotte", "Mia", "Jack", "Ella"],
+    lastNames: ["Wilson", "Taylor", "Brown", "Anderson", "Thomas", "Walker"],
+    streets: ["George Street", "Market Street", "Collins Street", "Elizabeth Street"],
+    city: "Sydney",
+    province: "New South Wales",
+    zipPrefix: "20",
+    phonePrefix: "+61 4",
+  },
+  NZ: {
+    firstNames: ["Lucas", "Mason", "Olivia", "Sophie", "Aria", "Leo"],
+    lastNames: ["Campbell", "Mitchell", "Reid", "Murray", "Walker", "Clark"],
+    streets: ["Queen Street", "Victoria Street", "Albert Street", "Customs Street"],
+    city: "Auckland",
+    province: "Auckland",
+    zipPrefix: "10",
+    phonePrefix: "+64 21",
+  },
+  US: {
+    firstNames: ["Michael", "Emma", "Daniel", "Ava", "Ethan", "Grace"],
+    lastNames: ["Johnson", "Williams", "Miller", "Davis", "Moore", "Taylor"],
+    streets: ["5th Avenue", "Broadway", "Madison Avenue", "Park Avenue"],
+    city: "New York",
+    province: "New York",
+    zipPrefix: "10",
+    phonePrefix: "+1 212",
+  },
+  CA: {
+    firstNames: ["Noah", "Benjamin", "Avery", "Harper", "Mila", "Logan"],
+    lastNames: ["Martin", "Roy", "Tremblay", "Gagnon", "Lee", "Wilson"],
+    streets: ["King Street West", "Yonge Street", "Queen Street", "Bloor Street"],
+    city: "Toronto",
+    province: "Ontario",
+    zipPrefix: "M5",
+    phonePrefix: "+1 416",
+  },
+  DE: {
+    firstNames: ["Anna", "Lukas", "Mia", "Leon", "Sophie", "Jonas"],
+    lastNames: ["Muller", "Schmidt", "Weber", "Fischer", "Wagner", "Becker"],
+    streets: ["Unter den Linden", "Friedrichstrasse", "Alexanderplatz", "Potsdamer Strasse"],
+    city: "Berlin",
+    province: "Berlin",
+    zipPrefix: "10",
+    phonePrefix: "+49 30",
+  },
+  SG: {
+    firstNames: ["Ethan", "Cheryl", "Marcus", "Alicia", "Ryan", "Grace"],
+    lastNames: ["Tan", "Lim", "Lee", "Ng", "Goh", "Chua"],
+    streets: ["Orchard Road", "Shenton Way", "Robinson Road", "Victoria Street"],
+    city: "Singapore",
+    province: "Singapore",
+    zipPrefix: "01",
+    phonePrefix: "+65 8",
+  },
+} as const;
 
-/** Country codes that this runner supports (derived from MARKET_FAKER) */
-export const SUPPORTED_MARKET_CODES = Object.keys(MARKET_FAKER);
+export const SUPPORTED_MARKET_CODES = Object.keys(CUSTOMER_PRESETS);
 
 // Currency per supported market
 const CURRENCY_BY_CC: Record<string, string> = {
@@ -129,29 +182,59 @@ export interface TestProduct {
   price: string;
 }
 
+function seededPick<T>(items: readonly T[], seed: number, offset = 0): T {
+  return items[Math.abs(seed + offset) % items.length];
+}
+
+function seededDigits(seed: number, length: number): string {
+  let value = Math.abs(seed);
+  let output = "";
+  while (output.length < length) {
+    value = (value * 9301 + 49297) % 233280;
+    output += String(value);
+  }
+  return output.slice(0, length);
+}
+
+function makeEmail(firstName: string, lastName: string, countryCode: string, seed: number): string {
+  const local = `${firstName}.${lastName}.${countryCode}.${seededDigits(seed, 4)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9.]/g, "");
+  return `${local}@im8test.dev`;
+}
+
+function makeBrowserIp(seed: number): string {
+  const octet = (offset: number) => (Math.abs(seed * (offset + 11)) % 253) + 1;
+  return `${octet(1)}.${octet(2)}.${octet(3)}.${octet(4)}`;
+}
+
 /**
- * Seed a locale-specific faker instance and generate realistic customer data
- * for the given country code. Returns undefined if the market is not supported.
- * Seed is deterministic so reruns produce identical data.
+ * Generate deterministic dummy customer data for supported markets only.
  */
 function seedCustomer(countryCode: string, seed: number) {
-  const f = MARKET_FAKER[countryCode];
-  if (!f) return undefined;
+  const preset = CUSTOMER_PRESETS[countryCode as keyof typeof CUSTOMER_PRESETS];
+  if (!preset) return undefined;
 
-  f.seed(seed);
+  const firstName = seededPick(preset.firstNames, seed, 1);
+  const lastName = seededPick(preset.lastNames, seed, 2);
+  const streetNumber = Number(seededDigits(seed, 3)) + 1;
+  const streetName = seededPick(preset.streets, seed, 3);
+  const city = preset.city;
+  const state = preset.province;
+  const zip = `${preset.zipPrefix}${seededDigits(seed, 4)}`;
+  const phone = `${preset.phonePrefix} ${seededDigits(seed, 6)}`;
+  const email = makeEmail(firstName, lastName, countryCode, seed);
 
-  const firstName = f.person.firstName();
-  const lastName = f.person.lastName();
-  const phone = f.phone.number({ style: "international" });
-  const email = f.internet.email({ firstName, lastName, provider: "im8test.dev" }).toLowerCase();
-
-  // All locale-specific: street format, city names, zip format match the country
-  const street = f.location.streetAddress();
-  const city = f.location.city();
-  const state = f.location.state({ abbreviated: true });
-  const zip = f.location.zipCode();
-
-  return { firstName, lastName, phone, email, street, city, state, zip };
+  return {
+    firstName,
+    lastName,
+    phone,
+    email,
+    street: `${streetNumber} ${streetName}`,
+    city,
+    state,
+    zip,
+  };
 }
 
 function currencyFor(countryCode: string): string {
@@ -328,7 +411,7 @@ function buildSyntheticOrder(opts: {
     payment_gateway_names: ["stripe"],
     processing_method: "direct",
     app_id: 580111,
-    browser_ip: (MARKET_FAKER[location.country_code] ?? MARKET_FAKER["GB"]).internet.ipv4(),
+    browser_ip: makeBrowserIp(seed),
     client_details: null,
   };
 }
