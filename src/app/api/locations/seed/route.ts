@@ -21,7 +21,8 @@ import { resolveCountryRouting, getDataAreaId } from "@/lib/helpers/warehouse";
 // Location name is the warehouse. We only auto-detect a default dataAreaId for new rows.
 function inferDataAreaId(loc: { name: string; country?: string | null }): string | null {
   const n = (loc.name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) return "H007";
+  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr")))
+    return "H007";
   if (n.includes("gps")) return "U001";
   if (n.includes("stord")) return "U001";
   if (n.includes("hk") || n.includes("hong kong")) return "H005";
@@ -60,10 +61,8 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   // Simple auth check — must supply INNGEST_SIGNING_KEY or BATTLE_BUS_API_KEY header
   const apiKey =
-    req.headers.get("x-api-key") ||
-    req.headers.get("authorization")?.replace("Bearer ", "");
-  const expectedKey =
-    process.env.BATTLE_BUS_API_KEY || process.env.INNGEST_SIGNING_KEY;
+    req.headers.get("x-api-key") || req.headers.get("authorization")?.replace("Bearer ", "");
+  const expectedKey = process.env.BATTLE_BUS_API_KEY || process.env.INNGEST_SIGNING_KEY;
 
   if (expectedKey && apiKey !== expectedKey) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -102,7 +101,13 @@ export async function POST(req: NextRequest) {
         isCreate: false,
       });
 
-      results.push({ id: loc.id, name: loc.name, status: "upserted", warehouseName: loc.name, dataAreaId });
+      results.push({
+        id: loc.id,
+        name: loc.name,
+        status: "upserted",
+        warehouseName: loc.name,
+        dataAreaId,
+      });
       console.log(`[LocationSeed] Upserted "${loc.name}" (${loc.id}) → dataAreaId=${dataAreaId}`);
     }
 

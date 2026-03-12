@@ -79,8 +79,7 @@ export const processShopifyOrder = inngest.createFunction(
     // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
     // Always use canonical Shopify order ID for Shopify API calls and persistence.
     const shopifyOrderId = String(
-      event.data.originalShopifyOrderId ||
-        String(rawShopifyOrderId || "").split("-rerun-")[0]
+      event.data.originalShopifyOrderId || String(rawShopifyOrderId || "").split("-rerun-")[0]
     );
     // Initial order from webhook - will be refreshed after 5min delay
     let order = orderJson as ShopifyOrderPayload;
@@ -174,8 +173,14 @@ export const processShopifyOrder = inngest.createFunction(
 
     if (isTestMode) {
       // Synthetic test order — use provided orderJson directly, no Shopify API call
-      await publishStatus("wait-for-tags", "skipped", "Test mode: using provided orderJson directly");
-      console.log(`[Order] Test mode for ${shopifyOrderName} — skipping tag wait and Shopify refetch`);
+      await publishStatus(
+        "wait-for-tags",
+        "skipped",
+        "Test mode: using provided orderJson directly"
+      );
+      console.log(
+        `[Order] Test mode for ${shopifyOrderName} — skipping tag wait and Shopify refetch`
+      );
     } else if (isRerun) {
       await publishStatus("wait-for-tags", "skipped", "Rerun: skipping tag wait delay");
       const refreshedOrder = await step.run("refetch-order-rerun-no-delay", async () => {
@@ -189,7 +194,11 @@ export const processShopifyOrder = inngest.createFunction(
       order = refreshedOrder as ShopifyOrderPayload;
     } else if (!TAG_WAIT_ENABLED) {
       // TAG_WAIT_ENABLED=false via env var — skip delay, still refetch for freshest data
-      await publishStatus("wait-for-tags", "skipped", "Tag wait disabled via TAG_WAIT_ENABLED=false");
+      await publishStatus(
+        "wait-for-tags",
+        "skipped",
+        "Tag wait disabled via TAG_WAIT_ENABLED=false"
+      );
       const refreshedOrder = await step.run("refetch-order-no-delay", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
         const freshOrder = await getOrder(shopifyOrderId);
@@ -386,10 +395,9 @@ export const processShopifyOrder = inngest.createFunction(
         if (skipD365) {
           return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
         }
-        return retryWithBackoff(
-          () => dynamics.createSalesOrderHeaderV3(headerRequest),
-          { label: `D365 header ${shopifyOrderName}` }
-        );
+        return retryWithBackoff(() => dynamics.createSalesOrderHeaderV3(headerRequest), {
+          label: `D365 header ${shopifyOrderName}`,
+        });
       });
 
       const salesOrderNumber = d365Header.SalesOrderNumber;
@@ -419,10 +427,9 @@ export const processShopifyOrder = inngest.createFunction(
 
         await Promise.all(
           lineItems.map((line) =>
-            retryWithBackoff(
-              () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber }),
-              { label: `D365 line ${line.itemNumber}` }
-            )
+            retryWithBackoff(() => dynamics.createSalesOrderLine({ ...line, salesOrderNumber }), {
+              label: `D365 line ${line.itemNumber}`,
+            })
           )
         );
         return lineItems;

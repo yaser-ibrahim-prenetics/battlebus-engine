@@ -46,4 +46,3 @@ sequenceDiagram
 
 - **Battle Bus = engine**
 - **Battle Hub = control panel**
-

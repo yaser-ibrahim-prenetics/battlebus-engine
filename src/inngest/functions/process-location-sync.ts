@@ -20,10 +20,7 @@
 
 import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import {
-  upsertLocation,
-  deactivateLocation,
-} from "@/lib/services/location-routing";
+import { upsertLocation, deactivateLocation } from "@/lib/services/location-routing";
 import { resolveCountryRouting } from "@/lib/helpers/warehouse";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
@@ -32,7 +29,8 @@ import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
 function inferDataAreaFromNameAndCountry(name: string, countryCode: string | null): string | null {
   const n = (name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr"))) return "H007";
+  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr")))
+    return "H007";
   if (n.includes("gps")) return "U001";
   if (n.includes("stord")) return "U001";
   if (n.includes("hk") || n.includes("hong kong")) return "H005";
@@ -81,7 +79,11 @@ export const processLocationSync = inngest.createFunction(
         try {
           await csPlatform.sendLocationEvent({
             event: "location.deleted",
-            data: { id: locationId, name: locationName || "Unknown", shopify_location_id: locationId },
+            data: {
+              id: locationId,
+              name: locationName || "Unknown",
+              shopify_location_id: locationId,
+            },
           });
         } catch (err) {
           console.error("[LocationSync] Failed to notify Hub of deletion:", err);
@@ -92,8 +94,7 @@ export const processLocationSync = inngest.createFunction(
     }
 
     // Location itself is the warehouse — use location name. Only auto-detect default dataAreaId.
-    const countryCode =
-      locationJson?.country_code || locationJson?.country || null;
+    const countryCode = locationJson?.country_code || locationJson?.country || null;
     const detectedDataAreaId = await step.run("detect-data-area-id", async () => {
       return inferDataAreaFromNameAndCountry(locationName || "", countryCode);
     });

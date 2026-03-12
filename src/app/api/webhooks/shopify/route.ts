@@ -21,28 +21,23 @@ function validateWebhookPayload(topic: string | null, payload: any): string | nu
     case "orders/updated":
     case "orders/cancelled":
       if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
-      if (!hasStringOrNumber(payload.name))
-        return "Missing required field: name";
-      if (!Array.isArray(payload.line_items))
-        return "Missing required field: line_items[]";
+      if (!hasStringOrNumber(payload.name)) return "Missing required field: name";
+      if (!Array.isArray(payload.line_items)) return "Missing required field: line_items[]";
       break;
     case "refunds/create":
       if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
-      if (!hasStringOrNumber(payload.order_id))
-        return "Missing required field: order_id";
+      if (!hasStringOrNumber(payload.order_id)) return "Missing required field: order_id";
       break;
     case "locations/create":
     case "locations/update":
     case "locations/delete":
       if (!hasStringOrNumber(payload.id)) return "Missing required field: id";
-      if (!hasStringOrNumber(payload.name))
-        return "Missing required field: name";
+      if (!hasStringOrNumber(payload.name)) return "Missing required field: name";
       break;
     case "inventory_levels/update":
       if (!hasStringOrNumber(payload.inventory_item_id))
         return "Missing required field: inventory_item_id";
-      if (!hasStringOrNumber(payload.location_id))
-        return "Missing required field: location_id";
+      if (!hasStringOrNumber(payload.location_id)) return "Missing required field: location_id";
       break;
     default:
       // unknown topics are handled by default switch branch later
@@ -154,21 +149,13 @@ export async function POST(request: NextRequest) {
       payload = JSON.parse(body);
     } catch {
       console.error(`[Webhook] [${requestId}] ❌ Malformed JSON payload`);
-      return NextResponse.json(
-        { error: "Malformed JSON payload", requestId },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Malformed JSON payload", requestId }, { status: 400 });
     }
 
     const payloadError = validateWebhookPayload(topic, payload);
     if (payloadError) {
-      console.error(
-        `[Webhook] [${requestId}] ❌ Invalid webhook payload: ${payloadError}`
-      );
-      return NextResponse.json(
-        { error: payloadError, requestId },
-        { status: 400 }
-      );
+      console.error(`[Webhook] [${requestId}] ❌ Invalid webhook payload: ${payloadError}`);
+      return NextResponse.json({ error: payloadError, requestId }, { status: 400 });
     }
 
     // =========================================================================
@@ -236,9 +223,11 @@ export async function POST(request: NextRequest) {
       case "orders/paid": {
         // Detect Skio / subscription contract renewals via source_name
         const isSubscriptionRenewal = payload.source_name === "subscription_contract";
-        const subscriptionContractId = payload.note_attributes?.find(
-          (a: { name: string; value: string }) => a.name === "subscription_id" || a.name === "contract_id"
-        )?.value || "";
+        const subscriptionContractId =
+          payload.note_attributes?.find(
+            (a: { name: string; value: string }) =>
+              a.name === "subscription_id" || a.name === "contract_id"
+          )?.value || "";
 
         if (isSubscriptionRenewal) {
           console.log(
@@ -282,17 +271,12 @@ export async function POST(request: NextRequest) {
               },
             });
             const internalEventId = sendResult.ids?.[0];
-            console.log(
-              `[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`
-            );
+            console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
             console.log(
               `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
             );
           } catch (error) {
-            console.error(
-              `[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`,
-              error
-            );
+            console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
             if (process.env.NODE_ENV === "development") {
               console.warn(
                 `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`

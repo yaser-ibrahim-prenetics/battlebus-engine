@@ -20,6 +20,7 @@
     "test:product-hub": "npx tsx scripts/test-product-to-hub.ts"
   },
   "dependencies": {
+    "@faker-js/faker": "^10.3.0",
     "@inngest/realtime": "^0.4.5",
     "@slack/webhook": "^7.0.6",
     "@supabase/supabase-js": "^2.95.3",

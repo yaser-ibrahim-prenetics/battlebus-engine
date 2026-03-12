@@ -38,19 +38,11 @@ function projectId(project: string): string {
   const p = normalizeProject(project);
   if (p === "hub") {
     // Support both naming conventions to avoid breaking old env setups
-    return (
-      process.env.VERCEL_HUB_PROJECT_ID ||
-      process.env.VERCEL_PROJECT_ID_HUB ||
-      ""
-    );
+    return process.env.VERCEL_HUB_PROJECT_ID || process.env.VERCEL_PROJECT_ID_HUB || "";
   }
   if (p === "inngest") {
     // Support both naming conventions to avoid breaking old env setups
-    return (
-      process.env.VERCEL_INNGEST_PROJECT_ID ||
-      process.env.VERCEL_PROJECT_ID_INNGEST ||
-      ""
-    );
+    return process.env.VERCEL_INNGEST_PROJECT_ID || process.env.VERCEL_PROJECT_ID_INNGEST || "";
   }
   return "";
 }
@@ -132,8 +124,8 @@ export async function GET(request: NextRequest) {
         error: `Project "${project}" is valid, but its Vercel project ID env var is missing on Battle Bus.`,
         hint:
           project === "hub"
-            ? 'Set VERCEL_HUB_PROJECT_ID (or VERCEL_PROJECT_ID_HUB).'
-            : 'Set VERCEL_INNGEST_PROJECT_ID (or VERCEL_PROJECT_ID_INNGEST).',
+            ? "Set VERCEL_HUB_PROJECT_ID (or VERCEL_PROJECT_ID_HUB)."
+            : "Set VERCEL_INNGEST_PROJECT_ID (or VERCEL_PROJECT_ID_INNGEST).",
       },
       { status: 400 }
     );

@@ -385,8 +385,8 @@ export interface ShopifyOrderPayload {
   refunds: ShopifyRefund[];
   cancel_reason: keyof typeof CancelReasonEnum | null;
   // Subscription / app metadata
-  source_name: string | null;           // 'subscription_contract' for Skio/Prive renewals
-  app_id: number | null;                // Shopify app ID that created the order
+  source_name: string | null; // 'subscription_contract' for Skio/Prive renewals
+  app_id: number | null; // Shopify app ID that created the order
   note_attributes: { name: string; value: string }[]; // e.g. subscription contract ID from Skio
 }
 

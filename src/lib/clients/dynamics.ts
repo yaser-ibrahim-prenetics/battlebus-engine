@@ -42,10 +42,7 @@ async function pacedFetch(
 ): Promise<Response> {
   if (D365_MIN_INTERVAL_MS > 0) {
     const now = Date.now();
-    const waitMs = Math.max(
-      0,
-      d365LastRequestAt + D365_MIN_INTERVAL_MS - now
-    );
+    const waitMs = Math.max(0, d365LastRequestAt + D365_MIN_INTERVAL_MS - now);
     if (waitMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }

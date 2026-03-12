@@ -9,10 +9,7 @@
 // It reflects the active routing table including any COUNTRY_ROUTING_OVERRIDES.
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getActiveRoutingTable,
-  resolveCountryRouting,
-} from "@/lib/helpers/warehouse";
+import { getActiveRoutingTable, resolveCountryRouting } from "@/lib/helpers/warehouse";
 
 export async function GET(request: NextRequest) {
   const country = request.nextUrl.searchParams.get("country");
@@ -35,7 +32,7 @@ export async function GET(request: NextRequest) {
     warehouses: table.warehouses,
     countryRouting: table.countryRouting,
     envVar: "COUNTRY_ROUTING_OVERRIDES",
-    hint: "Set COUNTRY_ROUTING_OVERRIDES env var to a JSON object to override per-country routing without a code change. E.g.: {\"AU\":\"HK Warehouse\"}",
+    hint: 'Set COUNTRY_ROUTING_OVERRIDES env var to a JSON object to override per-country routing without a code change. E.g.: {"AU":"HK Warehouse"}',
   });
 }
 

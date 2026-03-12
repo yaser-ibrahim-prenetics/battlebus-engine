@@ -30,7 +30,7 @@ import { createClient } from "@supabase/supabase-js";
 // ============================================================================
 
 export interface CountryDataAreaEntry {
-  country: string;    // ISO-2 code, e.g. "US", "GB"
+  country: string; // ISO-2 code, e.g. "US", "GB"
   dataAreaId: string; // D365 data area, e.g. "U001", "H007"
 }
 
@@ -236,27 +236,25 @@ export async function upsertLocation(params: {
       }
     } else {
       // INSERT — write everything including default routing values
-      const { error } = await supabase
-        .from("locations" as any)
-        .insert({
-          id: params.shopifyLocationId,
-          shopify_location_id: params.shopifyLocationId,
-          name: params.name,
-          warehouse_name: params.defaultWarehouseName ?? null,
-          dynamics_data_area_id: params.defaultDataAreaId ?? null,
-          country_data_area_mapping: [] as any,
-          address_line1: params.addressLine1 ?? null,
-          address_line2: params.addressLine2 ?? null,
-          city: params.city ?? null,
-          province: params.province ?? null,
-          country: params.country ?? null,
-          zip: params.zip ?? null,
-          phone: params.phone ?? null,
-          active: params.active,
-          fulfillment_service_id: params.fulfillmentServiceId ?? null,
-          created_at: now,
-          updated_at: now,
-        } as any);
+      const { error } = await supabase.from("locations" as any).insert({
+        id: params.shopifyLocationId,
+        shopify_location_id: params.shopifyLocationId,
+        name: params.name,
+        warehouse_name: params.defaultWarehouseName ?? null,
+        dynamics_data_area_id: params.defaultDataAreaId ?? null,
+        country_data_area_mapping: [] as any,
+        address_line1: params.addressLine1 ?? null,
+        address_line2: params.addressLine2 ?? null,
+        city: params.city ?? null,
+        province: params.province ?? null,
+        country: params.country ?? null,
+        zip: params.zip ?? null,
+        phone: params.phone ?? null,
+        active: params.active,
+        fulfillment_service_id: params.fulfillmentServiceId ?? null,
+        created_at: now,
+        updated_at: now,
+      } as any);
 
       if (error) {
         console.error("[LocationRouting] Error inserting location:", error);
@@ -324,9 +322,7 @@ export async function getDataAreaIdForLocationAndCountry(
   if (!mapping) return null;
 
   // 1. Per-country override
-  const entry = mapping.countryDataAreaMapping.find(
-    (e) => e.country.toUpperCase() === code
-  );
+  const entry = mapping.countryDataAreaMapping.find((e) => e.country.toUpperCase() === code);
   if (entry?.dataAreaId) {
     console.log(
       `[LocationRouting] Location ${locationId} country ${code} → dataAreaId ${entry.dataAreaId} (country override)`

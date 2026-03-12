@@ -79,9 +79,7 @@ function isRefillOrder(order: ShopifyOrderPayload): boolean {
  */
 function extractSubscriptionContractId(order: ShopifyOrderPayload): string {
   const attrs = order.note_attributes || [];
-  return (
-    attrs.find((a) => a.name === "subscription_id" || a.name === "contract_id")?.value || ""
-  );
+  return attrs.find((a) => a.name === "subscription_id" || a.name === "contract_id")?.value || "";
 }
 
 // ============================================================================
@@ -124,14 +122,11 @@ export const processSubscriptionOrder = inngest.createFunction(
     // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
     // Always use canonical Shopify order ID for Shopify API calls and persistence.
     const shopifyOrderId = String(
-      event.data.originalShopifyOrderId ||
-        String(rawShopifyOrderId || "").split("-rerun-")[0]
+      event.data.originalShopifyOrderId || String(rawShopifyOrderId || "").split("-rerun-")[0]
     );
     let order = event.data.orderJson as ShopifyOrderPayload;
 
-    console.log(
-      `[Subscription] ========================================`
-    );
+    console.log(`[Subscription] ========================================`);
     console.log(
       `[Subscription] Processing renewal: ${shopifyOrderName} (contract: ${subscriptionContractId || "unknown"})`
     );
@@ -317,16 +312,13 @@ export const processSubscriptionOrder = inngest.createFunction(
 
       await Promise.all(
         lines.map((line) =>
-          retryWithBackoff(
-            () => dynamics.createSalesOrderLine(line),
-            { label: `D365 sub line ${line.itemNumber}` }
-          )
+          retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
+            label: `D365 sub line ${line.itemNumber}`,
+          })
         )
       );
 
-      console.log(
-        `[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`
-      );
+      console.log(`[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`);
       return { status: "created", lineCount: lines.length };
     });
 
@@ -335,10 +327,9 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     await step.run("confirm-d365-order", async () => {
       if (!config.features.enableDynamicsSync) return { status: "skipped" };
-      await retryWithBackoff(
-        () => dynamics.confirmSalesOrder(d365OrderNumber, dataAreaId),
-        { label: `D365 sub confirm ${d365OrderNumber}` }
-      );
+      await retryWithBackoff(() => dynamics.confirmSalesOrder(d365OrderNumber, dataAreaId), {
+        label: `D365 sub confirm ${d365OrderNumber}`,
+      });
       console.log(`[Subscription] ✅ D365 order confirmed: ${d365OrderNumber}`);
       return { status: "confirmed" };
     });
@@ -347,13 +338,10 @@ export const processSubscriptionOrder = inngest.createFunction(
       if (!config.features.enableDynamicsSync) return { status: "skipped" };
       const prepayAmount = calculatePrepaymentAmount(order);
       if (prepayAmount <= 0) return { status: "skipped", reason: "zero amount" };
-      await retryWithBackoff(
-        () => dynamics.createPrepayment(d365OrderNumber, dataAreaId),
-        { label: `D365 sub prepay ${d365OrderNumber}` }
-      );
-      console.log(
-        `[Subscription] ✅ D365 prepayment created: ${prepayAmount} ${order.currency}`
-      );
+      await retryWithBackoff(() => dynamics.createPrepayment(d365OrderNumber, dataAreaId), {
+        label: `D365 sub prepay ${d365OrderNumber}`,
+      });
+      console.log(`[Subscription] ✅ D365 prepayment created: ${prepayAmount} ${order.currency}`);
       return { status: "created", amount: prepayAmount };
     });
 
@@ -361,8 +349,10 @@ export const processSubscriptionOrder = inngest.createFunction(
     // STEP 8: Create GPS Outbound Order
     // =========================================================================
     const gpsResult = await step.run("create-gps-order", async () => {
-      if (!config.features.enableGpsSync) return { status: "skipped" as const, reason: "GPS sync disabled", gpsOrderId: undefined };
-      if (!shouldSendToGps(order, warehouseName)) return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
+      if (!config.features.enableGpsSync)
+        return { status: "skipped" as const, reason: "GPS sync disabled", gpsOrderId: undefined };
+      if (!shouldSendToGps(order, warehouseName))
+        return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
 
       try {
         const gpsOrder = toGpsOutboundOrder(order, d365OrderNumber, warehouseName);
@@ -371,9 +361,7 @@ export const processSubscriptionOrder = inngest.createFunction(
           warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
         );
         const gpsOrderId = result?.response?.data?.[0]?.orderNo;
-        console.log(
-          `[Subscription] ✅ GPS order created: ${gpsOrderId} for ${shopifyOrderName}`
-        );
+        console.log(`[Subscription] ✅ GPS order created: ${gpsOrderId} for ${shopifyOrderName}`);
 
         // Store metafield immediately (same step, saves a round-trip)
         if (gpsOrderId) {
@@ -391,7 +379,11 @@ export const processSubscriptionOrder = inngest.createFunction(
           console.warn(
             `[Subscription] ⚠️  OOS for ${shopifyOrderName}: ${err.message}. Parking in backorder queue.`
           );
-          return { status: "backorder" as const, reason: err.message as string, gpsOrderId: undefined };
+          return {
+            status: "backorder" as const,
+            reason: err.message as string,
+            gpsOrderId: undefined,
+          };
         }
         throw err;
       }
@@ -411,10 +403,11 @@ export const processSubscriptionOrder = inngest.createFunction(
           warehouse: warehouseName,
           errorMessage: gpsResult.reason || "OOS",
           errorType: "out_of_stock" as const,
-          failedSkus: order.line_items
-            ?.filter((i: any) => i.requires_shipping && !i.gift_card)
-            .map((i: any) => i.sku)
-            .filter(Boolean) || [],
+          failedSkus:
+            order.line_items
+              ?.filter((i: any) => i.requires_shipping && !i.gift_card)
+              .map((i: any) => i.sku)
+              .filter(Boolean) || [],
           maxRetries: 7,
           retryCount: 0,
           createdAt: new Date().toISOString(),
