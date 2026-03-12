@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const VERCEL_API = "https://api.vercel.com";
+const CONFIG_ENV_PROXY_SECRET = process.env.CONFIG_ENV_PROXY_SECRET || "";
 
 function vercelToken() {
   return process.env.VERCEL_API_TOKEN || "";
@@ -26,9 +27,31 @@ function teamId() {
   return process.env.VERCEL_TEAM_ID || "";
 }
 
+function normalizeProject(project: string): "hub" | "inngest" | "" {
+  const p = (project || "").trim().toLowerCase();
+  if (p === "hub") return "hub";
+  if (p === "inngest") return "inngest";
+  return "";
+}
+
 function projectId(project: string): string {
-  if (project === "hub") return process.env.VERCEL_HUB_PROJECT_ID || "";
-  if (project === "inngest") return process.env.VERCEL_INNGEST_PROJECT_ID || "";
+  const p = normalizeProject(project);
+  if (p === "hub") {
+    // Support both naming conventions to avoid breaking old env setups
+    return (
+      process.env.VERCEL_HUB_PROJECT_ID ||
+      process.env.VERCEL_PROJECT_ID_HUB ||
+      ""
+    );
+  }
+  if (p === "inngest") {
+    // Support both naming conventions to avoid breaking old env setups
+    return (
+      process.env.VERCEL_INNGEST_PROJECT_ID ||
+      process.env.VERCEL_PROJECT_ID_INNGEST ||
+      ""
+    );
+  }
   return "";
 }
 
@@ -42,6 +65,13 @@ function authHeaders() {
 function teamQS(prefix: "?" | "&") {
   const tid = teamId();
   return tid ? `${prefix}teamId=${tid}` : "";
+}
+
+function isProxyAuthorized(request: NextRequest): boolean {
+  // If no secret configured, keep backward-compatible behavior.
+  if (!CONFIG_ENV_PROXY_SECRET) return true;
+  const received = request.headers.get("x-config-env-proxy-secret") || "";
+  return received === CONFIG_ENV_PROXY_SECRET;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -71,6 +101,10 @@ async function listEnvs(pid: string): Promise<VercelEnvVar[]> {
 // ─── GET — list env vars ──────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  if (!isProxyAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized proxy request" }, { status: 401 });
+  }
+
   const token = vercelToken();
   if (!token) {
     return NextResponse.json(
@@ -79,14 +113,27 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const project = request.nextUrl.searchParams.get("project") || "";
+  const rawProject = request.nextUrl.searchParams.get("project") || "";
+  const project = normalizeProject(rawProject);
   const pid = projectId(project);
 
   if (!pid) {
+    if (!project) {
+      return NextResponse.json(
+        {
+          error: `Unknown project "${rawProject}". Use "hub" or "inngest".`,
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       {
-        error: `Unknown project "${project}". Use "hub" or "inngest".`,
-        hint: "Set VERCEL_HUB_PROJECT_ID and VERCEL_INNGEST_PROJECT_ID on Battle Bus",
+        error: `Project "${project}" is valid, but its Vercel project ID env var is missing on Battle Bus.`,
+        hint:
+          project === "hub"
+            ? 'Set VERCEL_HUB_PROJECT_ID (or VERCEL_PROJECT_ID_HUB).'
+            : 'Set VERCEL_INNGEST_PROJECT_ID (or VERCEL_PROJECT_ID_INNGEST).',
       },
       { status: 400 }
     );
@@ -120,6 +167,10 @@ export async function GET(request: NextRequest) {
 // ─── POST — upsert env vars ───────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  if (!isProxyAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized proxy request" }, { status: 401 });
+  }
+
   const token = vercelToken();
   if (!token) {
     return NextResponse.json(
@@ -129,7 +180,8 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  const { project, vars } = body || {};
+  const { project: rawProject, vars } = body || {};
+  const project = normalizeProject(String(rawProject || ""));
 
   if (!project || !Array.isArray(vars) || vars.length === 0) {
     return NextResponse.json({ error: "project and vars[] are required" }, { status: 400 });
@@ -137,7 +189,18 @@ export async function POST(request: NextRequest) {
 
   const pid = projectId(project);
   if (!pid) {
-    return NextResponse.json({ error: `Unknown project "${project}"` }, { status: 400 });
+    if (!project) {
+      return NextResponse.json(
+        { error: `Unknown project "${rawProject}". Use "hub" or "inngest".` },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      {
+        error: `Project "${project}" is valid, but its Vercel project ID env var is missing on Battle Bus.`,
+      },
+      { status: 400 }
+    );
   }
 
   // Load existing vars once so we know which to PATCH vs POST
@@ -218,6 +281,10 @@ export async function POST(request: NextRequest) {
 // ─── DELETE — remove an env var by key ───────────────────────────────────────
 
 export async function DELETE(request: NextRequest) {
+  if (!isProxyAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized proxy request" }, { status: 401 });
+  }
+
   const token = vercelToken();
   if (!token) {
     return NextResponse.json(
@@ -226,7 +293,8 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const project = request.nextUrl.searchParams.get("project") || "";
+  const rawProject = request.nextUrl.searchParams.get("project") || "";
+  const project = normalizeProject(rawProject);
   const key = request.nextUrl.searchParams.get("key") || "";
 
   if (!project || !key) {
@@ -238,7 +306,18 @@ export async function DELETE(request: NextRequest) {
 
   const pid = projectId(project);
   if (!pid) {
-    return NextResponse.json({ error: `Unknown project "${project}"` }, { status: 400 });
+    if (!project) {
+      return NextResponse.json(
+        { error: `Unknown project "${rawProject}". Use "hub" or "inngest".` },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      {
+        error: `Project "${project}" is valid, but its Vercel project ID env var is missing on Battle Bus.`,
+      },
+      { status: 400 }
+    );
   }
 
   try {
