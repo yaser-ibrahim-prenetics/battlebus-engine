@@ -54,6 +54,46 @@ const CURRENCY_BY_CC: Record<string, string> = {
   SG: "SGD",
 };
 
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://battle-hub-three.vercel.app",
+  "https://battle-hub.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+];
+
+function getAllowedOrigins(): string[] {
+  const extraOrigins = (process.env.MASS_TEST_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...extraOrigins])];
+}
+
+function buildCorsHeaders(origin: string | null): HeadersInit {
+  const allowedOrigins = getAllowedOrigins();
+  const allowOrigin =
+    origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+function jsonWithCors(body: unknown, init: ResponseInit = {}, origin: string | null = null) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...buildCorsHeaders(origin),
+      ...(init.headers || {}),
+    },
+  });
+}
+
 // ─── Shopify helpers ──────────────────────────────────────────────────────────
 
 function shopifyHeaders() {
@@ -295,18 +335,30 @@ function buildSyntheticOrder(opts: {
 
 // ─── GET — return available locations + products for the UI ──────────────────
 
-export async function GET() {
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: buildCorsHeaders(req.headers.get("origin")),
+  });
+}
+
+export async function GET(req: NextRequest) {
   try {
     const [locations, products] = await Promise.all([
       fetchShopifyLocations(),
       fetchShopifyProducts(),
     ]);
-    return NextResponse.json({ locations, products, supportedMarkets: SUPPORTED_MARKET_CODES });
+    return jsonWithCors(
+      { locations, products, supportedMarkets: SUPPORTED_MARKET_CODES },
+      { status: 200 },
+      req.headers.get("origin")
+    );
   } catch (err) {
     console.error("[MassTest] GET error:", err);
-    return NextResponse.json(
+    return jsonWithCors(
       { error: "Failed to fetch Shopify data", message: String(err) },
-      { status: 500 }
+      { status: 500 },
+      req.headers.get("origin")
     );
   }
 }
@@ -326,7 +378,11 @@ export async function POST(req: NextRequest) {
     } = body;
 
     if (typeof count !== "number" || count < 1 || count > 500) {
-      return NextResponse.json({ error: "count must be 1–500" }, { status: 400 });
+      return jsonWithCors(
+        { error: "count must be 1–500" },
+        { status: 400 },
+        req.headers.get("origin")
+      );
     }
 
     // Fetch live data
@@ -336,12 +392,17 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (locations.length === 0) {
-      return NextResponse.json({ error: "No active Shopify locations found" }, { status: 500 });
+      return jsonWithCors(
+        { error: "No active Shopify locations found" },
+        { status: 500 },
+        req.headers.get("origin")
+      );
     }
     if (products.length === 0) {
-      return NextResponse.json(
+      return jsonWithCors(
         { error: "No active Shopify products with SKUs found" },
-        { status: 500 }
+        { status: 500 },
+        req.headers.get("origin")
       );
     }
 
@@ -470,17 +531,22 @@ export async function POST(req: NextRequest) {
 
     console.log(`[MassTest] Dispatched ${orders.length} orders for run ${testRunId}`);
 
-    return NextResponse.json({
-      ok: true,
-      testRunId,
-      count: orders.length,
-      orders,
-    });
+    return jsonWithCors(
+      {
+        ok: true,
+        testRunId,
+        count: orders.length,
+        orders,
+      },
+      { status: 200 },
+      req.headers.get("origin")
+    );
   } catch (err) {
     console.error("[MassTest] POST error:", err);
-    return NextResponse.json(
+    return jsonWithCors(
       { error: "Failed to dispatch mass test", message: String(err) },
-      { status: 500 }
+      { status: 500 },
+      req.headers.get("origin")
     );
   }
 }
