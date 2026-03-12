@@ -113,7 +113,17 @@ export const processSubscriptionOrder = inngest.createFunction(
   },
   { event: "shopify/subscription.renewed" },
   async ({ event, step }: { event: any; step: any }) => {
-    const { shopifyOrderId, shopifyOrderName, subscriptionContractId } = event.data;
+    const {
+      shopifyOrderId: rawShopifyOrderId,
+      shopifyOrderName,
+      subscriptionContractId,
+    } = event.data;
+    // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
+    // Always use canonical Shopify order ID for Shopify API calls and persistence.
+    const shopifyOrderId = String(
+      event.data.originalShopifyOrderId ||
+        String(rawShopifyOrderId || "").split("-rerun-")[0]
+    );
     let order = event.data.orderJson as ShopifyOrderPayload;
 
     console.log(

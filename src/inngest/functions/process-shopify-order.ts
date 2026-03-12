@@ -67,7 +67,13 @@ export const processShopifyOrder = inngest.createFunction(
   },
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
-    const { shopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    const { shopifyOrderId: rawShopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
+    // Always use canonical Shopify order ID for Shopify API calls and persistence.
+    const shopifyOrderId = String(
+      event.data.originalShopifyOrderId ||
+        String(rawShopifyOrderId || "").split("-rerun-")[0]
+    );
     // Initial order from webhook - will be refreshed after 5min delay
     let order = orderJson as ShopifyOrderPayload;
 
