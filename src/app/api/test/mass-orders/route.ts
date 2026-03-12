@@ -114,6 +114,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
 ];
 
+const MASS_TEST_PROXY_SECRET =
+  process.env.MASS_TEST_PROXY_SECRET || process.env.CONFIG_ENV_PROXY_SECRET || "";
+
 function getAllowedOrigins(): string[] {
   const extraOrigins = (process.env.MASS_TEST_ALLOWED_ORIGINS || "")
     .split(",")
@@ -145,6 +148,12 @@ function jsonWithCors(body: unknown, init: ResponseInit = {}, origin: string | n
       ...(init.headers || {}),
     },
   });
+}
+
+function isAuthorized(request: NextRequest): boolean {
+  if (!MASS_TEST_PROXY_SECRET) return false;
+  const secret = request.headers.get("x-mass-test-proxy-secret") || "";
+  return secret === MASS_TEST_PROXY_SECRET;
 }
 
 // ─── Shopify helpers ──────────────────────────────────────────────────────────
@@ -293,6 +302,32 @@ async function fetchShopifyProducts(): Promise<TestProduct[]> {
   return out;
 }
 
+async function fetchNextShopifyStyleOrderNumber(): Promise<number> {
+  const res = await fetch(
+    shopifyUrl("/orders.json?status=any&limit=50&fields=name"),
+    { headers: shopifyHeaders() }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Shopify recent orders error: ${res.status}`);
+  }
+
+  const { orders = [] } = await res.json();
+  let maxOrderNumber = 0;
+
+  for (const order of orders as Array<{ name?: string }>) {
+    const match = String(order.name || "").match(/^IM8-(\d+)$/i);
+    if (!match) continue;
+
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > maxOrderNumber) {
+      maxOrderNumber = parsed;
+    }
+  }
+
+  return maxOrderNumber > 0 ? maxOrderNumber + 1 : 10000;
+}
+
 // ─── Synthetic order builder ──────────────────────────────────────────────────
 
 function buildSyntheticOrder(opts: {
@@ -419,6 +454,12 @@ function buildSyntheticOrder(opts: {
 // ─── GET — return available locations + products for the UI ──────────────────
 
 export async function OPTIONS(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return new NextResponse(null, {
+      status: 401,
+      headers: buildCorsHeaders(req.headers.get("origin")),
+    });
+  }
   return new NextResponse(null, {
     status: 204,
     headers: buildCorsHeaders(req.headers.get("origin")),
@@ -426,6 +467,9 @@ export async function OPTIONS(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return jsonWithCors({ error: "Unauthorized" }, { status: 401 }, req.headers.get("origin"));
+  }
   try {
     const [locations, products] = await Promise.all([
       fetchShopifyLocations(),
@@ -449,6 +493,9 @@ export async function GET(req: NextRequest) {
 // ─── POST — dispatch mass test orders ────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return jsonWithCors({ error: "Unauthorized" }, { status: 401 }, req.headers.get("origin"));
+  }
   try {
     const body = await req.json();
     const {
@@ -469,9 +516,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch live data
-    const [locations, products] = await Promise.all([
+    const [locations, products, nextOrderNumber] = await Promise.all([
       fetchShopifyLocations(),
       fetchShopifyProducts(),
+      fetchNextShopifyStyleOrderNumber(),
     ]);
 
     if (locations.length === 0) {
@@ -569,7 +617,7 @@ export async function POST(req: NextRequest) {
 
       const orderId = baseId + idx;
       const seq = String(idx + 1).padStart(3, "0");
-      const orderName = `TEST-${testRunId.replace(/^TR-/, "")}-${seq}`;
+      const orderName = `IM8-${nextOrderNumber + idx}`;
       const product = resolveProduct(idx);
       const seed = runSeedBase + idx;
 
