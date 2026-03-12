@@ -35,6 +35,8 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
+  TAG_WAIT_ENABLED,
+  TAG_WAIT_DURATION,
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
@@ -68,6 +70,12 @@ export const processShopifyOrder = inngest.createFunction(
   [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
     const { shopifyOrderId: rawShopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    const isRerun =
+      Boolean(event.data.originalShopifyOrderId) ||
+      String(rawShopifyOrderId || "").includes("-rerun-");
+    // testMode: synthetic orders sent directly to Inngest (no real Shopify order).
+    // Skip Shopify refetch; use orderJson from the event directly.
+    const isTestMode = Boolean(event.data.testMode);
     // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
     // Always use canonical Shopify order ID for Shopify API calls and persistence.
     const shopifyOrderId = String(
@@ -164,30 +172,53 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    // Wait 5 minutes and refetch order to ensure tags are available
-    // Tags may not be immediately available when order is created
-    await publishStatus(
-      "wait-for-tags",
-      "running",
-      "Waiting 5 minutes for order tags to be available"
-    );
-
-    // Wait 5 minutes using Inngest step.sleep (must be outside step.run)
-    await step.sleep("wait-for-tags", "5m");
-
-    // Refetch order from Shopify to get latest tags
-    const refreshedOrder = await step.run("refetch-order-after-delay", async () => {
-      const { getOrder } = await import("@/lib/clients/shopify");
-      const freshOrder = await getOrder(shopifyOrderId);
-      console.log(
-        `[Order] Refetched order ${shopifyOrderName} after 5min delay. Tags: ${freshOrder.tags || "none"}`
+    if (isTestMode) {
+      // Synthetic test order — use provided orderJson directly, no Shopify API call
+      await publishStatus("wait-for-tags", "skipped", "Test mode: using provided orderJson directly");
+      console.log(`[Order] Test mode for ${shopifyOrderName} — skipping tag wait and Shopify refetch`);
+    } else if (isRerun) {
+      await publishStatus("wait-for-tags", "skipped", "Rerun: skipping tag wait delay");
+      const refreshedOrder = await step.run("refetch-order-rerun-no-delay", async () => {
+        const { getOrder } = await import("@/lib/clients/shopify");
+        const freshOrder = await getOrder(shopifyOrderId);
+        console.log(
+          `[Order] Refetched order ${shopifyOrderName} without delay (rerun). Tags: ${freshOrder.tags || "none"}`
+        );
+        return freshOrder;
+      });
+      order = refreshedOrder as ShopifyOrderPayload;
+    } else if (!TAG_WAIT_ENABLED) {
+      // TAG_WAIT_ENABLED=false via env var — skip delay, still refetch for freshest data
+      await publishStatus("wait-for-tags", "skipped", "Tag wait disabled via TAG_WAIT_ENABLED=false");
+      const refreshedOrder = await step.run("refetch-order-no-delay", async () => {
+        const { getOrder } = await import("@/lib/clients/shopify");
+        const freshOrder = await getOrder(shopifyOrderId);
+        console.log(
+          `[Order] Refetched order ${shopifyOrderName} (tag wait disabled). Tags: ${freshOrder.tags || "none"}`
+        );
+        return freshOrder;
+      });
+      order = refreshedOrder as ShopifyOrderPayload;
+    } else {
+      // Normal flow: wait TAG_WAIT_DURATION for Shopify tags to propagate
+      await publishStatus(
+        "wait-for-tags",
+        "running",
+        `Waiting ${TAG_WAIT_DURATION} for order tags to be available`
       );
-      return freshOrder;
-    });
-    await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
+      await step.sleep("wait-for-tags", TAG_WAIT_DURATION as any);
 
-    // Use the refreshed order for all subsequent processing
-    order = refreshedOrder as ShopifyOrderPayload;
+      const refreshedOrder = await step.run("refetch-order-after-delay", async () => {
+        const { getOrder } = await import("@/lib/clients/shopify");
+        const freshOrder = await getOrder(shopifyOrderId);
+        console.log(
+          `[Order] Refetched order ${shopifyOrderName} after ${TAG_WAIT_DURATION} delay. Tags: ${freshOrder.tags || "none"}`
+        );
+        return freshOrder;
+      });
+      await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
+      order = refreshedOrder as ShopifyOrderPayload;
+    }
 
     // Comprehensive order validation - all checks in one place
     await publishStatus("validate-order", "running", "Validating order");

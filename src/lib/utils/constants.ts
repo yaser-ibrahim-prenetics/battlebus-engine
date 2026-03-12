@@ -192,6 +192,16 @@ export async function retryWithBackoff<T>(
 }
 
 // ============================================================================
+// TAG WAIT FEATURE FLAG
+// ============================================================================
+// Controls the 5-minute delay after order creation to wait for Shopify tags.
+// Set TAG_WAIT_ENABLED=false to disable (useful in test environments or reruns).
+// TAG_WAIT_DURATION accepts Inngest step.sleep duration strings (e.g. "5m", "2m").
+
+export const TAG_WAIT_ENABLED = process.env.TAG_WAIT_ENABLED !== "false";
+export const TAG_WAIT_DURATION = process.env.TAG_WAIT_DURATION || "5m";
+
+// ============================================================================
 // BACKORDER CONFIGURATIONS
 // ============================================================================
 

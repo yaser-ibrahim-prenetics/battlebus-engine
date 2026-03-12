@@ -118,6 +118,9 @@ export const processSubscriptionOrder = inngest.createFunction(
       shopifyOrderName,
       subscriptionContractId,
     } = event.data;
+    const isRerun =
+      Boolean(event.data.originalShopifyOrderId) ||
+      String(rawShopifyOrderId || "").includes("-rerun-");
     // Reruns append "-rerun-<ts>" to shopifyOrderId for idempotency.
     // Always use canonical Shopify order ID for Shopify API calls and persistence.
     const shopifyOrderId = String(
@@ -152,7 +155,7 @@ export const processSubscriptionOrder = inngest.createFunction(
       return isRefillOrder(order);
     });
 
-    if (tagsMissing) {
+    if (tagsMissing && !isRerun) {
       console.log(
         `[Subscription] ⚠️  Order ${shopifyOrderName} is a refill but missing subscription tag. Waiting ${SUBSCRIPTION_TAG_WAIT_MINUTES} min for Skio to apply tags...`
       );
@@ -179,6 +182,10 @@ export const processSubscriptionOrder = inngest.createFunction(
           );
         });
       }
+    } else if (tagsMissing && isRerun) {
+      console.log(
+        `[Subscription] Rerun detected for ${shopifyOrderName}; skipping subscription tag wait delay`
+      );
     }
 
     // =========================================================================
