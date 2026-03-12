@@ -6,8 +6,8 @@
 //  - Real products / variants / SKUs pulled live from Shopify
 //  - Faker-generated customer data localised to the location's country
 //
-// GET /api/test/mass-orders            → { locations, products } for Hub setup
-// POST /api/test/mass-orders           → dispatch N seeded test orders into Inngest
+// GET /api/test/mass-orders            → { locations, products }  (for UI setup)
+// POST /api/test/mass-orders           → dispatch N test orders into Inngest
 
 import { NextRequest, NextResponse } from "next/server";
 import {
