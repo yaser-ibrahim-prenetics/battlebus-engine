@@ -29,6 +29,7 @@ import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
+  getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
 } from "@/lib/services/location-routing";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
@@ -233,8 +234,13 @@ export const processSubscriptionOrder = inngest.createFunction(
       );
 
       if (!locationDataAreaId || !warehouseNameFromLocation) {
+        const routingContext = await getLocationRoutingDebugContext(
+          fulfillmentLocationId,
+          country_code,
+          "im8"
+        );
         throw new Error(
-          `[Subscription Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${country_code}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled.`
+          `[Subscription Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${country_code}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled. Context: ${routingContext}`
         );
       }
 

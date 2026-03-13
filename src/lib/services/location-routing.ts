@@ -160,6 +160,47 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
   return mappings;
 }
 
+export async function getLocationRoutingDebugContext(
+  shopifyLocationId: string | number,
+  countryCode: string,
+  store = "im8"
+): Promise<string> {
+  const mappings = await getLocationMappings();
+  const locationId = String(shopifyLocationId);
+  const code = (countryCode || "").toUpperCase();
+
+  const matchingLocation = mappings.find(
+    (m) => m.shopifyLocationId === locationId && m.store === store && m.active
+  );
+
+  return JSON.stringify({
+    requestedLocationId: locationId,
+    requestedCountryCode: code,
+    store,
+    totalLoadedLocations: mappings.length,
+    matchingLocation: matchingLocation
+      ? {
+          id: matchingLocation.id,
+          name: matchingLocation.name,
+          shopifyLocationId: matchingLocation.shopifyLocationId,
+          warehouseName: matchingLocation.warehouseName,
+          dynamicsDataAreaId: matchingLocation.dynamicsDataAreaId,
+          countryDataAreaMapping: matchingLocation.countryDataAreaMapping,
+          active: matchingLocation.active,
+        }
+      : null,
+    loadedLocations: mappings.slice(0, 25).map((m) => ({
+      id: m.id,
+      name: m.name,
+      shopifyLocationId: m.shopifyLocationId,
+      warehouseName: m.warehouseName,
+      dynamicsDataAreaId: m.dynamicsDataAreaId,
+      countryOverrides: m.countryDataAreaMapping.map((entry) => `${entry.country}:${entry.dataAreaId}`),
+      active: m.active,
+    })),
+  });
+}
+
 // ============================================================================
 // Upsert (called by process-location-sync)
 // ============================================================================
