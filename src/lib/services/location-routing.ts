@@ -135,7 +135,9 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
       }
       const payload = await response.json();
       const rows = Array.isArray(payload?.locations) ? payload.locations : [];
-      const mappings = rows.map(rowToMapping).filter((m) => m.active);
+      const mappings: LocationMapping[] = rows
+        .map((row: any) => rowToMapping(row))
+        .filter((m: LocationMapping) => m.active);
       console.log(
         `[LocationRouting] ✅ Loaded ${mappings.length} location mappings from Hub API fallback (${reason})`
       );
