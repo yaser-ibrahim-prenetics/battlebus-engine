@@ -845,9 +845,38 @@ export const processShopifyOrder = inngest.createFunction(
       return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      const normalizedError = errorMsg.toLowerCase();
+      const errorType =
+        normalizedError.includes("out of stock") ||
+        normalizedError.includes("inventory insufficient")
+          ? "out_of_stock"
+          : normalizedError.includes("order routing") ||
+              (normalizedError.includes("location") &&
+                normalizedError.includes("not fully configured"))
+            ? "routing_configuration"
+            : normalizedError.includes("d365") || normalizedError.includes("dynamics")
+              ? "d365_error"
+              : normalizedError.includes("gps") || normalizedError.includes("xlwms")
+                ? "gps_error"
+                : "processing_error";
 
       // Publish failure result
       await publishResult("failed", { error: errorMsg });
+
+      // Persist terminal failure back to Battle Hub via webhook so Orders/Testing
+      // can report final run errors even when a run fails before a normal status update.
+      await csPlatform.sendOrderUpdate(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          status: "failed",
+          error: errorMsg,
+          errorType,
+        },
+        { inngestIdempotencyKey, inngestRunId }
+      );
 
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(
