@@ -24,6 +24,7 @@
 //   3. Country-level routing table      (warehouse-config.json countryRouting)
 
 import { createClient } from "@supabase/supabase-js";
+import { config } from "@/lib/config";
 
 // ============================================================================
 // Types
@@ -83,24 +84,26 @@ export function clearLocationCache(): void {
 
 function rowToMapping(row: any): LocationMapping {
   let countryDataAreaMapping: CountryDataAreaEntry[] = [];
-  if (Array.isArray(row.country_data_area_mapping)) {
-    countryDataAreaMapping = row.country_data_area_mapping as CountryDataAreaEntry[];
-  } else if (typeof row.country_data_area_mapping === "string") {
+  const rawCountryMapping =
+    row.country_data_area_mapping ?? row.countryDataAreaMapping ?? row.countryRouting;
+  if (Array.isArray(rawCountryMapping)) {
+    countryDataAreaMapping = rawCountryMapping as CountryDataAreaEntry[];
+  } else if (typeof rawCountryMapping === "string") {
     try {
-      countryDataAreaMapping = JSON.parse(row.country_data_area_mapping);
+      countryDataAreaMapping = JSON.parse(rawCountryMapping);
     } catch {
       countryDataAreaMapping = [];
     }
   }
 
   return {
-    id: row.id,
-    name: row.name,
-    shopifyLocationId: String(row.shopify_location_id || row.id),
-    warehouseName: row.warehouse_name || null,
-    dynamicsDataAreaId: row.dynamics_data_area_id || null,
+    id: String(row.id),
+    name: String(row.name || row.warehouse_name || row.warehouseName || "Unknown Location"),
+    shopifyLocationId: String(row.shopify_location_id || row.shopifyLocationId || row.id),
+    warehouseName: row.warehouse_name || row.warehouseName || null,
+    dynamicsDataAreaId: row.dynamics_data_area_id || row.dynamicsDataAreaId || null,
     countryDataAreaMapping,
-    store: "im8",
+    store: row.store || "im8",
     active: row.active !== false,
   };
 }
@@ -116,12 +119,36 @@ function rowToMapping(row: any): LocationMapping {
 // ============================================================================
 
 async function fetchLocationMappings(): Promise<LocationMapping[]> {
+  async function fetchFromHubApi(reason: string): Promise<LocationMapping[]> {
+    try {
+      const hubUrl = config.csPlatform.baseUrl;
+      const response = await fetch(`${hubUrl}/api/locations/mappings`, {
+        headers: {
+          "x-battle-bus-webhook-secret": config.csPlatform.webhookSecret || "",
+        },
+      });
+      if (!response.ok) {
+        console.warn(
+          `[LocationRouting] Hub API fallback failed (${reason}): HTTP ${response.status}`
+        );
+        return [];
+      }
+      const payload = await response.json();
+      const rows = Array.isArray(payload?.locations) ? payload.locations : [];
+      const mappings = rows.map(rowToMapping).filter((m) => m.active);
+      console.log(
+        `[LocationRouting] ✅ Loaded ${mappings.length} location mappings from Hub API fallback (${reason})`
+      );
+      return mappings;
+    } catch (error) {
+      console.warn(`[LocationRouting] Hub API fallback failed (${reason}):`, error);
+      return [];
+    }
+  }
+
   if (!supabase) {
-    console.warn(
-      "[LocationRouting] Supabase not configured — no location mappings available. " +
-        "Routing will fall back to country-level table."
-    );
-    return [];
+    console.warn("[LocationRouting] Supabase not configured — trying Hub API fallback");
+    return fetchFromHubApi("supabase_not_configured");
   }
 
   try {
@@ -133,15 +160,19 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
 
     if (error) {
       console.error("[LocationRouting] Supabase fetch error:", error);
-      return [];
+      return fetchFromHubApi("supabase_error");
     }
 
     const mappings = (data || []).map(rowToMapping);
+    if (mappings.length === 0) {
+      console.warn("[LocationRouting] Supabase returned 0 active locations — trying Hub API fallback");
+      return fetchFromHubApi("supabase_empty");
+    }
     console.log(`[LocationRouting] ✅ Fetched ${mappings.length} location mappings from Supabase`);
     return mappings;
   } catch (err) {
     console.error("[LocationRouting] Unexpected error fetching mappings:", err);
-    return [];
+    return fetchFromHubApi("supabase_exception");
   }
 }
 
