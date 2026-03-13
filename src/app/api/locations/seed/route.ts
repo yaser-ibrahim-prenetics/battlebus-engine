@@ -16,19 +16,6 @@ import {
   getLocationMappings,
   clearLocationCache,
 } from "@/lib/services/location-routing";
-import { resolveCountryRouting, getDataAreaId } from "@/lib/helpers/warehouse";
-
-// Location name is the warehouse. We only auto-detect a default dataAreaId for new rows.
-function inferDataAreaId(loc: { name: string; country?: string | null }): string | null {
-  const n = (loc.name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr")))
-    return "H007";
-  if (n.includes("gps")) return "U001";
-  if (n.includes("stord")) return "U001";
-  if (n.includes("hk") || n.includes("hong kong")) return "H005";
-  if (loc.country) return resolveCountryRouting(loc.country).dataAreaId;
-  return null;
-}
 
 // ============================================================================
 // GET — inspect current locations in Supabase
@@ -82,7 +69,7 @@ export async function POST(req: NextRequest) {
     }> = [];
 
     for (const loc of shopifyLocations) {
-      const dataAreaId = inferDataAreaId({ name: loc.name, country: loc.country ?? null });
+      const dataAreaId = null;
 
       await upsertLocation({
         shopifyLocationId: loc.id,
@@ -108,7 +95,9 @@ export async function POST(req: NextRequest) {
         warehouseName: loc.name,
         dataAreaId,
       });
-      console.log(`[LocationSeed] Upserted "${loc.name}" (${loc.id}) → dataAreaId=${dataAreaId}`);
+      console.log(
+        `[LocationSeed] Upserted "${loc.name}" (${loc.id}) → dataAreaId left blank until configured in Battle Hub`
+      );
     }
 
     // Force routing cache refresh

@@ -22,7 +22,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import { resolveCountryRouting, type WarehouseName } from "@/lib/helpers/warehouse";
+import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
@@ -284,15 +284,12 @@ export const processShopifyOrder = inngest.createFunction(
 
     await publishStatus("validate-order", "completed", "Order validation passed");
 
-    // Determine warehouse and DataAreaId using location-based routing
-    // Priority:
-    //   1. Shopify fulfillment location assignment (most specific — set by Shopify routing rules)
-    //   2. Country-based routing (warehouse-config.json countryRouting + COUNTRY_ROUTING_OVERRIDES env)
+    // Determine warehouse and DataAreaId strictly from Battle Hub location settings.
+    // Do not fall back to country/config routing.
     const routingResult = await step.run("determine-warehouse-routing", async () => {
       const countryCode =
         order.shipping_address?.country_code || order.billing_address?.country_code || "US";
 
-      // 1. Try fulfillment-location-based routing (most specific)
       let fulfillmentLocationId: number | null = null;
       try {
         const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
@@ -306,45 +303,36 @@ export const processShopifyOrder = inngest.createFunction(
         console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
       }
 
-      if (fulfillmentLocationId) {
-        // Use country-aware lookup: picks per-country dataAreaId override if configured
-        const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-          fulfillmentLocationId,
-          countryCode,
-          "im8"
-        );
-        const warehouseNameFromLocation = await getWarehouseNameForLocation(
-          fulfillmentLocationId,
-          "im8"
-        );
-
-        if (locationDataAreaId && warehouseNameFromLocation) {
-          console.log(
-            `[Order Routing] Location ${fulfillmentLocationId} + country ${countryCode} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
-          );
-          return {
-            warehouseName: warehouseNameFromLocation as WarehouseName,
-            dataAreaId: locationDataAreaId,
-            countryCode,
-            routingSource: "location" as const,
-          };
-        }
-        // Location found in Shopify but not yet in routing table — fall through
-        console.warn(
-          `[Order Routing] Location ${fulfillmentLocationId} not found in routing table — falling back to country routing`
+      if (!fulfillmentLocationId) {
+        throw new Error(
+          `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
         );
       }
 
-      // 2. Country-based routing (config-driven)
-      const routing = resolveCountryRouting(countryCode);
+      const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+        fulfillmentLocationId,
+        countryCode,
+        "im8"
+      );
+      const warehouseNameFromLocation = await getWarehouseNameForLocation(
+        fulfillmentLocationId,
+        "im8"
+      );
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        throw new Error(
+          `[Order Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${countryCode}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled.`
+        );
+      }
+
       console.log(
-        `[Order Routing] Country ${countryCode} → warehouse: ${routing.warehouseName}, dataAreaId: ${routing.dataAreaId} (source: ${routing.source})`
+        `[Order Routing] Location ${fulfillmentLocationId} + country ${countryCode} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
       );
       return {
-        warehouseName: routing.warehouseName,
-        dataAreaId: routing.dataAreaId,
+        warehouseName: warehouseNameFromLocation as WarehouseName,
+        dataAreaId: locationDataAreaId,
         countryCode,
-        routingSource: routing.source,
+        routingSource: "location" as const,
       };
     });
 

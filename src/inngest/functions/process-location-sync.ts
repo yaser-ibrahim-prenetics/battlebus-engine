@@ -21,25 +21,10 @@
 import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { upsertLocation, deactivateLocation } from "@/lib/services/location-routing";
-import { resolveCountryRouting } from "@/lib/helpers/warehouse";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
 // Location name from Shopify is the warehouse (no separate warehouse field).
-// We only auto-detect a default dataAreaId for new rows; user sets data area in Hub.
-
-function inferDataAreaFromNameAndCountry(name: string, countryCode: string | null): string | null {
-  const n = (name || "").toLowerCase();
-  if (n.includes("gps") && (n.includes("uk") || n.includes("london") || n.includes("lhr")))
-    return "H007";
-  if (n.includes("gps")) return "U001";
-  if (n.includes("stord")) return "U001";
-  if (n.includes("hk") || n.includes("hong kong")) return "H005";
-  if (countryCode) {
-    const routing = resolveCountryRouting(countryCode);
-    return routing.dataAreaId;
-  }
-  return null;
-}
+// Data area must be configured explicitly in Battle Hub. Do not infer defaults here.
 
 // ============================================================================
 // Inngest function
@@ -93,14 +78,11 @@ export const processLocationSync = inngest.createFunction(
       return { status: "deleted", locationId, locationName, processedAt: new Date().toISOString() };
     }
 
-    // Location itself is the warehouse — use location name. Only auto-detect default dataAreaId.
-    const countryCode = locationJson?.country_code || locationJson?.country || null;
-    const detectedDataAreaId = await step.run("detect-data-area-id", async () => {
-      return inferDataAreaFromNameAndCountry(locationName || "", countryCode);
-    });
+    // Location itself is the warehouse. Data area must be configured in Battle Hub.
+    const detectedDataAreaId: string | undefined = undefined;
 
     console.log(
-      `[LocationSync] Location="${locationName}" (warehouse = location). Default dataAreaId="${detectedDataAreaId}"`
+      `[LocationSync] Location="${locationName}" (warehouse = location). Default dataAreaId is blank until configured in Battle Hub.`
     );
 
     // =========================================================================

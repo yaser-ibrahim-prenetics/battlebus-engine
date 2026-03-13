@@ -25,7 +25,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import { resolveCountryRouting, type WarehouseName } from "@/lib/helpers/warehouse";
+import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
@@ -198,14 +198,13 @@ export const processSubscriptionOrder = inngest.createFunction(
     }
 
     // =========================================================================
-    // STEP 4: Determine warehouse and dataAreaId
-    // Priority: 1. Shopify fulfillment location, 2. Country routing table
+    // STEP 4: Determine warehouse and dataAreaId strictly from Battle Hub
+    // location settings. No country/config fallback.
     // =========================================================================
     const warehouseInfo = await step.run("determine-warehouse", async () => {
       const country_code =
         order.shipping_address?.country_code || order.billing_address?.country_code || "US";
 
-      // 1. Try fulfillment-location routing first
       let fulfillmentLocationId: number | undefined;
       try {
         const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
@@ -217,39 +216,36 @@ export const processSubscriptionOrder = inngest.createFunction(
         console.warn(`[Subscription] Could not fetch fulfillment orders for ${shopifyOrderName}`);
       }
 
-      if (fulfillmentLocationId) {
-        const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-          fulfillmentLocationId,
-          country_code,
-          "im8"
+      if (!fulfillmentLocationId) {
+        throw new Error(
+          `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
         );
-        const warehouseNameFromLocation = await getWarehouseNameForLocation(
-          fulfillmentLocationId,
-          "im8"
-        );
-        if (locationDataAreaId && warehouseNameFromLocation) {
-          console.log(
-            `[Subscription Routing] Location ${fulfillmentLocationId} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
-          );
-          return {
-            dataAreaId: locationDataAreaId,
-            warehouseName: warehouseNameFromLocation as WarehouseName,
-            country_code,
-            routingSource: "location" as const,
-          };
-        }
       }
 
-      // 2. Country routing (config-driven via warehouse-config.json)
-      const routing = resolveCountryRouting(country_code);
+      const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+        fulfillmentLocationId,
+        country_code,
+        "im8"
+      );
+      const warehouseNameFromLocation = await getWarehouseNameForLocation(
+        fulfillmentLocationId,
+        "im8"
+      );
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        throw new Error(
+          `[Subscription Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${country_code}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled.`
+        );
+      }
+
       console.log(
-        `[Subscription Routing] Country ${country_code} → warehouse: ${routing.warehouseName}, dataAreaId: ${routing.dataAreaId} (source: ${routing.source})`
+        `[Subscription Routing] Location ${fulfillmentLocationId} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
       );
       return {
-        dataAreaId: routing.dataAreaId,
-        warehouseName: routing.warehouseName,
+        dataAreaId: locationDataAreaId,
+        warehouseName: warehouseNameFromLocation as WarehouseName,
         country_code,
-        routingSource: routing.source,
+        routingSource: "location" as const,
       };
     });
 
