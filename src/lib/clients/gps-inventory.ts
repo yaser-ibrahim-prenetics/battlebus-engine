@@ -19,6 +19,8 @@ const OMS_MIN_INTERVAL_MS = Math.max(
   0,
   parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10)
 );
+const OMS_MAX_PAGE_SIZE = Math.max(1, parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10));
+const OMS_MAX_SKU_LIST_SIZE = Math.max(1, parseInt(process.env.OMS_MAX_PRODUCT_SKU_LIST_SIZE || "50", 10));
 let omsLastRequestAt = 0;
 
 async function pacedFetch(
@@ -159,7 +161,7 @@ export async function queryOmsInventory(options: {
   // Request data structure based on OMS API pattern
   const data: Record<string, unknown> = {
     page,
-    pageSize,
+    pageSize: Math.min(OMS_MAX_PAGE_SIZE, Math.max(1, pageSize)),
     warehouseCode: creds.warehouseCode,
   };
 
@@ -241,63 +243,70 @@ export async function queryProductInventory(options: {
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  const data: Record<string, unknown> = {
-    page: 1,
-    pageSize: 500,
-    warehouseCode: creds.warehouseCode,
-  };
+  const skuChunks =
+    skus.length > 0
+      ? Array.from({ length: Math.ceil(skus.length / OMS_MAX_SKU_LIST_SIZE) }, (_, i) =>
+          skus.slice(i * OMS_MAX_SKU_LIST_SIZE, (i + 1) * OMS_MAX_SKU_LIST_SIZE)
+        )
+      : [[]];
 
-  if (skus.length > 0) {
-    data.skuList = skus;
-  }
-
-  const authCode = generateAuthCode(creds.apiKey, creds.apiSecret, timestamp, data);
-
-  const requestBody = {
-    appKey: creds.apiKey,
-    data,
-    reqTime: timestamp,
-  };
-
-  // Try product inventory endpoint
-  const url = `${creds.baseUrl}/openapi/v1/product/list?authcode=${authCode}`;
-
-  try {
-    const response = await pacedFetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Product list failed: ${response.status} - ${errorText}`);
-    }
-
-    const result = await response.json();
-
-    if (result.code !== 0 && result.code !== 200) {
-      throw new Error(`Product list error: ${result.msg || result.message}`);
-    }
-
-    // Extract inventory data from product list
-    const products = result.data?.list || result.data || [];
-    return products.map((p: Record<string, unknown>) => ({
-      sku: p.sku || p.productSku,
-      productSku: p.productSku,
+  const allProducts: GpsProductInventoryItem[] = [];
+  for (const skuChunk of skuChunks) {
+    const data: Record<string, unknown> = {
+      page: 1,
+      pageSize: OMS_MAX_PAGE_SIZE,
       warehouseCode: creds.warehouseCode,
-      qty: p.qty || p.quantity || 0,
-      availableQty: p.availableQty || p.available || 0,
-      lockedQty: p.lockedQty || p.locked || 0,
-      transitQty: p.transitQty || p.inTransit || 0,
-      defectiveQty: p.defectiveQty || p.defective || 0,
-    }));
-  } catch (error) {
-    console.error("[GPS-Inventory] Product inventory query failed:", error);
-    return [];
+    };
+    if (skuChunk.length > 0) {
+      data.skuList = skuChunk;
+    }
+
+    const authCode = generateAuthCode(creds.apiKey, creds.apiSecret, timestamp, data);
+    const requestBody = {
+      appKey: creds.apiKey,
+      data,
+      reqTime: timestamp,
+    };
+    const url = `${creds.baseUrl}/openapi/v1/product/list?authcode=${authCode}`;
+
+    try {
+      const response = await pacedFetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Product list failed: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.code !== 0 && result.code !== 200) {
+        throw new Error(`Product list error: ${result.msg || result.message}`);
+      }
+
+      const products = result.data?.list || result.data || [];
+      allProducts.push(
+        ...products.map((p: Record<string, unknown>) => ({
+          sku: p.sku || p.productSku,
+          productSku: p.productSku,
+          warehouseCode: creds.warehouseCode,
+          qty: p.qty || p.quantity || 0,
+          availableQty: p.availableQty || p.available || 0,
+          lockedQty: p.lockedQty || p.locked || 0,
+          transitQty: p.transitQty || p.inTransit || 0,
+          defectiveQty: p.defectiveQty || p.defective || 0,
+        }))
+      );
+    } catch (error) {
+      console.error("[GPS-Inventory] Product inventory query failed:", error);
+    }
   }
+  return allProducts;
 }
 
 /**

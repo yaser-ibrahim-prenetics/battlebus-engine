@@ -10,6 +10,81 @@ import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
 
+const OMS_MIN_INTERVAL_MS = Math.max(
+  0,
+  parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10)
+);
+const OMS_MAX_RETRIES = Math.max(1, parseInt(process.env.OMS_CLIENT_MAX_RETRIES || "3", 10));
+const OMS_RETRY_BASE_MS = Math.max(100, parseInt(process.env.OMS_CLIENT_RETRY_BASE_MS || "300", 10));
+const OMS_MAX_OUTBOUND_CREATE_BATCH = Math.max(
+  1,
+  parseInt(process.env.OMS_MAX_OUTBOUND_CREATE_BATCH || "100", 10)
+);
+const OMS_MAX_PRODUCT_BATCH_CREATE = Math.max(
+  1,
+  parseInt(process.env.OMS_MAX_PRODUCT_BATCH_CREATE || "200", 10)
+);
+const OMS_MAX_INVENTORY_PAGE_SIZE = Math.max(
+  1,
+  parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10)
+);
+const OMS_MAX_OUTBOUND_DETAIL_IDS = Math.max(
+  1,
+  parseInt(process.env.OMS_MAX_OUTBOUND_DETAIL_IDS || "50", 10)
+);
+
+const omsQueueByWarehouse = new Map<string, Promise<void>>();
+const omsLastRequestAtByWarehouse = new Map<string, number>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (items.length === 0) return [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function normalizeOmsCode(code: unknown): number {
+  const n = Number(code);
+  return Number.isFinite(n) ? n : -1;
+}
+
+function isRetryableOmsCode(code: number): boolean {
+  return (
+    code === 100002 || // timestamp timeout
+    code === 100011 || // remote invocation failure
+    code === 200001 // temporary query limit exceeded
+  );
+}
+
+async function withOmsPacing<T>(warehouseKey: string, fn: () => Promise<T>): Promise<T> {
+  const previous = omsQueueByWarehouse.get(warehouseKey) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  omsQueueByWarehouse.set(warehouseKey, previous.then(() => gate));
+
+  await previous;
+  try {
+    if (OMS_MIN_INTERVAL_MS > 0) {
+      const now = Date.now();
+      const last = omsLastRequestAtByWarehouse.get(warehouseKey) || 0;
+      const waitMs = Math.max(0, last + OMS_MIN_INTERVAL_MS - now);
+      if (waitMs > 0) {
+        await sleep(waitMs);
+      }
+      omsLastRequestAtByWarehouse.set(warehouseKey, Date.now());
+    }
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 // ============================================================================
 // GPS AUTH CODE GENERATION (Ported from spock-store)
 // ============================================================================
@@ -189,6 +264,72 @@ function epochInSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+async function postOms<TResponse>(
+  endpointPath: string,
+  requestData: unknown,
+  warehouseName: GpsWarehouseName
+): Promise<TResponse> {
+  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
+  const queueKey = `${warehouseName}:${baseUrl}`;
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= OMS_MAX_RETRIES; attempt++) {
+    const timestamp = epochInSeconds().toString();
+    const payload = {
+      appKey,
+      reqTime: timestamp,
+      data: requestData,
+    };
+    const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
+    const url = `${baseUrl}${endpointPath}?authcode=${authCode}`;
+
+    try {
+      const response = await withOmsPacing(queueKey, () =>
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        })
+      );
+
+      if (!response.ok) {
+        if (
+          attempt < OMS_MAX_RETRIES &&
+          (response.status === 429 || response.status >= 500)
+        ) {
+          await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));
+          continue;
+        }
+        throw new Error(`OMS HTTP error ${response.status} for ${endpointPath}`);
+      }
+
+      const json = (await response.json()) as any;
+      const code = normalizeOmsCode(json?.code);
+      if (code === 200) {
+        return json as TResponse;
+      }
+
+      if (attempt < OMS_MAX_RETRIES && isRetryableOmsCode(code)) {
+        await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));
+        continue;
+      }
+
+      return json as TResponse;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= OMS_MAX_RETRIES) break;
+      await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));
+    }
+  }
+
+  throw (
+    lastError ||
+    new Error(`OMS request failed for ${endpointPath} after ${OMS_MAX_RETRIES} attempts`)
+  );
+}
+
 /**
  * Create an Outbound Order in GPS Warehouse
  * Ported from spock-store with correct auth code generation
@@ -203,15 +344,17 @@ export async function createOutboundOrder(
 }> {
   // Validate warehouse exists
   getWarehouseConfig(warehouseName);
-  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
-
   const data: GpsOrderData[] = [orderData];
-  const timestamp = epochInSeconds().toString();
+  if (data.length > OMS_MAX_OUTBOUND_CREATE_BATCH) {
+    throw new Error(
+      `GPS outbound create batch exceeds limit (${data.length} > ${OMS_MAX_OUTBOUND_CREATE_BATCH})`
+    );
+  }
 
   const payload: GpsCreateOrderRequest = {
     data,
-    appKey,
-    reqTime: timestamp,
+    appKey: getApiCredentials(warehouseName).appKey,
+    reqTime: epochInSeconds().toString(),
   };
 
   console.log(`[GPS] Creating outbound order: ${JSON.stringify(payload)}`);
@@ -235,17 +378,11 @@ export async function createOutboundOrder(
     };
   }
 
-  const authCode = generateAuthCode(data, timestamp, appKey, appSecret);
-
-  const response = await fetch(`${baseUrl}/openapi/v1/outboundOrder/create?authcode=${authCode}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const result: GpsCreateOrderResponse = await response.json();
+  const result = await postOms<GpsCreateOrderResponse>(
+    "/openapi/v1/outboundOrder/create",
+    data,
+    warehouseName
+  );
 
   console.log(`[GPS] Response: ${JSON.stringify(result)}`);
 
@@ -315,18 +452,12 @@ export async function getOutboundOrdersDetails(
     };
   }
 
-  const { appKey, appSecret, baseUrl } = getApiCredentials(warehouseName);
-  const timestamp = epochInSeconds().toString();
-
-  const requestData = {
-    outboundOrderNoList: orderIds,
-  };
-
-  const payload: GpsGetOrdersDetailRequest = {
-    appKey,
-    reqTime: timestamp,
-    data: requestData,
-  };
+  const requestChunks = chunkArray(orderIds, OMS_MAX_OUTBOUND_DETAIL_IDS);
+  if (requestChunks.length === 0) {
+    return {
+      response: { code: 200, msg: "操作成功", data: [] },
+    };
+  }
 
   console.log(`[GPS] Getting order details for: ${orderIds.join(", ")}`);
 
@@ -351,18 +482,28 @@ export async function getOutboundOrdersDetails(
     };
   }
 
-  const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
+  const merged: GpsGetOrdersDetailResponse = {
+    code: 200,
+    msg: "操作成功",
+    data: [],
+  };
 
-  const response = await fetch(`${baseUrl}/openapi/v1/outboundOrder/detail?authcode=${authCode}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  for (const chunk of requestChunks) {
+    const requestData = { outboundOrderNoList: chunk };
+    const result = await postOms<GpsGetOrdersDetailResponse>(
+      "/openapi/v1/outboundOrder/detail",
+      requestData,
+      warehouseName
+    );
+    if (result.code !== 200) {
+      return { response: result };
+    }
+    if (Array.isArray(result.data)) {
+      merged.data.push(...result.data);
+    }
+  }
 
-  const result: GpsGetOrdersDetailResponse = await response.json();
-  return { response: result };
+  return { response: merged };
 }
 
 /**
@@ -532,7 +673,7 @@ export async function getInventory(
 
   const requestData: GpsGetInventoryRequest["data"] = {
     pageNum: options.pageNum ?? 1,
-    pageSize: options.pageSize ?? 100,
+    pageSize: Math.min(OMS_MAX_INVENTORY_PAGE_SIZE, options.pageSize ?? 100),
     ...(options.sku && { sku: options.sku }),
     ...(options.whCode && { whCode: options.whCode }),
   };
@@ -565,20 +706,11 @@ export async function getInventory(
     };
   }
 
-  const authCode = generateAuthCode(requestData, timestamp, appKey, appSecret);
-
-  const response = await fetch(
-    `${baseUrl}/openapi/v1/integratedInventory/pageOpen?authcode=${authCode}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    }
+  const result = await postOms<GpsGetInventoryResponse>(
+    "/openapi/v1/integratedInventory/pageOpen",
+    requestData,
+    warehouseName
   );
-
-  const result: GpsGetInventoryResponse = await response.json();
 
   if (result.code !== 200) {
     throw new Error(`GPS Inventory API error: ${result.code} - ${result.msg}`);
@@ -737,61 +869,48 @@ export async function syncProduct(
   }
 
   try {
-    const timestamp = epochInSeconds().toString();
+    const chunks = chunkArray(productDataArray, OMS_MAX_PRODUCT_BATCH_CREATE);
+    let successCount = 0;
+    const failures: string[] = [];
 
-    // Build GPS batch create payload
-    const payload = {
-      appKey,
-      data: productDataArray,
-      reqTime: timestamp,
-    };
+    for (const chunk of chunks) {
+      console.log(
+        `[GPS] Batch creating ${chunk.length} product(s) via /openapi/v1/product/batchCreate`
+      );
+      const result: any = await postOms<any>(
+        "/openapi/v1/product/batchCreate",
+        chunk,
+        warehouseName
+      );
 
-    // Generate authcode using GPS signature algorithm
-    const authCode = generateAuthCode(productDataArray, timestamp, appKey, appSecret);
-
-    console.log(
-      `[GPS] Batch creating ${productDataArray.length} product(s) via /openapi/v1/product/batchCreate`
-    );
-
-    const response = await fetch(`${baseUrl}/openapi/v1/product/batchCreate?authcode=${authCode}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const result: any = await response.json();
-
-    if (result.code === 200) {
-      // Check individual product results
-      const failedProducts = result.data?.filter((item: any) => !item.success) || [];
-      const successProducts = result.data?.filter((item: any) => item.success) || [];
-
-      if (failedProducts.length > 0) {
-        console.log(`[GPS] ⚠️  Some products failed:`, failedProducts);
-        const errorMessages = failedProducts
-          .map((p: any) => `${p.sku}: ${p.message || "Unknown error"}`)
-          .join(", ");
-        return {
-          success: successProducts.length > 0,
-          message: `Synced ${successProducts.length}/${productDataArray.length} product(s) to GPS. Failures: ${errorMessages}`,
-        };
+      if (normalizeOmsCode(result?.code) !== 200) {
+        failures.push(`batch(${chunk.length}): ${result?.msg || "Unknown OMS error"}`);
+        continue;
       }
 
-      console.log(`[GPS] ✅ Successfully synced ${productDataArray.length} product(s) to GPS`);
+      const failedProducts = result.data?.filter((item: any) => !item.success) || [];
+      const successProducts = result.data?.filter((item: any) => item.success) || [];
+      successCount += successProducts.length;
+
+      if (failedProducts.length > 0) {
+        failures.push(
+          ...failedProducts.map((p: any) => `${p.sku}: ${p.message || "Unknown error"}`)
+        );
+      }
+    }
+
+    if (failures.length > 0) {
       return {
-        success: true,
-        message: `Successfully synced ${productDataArray.length} product(s) to GPS`,
-      };
-    } else {
-      const errorMsg = result.msg || JSON.stringify(result);
-      console.error(`[GPS] ❌ Failed to batch create products: ${errorMsg}`);
-      return {
-        success: false,
-        message: `GPS API error: ${errorMsg}`,
+        success: successCount > 0,
+        message: `Synced ${successCount}/${productDataArray.length} product(s) to GPS. Failures: ${failures.join(", ")}`,
       };
     }
+
+    console.log(`[GPS] ✅ Successfully synced ${successCount} product(s) to GPS`);
+    return {
+      success: true,
+      message: `Successfully synced ${successCount} product(s) to GPS`,
+    };
   } catch (error) {
     console.error(`[GPS] Error syncing products:`, error);
     return {
