@@ -122,6 +122,13 @@ export function getWarehouseConfig(warehouseName: string): WarehouseConfig {
 }
 
 /**
+ * Validate warehouse exists in static warehouse config.
+ */
+export function isKnownWarehouseName(warehouseName: string): warehouseName is WarehouseName {
+  return Object.prototype.hasOwnProperty.call(warehouseConfig.warehouses, warehouseName);
+}
+
+/**
  * Get default warehouse configuration
  */
 export function getDefaultWarehouse(): WarehouseConfig {

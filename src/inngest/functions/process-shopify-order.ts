@@ -22,7 +22,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import { type WarehouseName } from "@/lib/helpers/warehouse";
+import { isKnownWarehouseName, type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
@@ -41,6 +41,22 @@ import {
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
+
+function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
+  const activeOrders = fulfillmentOrders.filter(
+    (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+  );
+  if (!activeOrders.length) return null;
+
+  const deliverable = activeOrders.filter((fo: any) => {
+    const methodType = String(fo?.delivery_method?.method_type || "").toLowerCase();
+    const assignedLocationName = String(fo?.assigned_location?.name || "").toLowerCase();
+    return methodType !== "none" && !assignedLocationName.includes("virtual");
+  });
+
+  const candidate = deliverable[0] || activeOrders[0];
+  return candidate?.assigned_location_id ? Number(candidate.assigned_location_id) : null;
+}
 
 export const processShopifyOrder = inngest.createFunction(
   {
@@ -294,12 +310,7 @@ export const processShopifyOrder = inngest.createFunction(
       let fulfillmentLocationId: number | null = null;
       try {
         const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-        const openFulfillment = fulfillmentOrders.find(
-          (fo: any) => fo.status === "open" || fo.status === "in_progress"
-        );
-        if (openFulfillment?.assigned_location_id) {
-          fulfillmentLocationId = openFulfillment.assigned_location_id;
-        }
+        fulfillmentLocationId = selectPreferredFulfillmentLocationId(fulfillmentOrders as any[]);
       } catch (error) {
         console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
       }
@@ -328,6 +339,17 @@ export const processShopifyOrder = inngest.createFunction(
         );
         throw new Error(
           `[Order Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${countryCode}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled. Context: ${routingContext}`
+        );
+      }
+
+      if (!isKnownWarehouseName(warehouseNameFromLocation)) {
+        const routingContext = await getLocationRoutingDebugContext(
+          fulfillmentLocationId,
+          countryCode,
+          "im8"
+        );
+        throw new Error(
+          `[Order Routing] Unsupported warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Location settings must use a configured warehouse profile (for example: GPS Warehouse, GPS UK Warehouse, STORD ATL Location, STORD EU Location, HK Warehouse). Context: ${routingContext}`
         );
       }
 
