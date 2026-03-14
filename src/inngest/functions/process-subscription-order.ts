@@ -31,7 +31,9 @@ import {
   getDataAreaIdForLocationAndCountry,
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
+  findLocationByWarehouseName,
 } from "@/lib/services/location-routing";
+import { determineWarehouse } from "@/lib/helpers/warehouse";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -272,9 +274,20 @@ export const processSubscriptionOrder = inngest.createFunction(
       }
 
       if (!fulfillmentLocationId) {
-        throw new Error(
-          `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
-        );
+        const expectedWarehouseName = determineWarehouse(countryCode);
+        const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
+        if (hubLocation?.shopifyLocationId) {
+          fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
+          console.warn(
+            `[Subscription Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
+            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
+          );
+        } else {
+          throw new Error(
+            `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
+            `Configure the location in Battle Hub Locations settings.`
+          );
+        }
       }
 
       let locationDataAreaId = await getDataAreaIdForLocationAndCountry(

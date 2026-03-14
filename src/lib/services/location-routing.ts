@@ -451,6 +451,29 @@ export async function getWarehouseNameForLocation(
 }
 
 /**
+ * Find the first active Battle Hub location whose warehouse_name matches.
+ * Used as a last-resort when Shopify only assigns a virtual location but we
+ * know the expected warehouse from the static country-routing table.
+ */
+export async function findLocationByWarehouseName(
+  warehouseName: string,
+  store = "im8"
+): Promise<LocationMapping | null> {
+  const mappings = await getLocationMappings();
+  const name = (warehouseName || "").trim().toLowerCase();
+  const match = mappings.find(
+    (m) =>
+      m.active &&
+      m.store === store &&
+      m.warehouseName !== null &&
+      m.dynamicsDataAreaId !== null &&
+      !String(m.warehouseName || "").toLowerCase().includes("virtual") &&
+      String(m.warehouseName || "").trim().toLowerCase() === name
+  );
+  return match || null;
+}
+
+/**
  * Get all locations for a specific DataAreaId.
  * Used by inventory sync.
  */

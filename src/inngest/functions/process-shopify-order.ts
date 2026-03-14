@@ -28,7 +28,9 @@ import {
   getDataAreaIdForLocationAndCountry,
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
+  findLocationByWarehouseName,
 } from "@/lib/services/location-routing";
+import { determineWarehouse } from "@/lib/helpers/warehouse";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -355,19 +357,25 @@ export const processShopifyOrder = inngest.createFunction(
         );
       }
 
+      // Last resort: Shopify gave us only a virtual location.
+      // Use the static country-routing table to look up the expected warehouse name,
+      // then resolve the actual Battle Hub location for that warehouse.
+      // This still reads all config (dataAreaId, warehouse) from Hub location settings.
       if (!fulfillmentLocationId) {
-        const hasVirtualIntended = (() => {
-          const attrs = Array.isArray((order as any)?.note_attributes)
-            ? ((order as any).note_attributes as Array<{ name?: string; value?: string }>)
-            : [];
-          const name = attrs.find((a) => String(a?.name || "").toLowerCase() === "intended_location_name")?.value || "";
-          return String(name).toLowerCase().includes("virtual");
-        })();
-        throw new Error(
-          hasVirtualIntended
-            ? `[Order Routing] Order ${shopifyOrderName} was created targeting a Virtual location and cannot be routed. Delete this order and recreate it targeting a real Shopify fulfillment location (e.g. HK Warehouse, GPS Warehouse).`
-            : `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
-        );
+        const expectedWarehouseName = determineWarehouse(countryCode);
+        const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
+        if (hubLocation?.shopifyLocationId) {
+          fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
+          console.warn(
+            `[Order Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
+            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
+          );
+        } else {
+          throw new Error(
+            `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
+            `Configure the location in Battle Hub Locations settings.`
+          );
+        }
       }
 
       let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
