@@ -25,7 +25,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import { isKnownWarehouseName, type WarehouseName } from "@/lib/helpers/warehouse";
+import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
@@ -258,14 +258,14 @@ export const processSubscriptionOrder = inngest.createFunction(
         );
       }
 
-      if (!isKnownWarehouseName(warehouseNameFromLocation)) {
+      if (String(warehouseNameFromLocation).toLowerCase().includes("virtual")) {
         const routingContext = await getLocationRoutingDebugContext(
           fulfillmentLocationId,
           country_code,
           "im8"
         );
         throw new Error(
-          `[Subscription Routing] Unsupported warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Location settings must use a configured warehouse profile (for example: GPS Warehouse, GPS UK Warehouse, STORD ATL Location, STORD EU Location, HK Warehouse). Context: ${routingContext}`
+          `[Subscription Routing] Unsupported virtual warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Configure a real fulfillment location in Shopify and Battle Hub. Context: ${routingContext}`
         );
       }
 
@@ -310,8 +310,7 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped", salesOrderNumber: "" };
       }
 
-      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName);
-      headerPayload.dataAreaId = dataAreaId;
+      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
 
       const result = await retryWithBackoff(
         () => dynamics.createSalesOrderHeaderV3(headerPayload),
@@ -335,7 +334,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     await step.run("create-d365-order-lines", async () => {
       if (!config.features.enableDynamicsSync) return { status: "skipped" };
 
-      const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName);
+      const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName, true, dataAreaId);
 
       await Promise.all(
         lines.map((line) =>

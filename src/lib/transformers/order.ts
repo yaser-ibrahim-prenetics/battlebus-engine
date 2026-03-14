@@ -30,8 +30,10 @@ import {
 } from "./sku";
 import {
   getWarehouseConfig,
+  getWarehouseConfigForDataAreaId,
   determineWarehouse,
   toDefaultLedgerDimensionDisplayValue,
+  toDefaultLedgerDimensionDisplayValueByDataArea,
   getGpsWarehouseCode,
   getGpsLogisticsChannel,
   isGpsUkWarehouse,
@@ -39,6 +41,7 @@ import {
   getShippingSku,
   getTaxSku,
   getOrderingCustomerAccountNumber,
+  getOrderingCustomerAccountNumberByDataAreaId,
 } from "../helpers/warehouse";
 import type { GpsOrderData, GpsProductItem } from "../clients/gps";
 
@@ -59,14 +62,24 @@ const GpsOrderType = {
  */
 export function toD365SalesOrderHeaderV3(
   order: ShopifyOrderPayload,
-  warehouseName?: string
+  warehouseName?: string,
+  dataAreaIdOverride?: string
 ): D365SalesOrderHeaderV3Request {
   const warehouse =
     warehouseName ||
     determineWarehouse(
       order.shipping_address?.country_code || order.billing_address?.country_code || "US"
     );
-  const warehouseConfig = getWarehouseConfig(warehouse);
+  const effectiveDataAreaId = (dataAreaIdOverride || "").toUpperCase();
+  const warehouseConfig = effectiveDataAreaId
+    ? getWarehouseConfigForDataAreaId(effectiveDataAreaId)
+    : getWarehouseConfig(warehouse);
+  const orderingCustomerAccountNumber = effectiveDataAreaId
+    ? getOrderingCustomerAccountNumberByDataAreaId(effectiveDataAreaId)
+    : getOrderingCustomerAccountNumber(warehouse);
+  const defaultLedgerDimensionDisplayValue = effectiveDataAreaId
+    ? toDefaultLedgerDimensionDisplayValueByDataArea(warehouse, effectiveDataAreaId)
+    : toDefaultLedgerDimensionDisplayValue(warehouse);
 
   const shippingAddress = order.shipping_address || order.billing_address;
   const billingAddress = order.billing_address || order.shipping_address;
@@ -74,9 +87,9 @@ export function toD365SalesOrderHeaderV3(
   return {
     customerId: String(order.customer?.id || ""),
     orderId: String(order.id),
-    dataAreaId: warehouseConfig.dataAreaId,
-    orderingCustomerAccountNumber: getOrderingCustomerAccountNumber(warehouse),
-    defaultLedgerDimensionDisplayValue: toDefaultLedgerDimensionDisplayValue(warehouse),
+    dataAreaId: effectiveDataAreaId || warehouseConfig.dataAreaId,
+    orderingCustomerAccountNumber,
+    defaultLedgerDimensionDisplayValue,
     customerOrderReference: order.name,
     email: order.email,
     name: order.customer
@@ -154,10 +167,12 @@ export function toD365SalesOrderLines(
   order: ShopifyOrderPayload,
   salesOrderNumber: string,
   warehouseName: string,
-  includeShippingAndTax: boolean = true
+  includeShippingAndTax: boolean = true,
+  dataAreaIdOverride?: string
 ): D365SalesOrderLineRequest[] {
-  const warehouseConfig = getWarehouseConfig(warehouseName);
-  const dataAreaId = warehouseConfig.dataAreaId;
+  const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
+    ? (dataAreaIdOverride || "").toUpperCase()
+    : getWarehouseConfig(warehouseName).dataAreaId;
   const currency = order.currency || "USD";
   const discountCodes = order.discount_codes?.map((d) => d.code);
   const skuTransformer = createShopifyToDynamicsLineTransformer();

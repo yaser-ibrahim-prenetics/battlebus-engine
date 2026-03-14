@@ -129,6 +129,34 @@ export function isKnownWarehouseName(warehouseName: string): warehouseName is Wa
 }
 
 /**
+ * Resolve a warehouse profile from D365 dataAreaId.
+ * Used when a Shopify location name is not one of the static warehouse keys.
+ */
+export function getWarehouseConfigForDataAreaId(dataAreaId: string): WarehouseConfig {
+  const normalized = (dataAreaId || "").toUpperCase();
+  const warehouses = warehouseConfig.warehouses as Record<string, WarehouseConfig>;
+
+  // Prefer canonical profiles for each data area.
+  const preferredProfileByArea: Record<string, string> = {
+    U001: "GPS Warehouse",
+    H007: "GPS UK Warehouse",
+    H005: "HK Warehouse",
+  };
+
+  const preferred = preferredProfileByArea[normalized];
+  if (preferred && warehouses[preferred]) {
+    return warehouses[preferred];
+  }
+
+  const matched = Object.values(warehouses).find(
+    (cfg) => (cfg.dataAreaId || "").toUpperCase() === normalized
+  );
+  if (matched) return matched;
+
+  throw new Error(`No warehouse profile found for dataAreaId: ${dataAreaId}`);
+}
+
+/**
  * Get default warehouse configuration
  */
 export function getDefaultWarehouse(): WarehouseConfig {
@@ -180,6 +208,28 @@ function deriveCustomerAccountNumber(dataAreaId: string): string {
 
   const suffix = customerAccountSuffix[dataAreaId] || "C000000001"; // Default fallback
   return `${dataAreaId}-${suffix}`;
+}
+
+/**
+ * Derive customer account directly from dataAreaId.
+ * This prevents warehouse-name defaults from leaking wrong account dimensions.
+ */
+export function getOrderingCustomerAccountNumberByDataAreaId(dataAreaId: string): string {
+  return deriveCustomerAccountNumber((dataAreaId || "").toUpperCase());
+}
+
+/**
+ * Build default ledger dimension display value with an explicit dataAreaId.
+ */
+export function toDefaultLedgerDimensionDisplayValueByDataArea(
+  warehouseName: string,
+  dataAreaId: string
+): string {
+  const profile = isKnownWarehouseName(warehouseName)
+    ? getWarehouseConfig(warehouseName)
+    : getWarehouseConfigForDataAreaId(dataAreaId);
+  const orderingCustomerAccountNumber = getOrderingCustomerAccountNumberByDataAreaId(dataAreaId);
+  return `~${profile.dimensionValue}~${profile.project}~~${orderingCustomerAccountNumber}`;
 }
 
 /**

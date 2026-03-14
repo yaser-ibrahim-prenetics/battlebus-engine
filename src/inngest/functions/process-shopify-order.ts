@@ -22,7 +22,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import { isKnownWarehouseName, type WarehouseName } from "@/lib/helpers/warehouse";
+import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
   getDataAreaIdForLocationAndCountry,
@@ -342,14 +342,14 @@ export const processShopifyOrder = inngest.createFunction(
         );
       }
 
-      if (!isKnownWarehouseName(warehouseNameFromLocation)) {
+      if (String(warehouseNameFromLocation).toLowerCase().includes("virtual")) {
         const routingContext = await getLocationRoutingDebugContext(
           fulfillmentLocationId,
           countryCode,
           "im8"
         );
         throw new Error(
-          `[Order Routing] Unsupported warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Location settings must use a configured warehouse profile (for example: GPS Warehouse, GPS UK Warehouse, STORD ATL Location, STORD EU Location, HK Warehouse). Context: ${routingContext}`
+          `[Order Routing] Unsupported virtual warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Configure a real fulfillment location in Shopify and Battle Hub. Context: ${routingContext}`
         );
       }
 
@@ -406,8 +406,7 @@ export const processShopifyOrder = inngest.createFunction(
       // 2a. Create D365 Header
       await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
       const d365Header = await step.run("create-d365-header", async () => {
-        const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName);
-        headerRequest.dataAreaId = dataAreaId;
+        const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
         if (skipD365) {
           return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
         }
@@ -425,7 +424,7 @@ export const processShopifyOrder = inngest.createFunction(
       );
 
       // 2b. Create D365 Lines - OPTIMIZED: Parallel creation instead of sequential
-      const lineItems = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true);
+      const lineItems = toD365SalesOrderLines(order, salesOrderNumber, warehouseName, true, dataAreaId);
       // Update all line items with the correct dataAreaId from location routing
       lineItems.forEach((item) => {
         item.dataAreaId = dataAreaId;
