@@ -274,17 +274,17 @@ export const processSubscriptionOrder = inngest.createFunction(
       }
 
       if (!fulfillmentLocationId) {
-        const expectedWarehouseName = determineWarehouse(countryCode);
+        const expectedWarehouseName = determineWarehouse(country_code);
         const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
         if (hubLocation?.shopifyLocationId) {
           fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
           console.warn(
             `[Subscription Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
-            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
+            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${country_code} + Battle Hub config.`
           );
         } else {
           throw new Error(
-            `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
+            `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${country_code} (expected warehouse: ${expectedWarehouseName}). ` +
             `Configure the location in Battle Hub Locations settings.`
           );
         }
