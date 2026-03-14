@@ -59,6 +59,17 @@ function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number 
   return candidate?.assigned_location_id ? Number(candidate.assigned_location_id) : null;
 }
 
+function getIntendedLocationIdFromOrder(order: ShopifyOrderPayload): number | null {
+  const attributes = Array.isArray((order as any)?.note_attributes)
+    ? ((order as any).note_attributes as Array<{ name?: string; value?: string }>)
+    : [];
+  const intended = attributes.find(
+    (attr) => String(attr?.name || "").toLowerCase() === "intended_location_id"
+  )?.value;
+  const parsed = Number(String(intended || "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -221,6 +232,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     const warehouseInfo = await step.run("determine-warehouse", async () => {
       const country_code =
         order.shipping_address?.country_code || order.billing_address?.country_code || "US";
+      const intendedLocationId = getIntendedLocationIdFromOrder(order);
 
       let fulfillmentLocationId: number | undefined;
       try {
@@ -231,21 +243,50 @@ export const processSubscriptionOrder = inngest.createFunction(
         console.warn(`[Subscription] Could not fetch fulfillment orders for ${shopifyOrderName}`);
       }
 
+      if (!fulfillmentLocationId && intendedLocationId) {
+        fulfillmentLocationId = intendedLocationId;
+        console.log(
+          `[Subscription Routing] Using intended_location_id=${intendedLocationId} from order note attributes for ${shopifyOrderName}`
+        );
+      }
+
       if (!fulfillmentLocationId) {
         throw new Error(
           `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
         );
       }
 
-      const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+      let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
         fulfillmentLocationId,
         country_code,
         "im8"
       );
-      const warehouseNameFromLocation = await getWarehouseNameForLocation(
+      let warehouseNameFromLocation = await getWarehouseNameForLocation(
         fulfillmentLocationId,
         "im8"
       );
+
+      if (
+        intendedLocationId &&
+        intendedLocationId !== fulfillmentLocationId &&
+        String(warehouseNameFromLocation || "")
+          .toLowerCase()
+          .includes("virtual")
+      ) {
+        const intendedWarehouse = await getWarehouseNameForLocation(intendedLocationId, "im8");
+        if (intendedWarehouse && !String(intendedWarehouse).toLowerCase().includes("virtual")) {
+          fulfillmentLocationId = intendedLocationId;
+          locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+            fulfillmentLocationId,
+            country_code,
+            "im8"
+          );
+          warehouseNameFromLocation = intendedWarehouse;
+          console.log(
+            `[Subscription Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
+          );
+        }
+      }
 
       if (!locationDataAreaId || !warehouseNameFromLocation) {
         const routingContext = await getLocationRoutingDebugContext(

@@ -58,6 +58,17 @@ function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number 
   return candidate?.assigned_location_id ? Number(candidate.assigned_location_id) : null;
 }
 
+function getIntendedLocationIdFromOrder(order: ShopifyOrderPayload): number | null {
+  const attributes = Array.isArray((order as any)?.note_attributes)
+    ? ((order as any).note_attributes as Array<{ name?: string; value?: string }>)
+    : [];
+  const intended = attributes.find(
+    (attr) => String(attr?.name || "").toLowerCase() === "intended_location_id"
+  )?.value;
+  const parsed = Number(String(intended || "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 export const processShopifyOrder = inngest.createFunction(
   {
     id: "process-shopify-order",
@@ -306,6 +317,7 @@ export const processShopifyOrder = inngest.createFunction(
     const routingResult = await step.run("determine-warehouse-routing", async () => {
       const countryCode =
         order.shipping_address?.country_code || order.billing_address?.country_code || "US";
+      const intendedLocationId = getIntendedLocationIdFromOrder(order);
 
       let fulfillmentLocationId: number | null = null;
       try {
@@ -315,21 +327,52 @@ export const processShopifyOrder = inngest.createFunction(
         console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
       }
 
+      if (!fulfillmentLocationId && intendedLocationId) {
+        fulfillmentLocationId = intendedLocationId;
+        console.log(
+          `[Order Routing] Using intended_location_id=${intendedLocationId} from order note attributes for ${shopifyOrderName}`
+        );
+      }
+
       if (!fulfillmentLocationId) {
         throw new Error(
           `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName}. Configure Shopify routing/location assignment first; country fallback is disabled.`
         );
       }
 
-      const locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+      let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
         fulfillmentLocationId,
         countryCode,
         "im8"
       );
-      const warehouseNameFromLocation = await getWarehouseNameForLocation(
+      let warehouseNameFromLocation = await getWarehouseNameForLocation(
         fulfillmentLocationId,
         "im8"
       );
+
+      // Shopify may assign a virtual location for some queued/unassigned FOs.
+      // For Battle Hub generated tests/reruns, honor intended_location_id when present.
+      if (
+        intendedLocationId &&
+        intendedLocationId !== fulfillmentLocationId &&
+        String(warehouseNameFromLocation || "")
+          .toLowerCase()
+          .includes("virtual")
+      ) {
+        const intendedWarehouse = await getWarehouseNameForLocation(intendedLocationId, "im8");
+        if (intendedWarehouse && !String(intendedWarehouse).toLowerCase().includes("virtual")) {
+          fulfillmentLocationId = intendedLocationId;
+          locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+            fulfillmentLocationId,
+            countryCode,
+            "im8"
+          );
+          warehouseNameFromLocation = intendedWarehouse;
+          console.log(
+            `[Order Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
+          );
+        }
+      }
 
       if (!locationDataAreaId || !warehouseNameFromLocation) {
         const routingContext = await getLocationRoutingDebugContext(
