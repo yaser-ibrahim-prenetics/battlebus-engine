@@ -49,24 +49,45 @@ function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number 
   );
   if (!activeOrders.length) return null;
 
+  // Priority 1: open FOs with a real delivery method AND a non-virtual location
   const deliverable = activeOrders.filter((fo: any) => {
     const methodType = String(fo?.delivery_method?.method_type || "").toLowerCase();
     const assignedLocationName = String(fo?.assigned_location?.name || "").toLowerCase();
     return methodType !== "none" && !assignedLocationName.includes("virtual");
   });
+  if (deliverable[0]?.assigned_location_id) {
+    return Number(deliverable[0].assigned_location_id);
+  }
 
-  const candidate = deliverable[0] || activeOrders[0];
-  return candidate?.assigned_location_id ? Number(candidate.assigned_location_id) : null;
+  // Priority 2: any open FO whose assigned location is not virtual (ignoring delivery method)
+  const nonVirtual = activeOrders.filter(
+    (fo: any) =>
+      !String(fo?.assigned_location?.name || "").toLowerCase().includes("virtual")
+  );
+  if (nonVirtual[0]?.assigned_location_id) {
+    return Number(nonVirtual[0].assigned_location_id);
+  }
+
+  // All open FOs point to virtual — return null so caller can use intended_location_id
+  return null;
 }
 
 function getIntendedLocationIdFromOrder(order: ShopifyOrderPayload): number | null {
   const attributes = Array.isArray((order as any)?.note_attributes)
     ? ((order as any).note_attributes as Array<{ name?: string; value?: string }>)
     : [];
-  const intended = attributes.find(
-    (attr) => String(attr?.name || "").toLowerCase() === "intended_location_id"
-  )?.value;
-  const parsed = Number(String(intended || "").trim());
+
+  const getAttr = (key: string) =>
+    attributes.find((a) => String(a?.name || "").toLowerCase() === key)?.value || "";
+
+  const intendedName = getAttr("intended_location_name");
+  // Skip if the noted intended location is itself virtual — it was created incorrectly
+  if (intendedName && String(intendedName).toLowerCase().includes("virtual")) {
+    return null;
+  }
+
+  const intendedId = getAttr("intended_location_id");
+  const parsed = Number(String(intendedId).trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
