@@ -147,6 +147,8 @@ export interface RetryWithBackoffOptions {
   maxDelayMs?: number;
   /** Which HTTP status codes to retry on (in addition to network errors) */
   retryableStatuses?: number[];
+  /** Optional classifier to skip retries for known non-transient errors */
+  shouldRetry?: (error: unknown) => boolean;
 }
 
 const DEFAULT_RETRY_OPTS: Required<Omit<RetryWithBackoffOptions, "label">> = {
@@ -154,6 +156,7 @@ const DEFAULT_RETRY_OPTS: Required<Omit<RetryWithBackoffOptions, "label">> = {
   baseDelayMs: envInt("STEP_BACKOFF_BASE_MS", 500),
   maxDelayMs: envInt("STEP_BACKOFF_MAX_MS", 8000),
   retryableStatuses: [429, 500, 502, 503, 504],
+  shouldRetry: () => true,
 };
 
 /**
@@ -169,6 +172,7 @@ export async function retryWithBackoff<T>(
     maxAttempts = DEFAULT_RETRY_OPTS.maxAttempts,
     baseDelayMs = DEFAULT_RETRY_OPTS.baseDelayMs,
     maxDelayMs = DEFAULT_RETRY_OPTS.maxDelayMs,
+    shouldRetry,
   } = opts;
 
   let lastError: unknown;
@@ -178,6 +182,9 @@ export async function retryWithBackoff<T>(
       return await fn();
     } catch (err: any) {
       lastError = err;
+      if (shouldRetry && !shouldRetry(err)) {
+        throw err;
+      }
       if (attempt === maxAttempts) break;
 
       const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);

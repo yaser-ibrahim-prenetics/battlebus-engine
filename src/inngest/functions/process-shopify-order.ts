@@ -98,13 +98,35 @@ function isInventoryIssueError(message: string): boolean {
     m.includes("out of stock") ||
     m.includes("inventory insufficient") ||
     m.includes("cannot be reserved") ||
+    (m.includes("item number") && m.includes("does not exist")) ||
     m.includes("库存不足") ||
     m.includes("未维护新品")
   );
 }
 
+function isNonRetryableOrderError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return (
+    // Inventory / master-data conditions that won't be fixed by immediate retries
+    m.includes("out of stock") ||
+    m.includes("inventory insufficient") ||
+    m.includes("cannot be reserved") ||
+    (m.includes("item number") && m.includes("does not exist")) ||
+    m.includes("sku有误") ||
+    m.includes("未维护新品") ||
+    // Warehouse/configuration issues
+    m.includes("unknown warehouse") ||
+    m.includes("unsupported warehouse") ||
+    m.includes("unsupported virtual warehouse") ||
+    m.includes("not fully configured in battle hub")
+  );
+}
+
 function inferInventoryErrorType(message: string): string {
   const m = String(message || "").toLowerCase();
+  if (m.includes("item number") && m.includes("does not exist")) {
+    return "d365_item_not_found";
+  }
   if (m.includes("cannot be reserved") || m.includes("inventory insufficient")) {
     return "inventory_insufficient";
   }
@@ -552,6 +574,10 @@ export const processShopifyOrder = inngest.createFunction(
           lineItems.map((line) =>
             retryWithBackoff(() => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }), {
               label: `D365 line ${line.itemNumber}`,
+              shouldRetry: (err) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                return !isNonRetryableOrderError(msg);
+              },
             })
           )
         );
@@ -898,7 +924,8 @@ export const processShopifyOrder = inngest.createFunction(
               errorType,
               failedSkus,
               retryCount: 0,
-              maxRetries: 7,
+              // Out-of-stock/master-data issues should be parked, not loop-retried.
+              maxRetries: 0,
               createdAt: new Date().toISOString(),
             },
           });
@@ -1031,7 +1058,8 @@ export const processShopifyOrder = inngest.createFunction(
               errorType: inventoryErrorType,
               failedSkus,
               retryCount: 0,
-              maxRetries: 7,
+              // Out-of-stock/master-data issues should be parked, not loop-retried.
+              maxRetries: 0,
               createdAt: new Date().toISOString(),
             },
           });
@@ -1072,6 +1100,47 @@ export const processShopifyOrder = inngest.createFunction(
           d365OrderNumber: salesOrderNumber,
           error: errorMsg,
           errorType: inventoryErrorType,
+          processedAt: new Date().toISOString(),
+        };
+      }
+
+      // Non-retryable configuration/master-data errors: record and stop here.
+      // Do not rethrow, so Inngest function-level retries are avoided.
+      if (isNonRetryableOrderError(errorMsg)) {
+        await publishResult("failed", {
+          error: errorMsg,
+          d365OrderNumber: salesOrderNumber,
+        });
+
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            status: "failed",
+            processingStatus: "failed",
+            gpsSyncStatus: "failed",
+            error: errorMsg,
+            lastError: errorMsg,
+            errorType: "non_retryable_data_error",
+            lastErrorType: "non_retryable_data_error",
+          },
+          { inngestIdempotencyKey, inngestRunId }
+        );
+
+        await slack.sendWarningMessage(
+          SlackChannelEnum.SHOPIFY,
+          `[Non-Retryable] ${shopifyOrderName}: ${errorMsg}`
+        );
+
+        return {
+          status: "failed",
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: salesOrderNumber,
+          error: errorMsg,
+          errorType: "non_retryable_data_error",
           processedAt: new Date().toISOString(),
         };
       }

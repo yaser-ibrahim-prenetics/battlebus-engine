@@ -81,6 +81,28 @@ export const processBackorder = inngest.createFunction(
       );
     });
 
+    // No auto-retry mode: keep order parked in backorder queue for manual action only.
+    if (maxRetries <= 0) {
+      await step.run("notify-backorder-parked-no-retry", async () => {
+        await slack.sendWarningMessage(
+          SlackChannelEnum.SHOPIFY,
+          `[Backorder parked - no auto-retry] ${shopifyOrderName}\n` +
+            `Error: ${errorType} - ${errorMessage}\n` +
+            `Warehouse: ${warehouse}\n` +
+            `D365: ${d365OrderNumber}`
+        );
+      });
+
+      return {
+        status: "parked_no_retry",
+        shopifyOrderId,
+        shopifyOrderName,
+        errorType,
+        retryCount: 0,
+        processedAt: new Date().toISOString(),
+      };
+    }
+
     // Retry loop
     while (retryCount < maxRetries) {
       retryCount++;

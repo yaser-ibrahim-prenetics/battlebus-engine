@@ -93,6 +93,22 @@ function getIntendedLocationIdFromOrder(order: ShopifyOrderPayload): number | nu
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function isNonRetryableOrderError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return (
+    m.includes("out of stock") ||
+    m.includes("inventory insufficient") ||
+    m.includes("cannot be reserved") ||
+    (m.includes("item number") && m.includes("does not exist")) ||
+    m.includes("sku有误") ||
+    m.includes("未维护新品") ||
+    m.includes("unknown warehouse") ||
+    m.includes("unsupported warehouse") ||
+    m.includes("unsupported virtual warehouse") ||
+    m.includes("not fully configured in battle hub")
+  );
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -415,6 +431,10 @@ export const processSubscriptionOrder = inngest.createFunction(
         lines.map((line) =>
           retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
             label: `D365 sub line ${line.itemNumber}`,
+            shouldRetry: (err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              return !isNonRetryableOrderError(msg);
+            },
           })
         )
       );
@@ -509,7 +529,8 @@ export const processSubscriptionOrder = inngest.createFunction(
               ?.filter((i: any) => i.requires_shipping && !i.gift_card)
               .map((i: any) => i.sku)
               .filter(Boolean) || [],
-          maxRetries: 7,
+          // Park OOS in backorders, but avoid automatic retry loops.
+          maxRetries: 0,
           retryCount: 0,
           createdAt: new Date().toISOString(),
         },
