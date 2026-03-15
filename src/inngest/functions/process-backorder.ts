@@ -36,7 +36,7 @@ export const processBackorder = inngest.createFunction(
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
   },
-  { event: "backorder/created" },
+  [{ event: "backorder/created" }, { event: "backorder/retry" }],
   async ({ event, step }: { event: any; step: any }) => {
     const {
       shopifyOrderId,
@@ -53,6 +53,11 @@ export const processBackorder = inngest.createFunction(
     const retryIntervalHours = BACKORDER_CONFIGS.retryIntervalHours;
     const waitTimeoutHours = BACKORDER_CONFIGS.waitForEventTimeoutHours;
     let retryCount = event.data.retryCount || 0;
+    const isManualRetryRequest =
+      event.name === "backorder/retry" ||
+      event.data.triggeredBy === "manual" ||
+      event.data.triggeredBy === "manual_bulk";
+    const manualRetryOnly = true;
 
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
@@ -62,24 +67,172 @@ export const processBackorder = inngest.createFunction(
     );
     console.log(`[Backorder] Retry ${retryCount}/${maxRetries}`);
 
-    // Notify Battle Hub of backorder creation
-    await step.run("notify-hub-backorder-created", async () => {
-      await csPlatform.sendOrderUpdate(
-        {
-          id: shopifyOrderId,
-          name: shopifyOrderName,
+    // Notify Battle Hub when first parked in backorder queue.
+    if (event.name === "backorder/created") {
+      await step.run("notify-hub-backorder-created", async () => {
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber,
+            warehouse,
+            status: "backorder",
+            error: errorMessage,
+            errorType,
+          },
+          {}
+        );
+      });
+    }
+
+    // Manual-only mode: orders stay parked until Hub explicitly requests retry.
+    if (manualRetryOnly && !isManualRetryRequest) {
+      await step.run("notify-backorder-parked-manual-only", async () => {
+        await slack.sendWarningMessage(
+          SlackChannelEnum.SHOPIFY,
+          `[Backorder parked - manual retry only] ${shopifyOrderName}\n` +
+            `Error: ${errorType} - ${errorMessage}\n` +
+            `Warehouse: ${warehouse}\n` +
+            `D365: ${d365OrderNumber}`
+        );
+      });
+
+      return {
+        status: "parked_manual_only",
+        shopifyOrderId,
+        shopifyOrderName,
+        errorType,
+        retryCount: 0,
+        processedAt: new Date().toISOString(),
+      };
+    }
+
+    // Manual retry request: perform exactly one retry attempt.
+    if (manualRetryOnly && isManualRetryRequest) {
+      const manualAttempt = retryCount + 1;
+      const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
+        try {
+          const { getOrder } = await import("@/lib/clients/shopify");
+          const freshOrder = await getOrder(shopifyOrderId);
+          const order = freshOrder as unknown as ShopifyOrderPayload;
+
+          const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
+          const result = await gps.createOutboundOrder(
+            gpsPayload,
+            warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+          );
+
+          const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
+          if (gpsOrderNo) {
+            await setGpsOrderMetafield(shopifyOrderId, {
+              gpsOrderId: gpsOrderNo,
+              warehouse,
+              d365OrderNumber,
+              createdAt: new Date().toISOString(),
+            });
+          }
+
+          return { success: true, gpsOrderNo };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: msg,
+            isInventoryError: gps.isGpsInventoryError(msg),
+          };
+        }
+      });
+
+      if (retryResult.success) {
+        await step.run("notify-backorder-resolved-manual", async () => {
+          await slack.sendOrderMessage(
+            SlackChannelEnum.SHOPIFY,
+            `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
+          );
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber,
+              warehouse,
+              status: "processing",
+              error: undefined,
+              errorType: undefined,
+            },
+            {}
+          );
+        });
+
+        await inngest.send({
+          name: "backorder/resolved",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            resolvedAt: new Date().toISOString(),
+            resolution: "manual",
+          },
+        });
+
+        return {
+          status: "resolved",
           shopifyOrderId,
           shopifyOrderName,
-          d365OrderNumber,
-          warehouse,
-          status: "backorder",
-          error: errorMessage,
-          errorType,
-          retryAt: new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString(),
-        },
-        {}
-      );
-    });
+          gpsOrderNo: retryResult.gpsOrderNo,
+          retryCount: manualAttempt,
+          processedAt: new Date().toISOString(),
+        };
+      }
+
+      // Still inventory-related: keep parked in queue, no automatic requeue.
+      if (retryResult.isInventoryError) {
+        await step.run("notify-hub-manual-retry-still-backorder", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber,
+              warehouse,
+              status: "backorder",
+              error: retryResult.error,
+              errorType,
+            },
+            {}
+          );
+        });
+
+        return {
+          status: "still_backorder",
+          shopifyOrderId,
+          shopifyOrderName,
+          error: retryResult.error,
+          retryCount: manualAttempt,
+          processedAt: new Date().toISOString(),
+        };
+      }
+
+      await step.run("notify-manual-retry-non-inventory-error", async () => {
+        await slack.sendErrorMessage(
+          SlackChannelEnum.SHOPIFY,
+          `[Backorder] Non-inventory error on manual retry for ${shopifyOrderName}:\n${retryResult.error}`
+        );
+      });
+
+      return {
+        status: "error",
+        shopifyOrderId,
+        shopifyOrderName,
+        error: retryResult.error,
+        retryCount: manualAttempt,
+        reason: "Non-inventory error — requires manual investigation",
+        processedAt: new Date().toISOString(),
+      };
+    }
 
     // No auto-retry mode: keep order parked in backorder queue for manual action only.
     if (maxRetries <= 0) {
