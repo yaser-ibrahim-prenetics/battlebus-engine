@@ -44,6 +44,7 @@ import {
 } from "@/lib/utils/constants";
 import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
+import { NonRetriableError } from "inngest";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -422,26 +423,36 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     // STEP 6: Create D365 Order Lines
     // =========================================================================
-    await step.run("create-d365-order-lines", async () => {
-      if (!config.features.enableDynamicsSync) return { status: "skipped" };
+    try {
+      await step.run("create-d365-order-lines", async () => {
+        if (!config.features.enableDynamicsSync) return { status: "skipped" };
 
-      const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName, true, dataAreaId);
+        const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName, true, dataAreaId);
 
-      await Promise.all(
-        lines.map((line) =>
-          retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
-            label: `D365 sub line ${line.itemNumber}`,
-            shouldRetry: (err) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              return !isNonRetryableOrderError(msg);
-            },
-          })
-        )
-      );
+        await Promise.all(
+          lines.map((line) =>
+            retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
+              label: `D365 sub line ${line.itemNumber}`,
+              shouldRetry: (err) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                return !isNonRetryableOrderError(msg);
+              },
+            })
+          )
+        );
 
-      console.log(`[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`);
-      return { status: "created", lineCount: lines.length };
-    });
+        console.log(`[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`);
+        return { status: "created", lineCount: lines.length };
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (isNonRetryableOrderError(errorMsg)) {
+        throw new NonRetriableError(
+          `[D365_NON_RETRYABLE] ${shopifyOrderName}: ${errorMsg}`
+        );
+      }
+      throw error;
+    }
 
     // =========================================================================
     // STEP 7: Confirm & Prepay D365 Order
