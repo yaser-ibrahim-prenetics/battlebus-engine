@@ -69,7 +69,54 @@ export const processOrderCancellation = inngest.createFunction(
       try {
         const gpsMeta = await shopify.getGpsOrderMetafield(shopifyOrderId);
         if (!gpsMeta?.gpsOrderId) {
-          return { status: "skipped", reason: "No GPS order metadata found on Shopify order" };
+          // Fallback: older orders may miss GPS metafields.
+          // Try cancellation using Shopify order name as outbound order number.
+          const countryCode = (shopifyOrderPayload as any)?.shipping_address?.country_code || "";
+          const primaryWarehouse: "GPS Warehouse" | "GPS UK Warehouse" =
+            countryCode === "GB" ? "GPS UK Warehouse" : "GPS Warehouse";
+          const secondaryWarehouse: "GPS Warehouse" | "GPS UK Warehouse" =
+            primaryWarehouse === "GPS UK Warehouse" ? "GPS Warehouse" : "GPS UK Warehouse";
+
+          const attempts: Array<{
+            warehouse: "GPS Warehouse" | "GPS UK Warehouse";
+            success: boolean;
+            message: string;
+          }> = [];
+
+          for (const warehouse of [primaryWarehouse, secondaryWarehouse]) {
+            try {
+              const fallbackResult = await gps.cancelOutboundOrder(shopifyOrderName, warehouse);
+              attempts.push({
+                warehouse,
+                success: fallbackResult.success,
+                message: fallbackResult.message,
+              });
+
+              if (fallbackResult.success) {
+                return {
+                  status: "cancelled",
+                  result: fallbackResult,
+                  via: "fallback_shopify_order_name",
+                  warehouse,
+                };
+              }
+            } catch (fallbackError) {
+              attempts.push({
+                warehouse,
+                success: false,
+                message:
+                  fallbackError instanceof Error
+                    ? fallbackError.message
+                    : String(fallbackError),
+              });
+            }
+          }
+
+          return {
+            status: "skipped",
+            reason: "No GPS order metadata found on Shopify order; fallback cancellation not confirmed",
+            attempts,
+          };
         }
 
         if (!isGpsWarehouse(gpsMeta.warehouse)) {
