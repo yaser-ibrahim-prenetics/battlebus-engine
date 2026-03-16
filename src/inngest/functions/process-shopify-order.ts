@@ -43,6 +43,7 @@ import {
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
+import { NonRetriableError } from "inngest";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -1017,8 +1018,21 @@ export const processShopifyOrder = inngest.createFunction(
         );
       }
 
+      if (routedToBackorder) {
+        throw new NonRetriableError(
+          `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue due to inventory issue`
+        );
+      }
+
       return result;
     } catch (error) {
+      if (
+        error instanceof NonRetriableError &&
+        String(error.message || "").includes("[BACKORDER_TERMINAL]")
+      ) {
+        throw error;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
       const normalizedError = errorMsg.toLowerCase();
       const errorType =
@@ -1093,15 +1107,9 @@ export const processShopifyOrder = inngest.createFunction(
           `[Backorder] ${shopifyOrderName}: ${inventoryErrorType} - ${errorMsg}`
         );
 
-        return {
-          status: "backorder",
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber: salesOrderNumber,
-          error: errorMsg,
-          errorType: inventoryErrorType,
-          processedAt: new Date().toISOString(),
-        };
+        throw new NonRetriableError(
+          `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue: ${inventoryErrorType}`
+        );
       }
 
       // Non-retryable configuration/master-data errors: record and stop here.
