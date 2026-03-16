@@ -10,6 +10,8 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
+import * as paypal from "@/lib/clients/paypal";
+import * as shopifyClient from "@/lib/clients/shopify";
 import type {
   ShopifyOrderPayload,
   ShopifyFulfillment,
@@ -236,6 +238,79 @@ export const processShopifyFulfillment = inngest.createFunction(
       }
     }
 
+    // ========================================================================
+    // PAYPAL TRACKING SYNC (non-blocking)
+    // ========================================================================
+    // If any transactions on this order used PayPal, push tracking to PayPal
+    // for seller protection. Errors are logged but never fail the function.
+
+    let paypalResult: unknown = null;
+
+    if (paypal.isEnabled()) {
+      paypalResult = await step.run("sync-paypal-tracking", async () => {
+        try {
+          // Get order transactions from Shopify to find PayPal ones
+          const transactions = await shopifyClient.getOrderTransactions(shopifyOrderId);
+          const paypalTransactions = transactions.filter(
+            (t) =>
+              t.gateway?.toLowerCase().includes("paypal") &&
+              t.kind === "sale" &&
+              t.status === "success"
+          );
+
+          if (paypalTransactions.length === 0) {
+            return { status: "skipped", reason: "no PayPal transactions on this order" };
+          }
+
+          // Build tracker entries: each PayPal transaction × each fulfilled tracking number
+          const successfulFulfillments = fulfillmentResults.filter(
+            (r: { status: string; trackingNumber?: string }) =>
+              r.status === "success" && r.trackingNumber
+          );
+
+          if (successfulFulfillments.length === 0) {
+            return { status: "skipped", reason: "no successful fulfillments with tracking" };
+          }
+
+          const trackers: Array<{
+            transactionId: string;
+            trackingNumber: string;
+            carrierName: string | null | undefined;
+          }> = [];
+
+          for (const txn of paypalTransactions) {
+            for (const f of successfulFulfillments) {
+              trackers.push({
+                transactionId: String(txn.id),
+                trackingNumber: f.trackingNumber!,
+                carrierName: f.carrier,
+              });
+            }
+          }
+
+          const response = await paypal.syncTrackingBatch(trackers);
+
+          return {
+            status: "synced",
+            trackersSubmitted: trackers.length,
+            trackersProcessed: response.tracker_identifiers?.length || 0,
+            errors: response.errors?.length || 0,
+          };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`[PayPal] Tracking sync failed for ${shopifyOrderName}: ${errorMsg}`);
+
+          // Non-blocking: log to Slack but don't throw
+          await slack.sendWarningMessage(
+            "system",
+            `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`
+          ).catch(() => {});
+
+          return { status: "error", error: errorMsg };
+        }
+      });
+    }
+
     return {
       status: "success",
       shopifyOrderId,
@@ -243,6 +318,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       d365OrderNumber: d365Order.SalesOrderNumber,
       fulfillmentCount: fulfillments.length,
       fulfillmentResults,
+      paypalResult,
       processedAt: new Date().toISOString(),
     };
   }

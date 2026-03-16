@@ -209,6 +209,14 @@ export const TAG_WAIT_ENABLED = process.env.TAG_WAIT_ENABLED !== "false";
 export const TAG_WAIT_DURATION = process.env.TAG_WAIT_DURATION || "5m";
 
 // ============================================================================
+// SUBSCRIPTION TAG WAIT
+// ============================================================================
+// How long to wait for Skio to apply subscription tags before proceeding.
+// Reduced from 15m to 5m — if tags aren't applied, process anyway and alert.
+export const SUBSCRIPTION_TAG_WAIT_MINUTES = envInt('SUBSCRIPTION_TAG_WAIT_MINUTES', 5);
+export const SUBSCRIPTION_TAG_WAIT_WARN_ENABLED = process.env.SUBSCRIPTION_TAG_WAIT_WARN !== 'false';
+
+// ============================================================================
 // BACKORDER CONFIGURATIONS
 // ============================================================================
 
@@ -223,4 +231,9 @@ export const BACKORDER_CONFIGS = {
   waitForEventTimeoutHours: envInt("BACKORDER_WAIT_TIMEOUT_HOURS", 48),
   // Feature flag for backorder retry
   enabled: process.env.BACKORDER_RETRY_ENABLED !== "false",
+  // Auto-retry: opt-in automatic retry (default: manual-only)
+  // Set BACKORDER_AUTO_RETRY_ENABLED=true to enable scheduled auto-retries
+  autoRetryEnabled: process.env.BACKORDER_AUTO_RETRY_ENABLED === "true",
+  autoRetryIntervalHours: envInt("BACKORDER_AUTO_RETRY_INTERVAL_HOURS", 12),
+  autoRetryMaxAttempts: envInt("BACKORDER_AUTO_RETRY_MAX_ATTEMPTS", 3),
 };

@@ -26,6 +26,11 @@ export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processLocationSync } from "./process-location-sync";
 export { processBackorder } from "./process-backorder";
 export { processSubscriptionOrder } from "./process-subscription-order";
+export {
+  cronInventoryReconciliation,
+  triggerInventoryReconciliation,
+  syncSkuInventory,
+} from "./cron-inventory-reconciliation";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -53,6 +58,11 @@ import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processLocationSync } from "./process-location-sync";
 import { processBackorder } from "./process-backorder";
 import { processSubscriptionOrder } from "./process-subscription-order";
+import {
+  cronInventoryReconciliation,
+  triggerInventoryReconciliation,
+  syncSkuInventory,
+} from "./cron-inventory-reconciliation";
 
 export const functions = [
   processShopifyOrder,
@@ -81,4 +91,8 @@ export const functions = [
   processBackorder,
   // Skio Subscription Renewal Orders
   processSubscriptionOrder,
+  // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)
+  cronInventoryReconciliation,
+  triggerInventoryReconciliation,
+  syncSkuInventory,
 ];

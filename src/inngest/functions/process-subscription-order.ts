@@ -6,7 +6,7 @@
 //
 // Key differences from process-shopify-order:
 //   1. Skips the 5-minute delay (subscription orders are pre-validated)
-//   2. Checks for subscription reward tags — reschedules for up to 15 min if missing
+//   2. Checks for subscription reward tags — reschedules for up to 5 min if missing (configurable)
 //   3. Higher concurrency limit (Skio can burst 50+ orders at once)
 //   4. Maps refill SKUs to their Dynamics counterparts
 
@@ -41,6 +41,8 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
+  SUBSCRIPTION_TAG_WAIT_MINUTES,
+  SUBSCRIPTION_TAG_WAIT_WARN_ENABLED,
 } from "@/lib/utils/constants";
 import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
@@ -113,11 +115,6 @@ function isNonRetryableOrderError(message: string): boolean {
 // ============================================================================
 // HELPERS
 // ============================================================================
-
-const SUBSCRIPTION_TAG_WAIT_MINUTES = parseInt(
-  process.env.SUBSCRIPTION_TAG_WAIT_MINUTES || "15",
-  10
-);
 
 /**
  * Detect whether a subscription order has a refill SKU but is missing
@@ -223,7 +220,7 @@ export const processSubscriptionOrder = inngest.createFunction(
         `[Subscription] ⚠️  Order ${shopifyOrderName} is a refill but missing subscription tag. Waiting ${SUBSCRIPTION_TAG_WAIT_MINUTES} min for Skio to apply tags...`
       );
 
-      // Wait for the tag to appear (Skio applies tags within seconds, 15min is generous)
+      // Wait for the tag to appear (Skio applies tags within seconds, 5min default is sufficient)
       await step.sleep("wait-for-subscription-tags", `${SUBSCRIPTION_TAG_WAIT_MINUTES}m`);
 
       // Re-fetch once more
@@ -238,12 +235,17 @@ export const processSubscriptionOrder = inngest.createFunction(
 
       // Still missing — alert and continue processing (do not block indefinitely)
       if (isRefillOrder(order)) {
-        await step.run("alert-missing-subscription-tags", async () => {
-          await slack.sendWarningMessage(
-            SlackChannelEnum.SHOPIFY,
-            `[Subscription] Subscription tag still missing after ${SUBSCRIPTION_TAG_WAIT_MINUTES}min for ${shopifyOrderName} (contract: ${subscriptionContractId || "unknown"}). Proceeding without tag — check Skio webhook delivery.`
-          );
-        });
+        if (SUBSCRIPTION_TAG_WAIT_WARN_ENABLED) {
+          await step.run("alert-missing-subscription-tags", async () => {
+            await slack.sendWarningMessage(
+              SlackChannelEnum.SHOPIFY,
+              `[Subscription] Subscription tag still missing after ${SUBSCRIPTION_TAG_WAIT_MINUTES}min for ${shopifyOrderName} (contract: ${subscriptionContractId || "unknown"}). Proceeding without tag — check Skio webhook delivery.`
+            );
+          });
+        }
+        console.warn(
+          `[Subscription] Tag still missing after ${SUBSCRIPTION_TAG_WAIT_MINUTES}min for ${shopifyOrderName}. Proceeding anyway.`
+        );
       }
     } else if (tagsMissing && isRerun) {
       console.log(

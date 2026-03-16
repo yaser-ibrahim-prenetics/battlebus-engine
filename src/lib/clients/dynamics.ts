@@ -22,8 +22,156 @@ import type {
   D365ReturnOrderInvoiceRequest,
 } from "../types/dynamics";
 
-// Token cache (in-memory, will refresh on cold starts)
-let tokenCache: D365AuthToken | null = null;
+// ============================================================================
+// TOKEN CACHE — Global singleton with concurrent request deduplication
+// ============================================================================
+// Uses globalThis to survive across Inngest steps within the same invocation.
+// Each cold start gets a fresh cache (expected in serverless).
+
+const TOKEN_EXPIRY_BUFFER_MS = 120_000; // 120s safety buffer before expiry
+
+interface TokenCacheEntry {
+  token: D365AuthToken;
+  expiresAt: number; // absolute ms timestamp
+}
+
+const GLOBAL_TOKEN_KEY = "__d365_token_cache__" as const;
+const GLOBAL_TOKEN_PROMISE_KEY = "__d365_token_inflight__" as const;
+
+function getCachedToken(): D365AuthToken | null {
+  const entry = (globalThis as Record<string, unknown>)[GLOBAL_TOKEN_KEY] as
+    | TokenCacheEntry
+    | undefined;
+  if (entry && Date.now() < entry.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
+    return entry.token;
+  }
+  return null;
+}
+
+function setCachedToken(token: D365AuthToken): void {
+  const expiresAt = Date.now() + token.expires_in * 1000;
+  token.expires_at = expiresAt;
+  (globalThis as Record<string, unknown>)[GLOBAL_TOKEN_KEY] = {
+    token,
+    expiresAt,
+  } satisfies TokenCacheEntry;
+}
+
+/** Returns the in-flight token promise if one exists, preventing duplicate fetches. */
+function getInflightTokenPromise(): Promise<D365AuthToken> | null {
+  return (
+    ((globalThis as Record<string, unknown>)[GLOBAL_TOKEN_PROMISE_KEY] as
+      | Promise<D365AuthToken>
+      | undefined) ?? null
+  );
+}
+
+function setInflightTokenPromise(p: Promise<D365AuthToken> | null): void {
+  (globalThis as Record<string, unknown>)[GLOBAL_TOKEN_PROMISE_KEY] = p;
+}
+
+// ============================================================================
+// CIRCUIT BREAKER — Lightweight, module-level protection for all D365 calls
+// ============================================================================
+
+export class CircuitOpenError extends Error {
+  constructor(message = "D365 circuit breaker is OPEN — requests blocked") {
+    super(message);
+    this.name = "CircuitOpenError";
+  }
+}
+
+type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+const CIRCUIT_FAILURE_THRESHOLD = 5;
+const CIRCUIT_FAILURE_WINDOW_MS = 60_000; // 60s window for consecutive failures
+const CIRCUIT_OPEN_DURATION_MS = 30_000; // 30s before half-open probe
+
+interface CircuitBreaker {
+  state: CircuitState;
+  consecutiveFailures: number;
+  firstFailureAt: number; // timestamp of first failure in current window
+  lastFailureAt: number; // timestamp of most recent failure
+  openedAt: number; // timestamp when circuit opened
+}
+
+const circuit: CircuitBreaker = {
+  state: "CLOSED",
+  consecutiveFailures: 0,
+  firstFailureAt: 0,
+  lastFailureAt: 0,
+  openedAt: 0,
+};
+
+/** Expose circuit state for observability. */
+export function getCircuitState(): {
+  state: CircuitState;
+  consecutiveFailures: number;
+  openedAt: number;
+} {
+  // Re-evaluate in case the open duration has elapsed
+  if (circuit.state === "OPEN" && Date.now() - circuit.openedAt >= CIRCUIT_OPEN_DURATION_MS) {
+    circuit.state = "HALF_OPEN";
+  }
+  return {
+    state: circuit.state,
+    consecutiveFailures: circuit.consecutiveFailures,
+    openedAt: circuit.openedAt,
+  };
+}
+
+function circuitRecordSuccess(): void {
+  circuit.consecutiveFailures = 0;
+  circuit.firstFailureAt = 0;
+  circuit.lastFailureAt = 0;
+  circuit.state = "CLOSED";
+}
+
+function circuitRecordFailure(): void {
+  const now = Date.now();
+
+  // Reset window if first failure was too long ago
+  if (circuit.firstFailureAt === 0 || now - circuit.firstFailureAt > CIRCUIT_FAILURE_WINDOW_MS) {
+    circuit.consecutiveFailures = 0;
+    circuit.firstFailureAt = now;
+  }
+
+  circuit.consecutiveFailures++;
+  circuit.lastFailureAt = now;
+
+  if (circuit.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+    circuit.state = "OPEN";
+    circuit.openedAt = now;
+    console.warn(
+      `[D365] Circuit breaker OPENED after ${circuit.consecutiveFailures} consecutive failures`
+    );
+  }
+}
+
+/**
+ * Check circuit before making a request. Throws CircuitOpenError if open.
+ * Returns true if this is a half-open probe request.
+ */
+function circuitPreFlight(): boolean {
+  if (circuit.state === "CLOSED") return false;
+
+  if (circuit.state === "OPEN") {
+    if (Date.now() - circuit.openedAt >= CIRCUIT_OPEN_DURATION_MS) {
+      circuit.state = "HALF_OPEN";
+      console.log("[D365] Circuit breaker entering HALF_OPEN — allowing probe request");
+      return true; // probe
+    }
+    throw new CircuitOpenError();
+  }
+
+  // HALF_OPEN: only one probe allowed; subsequent calls block
+  // The first caller that passed pre-flight during HALF_OPEN is the probe.
+  // We immediately flip back to OPEN so further concurrent calls don't sneak through.
+  // The probe's post-flight will either close or re-open.
+  throw new CircuitOpenError(
+    "D365 circuit breaker is HALF_OPEN — probe in progress, request blocked"
+  );
+}
 
 // THK API success status code
 export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
@@ -40,6 +188,9 @@ async function pacedFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): Promise<Response> {
+  // Circuit breaker gate — throws CircuitOpenError if circuit is open
+  const isProbe = circuitPreFlight();
+
   if (D365_MIN_INTERVAL_MS > 0) {
     const now = Date.now();
     const waitMs = Math.max(0, d365LastRequestAt + D365_MIN_INTERVAL_MS - now);
@@ -48,7 +199,22 @@ async function pacedFetch(
     }
     d365LastRequestAt = Date.now();
   }
-  return fetch(input, init);
+
+  try {
+    const response = await fetch(input, init);
+
+    // Treat 5xx as failures for circuit breaker purposes
+    if (response.status >= 500) {
+      circuitRecordFailure();
+    } else {
+      circuitRecordSuccess();
+    }
+
+    return response;
+  } catch (err) {
+    circuitRecordFailure();
+    throw err;
+  }
 }
 
 // ============================================================================
@@ -56,46 +222,64 @@ async function pacedFetch(
 // ============================================================================
 
 /**
- * Authenticate with D365 using OAuth2 client credentials
- * Ported from spock-store integration/dynamics.ts
+ * Authenticate with D365 using OAuth2 client credentials.
+ * Uses globalThis singleton cache + concurrent request deduplication.
  */
 export async function authenticate(): Promise<D365AuthToken> {
-  // Check if we have a valid cached token
-  if (tokenCache && tokenCache.expires_at && Date.now() < tokenCache.expires_at - 60000) {
-    return tokenCache;
+  // 1. Return cached token if still valid (with 120s buffer)
+  const cached = getCachedToken();
+  if (cached) {
+    return cached;
   }
 
-  const tokenUrl = `https://login.microsoftonline.com/${config.dynamics.tenantId}/oauth2/v2.0/token`;
-
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: config.dynamics.clientId,
-    client_secret: config.dynamics.clientSecret,
-    scope: config.dynamics.scope,
-  });
-
-  console.log(`[D365] Authenticating to ${tokenUrl}`);
-
-  const response = await pacedFetch(tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`D365 authentication failed: ${response.status} - ${error}`);
+  // 2. Deduplicate: if another caller is already fetching, piggyback on it
+  const inflight = getInflightTokenPromise();
+  if (inflight) {
+    return inflight;
   }
 
-  const token: D365AuthToken = await response.json();
-  token.expires_at = Date.now() + token.expires_in * 1000;
-  tokenCache = token;
+  // 3. No cache, no in-flight — perform the actual token fetch
+  const fetchPromise = (async (): Promise<D365AuthToken> => {
+    try {
+      const tokenUrl = `https://login.microsoftonline.com/${config.dynamics.tenantId}/oauth2/v2.0/token`;
 
-  console.log(`[D365] Authentication successful, token expires in ${token.expires_in}s`);
+      const body = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: config.dynamics.clientId,
+        client_secret: config.dynamics.clientSecret,
+        scope: config.dynamics.scope,
+      });
 
-  return token;
+      console.log(`[D365] Authenticating to ${tokenUrl}`);
+
+      // Use raw fetch for auth (circuit breaker protects D365 API, not Azure AD)
+      const response = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`D365 authentication failed: ${response.status} - ${error}`);
+      }
+
+      const token: D365AuthToken = await response.json();
+      setCachedToken(token);
+
+      console.log(`[D365] Authentication successful, token expires in ${token.expires_in}s`);
+
+      return token;
+    } finally {
+      // Clear in-flight promise regardless of success/failure
+      setInflightTokenPromise(null);
+    }
+  })();
+
+  setInflightTokenPromise(fetchPromise);
+  return fetchPromise;
 }
 
 async function getAuthToken(): Promise<string> {

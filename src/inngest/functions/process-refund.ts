@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
 import * as warehouseHelper from "@/lib/helpers/warehouse";
+import * as exchangeHelper from "@/lib/helpers/exchange";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyRefundPayload } from "../events";
 import {
@@ -98,7 +99,57 @@ export const processRefund = inngest.createFunction(
       return totalAmount;
     });
 
-    if (refundAmount <= 0) {
+    // 4b. Convert refund amount to USD if order is in a different currency
+    const { refundAmountUsd, exchangeRateInfo } = await step.run(
+      "convert-refund-currency",
+      async () => {
+        const orderCurrency = (shopifyOrder.currency || "USD").toUpperCase();
+
+        if (orderCurrency === "USD") {
+          return {
+            refundAmountUsd: refundAmount,
+            exchangeRateInfo: null,
+          };
+        }
+
+        // Try to extract exchange rate from Shopify transactions
+        const transactions = shopifyOrder.transactions || refund.transactions || [];
+        let exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(
+          transactions,
+          "USD"
+        );
+
+        // Fall back to static rates if transaction-based extraction fails
+        if (!exchangeRate) {
+          exchangeRate = exchangeHelper.getFallbackRate(orderCurrency, "USD");
+        }
+
+        const convertedAmount = exchangeHelper.convertToShopCurrency(
+          refundAmount,
+          orderCurrency,
+          exchangeRate
+        );
+
+        console.log(
+          `[Refund ${refundId}] Currency conversion: ${refundAmount} ${orderCurrency} → ${convertedAmount} USD` +
+            ` (rate: ${exchangeRate?.rate ?? "1:1 fallback"}, source: ${exchangeRate?.source ?? "none"})`
+        );
+
+        return {
+          refundAmountUsd: convertedAmount,
+          exchangeRateInfo: exchangeRate
+            ? {
+                from: exchangeRate.from,
+                to: exchangeRate.to,
+                rate: exchangeRate.rate,
+                source: exchangeRate.source,
+              }
+            : null,
+        };
+      }
+    );
+
+    if (refundAmountUsd <= 0) {
       return {
         status: "skipped",
         reason: "Refund amount is 0",
@@ -121,7 +172,7 @@ export const processRefund = inngest.createFunction(
         dataAreaId,
         itemNumber: warehouseInfo.refundSku,
         quantity: -1,
-        price: refundAmount,
+        price: refundAmountUsd,
       });
 
       return { ...result, status: "created" };
@@ -162,6 +213,8 @@ export const processRefund = inngest.createFunction(
       shopifyOrderId,
       d365OrderNumber: d365Order?.SalesOrderNumber,
       refundAmount,
+      refundAmountUsd,
+      exchangeRateInfo,
       refundSku: warehouseInfo.refundSku,
       lotId: refundLine.InventoryLotId,
       processedAt: new Date().toISOString(),
@@ -169,13 +222,13 @@ export const processRefund = inngest.createFunction(
 
     // Determine if this is a full or partial refund based on Shopify order total
     const orderTotal = parseFloat(shopifyOrder.total_price || "0");
-    const refundType = refundAmount >= orderTotal ? "full" : "partial";
+    const refundType = refundAmountUsd >= orderTotal ? "full" : "partial";
 
     // Send refund event to CS platform with financial status
     await csPlatform.sendOrderRefunded({
       orderId: shopifyOrderId,
       shopifyOrderName: shopifyOrder.name || shopifyOrderId,
-      amount: refundAmount.toString(),
+      amount: refundAmountUsd.toString(),
       reason: "Refund processed",
       shopifyFinancialStatus: shopifyOrder.financial_status,
       refundType,

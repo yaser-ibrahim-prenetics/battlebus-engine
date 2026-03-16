@@ -31,6 +31,7 @@ import {
   findLocationByWarehouseName,
 } from "@/lib/services/location-routing";
 import { determineWarehouse } from "@/lib/helpers/warehouse";
+import { shouldSplitFulfillmentOrder, isDomesticOrder } from "@/lib/helpers/split";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -771,6 +772,111 @@ export const processShopifyOrder = inngest.createFunction(
         `D365 order created: ${salesOrderNo}`,
         { d365OrderNumber: salesOrderNo }
       );
+
+      // 3c. Fulfillment order splitting (optional, non-blocking)
+      // For international orders exceeding the split threshold, split the fulfillment order
+      // so multiple shipments can be created from different inventory pools
+      await step.run("check-fulfillment-split", async () => {
+        try {
+          const orderTotal = parseFloat(order.total_price || "0");
+          const countryCode = country_code || "US";
+          const domestic = isDomesticOrder(countryCode);
+          const splitDecision = shouldSplitFulfillmentOrder(orderTotal, countryCode, domestic);
+
+          console.log(
+            `[Fulfillment Split] ${shopifyOrderName}: ${splitDecision.reason} ` +
+            `(total=${orderTotal}, threshold=${splitDecision.threshold}, country=${countryCode})`
+          );
+
+          if (!splitDecision.shouldSplit) {
+            return { split: false, reason: splitDecision.reason };
+          }
+
+          // Fetch fulfillment orders to get the GID for splitting
+          const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+          const openFO = fulfillmentOrders?.find(
+            (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+          );
+
+          if (!openFO) {
+            console.warn(`[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`);
+            return { split: false, reason: "no_open_fulfillment_order" };
+          }
+
+          const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
+          const lineItems = (openFO as any).line_items || [];
+
+          if (lineItems.length < 2) {
+            console.log(`[Fulfillment Split] Only ${lineItems.length} line item(s), cannot split`);
+            return { split: false, reason: "single_line_item" };
+          }
+
+          // Split: move the second half of line items into a new fulfillment order
+          const midpoint = Math.ceil(lineItems.length / 2);
+          const splitLineItems = lineItems.slice(midpoint).map((li: any) => ({
+            fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
+            quantity: li.quantity || li.fulfillable_quantity || 1,
+          }));
+
+          const graphqlUrl = `https://${config.shopify.im8.shopDomain}/admin/api/${config.shopify.im8.apiVersion}/graphql.json`;
+          const mutation = `
+            mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
+              fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
+                fulfillmentOrders { id }
+                userErrors { field message }
+              }
+            }
+          `;
+
+          const graphqlResponse = await fetch(graphqlUrl, {
+            method: "POST",
+            headers: {
+              "X-Shopify-Access-Token": config.shopify.im8.accessToken,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: mutation,
+              variables: {
+                fulfillmentOrderId: fulfillmentOrderGid,
+                fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
+              },
+            }),
+          });
+
+          const graphqlResult = await graphqlResponse.json();
+          const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
+
+          if (userErrors && userErrors.length > 0) {
+            const errorMsg = userErrors.map((e: any) => e.message).join(", ");
+            console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
+            await slack.sendWarningMessage(
+              SlackChannelEnum.SHOPIFY,
+              `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
+            );
+            return { split: false, reason: "shopify_user_error", error: errorMsg };
+          }
+
+          const newFOs = graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
+          console.log(`[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`);
+
+          await slack.sendOrderMessage(
+            SlackChannelEnum.SHOPIFY,
+            `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
+            `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
+          );
+
+          return { split: true, fulfillmentOrderCount: newFOs.length, reason: splitDecision.reason };
+        } catch (error) {
+          // Non-blocking: log warning and continue without splitting
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
+          await slack.sendWarningMessage(
+            SlackChannelEnum.SHOPIFY,
+            `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
+          );
+          return { split: false, reason: "error", error: errorMsg };
+        }
+      });
 
       // 4. Send to GPS (if applicable)
       // Only GPS warehouses need syncing - Stord has its own Shopify app
