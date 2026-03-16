@@ -50,15 +50,19 @@ export const processBackorder = inngest.createFunction(
 
     const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
 
-    const maxRetries = event.data.maxRetries || BACKORDER_CONFIGS.maxRetries;
-    const retryIntervalHours = BACKORDER_CONFIGS.retryIntervalHours;
+    const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
+    const maxRetries = event.data.maxRetries ||
+      (autoRetryEnabled ? BACKORDER_CONFIGS.autoRetryMaxAttempts : BACKORDER_CONFIGS.maxRetries);
+    const retryIntervalHours = autoRetryEnabled
+      ? BACKORDER_CONFIGS.autoRetryIntervalHours
+      : BACKORDER_CONFIGS.retryIntervalHours;
     const waitTimeoutHours = BACKORDER_CONFIGS.waitForEventTimeoutHours;
     let retryCount = event.data.retryCount || 0;
     const isManualRetryRequest =
       event.name === "backorder/retry" ||
       event.data.triggeredBy === "manual" ||
       event.data.triggeredBy === "manual_bulk";
-    const manualRetryOnly = true;
+    const manualRetryOnly = !autoRetryEnabled;
 
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);

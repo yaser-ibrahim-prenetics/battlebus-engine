@@ -110,6 +110,14 @@ export const config = {
     enabled: process.env.CS_PLATFORM_ENABLED !== "false", // Default to true, set to "false" to disable
   },
 
+  // PayPal Tracking Configuration
+  paypal: {
+    clientId: process.env.PAYPAL_CLIENT_ID || "",
+    clientSecret: process.env.PAYPAL_CLIENT_SECRET || "",
+    mode: (process.env.PAYPAL_MODE || "sandbox") as "sandbox" | "live",
+    enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
+  },
+
   // Slack Notification Channels
   slack: {
     applicationName: "store",
