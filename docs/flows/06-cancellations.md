@@ -1,11 +1,16 @@
 # Flow 6: Cancellations
 
-> **Journey Name:** Cancelled Shopify orders marked with dummy fulfilment to stop reprocessing  
-> **Direction:** Shopify → battle-bus → Internal DB (GPS polling exclusion)
+> **Status:** Legacy simulation flow documentation (kept for historical reference)
+>  
+> For the current production cancellation workflow (GPS cancel API + Shopify uncancel safeguard),
+> use [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md).
 
 ## Overview
 
-This flow tests how cancelled Shopify orders are handled by battle-bus. The key behavior is creating a **dummy fulfillment record** to prevent the order from being re-polled by GPS scheduled tasks. This ensures cancelled orders don't get accidentally shipped.
+This page describes the older simulation-oriented cancellation flow.
+Current Battle Bus behavior has moved to a dedicated production flow doc:
+
+- [Flow 8: Cancellation Orchestration (GPS + Shopify Uncancel Safeguard)](./08-cancel-gps-and-uncancel.md)
 
 ```
 ┌─────────────┐   orders/cancelled    ┌─────────────┐   Create dummy fulfillment   ┌─────────────┐

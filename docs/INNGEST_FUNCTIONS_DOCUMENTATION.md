@@ -204,7 +204,7 @@
 **Function ID**: `process-order-cancellation`  
 **Trigger Event**: `shopify/order.cancelled`
 
-**Purpose**: Cancel orders in GPS and D365, or create return orders if already shipped
+**Purpose**: Orchestrate cancellation across GPS/D365 and keep Shopify state accurate when warehouse cancellation is no longer possible.
 
 **Workflow**:
 
@@ -212,16 +212,22 @@
 1. Get D365 Order
    └─ Lookup by Shopify order name
 
-2. Cancel GPS Order
-   ├─ Attempt cancellation
-   └─ Handle "already shipped" error
+2. Resolve GPS Metadata
+   ├─ Read Shopify order metafield (`battle_bus.gps_order`)
+   └─ Ensure warehouse is GPS US/UK before GPS cancellation attempt
 
-3. Process D365 Cancellation
-   ├─ If GPS cancelled: Cancel D365 order (TODO)
-   └─ If GPS shipped: Create return order
-       ├─ Create return order header
-       ├─ Create return order lines (negative quantities)
-       └─ Confirm return order
+3. Cancel GPS Order (OMS)
+   ├─ Submit `/openapi/v1/outboundOrder/cancel`
+   ├─ Poll `/openapi/v1/outboundOrder/selectBizStatus`
+   └─ Resolve terminal success/failure
+
+4. Safeguard: Shopify Uncancel on GPS Failure
+   ├─ If GPS cancellation fails (e.g. shipped/in-flight)
+   ├─ Re-open Shopify order (`orders/{id}/open.json`)
+   └─ Flag manual handling path and alert ops
+
+5. D365 Cancellation Path
+   └─ Run D365 cancellation/deletion path when applicable
 ```
 
 **Technical Details**:
@@ -229,10 +235,14 @@
 - **Idempotency**: `event.data.shopifyOrderId`
 - **Retries**: 3 attempts (low priority)
 - **Concurrency**: 1 per order
+- **GPS OMS Polling Controls**:
+  - `OMS_CANCEL_STATUS_POLL_ATTEMPTS`
+  - `OMS_CANCEL_STATUS_POLL_INTERVAL_MS`
 
-**Known Limitations**:
+**Notes**:
 
-- D365 order cancellation not yet implemented (returns "not_implemented" status)
+- Canonical processing remains on `shopify/order.cancelled`.
+- Hub cancel action also emits this canonical event to guarantee same downstream behavior.
 
 **Output Events**:
 
@@ -612,7 +622,8 @@ _Note: This function is listed twice in the index. The mesh function handles bot
 **Function ID**: `process-action-cancel`  
 **Trigger Event**: `action/order.cancel`
 
-**Purpose**: Track cancel actions triggered from Battle Hub dashboard
+**Purpose**: Track cancel actions triggered from Battle Hub dashboard.
+The API route now also emits `shopify/order.cancelled` so canonical cancellation processing always runs.
 
 **Workflow**:
 
@@ -622,12 +633,15 @@ _Note: This function is listed twice in the index. The mesh function handles bot
 
 2. Notify CS Platform
    └─ Send cancellation event (audit trail)
+
+3. Canonical cancellation processing
+   └─ Triggered by companion `shopify/order.cancelled` event emitted by `/api/actions/cancel`
 ```
 
 **Technical Details**:
 
 - **Retries**: 1 attempt
-- **Note**: Actual Shopify cancellation is handled by API route, this function provides tracking
+- **Note**: Actual Shopify cancellation is handled by API route; this function provides action tracking.
 
 **Output Events**:
 

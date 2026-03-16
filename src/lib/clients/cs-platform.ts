@@ -140,7 +140,7 @@ export async function sendOrderUpdate(
     status?: string;
     error?: string;
     errorType?: string;
-    retryAt?: string;
+    retryAt?: string | null;
     [key: string]: any;
   },
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }

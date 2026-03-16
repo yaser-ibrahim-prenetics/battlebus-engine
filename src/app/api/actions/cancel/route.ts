@@ -48,6 +48,48 @@ export async function POST(request: NextRequest) {
       );
     };
 
+    const sendCancellationEvents = async (
+      numericOrderId: number,
+      resolvedOrderName: string,
+      orderPayload: any
+    ): Promise<string> => {
+      const actionEventId = `action-cancel-${numericOrderId}-${Date.now()}`;
+
+      // Keep action event for real-time action tracking.
+      await inngest.send({
+        id: actionEventId,
+        name: "action/order.cancel",
+        data: {
+          shopifyOrderId: String(numericOrderId),
+          shopifyOrderName: resolvedOrderName,
+          reason: reason || "other",
+          email: email !== false,
+          refund: refund || false,
+          cancelledAt: new Date().toISOString(),
+          source: "battle-hub",
+        },
+      });
+
+      // Also emit canonical Shopify cancellation event so downstream cancellation
+      // flow (GPS/D365/etc.) executes immediately even before webhook delivery.
+      await inngest.send({
+        id: `shopify-order-cancelled-${numericOrderId}`,
+        name: "shopify/order.cancelled",
+        data: {
+          shopifyOrderId: String(numericOrderId),
+          shopifyOrderName: resolvedOrderName,
+          shopifyStore: shopDomain || "im8",
+          orderJson: orderPayload || null,
+          cancelledAt: new Date().toISOString(),
+          cancelReason: reason || "other",
+          receivedAt: new Date().toISOString(),
+          source: "battle-hub-action",
+        },
+      });
+
+      return actionEventId;
+    };
+
     let response: Response | null = null;
     let result: any = null;
 
@@ -62,22 +104,12 @@ export async function POST(request: NextRequest) {
       // If success, send Inngest event and return with eventId
       if (response.ok) {
         const orderData = result.order ?? result;
-        const eventId = `action-cancel-${numericIdFromOrderId}-${Date.now()}`;
-
-        // Send Inngest event for real-time tracking
-        await inngest.send({
-          id: eventId,
-          name: "action/order.cancel",
-          data: {
-            shopifyOrderId: String(numericIdFromOrderId),
-            shopifyOrderName: orderName || orderData.name || `#${numericIdFromOrderId}`,
-            reason: reason || "other",
-            email: email !== false,
-            refund: refund || false,
-            cancelledAt: new Date().toISOString(),
-            source: "battle-hub",
-          },
-        });
+        const resolvedOrderName = orderName || orderData.name || `#${numericIdFromOrderId}`;
+        const eventId = await sendCancellationEvents(
+          numericIdFromOrderId,
+          resolvedOrderName,
+          orderData
+        );
 
         return NextResponse.json(
           {
@@ -126,22 +158,8 @@ export async function POST(request: NextRequest) {
       }
 
       const orderData = result.order ?? result;
-      const eventId = `action-cancel-${numericFromName}-${Date.now()}`;
-
-      // Send Inngest event for real-time tracking
-      await inngest.send({
-        id: eventId,
-        name: "action/order.cancel",
-        data: {
-          shopifyOrderId: String(numericFromName),
-          shopifyOrderName: orderName || orderData.name || `#${numericFromName}`,
-          reason: reason || "other",
-          email: email !== false,
-          refund: refund || false,
-          cancelledAt: new Date().toISOString(),
-          source: "battle-hub",
-        },
-      });
+      const resolvedOrderName = orderName || orderData.name || `#${numericFromName}`;
+      const eventId = await sendCancellationEvents(numericFromName, resolvedOrderName, orderData);
 
       return NextResponse.json(
         {

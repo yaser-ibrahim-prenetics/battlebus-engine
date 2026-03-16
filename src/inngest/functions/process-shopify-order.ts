@@ -1122,6 +1122,32 @@ export const processShopifyOrder = inngest.createFunction(
           },
           { inngestIdempotencyKey, inngestRunId }
         );
+
+        // Explicitly close any stale backorder/error state on success
+        // (especially important for reruns that recover from prior failures).
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber: salesOrderNo,
+            warehouse: warehouseName,
+            status: "completed",
+            processingStatus: "completed",
+            d365SyncStatus: "synced",
+            gpsSyncStatus:
+              gpsResult?.type === "real" && gpsOrderId
+                ? "synced"
+                : gpsSkipped
+                  ? "skipped"
+                  : "pending",
+            lastError: null,
+            lastErrorType: null,
+            retryAt: null,
+          },
+          { inngestIdempotencyKey, inngestRunId }
+        );
       }
 
       if (routedToBackorder) {

@@ -4,7 +4,6 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
 import * as slack from "@/lib/clients/slack";
-import * as warehouseHelper from "@/lib/helpers/warehouse";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import {
   THROTTLE_CONFIGS,
@@ -40,6 +39,8 @@ export const processOrderCancellation = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, cancelReason, orderJson } = event.data;
     const shopifyOrderPayload = orderJson as ShopifyOrderPayload;
+    const isGpsWarehouse = (name?: string | null): name is "GPS Warehouse" | "GPS UK Warehouse" =>
+      name === "GPS Warehouse" || name === "GPS UK Warehouse";
 
     if (config.features.dryRunMode) {
       return {
@@ -59,14 +60,26 @@ export const processOrderCancellation = inngest.createFunction(
       return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
     });
 
-    // 2. Try to Cancel GPS Order
+    // 2. Try to Cancel GPS Order (only when we have GPS metafield data)
     const gpsCancellation = await step.run("cancel-gps-order", async () => {
       if (!config.features.enableGpsSync) {
         return { status: "skipped", reason: "GPS sync disabled" };
       }
 
       try {
-        const result = await gps.cancelOutboundOrder(shopifyOrderName);
+        const gpsMeta = await shopify.getGpsOrderMetafield(shopifyOrderId);
+        if (!gpsMeta?.gpsOrderId) {
+          return { status: "skipped", reason: "No GPS order metadata found on Shopify order" };
+        }
+
+        if (!isGpsWarehouse(gpsMeta.warehouse)) {
+          return {
+            status: "skipped",
+            reason: `Non-GPS warehouse (${gpsMeta.warehouse || "unknown"})`,
+          };
+        }
+
+        const result = await gps.cancelOutboundOrder(gpsMeta.gpsOrderId, gpsMeta.warehouse);
         return { status: result.success ? "cancelled" : "failed", result };
       } catch (error) {
         return {
@@ -119,104 +132,46 @@ export const processOrderCancellation = inngest.createFunction(
           };
         }
       } else {
-        // Case B: GPS Failed (Likely Shipped) -> Create Return Order in D365
-        // This is the "Return" flow from spock-store
-        console.log(
-          `[Cancellation] GPS cancel failed, initiating Return Order flow for ${shopifyOrderName}`
-        );
-
-        // 3a. Get Shopify Order Details (for address/warehouse)
-        const shopifyOrder = await shopify.getOrder(shopifyOrderId);
-
-        // 3b. Determine Warehouse Config
-        const countryCode = shopifyOrder.shipping_address?.country_code || "US";
-        const warehouseName = warehouseHelper.determineWarehouse(countryCode);
-        const returnConfig = warehouseHelper.getReturnConfig(warehouseName);
-        const orderingCustomerAccountNumber =
-          warehouseHelper.getOrderingCustomerAccountNumber(warehouseName);
-
-        // 3c. Get D365 Original Lines (to link Lot IDs)
-        const d365Lines = await dynamics.getSalesOrderLines(d365Order.SalesOrderNumber!);
-        const skuToLotIdMap = d365Lines.reduce(
-          (acc, line) => {
-            acc[line.ItemNumber] = line.InventoryLotId;
-            return acc;
-          },
-          {} as Record<string, string | undefined>
-        );
-
-        // 3d. Create Return Order Header
-        const { SalesOrderNumber: returnOrderNumber } =
-          await dynamics.createSalesOrderHeadersV3ForReturn({
-            customerId: shopifyOrder.customer?.id.toString() || "",
-            orderId: shopifyOrder.id.toString(),
-            dataAreaId,
-            orderingCustomerAccountNumber,
-            defaultLedgerDimensionDisplayValue:
-              warehouseHelper.toDefaultLedgerDimensionDisplayValue(warehouseName),
-            customerOrderReference: shopifyOrder.name,
-            email: shopifyOrder.email,
-            name: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim(),
-            shopifyReference: shopifyOrder.name,
-          });
-
-        // 3e. Create Return Order Lines
-        const returnLinesResult = [];
-        const skippedLines: string[] = [];
-        for (const item of shopifyOrder.line_items) {
-          if (item.gift_card || !item.requires_shipping) continue;
-
-          const originalLotId = skuToLotIdMap[item.sku];
-          if (!originalLotId) {
-            console.warn(
-              `[Cancellation] ⚠️  LotId not found for SKU ${item.sku} in D365 order ${d365Order.SalesOrderNumber} — skipping return line`
-            );
-            skippedLines.push(item.sku);
-            continue;
-          }
-
-          // In return order, quantity is negative (wait, spock-store toSalesOrderLinesForReturn sets quantity -1 ?)
-          // Let's check spock-store logic again.
-          // spock-store: quantity: -1, price: price (positive), discount: discount
-
-          await dynamics.createSalesOrderLineForReturn({
-            salesOrderNumber: returnOrderNumber,
-            quantity: -1 * item.quantity, // Return all
-            itemNumber: item.sku,
-            price: parseFloat(item.price),
-            discount: parseFloat(item.total_discount),
-            dataAreaId,
-            inventTransIdReturn: originalLotId,
-            shippingSiteId: returnConfig.shippingSiteId,
-          });
-          returnLinesResult.push({ sku: item.sku, quantity: item.quantity });
-        }
-
-        // Alert if any lines were silently skipped
-        if (skippedLines.length > 0) {
+        // Case B: GPS cancellation failed (typically already shipped/processing in warehouse).
+        // Restore order in Shopify so customer service sees it as active.
+        try {
+          await shopify.uncancelOrder(shopifyOrderId);
           await slack.sendWarningMessage(
-            SlackChannelEnum.DYNAMICS,
-            `[Cancellation] Partial return order ${returnOrderNumber} for ${shopifyOrderName}: ${skippedLines.length} SKU(s) skipped (no LotId in D365). Skipped: ${skippedLines.join(", ")}. Original order: ${d365Order.SalesOrderNumber}`
+            SlackChannelEnum.GPS,
+            `[Cancellation] Shopify order ${shopifyOrderName} (${shopifyOrderId}) was uncancelled because GPS cancellation failed (likely already shipped/in-flight).`
           );
+          return {
+            status: "manual_required",
+            action: "shopify_uncancelled",
+            reason: "gps_cancel_failed_order_restored",
+            gpsMessage:
+              gpsCancellation.status === "failed"
+                ? gpsCancellation.error || gpsCancellation.result?.message
+                : "GPS cancellation was not successful",
+          };
+        } catch (uncancelError: any) {
+          await slack.sendWarningMessage(
+            SlackChannelEnum.GPS,
+            `[Cancellation] GPS cancellation failed and Shopify uncancel also failed for ${shopifyOrderName} (${shopifyOrderId}). Manual intervention required. Error: ${uncancelError.message}`
+          );
+          return {
+            status: "manual_required",
+            action: "shopify_uncancel_failed",
+            reason: "gps_cancel_failed_uncancel_failed",
+            error: uncancelError.message,
+          };
         }
-
-        // 3f. Confirm Return Order
-        await dynamics.confirmSalesOrder(returnOrderNumber, dataAreaId);
-
-        return {
-          status: "success",
-          action: "return_order_created",
-          returnOrderNumber,
-          dataAreaId,
-          returnLines: returnLinesResult,
-          skippedLines,
-        };
       }
     });
 
+    const cancellationReverted =
+      d365Cancellation?.action === "shopify_uncancelled" ||
+      d365Cancellation?.action === "shopify_uncancel_failed";
+
     const result = {
-      status:
-        d365Cancellation.status === "success" || d365Cancellation.status === "manual_required"
+      status: cancellationReverted
+        ? "reverted"
+        : d365Cancellation.status === "success" || d365Cancellation.status === "manual_required"
           ? "success"
           : "partial",
       shopifyOrderId,

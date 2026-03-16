@@ -221,6 +221,31 @@ export interface GpsGetOrdersDetailResponse {
   }[];
 }
 
+interface GpsCancelOrderItem {
+  outboundOrderNo: string;
+  thirdOrderNo?: string;
+  msg?: string;
+  status?: number; // 0 processing, 2 failed validation
+}
+
+interface GpsCancelOrderResponse {
+  code: number;
+  msg: string;
+  data?: GpsCancelOrderItem[];
+}
+
+interface GpsCancelBizStatusItem {
+  outboundOrderNo: string;
+  status: number; // 0 processing, 1 success, 2 failed
+  msg?: string;
+}
+
+interface GpsCancelBizStatusResponse {
+  code: number;
+  msg: string;
+  data?: GpsCancelBizStatusItem[];
+}
+
 // GPS Order Type constants
 export const GpsOrderType = {
   PRODUCT_OUTBOUND: 1,
@@ -520,10 +545,76 @@ export async function cancelOutboundOrder(
     return { success: true, message: "DRY RUN - Order would be cancelled" };
   }
 
-  // GPS cancel API - implementation depends on GPS API docs
-  // For now, return a placeholder
-  console.log(`[GPS] TODO: Implement GPS cancel API for ${orderNumber}`);
-  return { success: false, message: "Cancel API not yet implemented" };
+  const pollAttempts = Math.max(1, parseInt(process.env.OMS_CANCEL_STATUS_POLL_ATTEMPTS || "8", 10));
+  const pollIntervalMs = Math.max(
+    500,
+    parseInt(process.env.OMS_CANCEL_STATUS_POLL_INTERVAL_MS || "3000", 10)
+  );
+
+  const cancelRequest = { outboundOrderNoList: [orderNumber] };
+  const cancelResponse = await postOms<GpsCancelOrderResponse>(
+    "/openapi/v1/outboundOrder/cancel",
+    cancelRequest,
+    warehouseName
+  );
+
+  if (Number(cancelResponse?.code) !== 200) {
+    return {
+      success: false,
+      message: cancelResponse?.msg || `GPS cancel request failed (code=${cancelResponse?.code})`,
+    };
+  }
+
+  const cancelItem = Array.isArray(cancelResponse?.data)
+    ? cancelResponse.data.find((x) => x.outboundOrderNo === orderNumber) || cancelResponse.data[0]
+    : undefined;
+  if (cancelItem?.status === 2) {
+    return {
+      success: false,
+      message: cancelItem.msg || "GPS cancel pre-check failed",
+    };
+  }
+
+  // OMS cancellation is asynchronous; poll aggregate status until terminal.
+  for (let attempt = 1; attempt <= pollAttempts; attempt++) {
+    const bizStatus = await postOms<GpsCancelBizStatusResponse>(
+      "/openapi/v1/outboundOrder/selectBizStatus",
+      cancelRequest,
+      warehouseName
+    );
+
+    if (Number(bizStatus?.code) !== 200) {
+      if (attempt < pollAttempts) {
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      return {
+        success: false,
+        message: bizStatus?.msg || `GPS cancel status query failed (code=${bizStatus?.code})`,
+      };
+    }
+
+    const row = Array.isArray(bizStatus?.data)
+      ? bizStatus.data.find((x) => x.outboundOrderNo === orderNumber) || bizStatus.data[0]
+      : undefined;
+    const status = Number(row?.status);
+
+    if (status === 1) {
+      return { success: true, message: row?.msg || "GPS cancellation successful" };
+    }
+    if (status === 2) {
+      return { success: false, message: row?.msg || "GPS cancellation rejected" };
+    }
+
+    if (attempt < pollAttempts) {
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  return {
+    success: false,
+    message: `GPS cancellation still processing after ${pollAttempts} polls`,
+  };
 }
 
 /**

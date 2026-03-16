@@ -158,6 +158,27 @@ export async function getOrder(orderId: string | number): Promise<ShopifyOrder> 
 }
 
 /**
+ * Attempt to restore a previously-cancelled Shopify order.
+ * Shopify exposes this as "open" in REST.
+ */
+export async function uncancelOrder(orderId: string | number): Promise<ShopifyOrder> {
+  const url = buildUrl(`/orders/${orderId}/open.json`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to uncancel Shopify order: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return data.order;
+}
+
+/**
  * Get Fulfillment Orders for an Order
  */
 export async function getFulfillmentOrders(

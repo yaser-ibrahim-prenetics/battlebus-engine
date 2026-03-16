@@ -21,6 +21,7 @@ This directory contains comprehensive test documentation for all integration flo
 | 5   | [Refunds](#flow-5-refunds)                                       | Shopify → Inngest → Dynamics            | [05-refunds.md](./05-refunds.md)                                                     |
 | 6   | [Cancellations](#flow-6-cancellations)                           | Shopify → Inngest (GPS exclusion)       | [06-cancellations.md](./06-cancellations.md)                                         |
 | 7   | [Shopify Direct Fulfillment](#flow-7-shopify-direct-fulfillment) | Shopify → Inngest → Dynamics            | [07-shopify-direct-fulfillment.md](./07-shopify-direct-fulfillment.md)               |
+| 8   | [Cancellation Orchestration](#flow-8-cancellation-orchestration) | Shopify/Hub → Inngest → GPS + Shopify   | [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md)                     |
 
 > **Note:** Individual flow docs reference "spock-store" which is now handled by **Inngest flows**.
 
@@ -250,6 +251,27 @@ Shopify → Inngest → Dynamics (fulfilment)
 - Dynamics fulfillment notification sent
 
 [📄 Full Documentation](./07-shopify-direct-fulfillment.md)
+
+---
+
+### Flow 8: Cancellation Orchestration
+
+**Trigger:** Cancellation from Shopify webhook or Battle Hub cancel action
+
+**Path:**
+
+```
+Shopify/Hub → Inngest → GPS cancel (OMS) → Shopify uncancel safeguard (if shipped)
+```
+
+**Key Validations:**
+
+- GPS cancel API called for GPS orders
+- OMS async cancel status is polled to terminal state
+- If GPS cancellation fails because shipped/in-flight, Shopify order is re-opened
+- Canonical cancellation processing works from both Shopify and Hub entry points
+
+[📄 Full Documentation](./08-cancel-gps-and-uncancel.md)
 
 ---
 
