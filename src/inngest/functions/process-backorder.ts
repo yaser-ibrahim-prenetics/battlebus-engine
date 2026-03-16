@@ -32,7 +32,8 @@ export const processBackorder = inngest.createFunction(
   {
     id: "process-backorder",
     name: "Process Backorder (Inventory Retry)",
-    idempotency: "event.data.shopifyOrderId",
+    // Keep idempotency for initial parking, but allow each manual retry to run.
+    idempotency: "event.data.manualRetryId || event.data.shopifyOrderId",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
   },
