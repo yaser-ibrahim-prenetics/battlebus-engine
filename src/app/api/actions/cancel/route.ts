@@ -72,8 +72,11 @@ export async function POST(request: NextRequest) {
 
       // Also emit canonical Shopify cancellation event so downstream cancellation
       // flow (GPS/D365/etc.) executes immediately even before webhook delivery.
+      // Use a unique event id here to avoid collisions with the Shopify webhook
+      // event id (`shopify-order-cancelled-{orderId}`) for the same cancellation.
+      // Idempotency is enforced in the cancellation function by shopifyOrderId.
       await inngest.send({
-        id: `shopify-order-cancelled-${numericOrderId}`,
+        id: `shopify-order-cancelled-${numericOrderId}-${Date.now()}`,
         name: "shopify/order.cancelled",
         data: {
           shopifyOrderId: String(numericOrderId),
