@@ -254,10 +254,9 @@ export function toD365SalesOrderLines(
   lines.length = 0;
   lines.push(...explodedLines);
 
-  // Add shipping line
-  // NOTE: Temporarily disabled - IM8-SER-* SKUs don't exist in D365 sandbox yet
-  // TODO: Re-enable once service SKUs are created in D365
-  if (includeShippingAndTax && false) {
+  // Add service lines (shipping/tax) using warehouse-config service SKUs.
+  // Mirrors spock-store behavior: tax line is derived from order-level tax (+ duties).
+  if (includeShippingAndTax) {
     const shippingCost = calculateShippingCost(order);
     if (shippingCost > 0) {
       lines.push({
@@ -270,15 +269,17 @@ export function toD365SalesOrderLines(
       });
     }
 
-    // Add tax line
+    // Add tax+duty line
     const taxAmount = calculateTaxAmount(order);
-    if (taxAmount > 0) {
+    const dutyAmount = calculateDutyAmount(order);
+    const taxAndDuty = taxAmount + dutyAmount;
+    if (taxAndDuty > 0) {
       lines.push({
         salesOrderNumber,
         dataAreaId,
         itemNumber: getTaxSku(warehouseName),
         quantity: 1,
-        price: taxAmount,
+        price: taxAndDuty,
         currency,
       });
     }
@@ -371,6 +372,15 @@ export function calculateShippingCost(order: ShopifyOrderPayload): number {
  */
 export function calculateTaxAmount(order: ShopifyOrderPayload): number {
   return parseFloat(order.total_tax) || 0;
+}
+
+/**
+ * Calculate total duties from order (shop currency)
+ */
+export function calculateDutyAmount(order: ShopifyOrderPayload): number {
+  const raw = (order as any)?.current_total_duties_set?.shop_money?.amount;
+  if (raw == null) return 0;
+  return parseFloat(String(raw)) || 0;
 }
 
 /**

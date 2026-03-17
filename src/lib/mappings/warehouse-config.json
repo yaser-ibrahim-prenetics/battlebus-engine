@@ -20,9 +20,9 @@
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
-        "tax": "IM8-SER-000001",
-        "refund": "IM8-SER-000003",
-        "shipping": "IM8-SER-000002"
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
+        "shipping": "IM8-SER-000003"
       }
     },
     "GPS UK Warehouse": {
@@ -68,9 +68,9 @@
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
-        "tax": "IM8-SER-000004",
-        "refund": "IM8-SER-000005",
-        "shipping": "IM8-SER-000003"
+        "tax": "IM8-SER-000001",
+        "refund": "IM8-SER-000003",
+        "shipping": "IM8-SER-000002"
       }
     },
     "HK Warehouse": {
