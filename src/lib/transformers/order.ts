@@ -219,9 +219,27 @@ export function toD365SalesOrderLines(
 
   for (const item of lineItems) {
     if (item.gift_card) continue;
+    const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
+    if (!rawSku) {
+      // Some Shopify app-generated lines (insurance/fees/etc.) can be non-shippable and have no SKU.
+      // They cannot be represented as D365 item lines, so we skip them.
+      if (item.requires_shipping === false) {
+        console.warn(
+          `[Transformers] Skipping non-shippable line without SKU for ${order.name}: ` +
+            `${item.title || "untitled"} (variant=${item.variant_id || "n/a"}, product=${item.product_id || "n/a"})`
+        );
+        continue;
+      }
+
+      // Shippable lines must always have a SKU; fail fast with actionable context.
+      throw new Error(
+        `[D365] Missing SKU on shippable Shopify line item for ${order.name}: ` +
+          `${item.title || "untitled"} (variant=${item.variant_id || "n/a"}, product=${item.product_id || "n/a"})`
+      );
+    }
 
     const line = toD365SalesOrderLine(
-      item,
+      { ...item, sku: rawSku },
       salesOrderNumber,
       dataAreaId,
       currency,
