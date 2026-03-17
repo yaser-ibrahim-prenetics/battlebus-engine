@@ -68,6 +68,103 @@ export const processOrderCancellation = inngest.createFunction(
 
       try {
         const gpsMeta = await shopify.getGpsOrderMetafield(shopifyOrderId);
+        if (gpsMeta?.gpsOrderId) {
+          if (!isGpsWarehouse(gpsMeta.warehouse)) {
+            return {
+              status: "skipped",
+              reason: `Non-GPS warehouse (${gpsMeta.warehouse || "unknown"})`,
+            };
+          }
+
+          const result = await gps.cancelOutboundOrder(gpsMeta.gpsOrderId, gpsMeta.warehouse);
+          return { status: result.success ? "cancelled" : "failed", result };
+        }
+
+        // Legacy fallback: some historical orders stored raw GPS IDs in metafields
+        // like gpsorderid / gpsukorderid instead of battle_bus.gps_order JSON.
+        const legacyMetafields = await shopify.getOrderMetafields(shopifyOrderId).catch(() => []);
+        const readLegacyValue = (candidates: string[]): string | null => {
+          const hit = legacyMetafields.find((mf: any) => {
+            const key = String(mf?.key || "").toLowerCase();
+            return candidates.some((candidate) => key === candidate || key.includes(candidate));
+          });
+          if (!hit?.value) return null;
+          const raw = String(hit.value).trim();
+          return raw.length > 0 ? raw : null;
+        };
+
+        const legacyUkId = readLegacyValue(["gpsukorderid", "gps_uk_order_id"]);
+        const legacyUsId = readLegacyValue(["gpsorderid", "gps_order_id"]);
+
+        const legacyCandidates: Array<{
+          orderNumber: string;
+          warehouse: "GPS Warehouse" | "GPS UK Warehouse";
+          source: string;
+        }> = [];
+        if (legacyUkId) {
+          legacyCandidates.push({
+            orderNumber: legacyUkId,
+            warehouse: "GPS UK Warehouse",
+            source: "legacy_metafield:gpsukorderid",
+          });
+        }
+        if (legacyUsId) {
+          legacyCandidates.push({
+            orderNumber: legacyUsId,
+            warehouse: "GPS Warehouse",
+            source: "legacy_metafield:gpsorderid",
+          });
+        }
+
+        if (legacyCandidates.length > 0) {
+          const attempts: Array<{
+            orderNumber: string;
+            warehouse: "GPS Warehouse" | "GPS UK Warehouse";
+            success: boolean;
+            message: string;
+            source: string;
+          }> = [];
+
+          for (const candidate of legacyCandidates) {
+            try {
+              const result = await gps.cancelOutboundOrder(
+                candidate.orderNumber,
+                candidate.warehouse
+              );
+              attempts.push({
+                orderNumber: candidate.orderNumber,
+                warehouse: candidate.warehouse,
+                success: result.success,
+                message: result.message,
+                source: candidate.source,
+              });
+              if (result.success) {
+                return {
+                  status: "cancelled",
+                  result,
+                  via: candidate.source,
+                  warehouse: candidate.warehouse,
+                };
+              }
+            } catch (legacyError) {
+              attempts.push({
+                orderNumber: candidate.orderNumber,
+                warehouse: candidate.warehouse,
+                success: false,
+                message:
+                  legacyError instanceof Error ? legacyError.message : String(legacyError),
+                source: candidate.source,
+              });
+            }
+          }
+
+          return {
+            status: "failed",
+            reason: "Legacy GPS metafield IDs found but cancellation failed",
+            attempts,
+          };
+        }
+
         if (!gpsMeta?.gpsOrderId) {
           // Fallback: older orders may miss GPS metafields.
           // Try cancellation using Shopify order name as outbound order number.
@@ -114,20 +211,11 @@ export const processOrderCancellation = inngest.createFunction(
 
           return {
             status: "skipped",
-            reason: "No GPS order metadata found on Shopify order; fallback cancellation not confirmed",
+            reason:
+              "No GPS order metadata found (battle_bus.gps_order or gpsorderid/gpsukorderid); fallback cancellation not confirmed",
             attempts,
           };
         }
-
-        if (!isGpsWarehouse(gpsMeta.warehouse)) {
-          return {
-            status: "skipped",
-            reason: `Non-GPS warehouse (${gpsMeta.warehouse || "unknown"})`,
-          };
-        }
-
-        const result = await gps.cancelOutboundOrder(gpsMeta.gpsOrderId, gpsMeta.warehouse);
-        return { status: result.success ? "cancelled" : "failed", result };
       } catch (error) {
         return {
           status: "failed",

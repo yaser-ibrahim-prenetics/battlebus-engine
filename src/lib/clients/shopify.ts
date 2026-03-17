@@ -158,6 +158,27 @@ export async function getOrder(orderId: string | number): Promise<ShopifyOrder> 
 }
 
 /**
+ * Get all metafields for a Shopify order.
+ * Used as a fallback for legacy GPS metafield keys (e.g. gpsorderid / gpsukorderid).
+ */
+export async function getOrderMetafields(orderId: string | number): Promise<any[]> {
+  const url = buildUrl(`/orders/${orderId}/metafields.json?limit=250`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get Shopify order metafields: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data?.metafields) ? data.metafields : [];
+}
+
+/**
  * Attempt to restore a previously-cancelled Shopify order.
  * Shopify exposes this as "open" in REST.
  */

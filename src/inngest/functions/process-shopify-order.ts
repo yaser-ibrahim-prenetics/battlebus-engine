@@ -120,7 +120,11 @@ function isNonRetryableOrderError(message: string): boolean {
     m.includes("unknown warehouse") ||
     m.includes("unsupported warehouse") ||
     m.includes("unsupported virtual warehouse") ||
-    m.includes("not fully configured in battle hub")
+    m.includes("not fully configured in battle hub") ||
+    // Malformed line payloads / missing SKU should fail fast (not retried)
+    m.includes("item or category must be specified") ||
+    m.includes("missing sku/itemnumber") ||
+    m.includes("missing d365 itemnumber")
   );
 }
 
@@ -572,6 +576,31 @@ export const processShopifyOrder = inngest.createFunction(
           return lineItems;
         }
 
+        const invalidLines = lineItems
+          .map((line, index) => ({ line, index }))
+          .filter(
+            ({ line }) =>
+              typeof line.itemNumber !== "string" ||
+              line.itemNumber.trim().length === 0 ||
+              !Number.isFinite(line.quantity) ||
+              line.quantity <= 0
+          );
+        if (invalidLines.length > 0) {
+          const details = invalidLines
+            .slice(0, 5)
+            .map(({ line, index }) => ({
+              index,
+              itemNumber: line.itemNumber,
+              quantity: line.quantity,
+              price: line.price,
+            }));
+          throw new Error(
+            `[D365] Missing SKU/ItemNumber in create-d365-lines for ${shopifyOrderName} (${salesOrderNo}); ` +
+              `invalidLines=${invalidLines.length}; details=${JSON.stringify(details)} ` +
+              `(missing SKU/ItemNumber is non-retryable)`
+          );
+        }
+
         await Promise.all(
           lineItems.map((line) =>
             retryWithBackoff(() => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }), {
@@ -986,6 +1015,22 @@ export const processShopifyOrder = inngest.createFunction(
             "completed",
             `Metafield stored: ${gpsOrderNo}`,
             { gpsOrderNo }
+          );
+
+          // Persist GPS reference to Battle Hub immediately after creation
+          // so the order detail view can show gps_order_no even if later steps fail.
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNo,
+              warehouse: warehouseName,
+              gpsOrderId: gpsOrderNo,
+              gpsSyncStatus: "synced",
+            },
+            { inngestIdempotencyKey, inngestRunId }
           );
         }
       } else if (gpsResult.type === "failed") {
