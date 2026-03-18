@@ -474,6 +474,18 @@ export async function findLocationByWarehouseName(
 }
 
 /**
+ * Get the Shopify location ID for a warehouse name.
+ * Used by inventory-sync and cron-gps-sync to replace hardcoded location IDs.
+ */
+export async function getLocationIdForWarehouse(
+  warehouseName: string,
+  store: string = "im8"
+): Promise<string | null> {
+  const mapping = await findLocationByWarehouseName(warehouseName, store);
+  return mapping?.shopifyLocationId ?? null;
+}
+
+/**
  * Get all locations for a specific DataAreaId.
  * Used by inventory sync.
  */

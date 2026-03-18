@@ -12,8 +12,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 
+const EVENT_SEND_SECRET = process.env.EVENT_SEND_SECRET || process.env.CS_PLATFORM_WEBHOOK_SECRET || "";
+
 export async function POST(request: NextRequest) {
   try {
+    const authHeader = request.headers.get("authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!EVENT_SEND_SECRET || token !== EVENT_SEND_SECRET) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const { name, data } = body;
 

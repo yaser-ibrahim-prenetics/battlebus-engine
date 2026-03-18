@@ -5,20 +5,38 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { stordWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.text();
     const authHeader = request.headers.get("authorization");
 
-    // Verify API key (STORD typically uses Bearer token)
     const expectedToken = process.env.STORD_WEBHOOK_SECRET;
-    if (expectedToken && authHeader !== `Bearer ${expectedToken}`) {
+    if (!expectedToken) {
+      console.error("[Webhook] STORD_WEBHOOK_SECRET not configured — rejecting request");
+      return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
+    }
+    if (authHeader !== `Bearer ${expectedToken}`) {
       console.error("[Webhook] Invalid STORD authorization");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const payload = JSON.parse(body);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 });
+    }
+
+    const validation = validateWebhookSchema(stordWebhookSchema, payload);
+    if (!validation.success) {
+      console.error(`[Webhook] Invalid STORD payload: ${validation.error}`);
+      return NextResponse.json(
+        { error: `Invalid payload: ${validation.error}` },
+        { status: 400 }
+      );
+    }
 
     console.log(`[Webhook] Received STORD fulfilment for order: ${payload.orderNumber}`);
 

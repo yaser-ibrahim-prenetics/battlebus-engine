@@ -136,8 +136,10 @@ interface BatchBuffer {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-const BATCH_WINDOW_MS = parseInt(process.env.SLACK_BATCH_WINDOW_MS || '10000', 10); // 10 seconds
-const BATCH_MAX_SIZE = parseInt(process.env.SLACK_BATCH_MAX_SIZE || '50', 10);
+const _batchWindowParsed = parseInt(process.env.SLACK_BATCH_WINDOW_MS || "10000", 10);
+const BATCH_WINDOW_MS = Number.isNaN(_batchWindowParsed) ? 10000 : _batchWindowParsed; // 10 seconds
+const _batchMaxSizeParsed = parseInt(process.env.SLACK_BATCH_MAX_SIZE || "50", 10);
+const BATCH_MAX_SIZE = Number.isNaN(_batchMaxSizeParsed) ? 50 : _batchMaxSizeParsed;
 const batchBuffers: Map<string, BatchBuffer> = new Map();
 
 /**

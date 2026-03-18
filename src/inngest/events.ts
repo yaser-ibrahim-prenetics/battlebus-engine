@@ -331,6 +331,22 @@ export type InventoryFullSyncRequestedEvent = {
   };
 };
 
+// ============================================================================
+// ORDER LIFECYCLE EVENTS
+// ============================================================================
+
+export type OrderLifecycleReadyEvent = {
+  name: "order/lifecycle.ready";
+  data: {
+    shopifyOrderId: string;
+    shopifyOrderName: string;
+    shopifyStore: string;
+    d365OrderNumber: string;
+    warehouseName: string;
+    dataAreaId: string;
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -355,7 +371,8 @@ export type BattleBusEvents =
   | SubscriptionRenewalEvent
   | BackorderCreatedEvent
   | BackorderResolvedEvent
-  | BackorderRetryEvent;
+  | BackorderRetryEvent
+  | OrderLifecycleReadyEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)

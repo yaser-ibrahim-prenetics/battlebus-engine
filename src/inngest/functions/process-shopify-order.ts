@@ -142,6 +142,16 @@ function inferInventoryErrorType(message: string): string {
   return "out_of_stock";
 }
 
+function isServiceSkuItemNumber(itemNumber?: string | null): boolean {
+  const sku = String(itemNumber || "").toUpperCase();
+  return sku.startsWith("IM8-SER-") || sku.startsWith("PRE-SER-");
+}
+
+function isD365ItemNotFoundError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return m.includes("item number") && m.includes("does not exist");
+}
+
 export const processShopifyOrder = inngest.createFunction(
   {
     id: "process-shopify-order",
@@ -601,17 +611,52 @@ export const processShopifyOrder = inngest.createFunction(
           );
         }
 
-        await Promise.all(
+        const lineResults = await Promise.all(
           lineItems.map((line) =>
-            retryWithBackoff(() => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }), {
-              label: `D365 line ${line.itemNumber}`,
-              shouldRetry: (err) => {
+            (async () => {
+              try {
+                await retryWithBackoff(
+                  () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }),
+                  {
+                    label: `D365 line ${line.itemNumber}`,
+                    shouldRetry: (err) => {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      return !isNonRetryableOrderError(msg);
+                    },
+                  }
+                );
+                return { skipped: false as const, itemNumber: line.itemNumber };
+              } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                return !isNonRetryableOrderError(msg);
-              },
-            })
+                // Keep spock-store service SKU behavior, but tolerate missing setup in D365 envs.
+                // Product SKU failures are still hard failures.
+                if (isServiceSkuItemNumber(line.itemNumber) && isD365ItemNotFoundError(msg)) {
+                  console.warn(
+                    `[D365] Skipping missing service SKU line ${line.itemNumber} for ${salesOrderNo}: ${msg}`
+                  );
+                  return {
+                    skipped: true as const,
+                    itemNumber: line.itemNumber,
+                    error: msg,
+                  };
+                }
+                throw err;
+              }
+            })()
           )
         );
+        const skippedServiceLines = lineResults.filter((r) => r.skipped);
+        if (skippedServiceLines.length > 0) {
+          await publishStatus(
+            "d365.create-lines",
+            "running",
+            `Skipped ${skippedServiceLines.length} missing service SKU lines`,
+            {
+              skippedServiceSkus: skippedServiceLines.map((s) => s.itemNumber),
+              skippedCount: skippedServiceLines.length,
+            }
+          );
+        }
         return lineItems;
       });
       await publishStatus(
@@ -1151,6 +1196,24 @@ export const processShopifyOrder = inngest.createFunction(
         }
       }
 
+      // Emit lifecycle.ready so stacked actions (fulfill/cancel/refund) are drained
+      if (!routedToBackorder) {
+        await step.run("emit-lifecycle-ready", async () => {
+          await inngest.send({
+            id: `lifecycle-ready-${shopifyOrderId}`,
+            name: "order/lifecycle.ready",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              shopifyStore: event.data.shopifyStore || "im8",
+              d365OrderNumber: salesOrderNo || "",
+              warehouseName: warehouseName || "",
+              dataAreaId: dataAreaId || "",
+            },
+          });
+        });
+      }
+
       // IMPORTANT: Do not overwrite backorder status with a generic "order created" update.
       if (!routedToBackorder) {
         await csPlatform.sendOrderCreated(
@@ -1241,10 +1304,7 @@ export const processShopifyOrder = inngest.createFunction(
               shopifyOrderId,
               shopifyOrderName,
               d365OrderNumber: salesOrderNumber,
-              warehouse:
-                order?.shipping_address?.country_code === "GB"
-                  ? "GPS UK Warehouse"
-                  : "GPS Warehouse",
+              warehouse: warehouseName || "GPS Warehouse",
               errorMessage: errorMsg,
               errorType: inventoryErrorType,
               failedSkus,
@@ -1287,6 +1347,48 @@ export const processShopifyOrder = inngest.createFunction(
         throw new NonRetriableError(
           `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue: ${inventoryErrorType}`
         );
+      }
+
+      // Service SKU "does not exist" errors are non-fatal config issues.
+      // The step-level graceful skip should have caught these, but if not
+      // (e.g. older deployment), don't mark the entire order as failed.
+      const serviceSkuMatch = errorMsg.match(
+        /create sales order line ((?:IM8|PRE)-SER-\d+)/i
+      );
+      if (serviceSkuMatch && isD365ItemNotFoundError(errorMsg)) {
+        console.warn(
+          `[D365] Service SKU ${serviceSkuMatch[1]} not registered in D365 — treating as warning, not failure. ` +
+          `Order ${shopifyOrderName} will continue processing without this service line.`
+        );
+
+        await publishResult("success", {
+          d365OrderNumber: salesOrderNumber,
+        });
+
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            status: "completed",
+            processingStatus: "completed",
+            d365SyncStatus: "synced",
+            d365OrderNumber: salesOrderNumber,
+            lastError: `Service SKU ${serviceSkuMatch[1]} not registered in D365 (non-fatal)`,
+            lastErrorType: "service_sku_missing",
+          },
+          { inngestIdempotencyKey, inngestRunId }
+        );
+
+        return {
+          status: "completed",
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: salesOrderNumber,
+          warning: `Service SKU ${serviceSkuMatch[1]} skipped`,
+          processedAt: new Date().toISOString(),
+        };
       }
 
       // Non-retryable configuration/master-data errors: record and stop here.

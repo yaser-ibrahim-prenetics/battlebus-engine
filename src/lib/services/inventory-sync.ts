@@ -18,6 +18,7 @@ import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
 import * as shopify from "../clients/shopify";
 import { mapShopifySkuToDynamics, mapDynamicsSkuToShopify } from "../transformers/sku";
+import { getLocationIdForWarehouse } from "./location-routing";
 
 // ============================================================================
 // TYPES
@@ -75,27 +76,41 @@ interface WarehouseMapping {
   shopifyLocationId: string;
 }
 
-const WAREHOUSE_MAPPINGS: WarehouseMapping[] = [
-  {
-    gpsName: "GPS Warehouse",
-    gpsCode: "JFK01W",
-    d365DataAreaId: "U001",
-    d365WarehouseId: "USOPS-WH04",
-    d365SiteId: "Prenetics",
-    shopifyLocationId: config.shopify.im8.locations?.gps || "",
-  },
-  {
-    gpsName: "GPS UK Warehouse",
-    gpsCode: "GB03RS",
-    d365DataAreaId: "H007",
-    d365WarehouseId: "OPS-WH02",
-    d365SiteId: "Prenetics",
-    shopifyLocationId: config.shopify.im8.locations?.gpsUk || "",
-  },
-];
+let _warehouseMappingsCache: WarehouseMapping[] | null = null;
 
-export function getWarehouseMapping(identifier: string): WarehouseMapping | undefined {
-  return WAREHOUSE_MAPPINGS.find(
+async function getWarehouseMappings(): Promise<WarehouseMapping[]> {
+  if (_warehouseMappingsCache) return _warehouseMappingsCache;
+
+  const [gpsLocationId, gpsUkLocationId] = await Promise.all([
+    getLocationIdForWarehouse("GPS Warehouse"),
+    getLocationIdForWarehouse("GPS UK Warehouse"),
+  ]);
+
+  _warehouseMappingsCache = [
+    {
+      gpsName: "GPS Warehouse",
+      gpsCode: "JFK01W",
+      d365DataAreaId: "U001",
+      d365WarehouseId: "USOPS-WH04",
+      d365SiteId: "Prenetics",
+      shopifyLocationId: gpsLocationId || config.shopify.im8.locations?.gps || "",
+    },
+    {
+      gpsName: "GPS UK Warehouse",
+      gpsCode: "GB03RS",
+      d365DataAreaId: "H007",
+      d365WarehouseId: "OPS-WH02",
+      d365SiteId: "Prenetics",
+      shopifyLocationId: gpsUkLocationId || config.shopify.im8.locations?.gpsUk || "",
+    },
+  ];
+
+  return _warehouseMappingsCache;
+}
+
+export async function getWarehouseMapping(identifier: string): Promise<WarehouseMapping | undefined> {
+  const mappings = await getWarehouseMappings();
+  return mappings.find(
     (m) =>
       m.gpsName === identifier ||
       m.gpsCode === identifier ||
@@ -144,7 +159,7 @@ export async function queryGpsWarehouseInventory(
 ): Promise<Map<string, InventoryLevel>> {
   console.log(`[InventorySync] Querying GPS inventory for warehouse: ${warehouseName}`);
 
-  const mapping = getWarehouseMapping(warehouseName);
+  const mapping = await getWarehouseMapping(warehouseName);
   if (!mapping) {
     throw new Error(`Unknown warehouse: ${warehouseName}`);
   }
@@ -380,7 +395,7 @@ export async function queryShopifyInventory(
 export async function syncGpsToD365(sku: string, warehouseName: string): Promise<SyncResult> {
   console.log(`[InventorySync] Syncing GPS -> D365: ${sku} in ${warehouseName}`);
 
-  const mapping = getWarehouseMapping(warehouseName);
+  const mapping = await getWarehouseMapping(warehouseName);
   if (!mapping) {
     return {
       success: false,
@@ -502,8 +517,8 @@ export async function syncD365ToShopify(
       };
     }
 
-    // Get warehouse mapping for location
-    const warehouseMapping = WAREHOUSE_MAPPINGS.find((m) => m.d365DataAreaId === dataAreaId);
+    const allMappings = await getWarehouseMappings();
+    const warehouseMapping = allMappings.find((m) => m.d365DataAreaId === dataAreaId);
 
     const locationId = warehouseMapping?.shopifyLocationId;
 

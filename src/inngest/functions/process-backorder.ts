@@ -182,6 +182,19 @@ export const processBackorder = inngest.createFunction(
           },
         });
 
+        await inngest.send({
+          id: `lifecycle-ready-${shopifyOrderId}`,
+          name: "order/lifecycle.ready",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            shopifyStore: (event.data as any).shopifyStore || "im8",
+            d365OrderNumber: d365OrderNumber || "",
+            warehouseName: warehouse || "",
+            dataAreaId: "",
+          },
+        });
+
         return {
           status: "resolved",
           shopifyOrderId,
@@ -362,6 +375,20 @@ export const processBackorder = inngest.createFunction(
             shopifyOrderName,
             resolvedAt: new Date().toISOString(),
             resolution: "fulfilled",
+          },
+        });
+
+        // Drain any stacked lifecycle actions
+        await inngest.send({
+          id: `lifecycle-ready-${shopifyOrderId}`,
+          name: "order/lifecycle.ready",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            shopifyStore: (event.data as any).shopifyStore || "im8",
+            d365OrderNumber: d365OrderNumber || "",
+            warehouseName: warehouse || "",
+            dataAreaId: "",
           },
         });
 

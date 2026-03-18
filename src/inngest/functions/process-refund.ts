@@ -12,6 +12,7 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
+import { storePendingAction } from "@/lib/services/pending-actions";
 
 export const processRefund = inngest.createFunction(
   {
@@ -62,11 +63,30 @@ export const processRefund = inngest.createFunction(
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
+      if ((event.data as any).fromDrain) {
+        return {
+          status: "failed",
+          refundId,
+          shopifyOrderId,
+          message: "D365 order not found after drain — refund permanently skipped",
+        };
+      }
+      await step.run("store-pending-refund", async () => {
+        await storePendingAction(shopifyOrderId, {
+          action: "refund",
+          eventName: "shopify/refund.created",
+          eventData: event.data,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      console.log(
+        `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — D365 order not yet created`
+      );
       return {
-        status: "no_d365_order",
+        status: "deferred",
         refundId,
         shopifyOrderId,
-        message: "D365 order not found - refund cannot be processed",
+        reason: "D365 order not yet created, refund queued for replay",
       };
     }
 

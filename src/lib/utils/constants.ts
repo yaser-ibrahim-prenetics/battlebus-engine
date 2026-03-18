@@ -4,9 +4,15 @@
 // Shared constants for Inngest functions
 // All values are configurable via environment variables with sensible defaults
 
-// Helper to parse int from env with fallback
+// Helper to safely parse int from env with fallback (NaN-safe)
+function safeParseInt(value: string | undefined, defaultValue: number): number {
+  if (!value) return defaultValue;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
 const envInt = (key: string, fallback: number): number =>
-  parseInt(process.env[key] || String(fallback), 10);
+  safeParseInt(process.env[key], fallback);
 
 // ============================================================================
 // THROTTLE CONFIGURATIONS

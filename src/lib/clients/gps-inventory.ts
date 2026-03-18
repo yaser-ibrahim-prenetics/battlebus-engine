@@ -15,12 +15,12 @@ import crypto from "crypto";
 import { config } from "../config";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
-const OMS_MIN_INTERVAL_MS = Math.max(
-  0,
-  parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10)
-);
-const OMS_MAX_PAGE_SIZE = Math.max(1, parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10));
-const OMS_MAX_SKU_LIST_SIZE = Math.max(1, parseInt(process.env.OMS_MAX_PRODUCT_SKU_LIST_SIZE || "50", 10));
+const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
+const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 120 : _omsMinIntervalParsed);
+const _omsMaxPageParsed = parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10);
+const OMS_MAX_PAGE_SIZE = Math.max(1, Number.isNaN(_omsMaxPageParsed) ? 100 : _omsMaxPageParsed);
+const _omsMaxSkuParsed = parseInt(process.env.OMS_MAX_PRODUCT_SKU_LIST_SIZE || "50", 10);
+const OMS_MAX_SKU_LIST_SIZE = Math.max(1, Number.isNaN(_omsMaxSkuParsed) ? 50 : _omsMaxSkuParsed);
 let omsLastRequestAt = 0;
 
 async function pacedFetch(

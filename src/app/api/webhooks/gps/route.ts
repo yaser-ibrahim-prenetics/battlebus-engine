@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/gps";
+import { gpsWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,13 +14,27 @@ export async function POST(request: NextRequest) {
     const signature = request.headers.get("x-signature");
     const timestamp = request.headers.get("x-timestamp");
 
-    // Verify webhook signature
-    if (signature && timestamp && !verifyWebhookSignature(body, signature, timestamp)) {
+    if (!signature || !timestamp) {
+      console.error("[Webhook] Missing GPS signature or timestamp headers");
+      return NextResponse.json({ error: "Missing signature headers" }, { status: 401 });
+    }
+    if (!verifyWebhookSignature(body, signature, timestamp)) {
       console.error("[Webhook] Invalid GPS signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    const payload = JSON.parse(body);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return NextResponse.json({ error: "Malformed JSON body" }, { status: 400 });
+    }
+
+    const validation = validateWebhookSchema(gpsWebhookSchema, payload);
+    if (!validation.success) {
+      console.error(`[Webhook] Invalid GPS payload: ${validation.error}`);
+      return NextResponse.json({ error: `Invalid payload: ${validation.error}` }, { status: 400 });
+    }
 
     console.log(`[Webhook] Received GPS fulfilment for order: ${payload.orderNumber}`);
 

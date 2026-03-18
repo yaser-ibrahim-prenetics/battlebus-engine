@@ -13,6 +13,7 @@ import {
 } from "@/lib/utils/constants";
 import { ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
+import { storePendingAction } from "@/lib/services/pending-actions";
 
 export const processOrderCancellation = inngest.createFunction(
   {
@@ -82,7 +83,10 @@ export const processOrderCancellation = inngest.createFunction(
 
         // Legacy fallback: some historical orders stored raw GPS IDs in metafields
         // like gpsorderid / gpsukorderid instead of battle_bus.gps_order JSON.
-        const legacyMetafields = await shopify.getOrderMetafields(shopifyOrderId).catch(() => []);
+        const legacyMetafields = await shopify.getOrderMetafields(shopifyOrderId).catch((error) => {
+          console.warn('[Cancellation] Fetch failed, continuing:', error instanceof Error ? error.message : error);
+          return [];
+        });
         const readLegacyValue = (candidates: string[]): string | null => {
           const hit = legacyMetafields.find((mf: any) => {
             const key = String(mf?.key || "").toLowerCase();
@@ -224,6 +228,36 @@ export const processOrderCancellation = inngest.createFunction(
         };
       }
     });
+
+    // If both D365 and GPS have nothing to act on and this is not a drain replay,
+    // the order creation likely hasn't completed yet — defer the cancellation.
+    const nothingToCancelInD365 = !d365Order && config.features.enableDynamicsSync;
+    const nothingToCancelInGps =
+      gpsCancellation.status === "skipped" &&
+      typeof gpsCancellation.reason === "string" &&
+      gpsCancellation.reason.includes("No GPS order metadata");
+    const isFromDrain = !!(event.data as any).fromDrain;
+
+    if (nothingToCancelInD365 && nothingToCancelInGps && !isFromDrain) {
+      await step.run("store-pending-cancel", async () => {
+        await storePendingAction(shopifyOrderId, {
+          action: "cancel",
+          eventName: "shopify/order.cancelled",
+          eventData: event.data,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      console.log(
+        `[PendingActions] Deferred cancellation for ${shopifyOrderName} — D365/GPS orders not yet created`
+      );
+      return {
+        status: "deferred",
+        shopifyOrderId,
+        shopifyOrderName,
+        cancelReason,
+        reason: "D365 and GPS orders not yet created, cancellation queued for replay",
+      };
+    }
 
     // 3. Handle D365 Cancellation or Return
     const d365Cancellation = await step.run("process-d365-cancellation", async () => {

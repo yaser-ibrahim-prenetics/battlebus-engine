@@ -1,0 +1,97 @@
+{
+  "id": 6902000000001,
+  "name": "IM8-18200",
+  "email": "subscriber@example.com",
+  "created_at": "2026-03-16T12:00:00-05:00",
+  "updated_at": "2026-03-16T12:01:00-05:00",
+  "cancelled_at": null,
+  "total_price": "59.99",
+  "subtotal_price": "59.99",
+  "total_tax": "0.00",
+  "currency": "USD",
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "tags": "subscription,skio",
+  "note": null,
+  "cancel_reason": null,
+  "source_name": "subscription_contract",
+  "app_id": 6048322,
+  "note_attributes": [
+    { "name": "subscription_contract_id", "value": "gid://shopify/SubscriptionContract/12345" }
+  ],
+  "line_items": [
+    {
+      "id": 14040,
+      "variant_id": 44040,
+      "title": "IM8 Monthly Refill Pack",
+      "quantity": 1,
+      "sku": "IM8-FG-000010",
+      "variant_title": "Monthly",
+      "vendor": "IM8",
+      "fulfillment_service": "manual",
+      "product_id": 8040,
+      "requires_shipping": true,
+      "taxable": false,
+      "gift_card": false,
+      "name": "IM8 Monthly Refill Pack - Monthly",
+      "price": "59.99",
+      "total_discount": "0.00",
+      "fulfillment_status": null,
+      "properties": [
+        { "name": "_subscription_contract_id", "value": "gid://shopify/SubscriptionContract/12345" }
+      ],
+      "tax_lines": []
+    }
+  ],
+  "shipping_address": {
+    "first_name": "Sam",
+    "last_name": "Wilson",
+    "address1": "789 Elm Street",
+    "address2": null,
+    "city": "Los Angeles",
+    "province": "California",
+    "country": "United States",
+    "zip": "90001",
+    "phone": "+13105551234",
+    "company": null,
+    "country_code": "US",
+    "province_code": "CA"
+  },
+  "billing_address": {
+    "first_name": "Sam",
+    "last_name": "Wilson",
+    "address1": "789 Elm Street",
+    "address2": null,
+    "city": "Los Angeles",
+    "province": "California",
+    "country": "United States",
+    "zip": "90001",
+    "phone": "+13105551234",
+    "company": null,
+    "country_code": "US",
+    "province_code": "CA"
+  },
+  "shipping_lines": [
+    {
+      "id": 5040,
+      "title": "Free Shipping",
+      "price": "0.00",
+      "code": "Free",
+      "source": "shopify",
+      "carrier_identifier": null,
+      "tax_lines": []
+    }
+  ],
+  "discount_codes": [
+    { "code": "SUBSCRIBE10", "amount": "6.00", "type": "percentage" }
+  ],
+  "customer": {
+    "id": 7040,
+    "email": "subscriber@example.com",
+    "first_name": "Sam",
+    "last_name": "Wilson",
+    "phone": "+13105551234",
+    "tags": "subscription"
+  },
+  "refunds": []
+}

@@ -30,6 +30,7 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
+import { storePendingAction } from "@/lib/services/pending-actions";
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
@@ -98,7 +99,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       // Determine data area from first non-GPS fulfillment location
       const nonGpsFulfillment = fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps);
       const dataAreaId = nonGpsFulfillment
-        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "")
+        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "") ?? config.dynamics.dataAreaId
         : config.dynamics.dataAreaId;
 
       // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
@@ -106,15 +107,34 @@ export const processShopifyFulfillment = inngest.createFunction(
     });
 
     if (!d365Order) {
-      await slack.sendWarningMessage(
-        "dynamics",
-        `Shopify Fulfillment: D365 order not found for ${shopifyOrderName} (${shopifyOrderId})`
+      if ((event.data as any).fromDrain) {
+        await slack.sendWarningMessage(
+          "dynamics",
+          `[PendingActions] D365 order still not found for ${shopifyOrderName} after drain — fulfillment cannot be synced`
+        );
+        return {
+          status: "failed",
+          shopifyOrderId,
+          shopifyOrderName,
+          message: "D365 order not found after drain — fulfillment permanently skipped",
+        };
+      }
+      await step.run("store-pending-fulfill", async () => {
+        await storePendingAction(shopifyOrderId, {
+          action: "fulfill",
+          eventName: "shopify/order.fulfilled",
+          eventData: event.data,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      console.log(
+        `[PendingActions] Deferred fulfillment for ${shopifyOrderName} — D365 order not yet created`
       );
       return {
-        status: "no_d365_order",
+        status: "deferred",
         shopifyOrderId,
         shopifyOrderName,
-        message: "D365 order not found - may not have been created yet",
+        reason: "D365 order not yet created, action queued for replay",
       };
     }
 
@@ -304,7 +324,9 @@ export const processShopifyFulfillment = inngest.createFunction(
           await slack.sendWarningMessage(
             "system",
             `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`
-          ).catch(() => {});
+          ).catch((error) => {
+            console.warn('[Fulfillment] Non-critical operation failed:', error instanceof Error ? error.message : error);
+          });
 
           return { status: "error", error: errorMsg };
         }

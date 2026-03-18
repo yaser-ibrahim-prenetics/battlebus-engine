@@ -1,0 +1,91 @@
+{
+  "id": 6900000000001,
+  "name": "IM8-18001",
+  "email": "test-hk@example.com",
+  "created_at": "2026-03-15T10:00:00+08:00",
+  "updated_at": "2026-03-15T10:01:00+08:00",
+  "cancelled_at": null,
+  "total_price": "899.00",
+  "subtotal_price": "899.00",
+  "total_tax": "0.00",
+  "currency": "HKD",
+  "financial_status": "paid",
+  "fulfillment_status": null,
+  "tags": "",
+  "note": null,
+  "cancel_reason": null,
+  "source_name": "web",
+  "app_id": null,
+  "note_attributes": [],
+  "line_items": [
+    {
+      "id": 14010,
+      "variant_id": 44010,
+      "title": "IM8 Complete Kit",
+      "quantity": 1,
+      "sku": "IM8-FG-000064",
+      "variant_title": null,
+      "vendor": "IM8",
+      "fulfillment_service": "manual",
+      "product_id": 8010,
+      "requires_shipping": true,
+      "taxable": false,
+      "gift_card": false,
+      "name": "IM8 Complete Kit",
+      "price": "899.00",
+      "total_discount": "0.00",
+      "fulfillment_status": null,
+      "properties": [],
+      "tax_lines": []
+    }
+  ],
+  "shipping_address": {
+    "first_name": "Wing",
+    "last_name": "Lam",
+    "address1": "88 Queensway",
+    "address2": "Suite 1201",
+    "city": "Hong Kong",
+    "province": "Hong Kong Island",
+    "country": "Hong Kong SAR China",
+    "zip": "",
+    "phone": "+85291234567",
+    "company": null,
+    "country_code": "HK",
+    "province_code": "HK"
+  },
+  "billing_address": {
+    "first_name": "Wing",
+    "last_name": "Lam",
+    "address1": "88 Queensway",
+    "address2": "Suite 1201",
+    "city": "Hong Kong",
+    "province": "Hong Kong Island",
+    "country": "Hong Kong SAR China",
+    "zip": "",
+    "phone": "+85291234567",
+    "company": null,
+    "country_code": "HK",
+    "province_code": "HK"
+  },
+  "shipping_lines": [
+    {
+      "id": 5010,
+      "title": "Free Shipping",
+      "price": "0.00",
+      "code": "Free",
+      "source": "shopify",
+      "carrier_identifier": null,
+      "tax_lines": []
+    }
+  ],
+  "discount_codes": [],
+  "customer": {
+    "id": 7010,
+    "email": "test-hk@example.com",
+    "first_name": "Wing",
+    "last_name": "Lam",
+    "phone": "+85291234567",
+    "tags": ""
+  },
+  "refunds": []
+}

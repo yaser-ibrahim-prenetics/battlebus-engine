@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
+import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 
 function validateWebhookPayload(topic: string | null, payload: any): string | null {
   if (!topic) return "Missing x-shopify-topic header";
@@ -150,6 +151,27 @@ export async function POST(request: NextRequest) {
     } catch {
       console.error(`[Webhook] [${requestId}] ❌ Malformed JSON payload`);
       return NextResponse.json({ error: "Malformed JSON payload", requestId }, { status: 400 });
+    }
+
+    // Zod schema validation for order-related topics
+    const orderTopics = [
+      "orders/create",
+      "orders/paid",
+      "orders/updated",
+      "orders/cancelled",
+      "orders/fulfilled",
+    ];
+    if (topic && orderTopics.includes(topic)) {
+      const zodValidation = validateWebhookSchema(shopifyOrderWebhookSchema, payload);
+      if (!zodValidation.success) {
+        console.error(
+          `[Webhook] [${requestId}] ❌ Invalid Shopify order payload: ${zodValidation.error}`
+        );
+        return NextResponse.json(
+          { error: `Invalid payload: ${zodValidation.error}`, requestId },
+          { status: 400 }
+        );
+      }
     }
 
     const payloadError = validateWebhookPayload(topic, payload);

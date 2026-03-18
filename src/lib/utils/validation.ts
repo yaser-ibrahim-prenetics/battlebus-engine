@@ -143,11 +143,15 @@ export function canCancelOrder(order: ShopifyOrderPayload): {
 // ============================================================================
 // LOCATION-BASED ROUTING
 // ============================================================================
+// @deprecated These synchronous helpers rely on hardcoded env-var location IDs.
+// Prefer the async location-routing service (location-routing.ts) which reads
+// from Hub/Supabase.  These remain as a sync fallback only.
 
 type FulfillmentLocation = "gps" | "gpsUk" | "stord" | "hkWarehouse" | "unknown";
 
 /**
- * Determine fulfillment location from Shopify location_id
+ * Determine fulfillment location from Shopify location_id.
+ * @deprecated Use location-routing.ts getWarehouseNameForLocation instead.
  */
 export function getFulfillmentLocation(locationId: string | number): FulfillmentLocation {
   const locId = String(locationId);
@@ -177,7 +181,8 @@ export function isStordFulfillment(locationId: string | number): boolean {
 }
 
 /**
- * Determine GPS warehouse name from location_id
+ * Determine GPS warehouse name from location_id.
+ * @deprecated Use location-routing.ts getWarehouseNameForLocation instead.
  */
 export function getGpsWarehouseFromLocation(
   locationId: string | number
@@ -191,67 +196,52 @@ export function getGpsWarehouseFromLocation(
 }
 
 /**
- * Get data area ID based on fulfillment location
- * Uses warehouse config to map location to dataAreaId
+ * Get data area ID based on fulfillment location.
+ * @deprecated Use location-routing.ts getDataAreaIdForLocationAndCountry instead.
+ * Returns null when location IDs are not configured (env vars empty).
  */
-export function getDataAreaIdFromLocation(locationId: string | number): string {
+export function getDataAreaIdFromLocation(locationId: string | number): string | null {
   const location = getFulfillmentLocation(locationId);
   const locId = String(locationId);
   const locations = config.shopify.im8.locations;
 
-  // Map based on known location IDs
-  if (locations.gpsUk && locId === locations.gpsUk) {
-    return "H007"; // GPS UK uses H007
-  }
-  if (locations.gps && locId === locations.gps) {
-    return "U001"; // GPS US uses U001
-  }
-  if (locations.stord && locId === locations.stord) {
-    return "U001"; // STORD uses U001
-  }
-  if (locations.hkWarehouse && locId === locations.hkWarehouse) {
-    return "H007"; // HK Warehouse uses H007
-  }
+  if (locations.gpsUk && locId === locations.gpsUk) return "H007";
+  if (locations.gps && locId === locations.gps) return "U001";
+  if (locations.stord && locId === locations.stord) return "U001";
+  if (locations.hkWarehouse && locId === locations.hkWarehouse) return "H007";
 
-  // Fallback based on location type
+  if (location === "unknown") return null;
+
   switch (location) {
     case "gpsUk":
-      return "H007";
     case "hkWarehouse":
       return "H007";
     case "gps":
     case "stord":
-    default:
       return "U001";
+    default:
+      return null;
   }
 }
 
 /**
- * Get warehouse name from location ID
- * Uses warehouse config and location name inference
+ * Get warehouse name from location ID.
+ * @deprecated Use location-routing.ts getWarehouseNameForLocation instead.
+ * Returns null when location IDs are not configured (env vars empty) and
+ * no locationName is provided for inference.
  */
 export function getWarehouseNameFromLocation(
   locationId: string | number,
   locationName?: string
-): string {
+): string | null {
   const locId = String(locationId);
   const locations = config.shopify.im8.locations;
 
-  // Map based on known location IDs
-  if (locations.gps && locId === locations.gps) {
-    return "GPS Warehouse";
-  }
-  if (locations.gpsUk && locId === locations.gpsUk) {
-    return "GPS UK Warehouse";
-  }
-  if (locations.stord && locId === locations.stord) {
-    return "STORD ATL Location";
-  }
-  if (locations.hkWarehouse && locId === locations.hkWarehouse) {
-    return "HK Warehouse";
-  }
+  if (locations.gps && locId === locations.gps) return "GPS Warehouse";
+  if (locations.gpsUk && locId === locations.gpsUk) return "GPS UK Warehouse";
+  if (locations.stord && locId === locations.stord) return "STORD ATL Location";
+  if (locations.hkWarehouse && locId === locations.hkWarehouse) return "HK Warehouse";
 
-  // Try to infer from location name
   if (locationName) {
     const name = locationName.toLowerCase();
     if (name.includes("gps") && name.includes("uk")) return "GPS UK Warehouse";
@@ -263,8 +253,7 @@ export function getWarehouseNameFromLocation(
     if (name.includes("virtual")) return "Virtual location";
   }
 
-  // Default fallback
-  return `Location ${locId}`;
+  return null;
 }
 
 // ============================================================================

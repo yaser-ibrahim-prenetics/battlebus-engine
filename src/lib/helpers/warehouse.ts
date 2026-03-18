@@ -466,3 +466,51 @@ export function extractGpsFulfilmentData(payload: IGpsIndividualFulfilment) {
     })),
   };
 }
+
+// ============================================================================
+// Config Validation (runs once at module load)
+// ============================================================================
+
+function validateWarehouseConfig(): void {
+  const errors: string[] = [];
+  const warehouseNames = Object.keys(warehouseConfig.warehouses);
+
+  for (const [name, wh] of Object.entries(warehouseConfig.warehouses)) {
+    const w = wh as Partial<WarehouseConfig>;
+    if (!w.name) errors.push(`${name}: missing name`);
+    if (!w.dataAreaId) errors.push(`${name}: missing dataAreaId`);
+    if (!w.item?.tax) errors.push(`${name}: missing item.tax`);
+    if (!w.item?.refund) errors.push(`${name}: missing item.refund`);
+    if (!w.item?.shipping) errors.push(`${name}: missing item.shipping`);
+    if (!w.fulfilment?.shippingSiteId) errors.push(`${name}: missing fulfilment.shippingSiteId`);
+    if (!w.fulfilment?.shippingWarehouseId) errors.push(`${name}: missing fulfilment.shippingWarehouseId`);
+  }
+
+  for (const [country, warehouse] of Object.entries(warehouseConfig.countryRouting)) {
+    if (!warehouseNames.includes(warehouse)) {
+      errors.push(`countryRouting.${country} references unknown warehouse: ${warehouse}`);
+    }
+  }
+
+  for (const gw of warehouseConfig.gpsWarehouses) {
+    if (!warehouseNames.includes(gw)) {
+      errors.push(`gpsWarehouses references unknown warehouse: ${gw}`);
+    }
+  }
+
+  for (const sw of warehouseConfig.stordWarehouses) {
+    if (!warehouseNames.includes(sw)) {
+      errors.push(`stordWarehouses references unknown warehouse: ${sw}`);
+    }
+  }
+
+  if (!warehouseNames.includes(warehouseConfig.defaultWarehouse)) {
+    errors.push(`defaultWarehouse references unknown warehouse: ${warehouseConfig.defaultWarehouse}`);
+  }
+
+  if (errors.length > 0) {
+    console.warn("[warehouse-config] Validation warnings:", errors.join("; "));
+  }
+}
+
+validateWarehouseConfig();

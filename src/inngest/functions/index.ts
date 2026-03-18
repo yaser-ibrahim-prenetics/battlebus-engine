@@ -25,6 +25,7 @@ export { processInventoryMesh } from "./process-inventory-mesh";
 export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processLocationSync } from "./process-location-sync";
 export { processBackorder } from "./process-backorder";
+export { drainPendingActions } from "./drain-pending-actions";
 export { processSubscriptionOrder } from "./process-subscription-order";
 export {
   cronInventoryReconciliation,
@@ -57,6 +58,7 @@ import { processInventoryMesh } from "./process-inventory-mesh";
 import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processLocationSync } from "./process-location-sync";
 import { processBackorder } from "./process-backorder";
+import { drainPendingActions } from "./drain-pending-actions";
 import { processSubscriptionOrder } from "./process-subscription-order";
 import {
   cronInventoryReconciliation,
@@ -89,6 +91,8 @@ export const functions = [
   processLocationSync,
   // Backorder Retry Queue
   processBackorder,
+  // Stacked lifecycle action drain
+  drainPendingActions,
   // Skio Subscription Renewal Orders
   processSubscriptionOrder,
   // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)

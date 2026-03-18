@@ -18,6 +18,7 @@ import * as slack from "@/lib/clients/slack";
 import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
 import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
+import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
@@ -471,6 +472,13 @@ async function processFulfilledOrdersBatch(
         };
       });
 
+      const resolvedLocationId = await getLocationIdForWarehouse(warehouse);
+      const locationIdNum = resolvedLocationId
+        ? parseInt(resolvedLocationId)
+        : warehouse === "GPS UK Warehouse"
+          ? parseInt(config.shopify.im8.locations.gpsUk || "0")
+          : parseInt(config.shopify.im8.locations.gps || "0");
+
       // Trigger process-shopify-fulfillment function to sync to D365
       await inngest.send({
         name: "shopify/order.fulfilled",
@@ -479,7 +487,7 @@ async function processFulfilledOrdersBatch(
           shopifyOrderName: platformOrderNo,
           shopifyStore: config.shopify.im8.shopDomain,
           orderJson: shopifyOrder as any,
-          fromGpsSync: true, // Flag to allow GPS fulfillments to be processed
+          fromGpsSync: true,
           fulfillments: [
             {
               id: fulfillment.id,
@@ -492,10 +500,7 @@ async function processFulfilledOrdersBatch(
               tracking_numbers: [logisticsTrackNo],
               tracking_url: trackingUrl,
               tracking_urls: [trackingUrl],
-              location_id:
-                warehouse === "GPS UK Warehouse"
-                  ? parseInt(config.shopify.im8.locations.gpsUk)
-                  : parseInt(config.shopify.im8.locations.gps),
+              location_id: locationIdNum,
               line_items: fulfillmentLineItems,
             } as ShopifyFulfillment,
           ],

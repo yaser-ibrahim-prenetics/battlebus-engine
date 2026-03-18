@@ -67,17 +67,18 @@
 
 ## Function Categories
 
-| Category                 | Functions | Purpose                                                |
-| ------------------------ | --------- | ------------------------------------------------------ |
-| **Order Processing**     | 5         | Handle order creation, updates, cancellations, refunds |
-| **Inventory Management** | 4         | Sync inventory across Shopify, D365, GPS               |
-| **Product Management**   | 1         | Sync product data across systems                       |
-| **Fulfillment**          | 4         | Process fulfillments from warehouses                   |
-| **Battle Hub Actions**   | 3         | Handle manual actions from dashboard                   |
-| **Location Management**  | 1         | Sync location/warehouse mappings                       |
-| **Cron Jobs**            | 1         | Scheduled GPS fulfillment polling                      |
+| Category                    | Coverage | Purpose                                                               |
+| --------------------------- | -------- | --------------------------------------------------------------------- |
+| **Order Processing**        | Multiple | Handle order creation, updates, cancellations, refunds, lifecycle     |
+| **Subscription Processing** | Multiple | Handle subscription renewal orders                                    |
+| **Inventory Management**    | Multiple | Sync inventory across Shopify, D365, GPS                              |
+| **Product Management**      | Multiple | Sync product data across systems                                      |
+| **Fulfillment**             | Multiple | Process fulfillments from warehouses                                  |
+| **Battle Hub Actions**      | Multiple | Handle manual actions from dashboard                                  |
+| **Location Management**     | Multiple | Sync location/warehouse mappings                                      |
+| **Cron Jobs**               | Multiple | Scheduled GPS fulfillment + inventory reconciliation                  |
 
-**Total: 19 Functions**
+**Total: 21 files (`src/inngest/functions/*.ts`), including `index.ts` registry**
 
 ---
 
@@ -150,6 +151,48 @@
 
 - `order:${shopifyOrderName}` channel (Inngest Realtime)
 - CS Platform order created event
+
+---
+
+### 1A. `drain-pending-actions`
+
+**Function ID**: `drain-pending-actions`  
+**Trigger Event**: `order/lifecycle.ready`
+
+**Purpose**: Reconcile out-of-order Shopify lifecycle events (fulfill/cancel/refund) that arrived before D365/GPS order creation completed.
+
+**Workflow**:
+
+```
+1. Read pending actions
+   └─ Fetch `orders.pending_actions` from Hub API
+
+2. Prioritize cancellation
+   └─ If cancel exists, skip conflicting fulfill actions
+
+3. Re-emit canonical lifecycle events
+   ├─ shopify/order.fulfilled
+   ├─ shopify/order.cancelled
+   └─ shopify/refund.created
+   (all with fromDrain=true)
+
+4. Clear queue
+   └─ Remove processed pending_actions from order row
+```
+
+**Technical Details**:
+
+- **Idempotency**: `event.data.shopifyOrderId`
+- **Retries**: Low-priority retry policy
+- **Concurrency**: 1 per Shopify order
+- **Data Source**: Hub endpoint `/api/orders/pending-actions`
+
+**Key Features**:
+
+- ✅ Durable storage of deferred actions in Supabase JSONB
+- ✅ No silent lifecycle-event loss
+- ✅ Safe replay with idempotent canonical events
+- ✅ Backorder resolution compatible (`process-backorder` also emits `order/lifecycle.ready`)
 
 ---
 

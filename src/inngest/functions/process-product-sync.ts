@@ -150,6 +150,7 @@ export const processProductSync = inngest.createFunction(
             levelsMap[variant.inventory_item_id] = levels;
           } catch (error) {
             // If fetch fails, continue without location breakdown
+            console.warn('[ProductSync] Location breakdown fetch failed, continuing:', error instanceof Error ? error.message : error);
           }
         }
       }
@@ -195,6 +196,7 @@ export const processProductSync = inngest.createFunction(
         }
       } catch (error) {
         // Don't throw - Battle Hub notification failure shouldn't break the sync
+        console.error('[ProductSync] Battle Hub notification failed:', error instanceof Error ? error.message : error);
       }
     });
 
