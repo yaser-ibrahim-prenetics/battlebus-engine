@@ -42,7 +42,7 @@ describe("Order Refund Flow (Integration)", () => {
       });
 
       expect(warehouseInfo.warehouseName).toBe("GPS Warehouse");
-      expect(warehouseInfo.refundSku).toBe("IM8-SER-000003");
+      expect(warehouseInfo.refundSku).toBe("IM8-SER-000005");
       expect(warehouseInfo.returnConfig.shippingWarehouseLocationId).toBe("Return");
 
       const refundLine = await harness.step.run("create-d365-refund-line", async () => {
@@ -57,7 +57,7 @@ describe("Order Refund Flow (Integration)", () => {
 
       expect(mockDynamics.createSalesOrderLine).toHaveBeenCalledWith(
         expect.objectContaining({
-          itemNumber: "IM8-SER-000003",
+          itemNumber: "IM8-SER-000005",
           quantity: -1,
           price: 129.99,
         })
@@ -91,7 +91,7 @@ describe("Order Refund Flow (Integration)", () => {
           type: "return",
           lines: expect.arrayContaining([
             expect.objectContaining({
-              itemNumber: "IM8-SER-000003",
+              itemNumber: "IM8-SER-000005",
               quantity: -1,
               shippingWarehouseLocationId: "Return",
             }),
@@ -102,16 +102,16 @@ describe("Order Refund Flow (Integration)", () => {
   });
 
   describe("Refund with correct service SKU per warehouse", () => {
-    it("uses IM8-SER-000003 for GPS US", () => {
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
+    it("uses IM8-SER-000005 for GPS US", () => {
+      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
     });
 
-    it("uses IM8-SER-000003 for GPS UK", () => {
-      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
+    it("uses IM8-SER-000005 for GPS UK", () => {
+      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000005");
     });
 
-    it("uses IM8-SER-000003 for HK Warehouse", () => {
-      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
+    it("uses IM8-SER-000005 for HK Warehouse", () => {
+      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000005");
     });
 
     it("uses IM8-SER-000005 for STORD", () => {
@@ -134,7 +134,7 @@ describe("Order Refund Flow (Integration)", () => {
       });
 
       expect(warehouseInfo.warehouseName).toBe("GPS UK Warehouse");
-      expect(warehouseInfo.refundSku).toBe("IM8-SER-000003");
+      expect(warehouseInfo.refundSku).toBe("IM8-SER-000005");
       expect(warehouseInfo.returnConfig.shippingWarehouseId).toBe("OPS-WH02-Q");
     });
   });
@@ -169,7 +169,7 @@ describe("Order Refund Flow (Integration)", () => {
   describe("D365 line creation failure during refund", () => {
     it("propagates error when D365 refund line creation fails", async () => {
       mockDynamics.createSalesOrderLine.mockRejectedValueOnce(
-        new Error("[D365 Mock] Line creation failed for IM8-SER-000003")
+        new Error("[D365 Mock] Line creation failed for IM8-SER-000005")
       );
 
       await expect(
@@ -177,7 +177,7 @@ describe("Order Refund Flow (Integration)", () => {
           return mockDynamics.createSalesOrderLine({
             salesOrderNumber: "U001-SO-100001",
             dataAreaId: "U001",
-            itemNumber: "IM8-SER-000003",
+            itemNumber: "IM8-SER-000005",
             quantity: -1,
             price: 100,
           });

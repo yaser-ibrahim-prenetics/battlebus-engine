@@ -122,7 +122,7 @@ describe("E2E: Routing Verification", () => {
       "GPS Warehouse": "U001",
       "GPS UK Warehouse": "H007",
       "STORD ATL Location": "U001",
-      "HK Warehouse": "H005",
+      "HK Warehouse": "H007",
     };
 
     for (const [warehouse, expectedDataAreaId] of Object.entries(expectedMapping)) {
@@ -191,7 +191,7 @@ describe("E2E: Routing Verification", () => {
         fixtureName: "hkOrder",
         expectedCountry: "HK",
         expectedWarehouse: "HK Warehouse",
-        expectedDataAreaId: "H005",
+        expectedDataAreaId: "H007",
         shouldGoToGps: false,
       },
       {
@@ -254,18 +254,18 @@ describe("E2E: Routing Verification", () => {
   describe("Service SKU cross-reference (spock-store verified)", () => {
     const spockStoreReference = {
       "GPS Warehouse": {
-        tax: "IM8-SER-000001",
-        refund: "IM8-SER-000003",
+        tax: "IM8-SER-000004",
+        refund: "IM8-SER-000005",
         shipping: "IM8-SER-000002",
       },
       "GPS UK Warehouse": {
-        tax: "IM8-SER-000001",
-        refund: "IM8-SER-000003",
+        tax: "IM8-SER-000004",
+        refund: "IM8-SER-000005",
         shipping: "IM8-SER-000002",
       },
       "HK Warehouse": {
-        tax: "IM8-SER-000001",
-        refund: "IM8-SER-000003",
+        tax: "IM8-SER-000004",
+        refund: "IM8-SER-000005",
         shipping: "IM8-SER-000002",
       },
       "STORD ATL Location": {

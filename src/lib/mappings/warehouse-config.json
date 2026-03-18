@@ -6,22 +6,22 @@
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
       "dataAreaId": "U001",
-      "orderingCustomerAccountNumber": "U001-C000000006",
+      "orderingCustomerAccountNumber": "U001-C000000001",
       "gpsCode": "JFK01W",
       "logisticsChannel": "GPS-IM8-STANDARD",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
-        "shippingWarehouseId": "USOPS-WH01",
+        "shippingWarehouseId": "USOPS-WH04",
         "shippingWarehouseLocationId": "Primary"
       },
       "return": {
         "shippingSiteId": "Prenetics",
-        "shippingWarehouseId": "USOPS-WH01",
+        "shippingWarehouseId": "USOPS-WH04-Q",
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
-        "tax": "IM8-SER-000001",
-        "refund": "IM8-SER-000003",
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
         "shipping": "IM8-SER-000002"
       }
     },
@@ -45,8 +45,8 @@
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
-        "tax": "IM8-SER-000001",
-        "refund": "IM8-SER-000003",
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
         "shipping": "IM8-SER-000002"
       }
     },
@@ -73,12 +73,35 @@
         "shipping": "IM8-SER-000003"
       }
     },
+    "STORD EU Location": {
+      "countryCode": "EU",
+      "name": "STORD EU Location",
+      "dimensionValue": "Consumer - Nutrition",
+      "project": "P1201",
+      "dataAreaId": "H007",
+      "orderingCustomerAccountNumber": "H007-C000000001",
+      "fulfilment": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH03",
+        "shippingWarehouseLocationId": "Primary"
+      },
+      "return": {
+        "shippingSiteId": "Prenetics",
+        "shippingWarehouseId": "OPS-WH03-Q",
+        "shippingWarehouseLocationId": "Return"
+      },
+      "item": {
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
+        "shipping": "IM8-SER-000002"
+      }
+    },
     "HK Warehouse": {
       "countryCode": "HK",
       "name": "HK Warehouse",
       "dimensionValue": "Consumer - Nutrition",
       "project": "P1201",
-      "dataAreaId": "H005",
+      "dataAreaId": "H007",
       "orderingCustomerAccountNumber": "H005-C000000001",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
@@ -91,15 +114,15 @@
         "shippingWarehouseLocationId": "Return"
       },
       "item": {
-        "tax": "IM8-SER-000001",
-        "refund": "IM8-SER-000003",
+        "tax": "IM8-SER-000004",
+        "refund": "IM8-SER-000005",
         "shipping": "IM8-SER-000002"
       }
     }
   },
 
   "gpsWarehouses": ["GPS Warehouse", "GPS UK Warehouse"],
-  "stordWarehouses": ["STORD ATL Location"],
+  "stordWarehouses": ["STORD ATL Location", "STORD EU Location"],
   "defaultWarehouse": "GPS Warehouse",
 
   "countryRouting": {

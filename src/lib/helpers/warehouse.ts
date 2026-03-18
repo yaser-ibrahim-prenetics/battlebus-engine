@@ -380,7 +380,7 @@ export function getShippingSku(warehouseName: string): string {
 }
 
 /**
- * Get tax SKU for warehouse
+ * Get tax SKU for warehouse.
  */
 export function getTaxSku(warehouseName: string): string {
   const config = getWarehouseConfig(warehouseName);

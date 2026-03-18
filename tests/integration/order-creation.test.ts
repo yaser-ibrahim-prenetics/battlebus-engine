@@ -87,7 +87,7 @@ describe("Order Creation Flow (Integration)", () => {
       const lines = toD365SalesOrderLines(order, salesOrderNo, warehouseName, true, dataAreaId);
       expect(lines.every((l) => l.dataAreaId === "H007")).toBe(true);
 
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
 
       const gpsOrder = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
@@ -97,11 +97,11 @@ describe("Order Creation Flow (Integration)", () => {
   });
 
   describe("Happy path: HK order (no GPS)", () => {
-    it("routes to HK Warehouse with H005 and skips GPS", () => {
+    it("routes to HK Warehouse with H007 and skips GPS", () => {
       const order = loadFixture("hkOrder");
       const warehouseName = determineWarehouse(order.shipping_address!.country_code);
       expect(warehouseName).toBe("HK Warehouse");
-      expect(getDataAreaId(warehouseName)).toBe("H005");
+      expect(getDataAreaId(warehouseName)).toBe("H007");
       expect(shouldSendToGps(order, warehouseName)).toBe(false);
     });
   });
@@ -128,7 +128,7 @@ describe("Order Creation Flow (Integration)", () => {
 
     it("creates service lines only when amounts are positive", () => {
       const order = loadFixture("hkOrder");
-      const lines = toD365SalesOrderLines(order, "H005-SO-100", "HK Warehouse");
+      const lines = toD365SalesOrderLines(order, "H007-SO-100", "HK Warehouse");
       const serviceLines = lines.filter((l) => isServiceSku(l.itemNumber));
       expect(serviceLines.length).toBe(0);
     });
@@ -137,7 +137,7 @@ describe("Order Creation Flow (Integration)", () => {
   describe("Null-SKU handling (GST fee order)", () => {
     it("skips non-shippable lines with null SKU", () => {
       const order = loadFixture("gstFeeOrder");
-      const lines = toD365SalesOrderLines(order, "H005-SO-200", "HK Warehouse");
+      const lines = toD365SalesOrderLines(order, "H007-SO-200", "HK Warehouse");
       const productLines = lines.filter((l) => !isServiceSku(l.itemNumber));
       expect(productLines.length).toBe(2);
       const invalidLines = lines.filter((l) => !l.itemNumber || l.itemNumber.trim() === "");
@@ -204,7 +204,7 @@ describe("Order Creation Flow (Integration)", () => {
       order.total_tax = "34.83";
 
       const lines = toD365SalesOrderLines(order, "H007-SO-100", "GPS UK Warehouse");
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBeCloseTo(43.33, 1);
     });
