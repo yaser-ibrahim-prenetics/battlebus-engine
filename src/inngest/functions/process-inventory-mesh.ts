@@ -314,7 +314,7 @@ async function syncToDynamics(
       } else {
         // Fallback to existing validation if location routing didn't work
         const { getDataAreaIdFromLocation } = await import("@/lib/utils/validation");
-        dataAreaId = getDataAreaIdFromLocation(inventory.locationId);
+        dataAreaId = getDataAreaIdFromLocation(inventory.locationId) ?? undefined;
         console.log(
           `[InventoryMesh] Mapped location ${inventory.locationId} to dataAreaId ${dataAreaId} via validation utils`
         );

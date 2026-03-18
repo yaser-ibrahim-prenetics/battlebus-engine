@@ -38,11 +38,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[Webhook] Received STORD fulfilment for order: ${payload.orderNumber}`);
+    const typedPayload = validation.data;
+    console.log(
+      `[Webhook] Received STORD fulfilment for order: ${typedPayload.orderNumber || typedPayload.orderId || typedPayload.id || "unknown"}`
+    );
 
     // Send event to Inngest with event-level idempotency
-    const stordOrderId = payload.orderId || payload.id;
-    const trackingNumber = payload.trackingNumber || payload.tracking?.number || "";
+    const stordOrderId = String(typedPayload.orderId || typedPayload.id || "");
+    const trackingNumber =
+      typedPayload.trackingNumber || typedPayload.tracking?.number || "";
 
     await inngest.send({
       // Event-level idempotency: unique per order + tracking number
@@ -50,10 +54,12 @@ export async function POST(request: NextRequest) {
       name: "stord/fulfilment.received",
       data: {
         stordOrderId,
-        shopifyOrderId: payload.externalOrderId || payload.shopifyOrderId || "",
+        shopifyOrderId: String(
+          typedPayload.externalOrderId || typedPayload.shopifyOrderId || ""
+        ),
         trackingNumber,
-        carrierCode: payload.carrier || payload.tracking?.carrier || "",
-        fulfilmentJson: payload,
+        carrierCode: typedPayload.carrier || typedPayload.tracking?.carrier || "",
+        fulfilmentJson: typedPayload,
         receivedAt: new Date().toISOString(),
       },
     });

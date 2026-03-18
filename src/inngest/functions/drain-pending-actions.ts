@@ -23,7 +23,15 @@ export const drainPendingActions = inngest.createFunction(
     concurrency: [{ limit: 1, key: "event.data.shopifyOrderId" }],
   },
   { event: "order/lifecycle.ready" },
-  async ({ event, step }) => {
+  async ({
+    event,
+    step,
+  }: {
+    event: { data: { shopifyOrderId: string; shopifyOrderName: string } };
+    step: {
+      run: <T>(id: string, fn: () => Promise<T> | T) => Promise<T>;
+    };
+  }) => {
     const { shopifyOrderId, shopifyOrderName } = event.data;
 
     const actions = await step.run("read-pending-actions", async () => {

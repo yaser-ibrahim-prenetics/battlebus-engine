@@ -50,10 +50,19 @@ export const gpsWebhookSchema = z
 
 export const stordWebhookSchema = z
   .object({
-    orderId: z.string().optional(),
-    id: z.string().optional(),
+    orderId: z.union([z.string(), z.number()]).optional(),
+    id: z.union([z.string(), z.number()]).optional(),
+    orderNumber: z.string().optional(),
     trackingNumber: z.string().optional(),
-    externalOrderId: z.string().optional(),
+    tracking: z
+      .object({
+        number: z.string().optional(),
+        carrier: z.string().optional(),
+      })
+      .optional(),
+    carrier: z.string().optional(),
+    externalOrderId: z.union([z.string(), z.number()]).optional(),
+    shopifyOrderId: z.union([z.string(), z.number()]).optional(),
   })
   .passthrough();
 
