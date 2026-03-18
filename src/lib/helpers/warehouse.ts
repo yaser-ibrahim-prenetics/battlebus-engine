@@ -215,11 +215,19 @@ function deriveCustomerAccountNumber(dataAreaId: string): string {
  * This prevents warehouse-name defaults from leaking wrong account dimensions.
  */
 export function getOrderingCustomerAccountNumberByDataAreaId(dataAreaId: string): string {
-  const profile = getWarehouseConfigForDataAreaId((dataAreaId || "").toUpperCase());
+  const normalized = (dataAreaId || "").toUpperCase();
+
+  // Hard safety guard: U001 must use ...000006 in D365.
+  // This prevents accidental config drift from breaking header creation.
+  if (normalized === "U001") {
+    return "U001-C000000006";
+  }
+
+  const profile = getWarehouseConfigForDataAreaId(normalized);
   if (profile.orderingCustomerAccountNumber) {
     return profile.orderingCustomerAccountNumber;
   }
-  return deriveCustomerAccountNumber((dataAreaId || "").toUpperCase());
+  return deriveCustomerAccountNumber(normalized);
 }
 
 /**
