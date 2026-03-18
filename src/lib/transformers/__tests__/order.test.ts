@@ -23,7 +23,7 @@ describe("Order Transformers", () => {
       const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse");
 
       expect(header.dataAreaId).toBe("U001");
-      expect(header.orderingCustomerAccountNumber).toBe("U001-C000000006");
+      expect(header.orderingCustomerAccountNumber).toBe("U001-C000000001");
       expect(header.customerOrderReference).toBe("IM8-17715");
       expect(header.email).toBe("test-us@example.com");
       expect(header.currency).toBe("USD");
@@ -42,11 +42,11 @@ describe("Order Transformers", () => {
       expect(header.skipFulfillmentNotification).toBe("Yes");
     });
 
-    it("creates correct header for HK warehouse with H005", () => {
+    it("creates correct header for HK warehouse with H007", () => {
       const order = loadFixture("hkOrder");
       const header = toD365SalesOrderHeaderV3(order, "HK Warehouse");
 
-      expect(header.dataAreaId).toBe("H005");
+      expect(header.dataAreaId).toBe("H007");
       expect(header.orderingCustomerAccountNumber).toBe("H005-C000000001");
     });
 
@@ -159,7 +159,7 @@ describe("Order Transformers", () => {
       expect(shippingLine).toBeDefined();
       expect(shippingLine!.price).toBe(9.99);
 
-      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000001");
+      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(10);
     });
@@ -168,7 +168,7 @@ describe("Order Transformers", () => {
       const order = loadFixture("gpsUkOrder");
       const lines = toD365SalesOrderLines(order, "H007-SO-100", "GPS UK Warehouse");
 
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(34.83);
 
@@ -177,7 +177,7 @@ describe("Order Transformers", () => {
 
     it("skips non-shippable lines with null SKU (GST fees)", () => {
       const order = loadFixture("gstFeeOrder");
-      const lines = toD365SalesOrderLines(order, "H005-SO-200", "HK Warehouse");
+      const lines = toD365SalesOrderLines(order, "H007-SO-200", "HK Warehouse");
 
       const nullSkuLines = lines.filter((l) => l.itemNumber === null || l.itemNumber === "");
       expect(nullSkuLines.length).toBe(0);
@@ -216,7 +216,7 @@ describe("Order Transformers", () => {
 
     it("handles orders with zero shipping and zero tax", () => {
       const order = loadFixture("hkOrder");
-      const lines = toD365SalesOrderLines(order, "H005-SO-100", "HK Warehouse");
+      const lines = toD365SalesOrderLines(order, "H007-SO-100", "HK Warehouse");
 
       const shippingLines = lines.filter((l) => l.itemNumber === "IM8-SER-000002");
       expect(shippingLines.length).toBe(0);

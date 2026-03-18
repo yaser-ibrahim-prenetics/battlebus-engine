@@ -96,12 +96,14 @@ export const processRefund = inngest.createFunction(
 
     // 3. Determine Warehouse and Refund SKU
     const warehouseInfo = await step.run("determine-warehouse-info", async () => {
+      const dataAreaId = (d365Order?.dataAreaId || config.dynamics.dataAreaId || "").toUpperCase();
       const countryCode = shopifyOrder.shipping_address?.country_code || "US";
       const warehouseName = warehouseHelper.determineWarehouse(countryCode);
-      const refundSku = warehouseHelper.getRefundSku(warehouseName);
+      const refundSku = warehouseHelper.getRefundSku(warehouseName, dataAreaId);
       const returnConfig = warehouseHelper.getReturnConfig(warehouseName);
 
       return {
+        dataAreaId,
         warehouseName,
         refundSku,
         returnConfig,

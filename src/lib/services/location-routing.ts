@@ -122,14 +122,27 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
   async function fetchFromHubApi(reason: string): Promise<LocationMapping[]> {
     try {
       const hubUrl = config.csPlatform.baseUrl;
+      const serviceSecret =
+        config.csPlatform.webhookSecret ||
+        process.env.INTERNAL_SERVICE_SECRET ||
+        process.env.BATTLE_BUS_WEBHOOK_SECRET ||
+        "";
+      if (!serviceSecret) {
+        console.warn(
+          `[LocationRouting] Hub API fallback skipped (${reason}): missing CS_PLATFORM_WEBHOOK_SECRET/INTERNAL_SERVICE_SECRET`
+        );
+        return [];
+      }
       const response = await fetch(`${hubUrl}/api/locations/mappings`, {
         headers: {
-          "x-battle-bus-webhook-secret": config.csPlatform.webhookSecret || "",
+          Authorization: `Bearer ${serviceSecret}`,
+          "x-battle-bus-webhook-secret": serviceSecret,
         },
       });
       if (!response.ok) {
+        const body = await response.text().catch(() => "");
         console.warn(
-          `[LocationRouting] Hub API fallback failed (${reason}): HTTP ${response.status}`
+          `[LocationRouting] Hub API fallback failed (${reason}): HTTP ${response.status} ${body}`
         );
         return [];
       }

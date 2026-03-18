@@ -106,7 +106,7 @@ describe("Warehouse Routing Helpers", () => {
 
     it("returns config for HK Warehouse", () => {
       const cfg = getWarehouseConfig("HK Warehouse");
-      expect(cfg.dataAreaId).toBe("H005");
+      expect(cfg.dataAreaId).toBe("H007");
     });
 
     it("returns config for STORD ATL Location", () => {
@@ -156,17 +156,17 @@ describe("Warehouse Routing Helpers", () => {
     it("getDataAreaId returns correct IDs", () => {
       expect(getDataAreaId("GPS Warehouse")).toBe("U001");
       expect(getDataAreaId("GPS UK Warehouse")).toBe("H007");
-      expect(getDataAreaId("HK Warehouse")).toBe("H005");
+      expect(getDataAreaId("HK Warehouse")).toBe("H007");
     });
 
     it("getOrderingCustomerAccountNumber returns correct accounts", () => {
-      expect(getOrderingCustomerAccountNumber("GPS Warehouse")).toBe("U001-C000000006");
+      expect(getOrderingCustomerAccountNumber("GPS Warehouse")).toBe("U001-C000000001");
       expect(getOrderingCustomerAccountNumber("GPS UK Warehouse")).toBe("H007-C000000001");
       expect(getOrderingCustomerAccountNumber("HK Warehouse")).toBe("H005-C000000001");
     });
 
     it("getOrderingCustomerAccountNumberByDataAreaId derives correctly", () => {
-      expect(getOrderingCustomerAccountNumberByDataAreaId("U001")).toBe("U001-C000000006");
+      expect(getOrderingCustomerAccountNumberByDataAreaId("U001")).toBe("U001-C000000001");
       expect(getOrderingCustomerAccountNumberByDataAreaId("H007")).toBe("H007-C000000001");
       expect(getOrderingCustomerAccountNumberByDataAreaId("H005")).toBe("H005-C000000001");
     });
@@ -175,7 +175,7 @@ describe("Warehouse Routing Helpers", () => {
   describe("Ledger Dimension", () => {
     it("toDefaultLedgerDimensionDisplayValue formats correctly", () => {
       const val = toDefaultLedgerDimensionDisplayValue("GPS Warehouse");
-      expect(val).toBe("~Consumer - Nutrition~P1201~~U001-C000000006");
+      expect(val).toBe("~Consumer - Nutrition~P1201~~U001-C000000001");
     });
 
     it("toDefaultLedgerDimensionDisplayValueByDataArea uses explicit dataAreaId", () => {
@@ -266,17 +266,25 @@ describe("Warehouse Routing Helpers", () => {
     });
 
     it("getTaxSku returns correct SKU per warehouse", () => {
-      expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000001");
-      expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000001");
-      expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000001");
+      expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000004");
+      expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000004");
+      expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000004");
       expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000004");
     });
 
     it("getRefundSku returns correct SKU per warehouse", () => {
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
-      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
-      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
+      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
+      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000005");
+      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000005");
       expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
+    });
+
+    it("resolves SKU profile by routed dataAreaId when provided", () => {
+      // Unknown/placeholder warehouse names can appear from location settings;
+      // service SKU routing must still follow the final dataAreaId.
+      expect(getTaxSku("Some Custom Location", "H007")).toBe("IM8-SER-000004");
+      expect(getRefundSku("Some Custom Location", "H007")).toBe("IM8-SER-000005");
+      expect(getShippingSku("Some Custom Location", "H007")).toBe("IM8-SER-000002");
     });
   });
 
@@ -284,7 +292,7 @@ describe("Warehouse Routing Helpers", () => {
     it("getFulfilmentConfig returns correct config", () => {
       const fc = getFulfilmentConfig("GPS Warehouse");
       expect(fc.shippingSiteId).toBe("Prenetics");
-      expect(fc.shippingWarehouseId).toBe("USOPS-WH01");
+      expect(fc.shippingWarehouseId).toBe("USOPS-WH04");
     });
 
     it("getReturnConfig returns correct config", () => {

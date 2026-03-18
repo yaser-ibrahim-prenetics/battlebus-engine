@@ -215,6 +215,10 @@ function deriveCustomerAccountNumber(dataAreaId: string): string {
  * This prevents warehouse-name defaults from leaking wrong account dimensions.
  */
 export function getOrderingCustomerAccountNumberByDataAreaId(dataAreaId: string): string {
+  const profile = getWarehouseConfigForDataAreaId((dataAreaId || "").toUpperCase());
+  if (profile.orderingCustomerAccountNumber) {
+    return profile.orderingCustomerAccountNumber;
+  }
   return deriveCustomerAccountNumber((dataAreaId || "").toUpperCase());
 }
 
@@ -371,27 +375,48 @@ export function getGpsLogisticsChannel(warehouseName: string): string {
 // Service SKU Helpers
 // ============================================================================
 
+function resolveServiceSkuConfig(warehouseName: string, dataAreaIdOverride?: string): WarehouseConfig {
+  const normalizedDataAreaId = (dataAreaIdOverride || "").toUpperCase();
+
+  // If a routed dataAreaId is provided, prefer a profile aligned to it.
+  // Keep warehouse-specific profile when it already matches the routed area
+  // (e.g. STORD ATL U001 keeps STORD-specific shipping/refund/tax SKUs).
+  if (normalizedDataAreaId) {
+    try {
+      const byWarehouse = getWarehouseConfig(warehouseName);
+      if ((byWarehouse.dataAreaId || "").toUpperCase() === normalizedDataAreaId) {
+        return byWarehouse;
+      }
+    } catch {
+      // Ignore unknown warehouse names and fall back to dataArea profile below.
+    }
+    return getWarehouseConfigForDataAreaId(normalizedDataAreaId);
+  }
+
+  return getWarehouseConfig(warehouseName);
+}
+
 /**
- * Get shipping SKU for warehouse
+ * Get shipping SKU for warehouse or routed dataArea profile.
  */
-export function getShippingSku(warehouseName: string): string {
-  const config = getWarehouseConfig(warehouseName);
+export function getShippingSku(warehouseName: string, dataAreaIdOverride?: string): string {
+  const config = resolveServiceSkuConfig(warehouseName, dataAreaIdOverride);
   return config.item.shipping;
 }
 
 /**
- * Get tax SKU for warehouse.
+ * Get tax SKU for warehouse or routed dataArea profile.
  */
-export function getTaxSku(warehouseName: string): string {
-  const config = getWarehouseConfig(warehouseName);
+export function getTaxSku(warehouseName: string, dataAreaIdOverride?: string): string {
+  const config = resolveServiceSkuConfig(warehouseName, dataAreaIdOverride);
   return config.item.tax;
 }
 
 /**
- * Get refund SKU for warehouse
+ * Get refund SKU for warehouse or routed dataArea profile.
  */
-export function getRefundSku(warehouseName: string): string {
-  const config = getWarehouseConfig(warehouseName);
+export function getRefundSku(warehouseName: string, dataAreaIdOverride?: string): string {
+  const config = resolveServiceSkuConfig(warehouseName, dataAreaIdOverride);
   return config.item.refund;
 }
 

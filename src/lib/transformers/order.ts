@@ -262,7 +262,7 @@ export function toD365SalesOrderLines(
       lines.push({
         salesOrderNumber,
         dataAreaId,
-        itemNumber: getShippingSku(warehouseName),
+        itemNumber: getShippingSku(warehouseName, dataAreaId),
         quantity: 1,
         price: shippingCost,
         currency,
@@ -277,7 +277,7 @@ export function toD365SalesOrderLines(
       lines.push({
         salesOrderNumber,
         dataAreaId,
-        itemNumber: getTaxSku(warehouseName),
+        itemNumber: getTaxSku(warehouseName, dataAreaId),
         quantity: 1,
         price: taxAndDuty,
         currency,
