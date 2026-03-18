@@ -23,7 +23,7 @@ describe("Order Transformers", () => {
       const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse");
 
       expect(header.dataAreaId).toBe("U001");
-      expect(header.orderingCustomerAccountNumber).toBe("U001-C000000001");
+      expect(header.orderingCustomerAccountNumber).toBe("U001-C000000006");
       expect(header.customerOrderReference).toBe("IM8-17715");
       expect(header.email).toBe("test-us@example.com");
       expect(header.currency).toBe("USD");

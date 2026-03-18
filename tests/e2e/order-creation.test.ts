@@ -81,7 +81,7 @@ describe("E2E: Order Creation Flow", () => {
         fixtureName: "gpsUsOrder",
         expectedWarehouse: "GPS Warehouse",
         expectedDataAreaId: "U001",
-        expectedCustomerAccount: "U001-C000000001",
+        expectedCustomerAccount: "U001-C000000006",
       },
       {
         fixtureName: "gpsUkOrder",

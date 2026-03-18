@@ -160,13 +160,13 @@ describe("Warehouse Routing Helpers", () => {
     });
 
     it("getOrderingCustomerAccountNumber returns correct accounts", () => {
-      expect(getOrderingCustomerAccountNumber("GPS Warehouse")).toBe("U001-C000000001");
+      expect(getOrderingCustomerAccountNumber("GPS Warehouse")).toBe("U001-C000000006");
       expect(getOrderingCustomerAccountNumber("GPS UK Warehouse")).toBe("H007-C000000001");
       expect(getOrderingCustomerAccountNumber("HK Warehouse")).toBe("H005-C000000001");
     });
 
     it("getOrderingCustomerAccountNumberByDataAreaId derives correctly", () => {
-      expect(getOrderingCustomerAccountNumberByDataAreaId("U001")).toBe("U001-C000000001");
+      expect(getOrderingCustomerAccountNumberByDataAreaId("U001")).toBe("U001-C000000006");
       expect(getOrderingCustomerAccountNumberByDataAreaId("H007")).toBe("H007-C000000001");
       expect(getOrderingCustomerAccountNumberByDataAreaId("H005")).toBe("H005-C000000001");
     });
@@ -175,7 +175,7 @@ describe("Warehouse Routing Helpers", () => {
   describe("Ledger Dimension", () => {
     it("toDefaultLedgerDimensionDisplayValue formats correctly", () => {
       const val = toDefaultLedgerDimensionDisplayValue("GPS Warehouse");
-      expect(val).toBe("~Consumer - Nutrition~P1201~~U001-C000000001");
+      expect(val).toBe("~Consumer - Nutrition~P1201~~U001-C000000006");
     });
 
     it("toDefaultLedgerDimensionDisplayValueByDataArea uses explicit dataAreaId", () => {
