@@ -250,7 +250,7 @@ export const processShopifyOrder = inngest.createFunction(
     // Helper to publish final result
     const publishResult = async (
       status: "success" | "failed" | "skipped",
-      resultData?: { d365OrderNumber?: string; warehouse?: string; error?: string }
+      resultData?: { d365OrderNumber?: string; gpsOrderNo?: string; warehouse?: string; error?: string }
     ) => {
       try {
         await publish({
@@ -1171,6 +1171,17 @@ export const processShopifyOrder = inngest.createFunction(
         processedAt: new Date().toISOString(),
       };
 
+      // Extract GPS order ID for use in final events
+      let gpsOrderId: string | undefined;
+      const gpsSkipped = gpsResult?.type === "skipped";
+
+      if (gpsResult?.type === "real" && "result" in gpsResult) {
+        const gpsData = gpsResult.result?.response?.data;
+        if (Array.isArray(gpsData) && gpsData.length > 0) {
+          gpsOrderId = (gpsData[0] as any)?.outboundOrderNo || (gpsData[0] as any)?.orderNo;
+        }
+      }
+
       // Publish final success result
       if (routedToBackorder) {
         await publishResult("failed", {
@@ -1181,19 +1192,9 @@ export const processShopifyOrder = inngest.createFunction(
       } else {
         await publishResult("success", {
           d365OrderNumber: salesOrderNo,
+          gpsOrderNo: gpsOrderId,
           warehouse: warehouseName,
         });
-      }
-
-      // Send order created event to CS platform (Battle Hub)
-      let gpsOrderId: string | undefined;
-      const gpsSkipped = gpsResult?.type === "skipped";
-
-      if (gpsResult?.type === "real" && "result" in gpsResult) {
-        const gpsData = gpsResult.result?.response?.data;
-        if (Array.isArray(gpsData) && gpsData.length > 0) {
-          gpsOrderId = (gpsData[0] as any)?.outboundOrderNo || (gpsData[0] as any)?.orderNo;
-        }
       }
 
       // Emit lifecycle.ready so stacked actions (fulfill/cancel/refund) are drained
@@ -1241,11 +1242,12 @@ export const processShopifyOrder = inngest.createFunction(
             shopifyOrderName,
             d365OrderNumber: salesOrderNo,
             warehouse: warehouseName,
+            gpsOrderId,
             status: "completed",
             processingStatus: "completed",
             d365SyncStatus: "synced",
             gpsSyncStatus:
-              gpsResult?.type === "real" && gpsOrderId
+              gpsResult?.type === "real"
                 ? "synced"
                 : gpsSkipped
                   ? "skipped"
