@@ -261,12 +261,15 @@ function getWarehouseConfig(warehouseName: GpsWarehouseName) {
 
 function getApiCredentials(warehouseName: GpsWarehouseName) {
   if (warehouseName === "GPS UK Warehouse") {
-    // If GPS UK credentials are not explicitly set, fallback to main GPS credentials?
-    // Or assume config validation ensures they are set if needed.
-    // config.gpsUk defaults to gps if not set, but let's be explicit.
+    if (!config.gpsUk.apiKey || !config.gpsUk.apiSecret) {
+      throw new Error(
+        "GPS_UK_API_KEY and GPS_UK_API_SECRET must be set for GPS UK Warehouse. " +
+          "Do NOT reuse GPS_API_KEY (US) — each warehouse requires its own credentials."
+      );
+    }
     return {
-      appKey: config.gpsUk.apiKey || config.gps.apiKey,
-      appSecret: config.gpsUk.apiSecret || config.gps.apiSecret,
+      appKey: config.gpsUk.apiKey,
+      appSecret: config.gpsUk.apiSecret,
       baseUrl: config.gpsUk.baseUrl || config.gps.baseUrl,
     };
   }

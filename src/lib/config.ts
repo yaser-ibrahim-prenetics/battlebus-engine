@@ -218,11 +218,17 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
 
   if (config.features.enableGpsSync) {
     if (!config.gps.baseUrl) errors.push("GPS_BASE_URL is required");
-    if (!config.gps.apiKey) errors.push("GPS_API_KEY is required");
-    if (!config.gps.apiSecret) errors.push("GPS_API_SECRET is required");
+    if (!config.gps.apiKey) errors.push("GPS_API_KEY is required (US warehouse credentials)");
+    if (!config.gps.apiSecret) errors.push("GPS_API_SECRET is required (US warehouse credentials)");
 
-    if (process.env.GPS_UK_API_KEY && !process.env.GPS_UK_API_SECRET) {
-      errors.push("GPS_UK_API_SECRET is required if GPS_UK_API_KEY is set");
+    if (!config.gpsUk.apiKey) errors.push("GPS_UK_API_KEY is required (UK warehouse credentials — must differ from GPS_API_KEY)");
+    if (!config.gpsUk.apiSecret) errors.push("GPS_UK_API_SECRET is required (UK warehouse credentials)");
+
+    if (config.gps.apiKey && config.gpsUk.apiKey && config.gps.apiKey === config.gpsUk.apiKey) {
+      console.warn(
+        "[Config] WARNING: GPS_API_KEY and GPS_UK_API_KEY are identical. " +
+          "Each GPS warehouse usually has its own appKey — verify this is intentional."
+      );
     }
   }
 

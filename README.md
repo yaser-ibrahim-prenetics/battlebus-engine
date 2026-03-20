@@ -327,10 +327,21 @@ D365_TENANT_ID=your-tenant-id
 D365_CLIENT_ID=your-client-id
 D365_CLIENT_SECRET=your-client-secret
 
-# GPS Warehouse
-GPS_BASE_URL=https://api.gpswarehouse.com
-GPS_API_KEY=your_api_key
-GPS_API_SECRET=your_api_secret
+# GPS / XLWMS (US — required when ENABLE_GPS_SYNC=true)
+# Match Spock Store api.json: gps.warehouse["GPS Warehouse"].authentication
+GPS_BASE_URL=https://api.xlwms.com
+GPS_API_KEY=your_us_app_key
+GPS_API_SECRET=your_us_app_secret
+# GPS_WAREHOUSE_CODE=JFK01W
+
+# GPS UK (optional — if unset, falls back to US key/secret)
+# Match api.json: gps.warehouse["GPS UK Warehouse"].authentication
+# GPS_UK_API_KEY=
+# GPS_UK_API_SECRET=
+# GPS_UK_BASE_URL=https://api.xlwms.com
+# GPS_UK_WAREHOUSE_CODE=LHR
+
+# See inngest/docs/GPS_ENV_SETUP.md for Spock ↔ Battle Bus mapping
 # Orders to check for GPS fulfillment: Supabase + Shopify unfulfilled list (default 30, max 365)
 GPS_FULFILLMENT_POLL_DAYS_BACK=30
 # How far back fulfilled GPS shipments count as "recent" when matching to Shopify (hours)
