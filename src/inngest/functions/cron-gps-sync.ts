@@ -169,14 +169,23 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
     ? createClient(supabaseUrl, supabaseKey, { auth: { autoRefreshToken: false, persistSession: false } })
     : null;
 
+  const daysBack = config.gps.fulfillmentPollDaysBack;
+  const pollCutoff = new Date();
+  pollCutoff.setUTCDate(pollCutoff.getUTCDate() - daysBack);
+  const pollCutoffIso = pollCutoff.toISOString();
+  console.log(
+    `[GPS Sync] Fulfillment poll window: last ${daysBack} day(s), created_at >= ${pollCutoffIso}`
+  );
+
   if (supabase) {
-    // Single query: unfulfilled GPS orders that have a gps_order_no
+    // Single query: recent unfulfilled GPS orders with gps_order_no (created within poll window)
     const { data: rows, error } = await supabase
       .from("orders")
       .select("id, shopify_order_id, shopify_order_name, gps_order_no, warehouse")
       .not("gps_order_no", "is", null)
       .in("warehouse", ["GPS Warehouse", "GPS UK Warehouse"])
       .or("shopify_fulfillment_status.is.null,shopify_fulfillment_status.neq.fulfilled")
+      .gte("created_at", pollCutoffIso)
       .limit(500);
 
     if (error) {
@@ -199,7 +208,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   // Fallback to Shopify metafields if Supabase returned nothing
   if (gpsOrderData.length === 0) {
     console.log(`[GPS Sync] Falling back to Shopify metafield lookup...`);
-    const orders = await shopify.getUnfulfilledOrders(250, 30);
+    const orders = await shopify.getUnfulfilledOrders(250, daysBack);
     console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
 
     for (const order of orders) {

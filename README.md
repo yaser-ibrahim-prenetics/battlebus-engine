@@ -331,6 +331,10 @@ D365_CLIENT_SECRET=your-client-secret
 GPS_BASE_URL=https://api.gpswarehouse.com
 GPS_API_KEY=your_api_key
 GPS_API_SECRET=your_api_secret
+# Orders to check for GPS fulfillment: Supabase + Shopify unfulfilled list (default 30, max 365)
+GPS_FULFILLMENT_POLL_DAYS_BACK=30
+# How far back fulfilled GPS shipments count as "recent" when matching to Shopify (hours)
+# GPS_FULFILLMENT_HOURS_BACK=80
 
 # STORD Warehouse
 STORD_BASE_URL=https://api.stord.com

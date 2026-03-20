@@ -9,6 +9,10 @@ function safeParseInt(value: string | undefined, defaultValue: number): number {
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 export const config = {
   // Dynamics 365 Configuration
   dynamics: {
@@ -32,7 +36,16 @@ export const config = {
     apiSecret: process.env.GPS_API_SECRET || "",
     warehouseCode: process.env.GPS_WAREHOUSE_CODE || "JFK01W",
     scheduleIntervalMinutes: safeParseInt(process.env.GPS_SCHEDULE_INTERVAL_MINUTES, 60),
-    queryDaysBack: safeParseInt(process.env.GPS_QUERY_DAYS_BACK, 7),
+    /** How many days of orders to include when polling for GPS fulfillment (Supabase + Shopify fallback). */
+    fulfillmentPollDaysBack: clampInt(
+      safeParseInt(
+        process.env.GPS_FULFILLMENT_POLL_DAYS_BACK ||
+          process.env.GPS_QUERY_DAYS_BACK /* legacy name */,
+        30
+      ),
+      1,
+      365
+    ),
     batchSize: safeParseInt(process.env.GPS_BATCH_SIZE, 50),
     gpsFulfilledStatus: 3,
     fulfillmentHoursBack: safeParseInt(process.env.GPS_FULFILLMENT_HOURS_BACK, 80),
