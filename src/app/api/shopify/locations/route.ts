@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
         gps: configuredLocations.gps
           ? {
               id: configuredLocations.gps,
-              name: findLocationName(configuredLocations.gps) || "GPS US Warehouse",
+              name: findLocationName(configuredLocations.gps) || "GPS Warehouse",
             }
           : null,
         gpsUk: configuredLocations.gpsUk
