@@ -5,7 +5,7 @@
 // Serverless-friendly: splits processing into small batches
 //
 // Flow:
-// 1. Get GPS order IDs from Shopify metafields
+// 1. Get GPS order IDs from Supabase (fast) — falls back to Shopify metafields
 // 2. Query GPS API in batches for all orders
 // 3. Filter for status 3 (fulfilled) within configured hours
 // 4. For each fulfilled order, create Shopify fulfillment and trigger D365 sync
@@ -19,6 +19,7 @@ import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
 import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
+import { createClient } from "@supabase/supabase-js";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
@@ -152,12 +153,8 @@ type GpsSyncResult = {
   allOrderStatuses: GpsOrderStatusSummary[];
 };
 
-// Get GPS order IDs from Shopify metafields, query GPS in batches, filter for status 3 within configured hours
+// Get GPS order data from Supabase (instead of Shopify metafields), query GPS API, filter for status 3
 async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
-  // Step 1: Get GPS order IDs from Shopify metafields (with order names for tracking)
-  const orders = await shopify.getUnfulfilledOrders(250, 30);
-  console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
-
   const gpsOrderData: Array<{
     gpsOrderId: string;
     warehouse: string;
@@ -165,22 +162,60 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
     shopifyOrderId: string;
   }> = [];
 
-  for (const order of orders) {
-    try {
-      const gpsData = await shopify.getGpsOrderMetafield(order.id);
-      if (gpsData) {
-        gpsOrderData.push({
-          gpsOrderId: gpsData.gpsOrderId,
-          warehouse: gpsData.warehouse,
-          shopifyOrderName: order.name,
-          shopifyOrderId: order.id.toString(),
-        });
-        console.log(
-          `[GPS Sync] Found GPS order: ${gpsData.gpsOrderId} for Shopify order: ${order.name} (ID: ${order.id})`
-        );
+  // Try Supabase first — much faster than N+1 Shopify metafield calls
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const supabase = supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, { auth: { autoRefreshToken: false, persistSession: false } })
+    : null;
+
+  if (supabase) {
+    // Single query: unfulfilled GPS orders that have a gps_order_no
+    const { data: rows, error } = await supabase
+      .from("orders")
+      .select("id, shopify_order_id, shopify_order_name, gps_order_no, warehouse")
+      .not("gps_order_no", "is", null)
+      .in("warehouse", ["GPS Warehouse", "GPS UK Warehouse"])
+      .or("shopify_fulfillment_status.is.null,shopify_fulfillment_status.neq.fulfilled")
+      .limit(500);
+
+    if (error) {
+      console.warn(`[GPS Sync] Supabase query failed, falling back to Shopify metafields: ${error.message}`);
+    } else if (rows && rows.length > 0) {
+      for (const row of rows) {
+        if (row.gps_order_no && row.warehouse) {
+          gpsOrderData.push({
+            gpsOrderId: row.gps_order_no,
+            warehouse: row.warehouse,
+            shopifyOrderName: row.shopify_order_name || row.id,
+            shopifyOrderId: row.shopify_order_id || row.id,
+          });
+        }
       }
-    } catch (error) {
-      console.warn(`[GPS Sync] Failed to get GPS metafield for order ${order.id}: ${error}`);
+      console.log(`[GPS Sync] Found ${gpsOrderData.length} GPS orders from Supabase (no Shopify calls needed)`);
+    }
+  }
+
+  // Fallback to Shopify metafields if Supabase returned nothing
+  if (gpsOrderData.length === 0) {
+    console.log(`[GPS Sync] Falling back to Shopify metafield lookup...`);
+    const orders = await shopify.getUnfulfilledOrders(250, 30);
+    console.log(`[GPS Sync] Checking ${orders.length} orders for GPS metafields...`);
+
+    for (const order of orders) {
+      try {
+        const gpsData = await shopify.getGpsOrderMetafield(order.id);
+        if (gpsData) {
+          gpsOrderData.push({
+            gpsOrderId: gpsData.gpsOrderId,
+            warehouse: gpsData.warehouse,
+            shopifyOrderName: order.name,
+            shopifyOrderId: order.id.toString(),
+          });
+        }
+      } catch (error) {
+        console.warn(`[GPS Sync] Failed to get GPS metafield for order ${order.id}: ${error}`);
+      }
     }
   }
 

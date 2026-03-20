@@ -243,7 +243,18 @@ export const processShopifyFulfillment = inngest.createFunction(
       );
     }
 
-    // Send fulfillment events to CS platform with Shopify status
+    // Determine fulfillment source for downstream tracking
+    const isFromGpsSyncPath = isFromGpsSync;
+    const hasStordFulfillments = fulfillmentResults.some(
+      (r: { status: string; source?: string }) => r.status === "success" && r.source === "STORD"
+    );
+    const fulfillmentSource: "gps" | "stord" | "shopify" = isFromGpsSyncPath
+      ? "gps"
+      : hasStordFulfillments
+        ? "stord"
+        : "shopify";
+
+    // Send fulfillment events to CS platform with Shopify status and source
     for (const fulfillmentResult of fulfillmentResults) {
       if (fulfillmentResult.status === "success" && fulfillmentResult.trackingNumber) {
         await csPlatform.sendOrderFulfilled({
@@ -254,9 +265,43 @@ export const processShopifyFulfillment = inngest.createFunction(
           fulfillmentId: fulfillmentResult.fulfillmentId,
           shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
           shopifyFinancialStatus: order.financial_status,
+          fulfillmentSource,
+          d365FulfillmentStatus: "synced",
+          gpsFulfillmentStatus: fulfillmentSource === "gps" ? "synced" : undefined,
         });
       }
     }
+
+    // ========================================================================
+    // D365 INVOICING (PostPrepayment) — after packing slip, before PayPal
+    // ========================================================================
+    const invoiceResult = await step.run("d365-post-prepayment", async () => {
+      if (!config.features.enableDynamicsSync || !d365Order?.SalesOrderNumber) {
+        return { status: "skipped", reason: "D365 sync disabled or no sales order" };
+      }
+
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+      const hasSuccessfulFulfillment = fulfillmentResults.some(
+        (r: { status: string }) => r.status === "success"
+      );
+      if (!hasSuccessfulFulfillment) {
+        return { status: "skipped", reason: "No successful fulfillments to invoice" };
+      }
+
+      try {
+        const result = await dynamics.createPrepayment(d365Order.SalesOrderNumber, dataAreaId);
+        console.log(`[Fulfillment] D365 prepayment posted for ${shopifyOrderName}: ${d365Order.SalesOrderNumber}`);
+        return { status: "success", salesOrderNumber: d365Order.SalesOrderNumber, result };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[Fulfillment] D365 prepayment failed for ${shopifyOrderName}: ${errorMsg}`);
+        await slack.sendWarningMessage(
+          "dynamics",
+          `D365 PostPrepayment failed for ${shopifyOrderName} (${d365Order.SalesOrderNumber}): ${errorMsg}`
+        ).catch(() => {});
+        return { status: "error", error: errorMsg };
+      }
+    });
 
     // ========================================================================
     // PAYPAL TRACKING SYNC (non-blocking)
@@ -340,6 +385,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       d365OrderNumber: d365Order.SalesOrderNumber,
       fulfillmentCount: fulfillments.length,
       fulfillmentResults,
+      invoiceResult,
       paypalResult,
       processedAt: new Date().toISOString(),
     };

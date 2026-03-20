@@ -24,6 +24,7 @@ import type { IFulfillmentOrderLineItem, ILineItem } from "@/lib/types/shopify";
 import * as slack from "@/lib/clients/slack";
 import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
+import * as csPlatform from "@/lib/clients/cs-platform";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
@@ -224,17 +225,55 @@ export const processGpsIndividual = inngest.createFunction(
       };
     });
 
-    // Step 6: Send completion notification
+    // Step 6: D365 invoicing (PostPrepayment)
+    const invoiceResult = await step.run("d365-post-prepayment", async () => {
+      if (dynamicRecord.skipped || !dynamicRecord.salesOrderNumber) {
+        return { skipped: true, reason: "D365 packing slip was skipped" };
+      }
+
+      try {
+        const result = await dynamics.createPrepayment(
+          dynamicRecord.salesOrderNumber,
+          dynamicRecord.dataAreaId!
+        );
+        console.log(`[GPS Individual] D365 prepayment posted for: ${dynamicRecord.salesOrderNumber}`);
+        return { skipped: false, salesOrderNumber: dynamicRecord.salesOrderNumber, result };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[GPS Individual] D365 prepayment failed: ${errorMsg}`);
+        await slack.sendWarningMessage(
+          SlackChannelEnum.GPS,
+          `D365 PostPrepayment failed for ${fulfilmentData.shopifyOrderName} (${dynamicRecord.salesOrderNumber}): ${errorMsg}`
+        ).catch(() => {});
+        return { skipped: false, error: errorMsg };
+      }
+    });
+
+    // Step 7: Send completion notification
     await step.run("send-completion-notification", async () => {
       const shopifyStatus = shopifyFulfillment.skipped ? "skipped" : "success";
       const d365Status = dynamicRecord.skipped ? "skipped" : "success";
+      const invoiceStatus = invoiceResult.skipped ? "skipped" : (invoiceResult as any).error ? "failed" : "success";
 
       const message =
         `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
-        `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
+        `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status} \nInvoice: ${invoiceStatus}`;
 
       console.log(message);
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
+    });
+
+    // Step 8: Notify Hub of fulfillment with GPS source
+    await step.run("notify-hub-fulfillment", async () => {
+      await csPlatform.sendOrderFulfilled({
+        orderId: shopifyOrder.id?.toString(),
+        shopifyOrderName: fulfilmentData.shopifyOrderName,
+        trackingNumber: fulfilmentData.trackingNumber,
+        carrier: fulfilmentData.carrier || "",
+        fulfillmentSource: "gps",
+        d365FulfillmentStatus: dynamicRecord.skipped ? "pending" : "synced",
+        gpsFulfillmentStatus: "synced",
+      });
     });
 
     return {

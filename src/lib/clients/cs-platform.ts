@@ -168,6 +168,9 @@ export async function sendOrderFulfilled(orderData: {
   fulfillmentId?: string;
   shopifyFulfillmentStatus?: string;
   shopifyFinancialStatus?: string;
+  fulfillmentSource?: "shopify" | "gps" | "stord" | "extensiv";
+  d365FulfillmentStatus?: string;
+  gpsFulfillmentStatus?: string;
 }): Promise<void> {
   await sendOrderEvent({
     event: "order.fulfilled",
@@ -179,6 +182,9 @@ export async function sendOrderFulfilled(orderData: {
       fulfillmentId: orderData.fulfillmentId,
       shopifyFulfillmentStatus: orderData.shopifyFulfillmentStatus || "fulfilled",
       shopifyFinancialStatus: orderData.shopifyFinancialStatus,
+      fulfillmentSource: orderData.fulfillmentSource,
+      d365FulfillmentStatus: orderData.d365FulfillmentStatus,
+      gpsFulfillmentStatus: orderData.gpsFulfillmentStatus,
       fulfilledAt: new Date().toISOString(),
     },
   });
