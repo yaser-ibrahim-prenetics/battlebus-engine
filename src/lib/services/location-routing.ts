@@ -25,6 +25,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { config } from "@/lib/config";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 // ============================================================================
 // Types
@@ -53,6 +55,11 @@ interface LocationRoutingCache {
   ttl: number;
 }
 
+interface LocationCacheSnapshot {
+  fetchedAt: string;
+  mappings: LocationMapping[];
+}
+
 // ============================================================================
 // Supabase client
 // ============================================================================
@@ -72,10 +79,36 @@ const supabase =
 // ============================================================================
 
 let locationCache: LocationRoutingCache | null = null;
-const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TTL = 60 * 60 * 1000; // 1 hour
+const CACHE_FILE_PATH =
+  process.env.LOCATION_CONFIG_CACHE_FILE_PATH || "/tmp/battle-bus/location-mappings-cache.json";
 
 export function clearLocationCache(): void {
   locationCache = null;
+}
+
+async function writeLocationSnapshot(mappings: LocationMapping[]): Promise<void> {
+  try {
+    await mkdir(dirname(CACHE_FILE_PATH), { recursive: true });
+    const payload: LocationCacheSnapshot = {
+      fetchedAt: new Date().toISOString(),
+      mappings,
+    };
+    await writeFile(CACHE_FILE_PATH, JSON.stringify(payload), "utf8");
+  } catch (error) {
+    console.warn("[LocationRouting] Failed to write cache snapshot:", error);
+  }
+}
+
+async function readLocationSnapshot(): Promise<LocationMapping[]> {
+  try {
+    const raw = await readFile(CACHE_FILE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as LocationCacheSnapshot;
+    if (!Array.isArray(parsed?.mappings)) return [];
+    return parsed.mappings.filter((m) => m && m.active !== false);
+  } catch {
+    return [];
+  }
 }
 
 // ============================================================================
@@ -202,8 +235,61 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
   }
 
   const mappings = await fetchLocationMappings();
-  locationCache = { mappings, lastFetched: new Date(), ttl: DEFAULT_TTL };
-  return mappings;
+  if (mappings.length > 0) {
+    locationCache = { mappings, lastFetched: new Date(), ttl: DEFAULT_TTL };
+    await writeLocationSnapshot(mappings);
+    return mappings;
+  }
+
+  if (locationCache?.mappings?.length) {
+    console.warn("[LocationRouting] Using stale in-memory cache (refresh returned 0 mappings)");
+    return locationCache.mappings;
+  }
+
+  const snapshotMappings = await readLocationSnapshot();
+  if (snapshotMappings.length > 0) {
+    console.warn(
+      `[LocationRouting] Using persisted cache snapshot with ${snapshotMappings.length} mappings`
+    );
+    locationCache = {
+      mappings: snapshotMappings,
+      lastFetched: new Date(),
+      ttl: DEFAULT_TTL,
+    };
+    return snapshotMappings;
+  }
+
+  locationCache = { mappings: [], lastFetched: new Date(), ttl: DEFAULT_TTL };
+  return [];
+}
+
+export async function refreshLocationMappings(reason = "manual"): Promise<{
+  refreshed: boolean;
+  count: number;
+  reason: string;
+}> {
+  const mappings = await getLocationMappings(true);
+  return {
+    refreshed: true,
+    count: mappings.length,
+    reason,
+  };
+}
+
+export function getLocationCacheStatus(): {
+  cacheFilePath: string;
+  hasMemoryCache: boolean;
+  memoryCount: number;
+  lastFetched: string | null;
+  ttlMs: number;
+} {
+  return {
+    cacheFilePath: CACHE_FILE_PATH,
+    hasMemoryCache: !!locationCache,
+    memoryCount: locationCache?.mappings.length || 0,
+    lastFetched: locationCache?.lastFetched.toISOString() || null,
+    ttlMs: DEFAULT_TTL,
+  };
 }
 
 export async function getLocationRoutingDebugContext(

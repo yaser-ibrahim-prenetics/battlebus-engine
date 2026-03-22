@@ -395,11 +395,11 @@ export const processShopifyOrder = inngest.createFunction(
 
     await publishStatus("validate-order", "completed", "Order validation passed");
 
-    // Determine warehouse and DataAreaId strictly from Battle Hub location settings.
-    // Do not fall back to country/config routing.
-    const routingResult = await step.run("determine-warehouse-routing", async () => {
+    // Determine warehouse and DataAreaId using Hub location settings.
+    const resolveRouting = async () => {
       const countryCode =
         order.shipping_address?.country_code || order.billing_address?.country_code || "US";
+
       const intendedLocationId = getIntendedLocationIdFromOrder(order);
 
       let fulfillmentLocationId: number | null = null;
@@ -428,12 +428,12 @@ export const processShopifyOrder = inngest.createFunction(
           fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
           console.warn(
             `[Order Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
-            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
+              `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
           );
         } else {
           throw new Error(
             `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
-            `Configure the location in Battle Hub Locations settings.`
+              `Configure the location in Battle Hub Locations settings.`
           );
         }
       }
@@ -503,7 +503,9 @@ export const processShopifyOrder = inngest.createFunction(
         countryCode,
         routingSource: "location" as const,
       };
-    });
+    };
+
+    const routingResult = await step.run("determine-warehouse-routing", resolveRouting);
 
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;

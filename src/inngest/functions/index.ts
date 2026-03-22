@@ -32,6 +32,7 @@ export {
   triggerInventoryReconciliation,
   syncSkuInventory,
 } from "./cron-inventory-reconciliation";
+export { refreshLocationConfigCache } from "./refresh-location-config-cache";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -65,6 +66,7 @@ import {
   triggerInventoryReconciliation,
   syncSkuInventory,
 } from "./cron-inventory-reconciliation";
+import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 
 export const functions = [
   processShopifyOrder,
@@ -99,4 +101,6 @@ export const functions = [
   cronInventoryReconciliation,
   triggerInventoryReconciliation,
   syncSkuInventory,
+  // Config cache refresh
+  refreshLocationConfigCache,
 ];
