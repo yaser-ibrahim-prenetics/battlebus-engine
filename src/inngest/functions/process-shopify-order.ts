@@ -168,8 +168,8 @@ export const processShopifyOrder = inngest.createFunction(
     },
     concurrency: [
       {
-        // OPTIMIZATION: Increased from 3 to 5 per country for higher throughput
-        limit: 5,
+        // Per-country order concurrency is env-tunable via CONCURRENCY_ORDER_PROCESSING.
+        limit: CONCURRENCY_CONFIGS.ORDER_PROCESSING.limit,
         key: "event.data.orderJson.shipping_address.country_code",
       },
     ],
