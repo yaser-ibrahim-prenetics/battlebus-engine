@@ -297,32 +297,6 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           `[GPS Sync] [${warehouse}] Querying batch ${batchNumber}/${totalBatches} with ${batch.length} orders`
         );
 
-        // Simulate fulfillment for first order in first batch if simulation is enabled
-        if (
-          config.features.enableGpsFulfillmentSimulation &&
-          batchNumber === 1 &&
-          i === 0 &&
-          batch.length > 0
-        ) {
-          const firstGpsOrderId = batch[0];
-          const firstShopifyData = gpsOrderIdToShopifyData.get(firstGpsOrderId);
-          if (firstShopifyData) {
-            // Mark first order as fulfilled in simulation store
-            const testFulfillment = {
-              platformOrderNo: firstShopifyData.shopifyOrderName,
-              thirdOrderNo: undefined,
-              trackingNumber: `TEST-${warehouse === "GPS UK Warehouse" ? "DHL" : "FEDEX"}-${Date.now()}`,
-              carrier: warehouse === "GPS UK Warehouse" ? "DHL" : "FEDEX",
-              outboundTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-              warehouse: warehouse,
-            };
-            gpsSimulationStore.markFulfilled(testFulfillment);
-            console.log(
-              `[GPS Sync] 🧪 SIMULATION: Marked first order ${firstShopifyData.shopifyOrderName} (GPS: ${firstGpsOrderId}, Shopify ID: ${firstShopifyData.shopifyOrderId}) as fulfilled`
-            );
-          }
-        }
-
         const { response } = await gps.getOutboundOrdersDetails(batch, warehouse);
 
         if (!response.data || response.code !== 200) {
