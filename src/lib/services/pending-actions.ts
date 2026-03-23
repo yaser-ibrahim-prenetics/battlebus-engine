@@ -78,6 +78,20 @@ export async function getPendingActions(
   return result.actions || [];
 }
 
+export interface PendingActionOrder {
+  shopify_order_id: string;
+  shopify_order_name: string;
+  pending_actions: PendingAction[];
+}
+
+export async function getAllPendingActionOrders(): Promise<PendingActionOrder[]> {
+  const result = (await callHubApi(
+    "GET",
+    "/api/orders/pending-actions",
+  )) as { orders: PendingActionOrder[]; count: number };
+  return result.orders || [];
+}
+
 export async function clearPendingActions(
   shopifyOrderId: string
 ): Promise<void> {
@@ -87,5 +101,18 @@ export async function clearPendingActions(
   await callHubApi("PATCH", "/api/orders/pending-actions", {
     shopifyOrderId,
     operation: "clear",
+  });
+}
+
+export async function clearPendingActionsBatch(
+  shopifyOrderIds: string[]
+): Promise<void> {
+  if (shopifyOrderIds.length === 0) return;
+  console.log(
+    `[PendingActions] Bulk-clearing pending actions for ${shopifyOrderIds.length} orders`
+  );
+  await callHubApi("PATCH", "/api/orders/pending-actions", {
+    shopifyOrderIds,
+    operation: "clear-batch",
   });
 }

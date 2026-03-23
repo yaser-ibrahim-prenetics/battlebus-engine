@@ -1199,23 +1199,9 @@ export const processShopifyOrder = inngest.createFunction(
         });
       }
 
-      // Emit lifecycle.ready so stacked actions (fulfill/cancel/refund) are drained
-      if (!routedToBackorder) {
-        await step.run("emit-lifecycle-ready", async () => {
-          await inngest.send({
-            id: `lifecycle-ready-${shopifyOrderId}`,
-            name: "order/lifecycle.ready",
-            data: {
-              shopifyOrderId,
-              shopifyOrderName,
-              shopifyStore: event.data.shopifyStore || "im8",
-              d365OrderNumber: salesOrderNo || "",
-              warehouseName: warehouseName || "",
-              dataAreaId: dataAreaId || "",
-            },
-          });
-        });
-      }
+      // Pending lifecycle actions (fulfill/cancel/refund that arrived during processing)
+      // are drained automatically by the cron-based drain-pending-actions sweep.
+      // No per-order trigger needed.
 
       // IMPORTANT: Do not overwrite backorder status with a generic "order created" update.
       if (!routedToBackorder) {

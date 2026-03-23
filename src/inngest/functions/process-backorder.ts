@@ -184,18 +184,7 @@ export const processBackorder = inngest.createFunction(
           },
         });
 
-        await inngest.send({
-          id: `lifecycle-ready-${shopifyOrderId}`,
-          name: "order/lifecycle.ready",
-          data: {
-            shopifyOrderId,
-            shopifyOrderName,
-            shopifyStore: (event.data as any).shopifyStore || "im8",
-            d365OrderNumber: d365OrderNumber || "",
-            warehouseName: warehouse || "",
-            dataAreaId: "",
-          },
-        });
+        // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
 
         return {
           status: "resolved",
@@ -382,19 +371,7 @@ export const processBackorder = inngest.createFunction(
           },
         });
 
-        // Drain any stacked lifecycle actions
-        await inngest.send({
-          id: `lifecycle-ready-${shopifyOrderId}`,
-          name: "order/lifecycle.ready",
-          data: {
-            shopifyOrderId,
-            shopifyOrderName,
-            shopifyStore: (event.data as any).shopifyStore || "im8",
-            d365OrderNumber: d365OrderNumber || "",
-            warehouseName: warehouse || "",
-            dataAreaId: "",
-          },
-        });
+        // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
 
         return {
           status: "resolved",

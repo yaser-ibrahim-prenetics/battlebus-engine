@@ -1,94 +1,112 @@
 // ============================================================================
-// DRAIN PENDING ACTIONS
+// DRAIN PENDING ACTIONS — CRON SWEEP
 // ============================================================================
-// Replays stacked lifecycle events (fulfillment, cancellation, refund) that
-// arrived before the D365/GPS order was fully created. Triggered by
-// order/lifecycle.ready after process-shopify-order or process-backorder
-// succeeds.
+// Single scheduled sweep (every 2 minutes) that fetches ALL orders with
+// pending lifecycle actions in one Hub API call, emits all events in one
+// batch inngest.send(), and bulk-clears them in one update.
+//
+// Replaces the previous per-order event-triggered approach which spawned one
+// Inngest function run per order and N steps per action — wasteful when
+// processing hundreds of orders simultaneously.
+//
+// Priority:   cancel > refund > fulfill  (cancel beats everything)
+// Durability: 2 steps total (sweep + clear), regardless of order count.
 
 import { inngest } from "../client";
 import {
-  getPendingActions,
-  clearPendingActions,
+  getAllPendingActionOrders,
+  clearPendingActionsBatch,
+  type PendingAction,
 } from "@/lib/services/pending-actions";
-import type { PendingAction } from "@/lib/services/pending-actions";
+import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
 export const drainPendingActions = inngest.createFunction(
   {
     id: "drain-pending-actions",
     name: "Drain Pending Lifecycle Actions",
-    idempotency: "event.data.shopifyOrderId",
     retries: RETRY_CONFIGS.LOW_PRIORITY,
-    concurrency: [{ limit: 1, key: "event.data.shopifyOrderId" }],
+    // Only one sweep at a time — prevents overlapping cron runs from
+    // double-emitting the same pending actions.
+    concurrency: { limit: 1 },
   },
-  { event: "order/lifecycle.ready" },
-  async ({
-    event,
-    step,
-  }: {
-    event: { data: { shopifyOrderId: string; shopifyOrderName: string } };
-    step: {
-      run: <T>(id: string, fn: () => Promise<T> | T) => Promise<T>;
-    };
-  }) => {
-    const { shopifyOrderId, shopifyOrderName } = event.data;
+  { cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` },
+  async ({ step }: { step: any }) => {
+    // ── Step 1: Fetch all orders with pending actions + emit all events ───
+    const drainResult = await step.run("sweep-and-emit", async () => {
+      const orders = await getAllPendingActionOrders();
 
-    const actions = await step.run("read-pending-actions", async () => {
-      return getPendingActions(shopifyOrderId);
-    });
-
-    if (!actions || actions.length === 0) {
-      return {
-        status: "no_pending_actions",
-        shopifyOrderId,
-        shopifyOrderName,
-      };
-    }
-
-    console.log(
-      `[PendingActions] Draining ${actions.length} pending action(s) for ${shopifyOrderName}`
-    );
-
-    // Check if a cancel action is pending — if so, skip fulfillment events
-    const hasCancelAction = actions.some(
-      (a: PendingAction) => a.action === "cancel"
-    );
-
-    const emitted: string[] = [];
-
-    for (const action of actions) {
-      // Skip fulfillment if cancellation is also pending — cancel takes priority
-      if (action.action === "fulfill" && hasCancelAction) {
-        console.log(
-          `[PendingActions] Skipping stacked fulfillment for ${shopifyOrderName} — cancellation pending`
-        );
-        continue;
+      if (orders.length === 0) {
+        return { count: 0, emitted: [], cleared: [] };
       }
 
-      await step.run(`emit-${action.action}-${action.createdAt}`, async () => {
-        await inngest.send({
-          name: action.eventName as any,
-          data: {
-            ...action.eventData,
-            fromDrain: true,
-          },
-        });
-      });
+      console.log(
+        `[PendingActions] Drain sweep: ${orders.length} order(s) have pending actions`
+      );
 
-      emitted.push(action.action);
+      const eventsToSend: Array<{ name: string; data: Record<string, unknown> }> = [];
+      const clearedOrderIds: string[] = [];
+
+      for (const order of orders) {
+        const actions: PendingAction[] = order.pending_actions || [];
+        if (actions.length === 0) continue;
+
+        const hasCancelAction = actions.some((a) => a.action === "cancel");
+
+        let emittedForOrder = 0;
+        for (const action of actions) {
+          // Cancel takes priority — skip fulfillment if cancel is also pending
+          if (action.action === "fulfill" && hasCancelAction) {
+            console.log(
+              `[PendingActions] Skipping stacked fulfillment for ${order.shopify_order_name} — cancellation pending`
+            );
+            continue;
+          }
+
+          eventsToSend.push({
+            name: action.eventName as string,
+            data: {
+              ...action.eventData,
+              fromDrain: true,
+            },
+          });
+          emittedForOrder++;
+        }
+
+        if (emittedForOrder > 0 || hasCancelAction) {
+          clearedOrderIds.push(order.shopify_order_id);
+        }
+      }
+
+      if (eventsToSend.length > 0) {
+        // Single batch send — one network call for all events across all orders
+        await inngest.send(eventsToSend as any);
+        console.log(
+          `[PendingActions] Batch-sent ${eventsToSend.length} event(s) for ${clearedOrderIds.length} order(s)`
+        );
+      }
+
+      return {
+        count: orders.length,
+        emitted: eventsToSend.map((e) => e.name),
+        cleared: clearedOrderIds,
+      };
+    });
+
+    if (drainResult.cleared.length === 0) {
+      return { status: "idle", processed: 0 };
     }
 
-    await step.run("clear-pending-actions", async () => {
-      await clearPendingActions(shopifyOrderId);
+    // ── Step 2: Bulk-clear all processed orders in one update ─────────────
+    await step.run("bulk-clear", async () => {
+      await clearPendingActionsBatch(drainResult.cleared);
     });
 
     return {
       status: "drained",
-      shopifyOrderId,
-      shopifyOrderName,
-      actionsEmitted: emitted,
-      totalActions: actions.length,
+      processed: drainResult.count,
+      eventsEmitted: drainResult.emitted.length,
+      ordersCleared: drainResult.cleared.length,
     };
   }
 );

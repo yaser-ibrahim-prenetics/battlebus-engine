@@ -188,6 +188,16 @@ export const config = {
     waitForEventTimeoutHours: safeParseInt(process.env.BACKORDER_WAIT_TIMEOUT_HOURS, 48),
   },
 
+  // Pending lifecycle action drain sweep
+  pendingActions: {
+    // 1-59 minutes (default 10). This powers the cron schedule for drain-pending-actions.
+    drainIntervalMinutes: clampInt(
+      safeParseInt(process.env.PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES, 10),
+      1,
+      59
+    ),
+  },
+
   // Order validation
   orders: {
     liveDateTime: process.env.ORDERS_LIVE_DATE || "2024-11-17T13:22:00-05:00",
