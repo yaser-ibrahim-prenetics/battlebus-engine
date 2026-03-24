@@ -66,17 +66,21 @@ export const processShopifyFulfillment = inngest.createFunction(
       isStord: isStordFulfillment(f.location_id || ""),
     }));
 
-    // Skip GPS fulfillments from webhooks - they are handled by cron-gps-sync
-    // But allow GPS fulfillments when explicitly triggered by cron-gps-sync (for D365 sync)
+    // Skip GPS fulfillments from webhook echo (automatic Shopify webhook after cron
+    // created the fulfillment) to prevent double D365 processing.
+    // Allow through when:
+    //   - fromGpsSync: true  (cron-driven GPS fulfillment)
+    //   - fromManualFulfillment: true  (Hub manual fulfillment)
     const gpsOnly = fulfillmentSources.every((s: { isGps: boolean }) => s.isGps);
     const isFromGpsSync = (event.data as any).fromGpsSync === true;
+    const isManualFulfillment = !!(event.data as any).fromManualFulfillment;
 
-    if (gpsOnly && !isFromGpsSync) {
+    if (gpsOnly && !isFromGpsSync && !isManualFulfillment) {
       return {
         status: "skipped_gps",
         shopifyOrderId,
         shopifyOrderName,
-        reason: "GPS fulfillments from webhook - handled by cron-gps-sync",
+        reason: "GPS fulfillments from webhook echo - handled by cron-gps-sync or manual action",
       };
     }
 

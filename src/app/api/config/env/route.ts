@@ -47,6 +47,25 @@ function projectId(project: string): string {
   return "";
 }
 
+function deployHookUrl(project: string): string {
+  const p = normalizeProject(project);
+  if (p === "hub") {
+    return (
+      process.env.VERCEL_HUB_DEPLOY_HOOK_URL ||
+      process.env.VERCEL_DEPLOY_HOOK_URL_HUB ||
+      ""
+    );
+  }
+  if (p === "inngest") {
+    return (
+      process.env.VERCEL_INNGEST_DEPLOY_HOOK_URL ||
+      process.env.VERCEL_DEPLOY_HOOK_URL_INNGEST ||
+      ""
+    );
+  }
+  return "";
+}
+
 function authHeaders() {
   return {
     Authorization: `Bearer ${vercelToken()}`,
@@ -88,6 +107,50 @@ async function listEnvs(pid: string): Promise<VercelEnvVar[]> {
   }
 
   return all;
+}
+
+async function triggerRedeploy(project: "hub" | "inngest"): Promise<{
+  required: boolean;
+  triggered: boolean;
+  message: string;
+}> {
+  const hookUrl = deployHookUrl(project);
+  if (!hookUrl) {
+    return {
+      required: true,
+      triggered: false,
+      message:
+        `Environment variables changed for "${project}", but no deploy hook is configured. ` +
+        "Redeploy is required for changes to take effect.",
+    };
+  }
+
+  try {
+    const res = await fetch(hookUrl, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return {
+        required: true,
+        triggered: false,
+        message:
+          `Redeploy hook call failed for "${project}" (${res.status}). ` +
+          (body ? body.slice(0, 300) : "Please redeploy manually."),
+      };
+    }
+    return {
+      required: true,
+      triggered: true,
+      message: `Environment variables updated and redeploy triggered for "${project}".`,
+    };
+  } catch (error) {
+    return {
+      required: true,
+      triggered: false,
+      message:
+        `Environment variables updated for "${project}", but redeploy trigger failed: ` +
+        (error instanceof Error ? error.message : String(error)),
+    };
+  }
 }
 
 // ─── GET — list env vars ──────────────────────────────────────────────────────
@@ -262,12 +325,20 @@ export async function POST(request: NextRequest) {
 
   const succeeded = results.filter((r) => r.status === "upserted").length;
   const failed = results.filter((r) => r.status === "error").length;
+  const redeploy =
+    succeeded > 0
+      ? await triggerRedeploy(project)
+      : {
+          required: false,
+          triggered: false,
+          message: "No environment changes were applied.",
+        };
 
   console.log(
     `[config/env] POST: ${succeeded} upserted, ${failed} failed for project "${project}"`
   );
 
-  return NextResponse.json({ succeeded, failed, results });
+  return NextResponse.json({ succeeded, failed, results, redeploy });
 }
 
 // ─── DELETE — remove an env var by key ───────────────────────────────────────

@@ -4,6 +4,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
 import * as warehouseHelper from "@/lib/helpers/warehouse";
 import * as exchangeHelper from "@/lib/helpers/exchange";
+import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyRefundPayload } from "../events";
 import {
@@ -229,6 +230,40 @@ export const processRefund = inngest.createFunction(
       return { status: "success" };
     });
 
+    // 7. Post Return Order Invoice (generates D365 credit note)
+    const invoiceResult = await step.run("post-return-invoice", async () => {
+      if (!config.features.enableDynamicsSync || !d365Order || fulfillment.status === "skipped") {
+        return { status: "skipped" };
+      }
+
+      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+
+      try {
+        const result = await dynamics.postReturnOrderInvoice({
+          salesOrderNumber: d365Order.SalesOrderNumber!,
+          dataAreaId,
+          invoiceDate: new Date(),
+        });
+        console.log(
+          `[Refund ${refundId}] D365 return invoice posted: credit note ${result.creditNoteNumber}`
+        );
+        return {
+          status: "success",
+          creditNoteNumber: result.creditNoteNumber,
+        };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[Refund ${refundId}] D365 return invoice failed: ${errorMsg}`);
+        await slack
+          .sendWarningMessage(
+            "dynamics",
+            `[Refund] postReturnOrderInvoice failed for ${d365Order.SalesOrderNumber} (refund ${refundId}): ${errorMsg}`
+          )
+          .catch(() => {});
+        return { status: "error", error: errorMsg };
+      }
+    });
+
     const result = {
       status: "success",
       refundId,
@@ -239,6 +274,9 @@ export const processRefund = inngest.createFunction(
       exchangeRateInfo,
       refundSku: warehouseInfo.refundSku,
       lotId: refundLine.InventoryLotId,
+      creditNoteNumber:
+        invoiceResult.status === "success" ? invoiceResult.creditNoteNumber : undefined,
+      invoiceResult: invoiceResult.status,
       processedAt: new Date().toISOString(),
     };
 

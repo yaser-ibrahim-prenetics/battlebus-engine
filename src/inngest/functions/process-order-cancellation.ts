@@ -1,6 +1,5 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
-import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
 import * as slack from "@/lib/clients/slack";
@@ -52,16 +51,7 @@ export const processOrderCancellation = inngest.createFunction(
       };
     }
 
-    // 1. Get D365 Order (lookup by order name, not ID, since THK_ShopifyReference stores the order name)
-    const d365Order = await step.run("get-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
-      }
-      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., #D365-GPS-123)
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderName);
-    });
-
-    // 2. Try to Cancel GPS Order (only when we have GPS metafield data)
+    // 1. Cancel GPS Order (only for GPS orders — no D365 action on cancel)
     const gpsCancellation = await step.run("cancel-gps-order", async () => {
       if (!config.features.enableGpsSync) {
         return { status: "skipped", reason: "GPS sync disabled" };
@@ -229,16 +219,15 @@ export const processOrderCancellation = inngest.createFunction(
       }
     });
 
-    // If both D365 and GPS have nothing to act on and this is not a drain replay,
-    // the order creation likely hasn't completed yet — defer the cancellation.
-    const nothingToCancelInD365 = !d365Order && config.features.enableDynamicsSync;
+    // If GPS has nothing to act on and this is not a drain replay,
+    // the GPS order creation likely hasn't completed yet — defer.
     const nothingToCancelInGps =
       gpsCancellation.status === "skipped" &&
       typeof gpsCancellation.reason === "string" &&
       gpsCancellation.reason.includes("No GPS order metadata");
     const isFromDrain = !!(event.data as any).fromDrain;
 
-    if (nothingToCancelInD365 && nothingToCancelInGps && !isFromDrain) {
+    if (nothingToCancelInGps && config.features.enableGpsSync && !isFromDrain) {
       await step.run("store-pending-cancel", async () => {
         await storePendingAction(shopifyOrderId, {
           action: "cancel",
@@ -248,120 +237,62 @@ export const processOrderCancellation = inngest.createFunction(
         });
       });
       console.log(
-        `[PendingActions] Deferred cancellation for ${shopifyOrderName} — D365/GPS orders not yet created`
+        `[PendingActions] Deferred cancellation for ${shopifyOrderName} — GPS order not yet created`
       );
       return {
         status: "deferred",
         shopifyOrderId,
         shopifyOrderName,
         cancelReason,
-        reason: "D365 and GPS orders not yet created, cancellation queued for replay",
+        reason: "GPS order not yet created, cancellation queued for replay",
       };
     }
 
-    // 3. Handle D365 Cancellation or Return
-    const d365Cancellation = await step.run("process-d365-cancellation", async () => {
-      if (!config.features.enableDynamicsSync || !d365Order) {
-        return { status: "skipped", reason: "Dynamics sync disabled or order not found" };
-      }
-
-      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
-      const isGpsCancelled =
-        gpsCancellation.status === "cancelled" || gpsCancellation.status === "skipped";
-
-      if (isGpsCancelled) {
-        // Case A: GPS Cancelled (or was never sent to GPS) → Delete D365 Sales Order
-        // D365 sales orders can be deleted if they haven't been confirmed/posted yet.
-        // If already confirmed, D365 will return an error — catch and fall through to return order.
-        try {
-          await dynamics.deleteSalesOrderHeaderV3(dataAreaId, d365Order.SalesOrderNumber!);
-          console.log(
-            `[Cancellation] ✅ D365 order deleted: ${d365Order.SalesOrderNumber} for ${shopifyOrderName}`
-          );
-          return {
-            status: "success",
-            action: "cancel_order",
-            salesOrderNumber: d365Order.SalesOrderNumber,
-            cancelReason: cancelReason || "Customer Request",
-          };
-        } catch (deleteErr: any) {
-          // Order may already be confirmed/posted — log and escalate to Slack
-          console.warn(
-            `[Cancellation] ⚠️  Could not delete D365 order ${d365Order.SalesOrderNumber}: ${deleteErr.message}. Order may be confirmed — manual action required.`
-          );
-          await slack.sendWarningMessage(
-            SlackChannelEnum.DYNAMICS,
-            `[Cancellation] D365 order ${d365Order.SalesOrderNumber} (${shopifyOrderName}) could not be auto-cancelled — manual action required. GPS was cancelled. Reason: ${deleteErr.message}`
-          );
-          return {
-            status: "manual_required",
-            action: "cancel_order",
-            salesOrderNumber: d365Order.SalesOrderNumber,
-            error: deleteErr.message,
-          };
-        }
-      } else {
-        // Case B: GPS cancellation failed (typically already shipped/processing in warehouse).
-        // Restore order in Shopify so customer service sees it as active.
+    // 2. If GPS cancel failed, uncancel in Shopify to keep state aligned with warehouse
+    if (gpsCancellation.status === "failed") {
+      await step.run("uncancel-shopify-order", async () => {
         try {
           await shopify.uncancelOrder(shopifyOrderId);
           await slack.sendWarningMessage(
             SlackChannelEnum.GPS,
             `[Cancellation] Shopify order ${shopifyOrderName} (${shopifyOrderId}) was uncancelled because GPS cancellation failed (likely already shipped/in-flight).`
           );
-          return {
-            status: "manual_required",
-            action: "shopify_uncancelled",
-            reason: "gps_cancel_failed_order_restored",
-            gpsMessage:
-              gpsCancellation.status === "failed"
-                ? gpsCancellation.error || gpsCancellation.result?.message
-                : "GPS cancellation was not successful",
-          };
         } catch (uncancelError: any) {
           await slack.sendWarningMessage(
             SlackChannelEnum.GPS,
             `[Cancellation] GPS cancellation failed and Shopify uncancel also failed for ${shopifyOrderName} (${shopifyOrderId}). Manual intervention required. Error: ${uncancelError.message}`
           );
-          return {
-            status: "manual_required",
-            action: "shopify_uncancel_failed",
-            reason: "gps_cancel_failed_uncancel_failed",
-            error: uncancelError.message,
-          };
         }
-      }
-    });
+      });
 
-    const cancellationReverted =
-      d365Cancellation?.action === "shopify_uncancelled" ||
-      d365Cancellation?.action === "shopify_uncancel_failed";
+      return {
+        status: "reverted",
+        shopifyOrderId,
+        shopifyOrderName,
+        cancelReason,
+        gpsCancellation,
+        reason: "GPS cancel failed — Shopify order restored",
+        processedAt: new Date().toISOString(),
+      };
+    }
 
     const result = {
-      status: cancellationReverted
-        ? "reverted"
-        : d365Cancellation.status === "success" || d365Cancellation.status === "manual_required"
-          ? "success"
-          : "partial",
+      status: gpsCancellation.status === "cancelled" ? "success" : "success",
       shopifyOrderId,
       shopifyOrderName,
       cancelReason,
-      d365OrderNumber: d365Order?.SalesOrderNumber,
       gpsCancellation,
-      d365Cancellation,
       processedAt: new Date().toISOString(),
     };
 
-    // Send cancellation event to CS platform with Shopify status
-    if (result.status === "success" || result.status === "partial") {
-      await csPlatform.sendOrderCancelled({
-        orderId: shopifyOrderId,
-        shopifyOrderName,
-        reason: cancelReason,
-        shopifyFinancialStatus: shopifyOrderPayload?.financial_status,
-        shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
-      });
-    }
+    // 3. Notify CS platform
+    await csPlatform.sendOrderCancelled({
+      orderId: shopifyOrderId,
+      shopifyOrderName,
+      reason: cancelReason,
+      shopifyFinancialStatus: shopifyOrderPayload?.financial_status,
+      shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
+    });
 
     return result;
   }

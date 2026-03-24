@@ -330,13 +330,14 @@ export async function POST(request: NextRequest) {
 
     // Send Inngest event for real-time tracking
     const eventId = `action-fulfill-${numericOrderId}-${Date.now()}`;
+    const resolvedOrderName = orderName || `#${numericOrderId}`;
 
     await inngest.send({
       id: eventId,
       name: "action/order.fulfill",
       data: {
         shopifyOrderId: String(numericOrderId),
-        shopifyOrderName: orderName || `#${numericOrderId}`,
+        shopifyOrderName: resolvedOrderName,
         fulfillmentId: fulfillment.id ? String(fulfillment.id) : undefined,
         fulfillmentType: fulfillmentType || "manual",
         platform: platform || "shopify",
@@ -347,7 +348,37 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Note: Additional Inngest + webhooks will take care of syncing to D365, GPS, etc.
+    // Emit canonical shopify/order.fulfilled so D365 sync runs immediately,
+    // even for GPS orders (which are normally skipped from webhook echo).
+    // Mirrors the cancel route pattern (action event + canonical event).
+    await inngest.send({
+      id: `shopify-order-fulfilled-manual-${numericOrderId}-${Date.now()}`,
+      name: "shopify/order.fulfilled",
+      data: {
+        shopifyOrderId: String(numericOrderId),
+        shopifyOrderName: resolvedOrderName,
+        shopifyStore: config.shopify.im8.shopDomain || "im8",
+        orderJson: null,
+        fulfillments: [
+          {
+            id: fulfillment.id,
+            location_id: locationId || targetFulfillmentOrder?.assigned_location_id || null,
+            tracking_number: trackingInfo.number,
+            tracking_company: trackingInfo.company,
+            tracking_url: trackingInfo.url || null,
+            line_items: targetFulfillmentOrder?.line_items?.map((li: any) => ({
+              id: li.line_item_id,
+              sku: li.sku || li.variant_sku || "",
+              quantity: li.quantity || li.fulfillable_quantity || 1,
+            })) || [],
+            created_at: new Date().toISOString(),
+          },
+        ],
+        fromManualFulfillment: true,
+        receivedAt: new Date().toISOString(),
+        source: "battle-hub-action",
+      },
+    });
 
     return NextResponse.json(
       {
