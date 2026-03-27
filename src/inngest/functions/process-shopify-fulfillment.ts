@@ -52,8 +52,8 @@ export const processShopifyFulfillment = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.FULFILLMENT,
       key: "event.data.shopifyOrderId",
     },
+    triggers: [{ event: "shopify/order.fulfilled" }],
   },
-  { event: "shopify/order.fulfilled" },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
     const order = orderJson as ShopifyOrderPayload;

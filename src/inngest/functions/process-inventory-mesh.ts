@@ -94,8 +94,8 @@ export const processInventoryMesh = inngest.createFunction(
     name: "Process Inventory Sync Mesh",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
+    triggers: [{ event: "inventory/sync" }],
   },
-  { event: "inventory/sync" },
   async ({ event, step }: { event: any; step: any }) => {
     const { source, destination, payload } = event.data;
     const inventory = payload as InventorySyncPayload;

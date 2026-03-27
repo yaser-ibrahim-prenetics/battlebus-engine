@@ -32,8 +32,8 @@ export const syncGpsFulfillments = inngest.createFunction(
     name: "Sync GPS Fulfillments",
     concurrency: { limit: 1 },
     throttle: THROTTLE_CONFIGS.CRON,
+    triggers: [{ cron: `*/${config.gps.scheduleIntervalMinutes} * * * *` }],
   },
-  { cron: `*/${config.gps.scheduleIntervalMinutes} * * * *` },
   async ({ step }: { step: any }) => {
     if (!config.features.enableGpsSync) {
       return { status: "skipped", reason: "GPS sync disabled" };

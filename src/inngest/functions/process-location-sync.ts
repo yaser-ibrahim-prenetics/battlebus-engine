@@ -36,12 +36,12 @@ export const processLocationSync = inngest.createFunction(
     name: "Process Shopify Location Sync",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
+    triggers: [
+      { event: "shopify/location.created" },
+      { event: "shopify/location.updated" },
+      { event: "shopify/location.deleted" },
+    ],
   },
-  [
-    { event: "shopify/location.created" },
-    { event: "shopify/location.updated" },
-    { event: "shopify/location.deleted" },
-  ],
   async ({ event, step }: { event: any; step: any }) => {
     const { locationId, locationName, shopifyStore, locationJson } = event.data;
     const isCreate = event.name === "shopify/location.created";

@@ -8,8 +8,8 @@ export const refreshLocationConfigCache = inngest.createFunction(
     name: "Refresh Location Config Cache",
     concurrency: { limit: 1 },
     throttle: THROTTLE_CONFIGS.CRON,
+    triggers: [{ cron: "0 * * * *" }],
   },
-  { cron: "0 * * * *" },
   async ({ step }: { step: any }) => {
     const result = await step.run("refresh-location-cache", async () => {
       return refreshLocationMappings("hourly_cron");

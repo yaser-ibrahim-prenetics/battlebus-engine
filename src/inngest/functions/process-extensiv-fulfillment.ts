@@ -25,8 +25,8 @@ export const processExtensivFulfillment = inngest.createFunction(
     throttle: THROTTLE_CONFIGS.FULFILLMENT,
     retries: RETRY_CONFIGS.STANDARD,
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
+    triggers: [{ event: "extensiv/order.confirm" }],
   },
-  { event: "extensiv/order.confirm" },
   async ({ event, step }: { event: any; step: any }) => {
     const {
       wmsEventId,
@@ -193,8 +193,8 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
     throttle: THROTTLE_CONFIGS.FULFILLMENT,
     retries: RETRY_CONFIGS.STANDARD,
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
+    triggers: [{ event: "extensiv/receiver.confirm" }],
   },
-  { event: "extensiv/receiver.confirm" },
   async ({ event, step }: { event: any; step: any }) => {
     const { wmsEventId, receiverId, referenceNum, eventJson } = event.data;
 

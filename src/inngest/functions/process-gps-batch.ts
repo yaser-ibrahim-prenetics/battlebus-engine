@@ -23,8 +23,7 @@ const processGpsBatchConfig = Object.freeze({
  * Process GPS orders in batch to individual events
  */
 export const processGpsBatch = inngest.createFunction(
-  processGpsBatchConfig,
-  { event: "gps/batch.process" },
+  { ...processGpsBatchConfig, triggers: [{ event: "gps/batch.process" }] },
   async ({ event, step }: { event: any; step: any }) => {
     const { gpsOrderIds, warehouse, batchId } = event.data;
     console.log(`[GPS Batch] Starting batch ${batchId} with ${gpsOrderIds.length} orders`);

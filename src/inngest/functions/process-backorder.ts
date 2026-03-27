@@ -36,8 +36,8 @@ export const processBackorder = inngest.createFunction(
     idempotency: "event.id",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
+    triggers: [{ event: "backorder/created" }, { event: "backorder/retry" }],
   },
-  [{ event: "backorder/created" }, { event: "backorder/retry" }],
   async ({ event, step }: { event: any; step: any }) => {
     const {
       shopifyOrderId,

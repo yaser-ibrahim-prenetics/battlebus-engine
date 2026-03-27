@@ -44,8 +44,7 @@ const processGpsIndividualConfig = Object.freeze({
 });
 
 export const processGpsIndividual = inngest.createFunction(
-  processGpsIndividualConfig,
-  { event: "gps/individual.fulfilment" },
+  { ...processGpsIndividualConfig, triggers: [{ event: "gps/individual.fulfilment" }] },
   async ({ event, step }: { event: any; step: any }) => {
     const { fulfilmentPayload, warehouse } = event.data;
 

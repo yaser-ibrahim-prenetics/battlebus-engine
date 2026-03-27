@@ -25,8 +25,8 @@ export const processOrderUpdate = inngest.createFunction(
       },
     ],
     retries: RETRY_CONFIGS.LOW_PRIORITY,
+    triggers: [{ event: "shopify/order.updated" }],
   },
-  { event: "shopify/order.updated" },
   async ({ event, step, runId }: { event: any; step: any; runId: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, changedFields } = event.data;
     const inngestIdempotencyKey = event.id;

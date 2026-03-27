@@ -12,6 +12,7 @@
 // Topics: status, result
 
 import { inngest } from "../client";
+import { inventorySyncChannel } from "../channels";
 import * as gpsInventory from "@/lib/clients/gps-inventory";
 import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
@@ -41,13 +42,13 @@ export const processInventoryFullSync = inngest.createFunction(
     id: "process-inventory-full-sync",
     name: "Process Inventory Full Sync (GPS → D365 → Shopify)",
     retries: RETRY_CONFIGS.DEFAULT,
+    triggers: [{ event: "inventory/sync.requested" }],
     // Only one full sync at a time
     concurrency: [{ limit: 1 }],
   },
-  { event: "inventory/sync.requested" },
   async ({ event, step, publish }: { event: any; step: any; publish: any }) => {
     const { syncId, steps, skus, dryRun = false, requestedBy } = event.data;
-    const channel = `inventory:sync:${syncId}`;
+    const ch = inventorySyncChannel({ syncId });
 
     console.log(`[InventoryFullSync] ========================================`);
     console.log(`[InventoryFullSync] Starting full sync: ${syncId}`);
@@ -66,18 +67,14 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("gps")) {
       // Publish "running" status BEFORE the step (side effects outside step.run)
-      console.log(`[InventoryFullSync] Publishing GPS running status to channel: ${channel}`);
+      console.log(`[InventoryFullSync] Publishing GPS running status`);
       try {
-        await publish({
-          channel,
-          topic: "status",
-          data: {
-            syncId,
-            step: "gps",
-            status: "running",
-            message: "Pulling inventory from GPS warehouse...",
-            timestamp: new Date().toISOString(),
-          },
+        await publish(ch.status, {
+          syncId,
+          step: "gps",
+          status: "running",
+          message: "Pulling inventory from GPS warehouse...",
+          timestamp: new Date().toISOString(),
         });
         console.log(`[InventoryFullSync] GPS running status published successfully`);
       } catch (publishError) {
@@ -141,20 +138,16 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step (side effects outside step.run)
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "gps",
-          status: gpsResult.success ? "completed" : "failed",
-          itemsProcessed: gpsResult.itemsProcessed,
-          itemsSucceeded: gpsResult.itemsSucceeded,
-          itemsFailed: gpsResult.itemsFailed,
-          message: gpsResult.message,
-          error: gpsResult.error,
-          timestamp: new Date().toISOString(),
-        },
+      await publish(ch.status, {
+        syncId,
+        step: "gps",
+        status: gpsResult.success ? "completed" : "failed",
+        itemsProcessed: gpsResult.itemsProcessed,
+        itemsSucceeded: gpsResult.itemsSucceeded,
+        itemsFailed: gpsResult.itemsFailed,
+        message: gpsResult.message,
+        error: gpsResult.error,
+        timestamp: new Date().toISOString(),
       });
 
       // Store inventory data for later steps
@@ -170,16 +163,12 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("d365")) {
       // Publish "running" status BEFORE the step
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "d365",
-          status: "running",
-          message: "Syncing inventory to D365 sandbox...",
-          timestamp: new Date().toISOString(),
-        },
+      await publish(ch.status, {
+        syncId,
+        step: "d365",
+        status: "running",
+        message: "Syncing inventory to D365 sandbox...",
+        timestamp: new Date().toISOString(),
       });
 
       // Run the actual sync in a step (idempotent computation only)
@@ -246,20 +235,16 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "d365",
-          status: d365Result.success ? "completed" : "failed",
-          itemsProcessed: d365Result.itemsProcessed,
-          itemsSucceeded: d365Result.itemsSucceeded,
-          itemsFailed: d365Result.driftCount, // Report drift as "failed" for tracking
-          message: d365Result.message,
-          error: d365Result.error,
-          timestamp: new Date().toISOString(),
-        },
+      await publish(ch.status, {
+        syncId,
+        step: "d365",
+        status: d365Result.success ? "completed" : "failed",
+        itemsProcessed: d365Result.itemsProcessed,
+        itemsSucceeded: d365Result.itemsSucceeded,
+        itemsFailed: d365Result.driftCount, // Report drift as "failed" for tracking
+        message: d365Result.message,
+        error: d365Result.error,
+        timestamp: new Date().toISOString(),
       });
 
       results.push(d365Result);
@@ -270,16 +255,12 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("shopify")) {
       // Publish "running" status BEFORE the step
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "shopify",
-          status: "running",
-          message: "Syncing inventory to Shopify...",
-          timestamp: new Date().toISOString(),
-        },
+      await publish(ch.status, {
+        syncId,
+        step: "shopify",
+        status: "running",
+        message: "Syncing inventory to Shopify...",
+        timestamp: new Date().toISOString(),
       });
 
       // Run the actual sync in a step (idempotent computation only)
@@ -322,20 +303,16 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step
-      await publish({
-        channel,
-        topic: "status",
-        data: {
-          syncId,
-          step: "shopify",
-          status: shopifyResult.success ? "completed" : "failed",
-          itemsProcessed: shopifyResult.itemsProcessed,
-          itemsSucceeded: shopifyResult.itemsSucceeded,
-          itemsFailed: shopifyResult.itemsFailed,
-          message: shopifyResult.message,
-          error: shopifyResult.error,
-          timestamp: new Date().toISOString(),
-        },
+      await publish(ch.status, {
+        syncId,
+        step: "shopify",
+        status: shopifyResult.success ? "completed" : "failed",
+        itemsProcessed: shopifyResult.itemsProcessed,
+        itemsSucceeded: shopifyResult.itemsSucceeded,
+        itemsFailed: shopifyResult.itemsFailed,
+        message: shopifyResult.message,
+        error: shopifyResult.error,
+        timestamp: new Date().toISOString(),
       });
 
       results.push(shopifyResult);
@@ -370,16 +347,12 @@ export const processInventoryFullSync = inngest.createFunction(
     };
 
     // Publish final result (no step.run needed - publish is a side effect)
-    await publish({
-      channel,
-      topic: "result",
-      data: {
-        syncId,
-        success: overallSuccess,
-        summary,
-        totalDurationMs,
-        timestamp: new Date().toISOString(),
-      },
+    await publish(ch.status, {
+      syncId,
+      step: "result",
+      status: overallSuccess ? "completed" : "failed",
+      message: `Sync ${overallSuccess ? "completed" : "failed"} in ${totalDurationMs}ms`,
+      timestamp: new Date().toISOString(),
     });
 
     console.log(`[InventoryFullSync] ========================================`);

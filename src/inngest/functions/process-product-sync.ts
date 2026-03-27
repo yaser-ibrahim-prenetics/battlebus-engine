@@ -22,12 +22,12 @@ export const processProductSync = inngest.createFunction(
     name: "Process Shopify Product Sync",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: [{ limit: 5 }],
+    triggers: [
+      { event: "shopify/product.created" },
+      { event: "shopify/product.updated" },
+      { event: "shopify/product.deleted" },
+    ],
   },
-  [
-    { event: "shopify/product.created" },
-    { event: "shopify/product.updated" },
-    { event: "shopify/product.deleted" },
-  ],
   async ({ event, step }: { event: any; step: any }) => {
     const { productId, productTitle, shopifyStore, productJson } = event.data;
     const product = productJson as ShopifyProductPayload;

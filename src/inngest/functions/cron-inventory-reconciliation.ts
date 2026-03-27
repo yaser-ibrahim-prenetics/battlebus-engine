@@ -57,8 +57,8 @@ export const cronInventoryReconciliation = inngest.createFunction(
     retries: RETRY_CONFIGS.CRON,
     concurrency: { limit: 1 },
     throttle: THROTTLE_CONFIGS.CRON,
+    triggers: [{ cron: `*/${config.gps.inventorySyncIntervalMinutes || 120} * * * *` }],
   },
-  { cron: `*/${config.gps.inventorySyncIntervalMinutes || 120} * * * *` },
   async ({ step }: { step: any }) => {
     console.log("[InventoryReconciliation] Starting scheduled reconciliation");
 
@@ -198,8 +198,8 @@ export const triggerInventoryReconciliation = inngest.createFunction(
   {
     id: "trigger-inventory-reconciliation",
     name: "Trigger Inventory Reconciliation",
+    triggers: [{ event: "inventory/reconciliation.requested" }],
   },
-  { event: "inventory/reconciliation.requested" },
   async ({ step, event }: { step: any; event: any }) => {
     const { skus, warehouse, autoSync = false } = event.data;
 
@@ -237,8 +237,8 @@ export const syncSkuInventory = inngest.createFunction(
     name: "Sync SKU Inventory",
     retries: RETRY_CONFIGS.STANDARD,
     concurrency: { limit: 2 },
+    triggers: [{ event: "inventory/sku.sync.requested" }],
   },
-  { event: "inventory/sku.sync.requested" },
   async ({ step, event }: { step: any; event: any }) => {
     const { sku, source, destination, warehouse } = event.data;
 

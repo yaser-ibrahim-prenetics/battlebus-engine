@@ -29,8 +29,8 @@ export const drainPendingActions = inngest.createFunction(
     // Only one sweep at a time — prevents overlapping cron runs from
     // double-emitting the same pending actions.
     concurrency: { limit: 1 },
+    triggers: [{ cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` }],
   },
-  { cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` },
   async ({ step }: { step: any }) => {
     // ── Step 1: Fetch all orders with pending actions + emit all events ───
     const drainResult = await step.run("sweep-and-emit", async () => {

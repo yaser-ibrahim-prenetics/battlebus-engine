@@ -173,8 +173,8 @@ export const processSubscriptionOrder = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.FULFILLMENT,
       key: "event.data.shopifyOrderId",
     },
+    triggers: [{ event: "shopify/subscription.renewed" }],
   },
-  { event: "shopify/subscription.renewed" },
   async ({ event, step }: { event: any; step: any }) => {
     const {
       shopifyOrderId: rawShopifyOrderId,

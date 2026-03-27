@@ -43,6 +43,7 @@ import {
   TAG_WAIT_DURATION,
 } from "@/lib/utils/constants";
 import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
+import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 
@@ -158,10 +159,7 @@ export const processShopifyOrder = inngest.createFunction(
     name: "Process Shopify Order",
     idempotency: "event.data.shopifyOrderId",
     retries: RETRY_CONFIGS.DEFAULT,
-    // OPTIMIZATION: Enable optimized parallelism to reduce HTTP requests by 50%
-    // This reduces Inngest overhead from 2 requests/step to 1 request/step
-    // @see https://inngest.com/docs/guides/step-parallelism#optimizing-parallel-step-performance
-    optimizeParallelism: true,
+    triggers: [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
     throttle: {
       ...THROTTLE_CONFIGS.DYNAMICS,
       key: "event.data.shopifyStore",
@@ -178,9 +176,9 @@ export const processShopifyOrder = inngest.createFunction(
       key: "event.data.shopifyOrderId",
     },
   },
-  [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
     const { shopifyOrderId: rawShopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    const ch = orderChannel({ orderName: shopifyOrderName });
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
       String(rawShopifyOrderId || "").includes("-rerun-");
@@ -226,10 +224,7 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       try {
-        await publish({
-          channel: `order:${shopifyOrderName}`,
-          topic: "status",
-          data: {
+        await publish(ch.status, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,
             inngestRunId,
@@ -237,9 +232,8 @@ export const processShopifyOrder = inngest.createFunction(
             status,
             message,
             data,
-            durationMs, // Include step duration for completed/failed steps
+            durationMs,
             timestamp: new Date().toISOString(),
-          },
         });
       } catch (err) {
         // Don't fail the function if realtime publish fails
@@ -253,17 +247,13 @@ export const processShopifyOrder = inngest.createFunction(
       resultData?: { d365OrderNumber?: string; gpsOrderNo?: string; warehouse?: string; error?: string }
     ) => {
       try {
-        await publish({
-          channel: `order:${shopifyOrderName}`,
-          topic: "result",
-          data: {
+        await publish(ch.result, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,
             inngestRunId,
             status,
             ...resultData,
             timestamp: new Date().toISOString(),
-          },
         });
       } catch (err) {
         console.warn(`[Realtime] Failed to publish result: ${err}`);

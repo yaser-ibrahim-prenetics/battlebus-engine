@@ -34,8 +34,8 @@ export const processOrderCancellation = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.CANCELLATION,
       key: "event.data.shopifyOrderId",
     },
+    triggers: [{ event: "shopify/order.cancelled" }],
   },
-  { event: "shopify/order.cancelled" },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, cancelReason, orderJson } = event.data;
     const shopifyOrderPayload = orderJson as ShopifyOrderPayload;

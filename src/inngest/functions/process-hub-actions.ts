@@ -21,8 +21,8 @@ export const processActionCancel = inngest.createFunction(
     name: "Process Hub Cancel Action",
     retries: 1,
     concurrency: [{ ...CONCURRENCY_CONFIGS.CANCELLATION, key: "event.data.shopifyOrderId" }],
+    triggers: [{ event: "action/order.cancel" }],
   },
-  { event: "action/order.cancel" },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, reason, source } = event.data;
 
@@ -73,8 +73,8 @@ export const processActionRefund = inngest.createFunction(
     name: "Process Hub Refund Action",
     retries: 1,
     concurrency: [{ ...CONCURRENCY_CONFIGS.REFUND, key: "event.data.shopifyOrderId" }],
+    triggers: [{ event: "action/order.refund" }],
   },
-  { event: "action/order.refund" },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } =
       event.data;
@@ -116,8 +116,8 @@ export const processActionFulfill = inngest.createFunction(
     name: "Process Hub Fulfill Action",
     retries: 1,
     concurrency: [{ ...CONCURRENCY_CONFIGS.FULFILLMENT, key: "event.data.shopifyOrderId" }],
+    triggers: [{ event: "action/order.fulfill" }],
   },
-  { event: "action/order.fulfill" },
   async ({ event, step }: { event: any; step: any }) => {
     const {
       shopifyOrderId,

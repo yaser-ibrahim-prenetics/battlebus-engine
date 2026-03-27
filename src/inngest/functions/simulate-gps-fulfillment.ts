@@ -17,8 +17,8 @@ export const simulateGpsFulfillment = inngest.createFunction(
     id: "simulate-gps-fulfillment",
     name: "Simulate GPS Fulfillment",
     retries: RETRY_CONFIGS.DEFAULT,
+    triggers: [{ event: "gps/simulate.fulfillment" }],
   },
-  { event: "gps/simulate.fulfillment" },
   async ({ event, step }: { event: any; step: any }) => {
     const { minutesAgo = 5, orderNames = [] } = event.data;
 

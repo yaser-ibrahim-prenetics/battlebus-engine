@@ -35,8 +35,8 @@ export const processRefund = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.REFUND,
       key: "event.data.shopifyOrderId",
     },
+    triggers: [{ event: "shopify/refund.created" }],
   },
-  { event: "shopify/refund.created" },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
     const refund = refundJson as ShopifyRefundPayload;
