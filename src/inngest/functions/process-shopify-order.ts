@@ -13,7 +13,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import { setGpsOrderMetafield } from "@/lib/clients/shopify";
+import { getVariantSkusByVariantIds, setGpsOrderMetafield } from "@/lib/clients/shopify";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -329,6 +329,107 @@ export const processShopifyOrder = inngest.createFunction(
       await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
       order = refreshedOrder as ShopifyOrderPayload;
     }
+
+    await publishStatus(
+      "resolve-line-skus",
+      "running",
+      "Resolving missing line SKUs from Shopify variants"
+    );
+    const skuResolution = await step.run("resolve-missing-line-skus", async () => {
+      const lineItems = Array.isArray(order?.line_items) ? order.line_items : [];
+      const missingShippableLines = lineItems
+        .map((item: any, index: number) => ({ item, index }))
+        .filter(({ item }) => {
+          const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
+          const requiresShipping = item?.requires_shipping !== false;
+          return requiresShipping && !sku;
+        });
+
+      if (missingShippableLines.length === 0) {
+        return {
+          updatedOrder: order,
+          attempted: 0,
+          resolved: 0,
+          unresolved: [] as Array<{ index: number; title: string; variantId: number | null }>,
+        };
+      }
+
+      const variantIds = missingShippableLines
+        .map(({ item }) => Number(item?.variant_id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+
+      const latestSkuByVariantId =
+        variantIds.length > 0 ? await getVariantSkusByVariantIds(variantIds) : {};
+
+      let resolved = 0;
+      const patchedLineItems = lineItems.map((item: any) => {
+        const currentSku = typeof item?.sku === "string" ? item.sku.trim() : "";
+        const requiresShipping = item?.requires_shipping !== false;
+        if (!requiresShipping || currentSku) return item;
+
+        const variantId = Number(item?.variant_id);
+        const latestSku =
+          Number.isFinite(variantId) && variantId > 0
+            ? latestSkuByVariantId[String(Math.trunc(variantId))]
+            : "";
+        if (!latestSku) return item;
+        resolved += 1;
+        return { ...item, sku: latestSku };
+      });
+
+      const unresolved = patchedLineItems
+        .map((item: any, index: number) => ({ item, index }))
+        .filter(({ item }) => {
+          const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
+          const requiresShipping = item?.requires_shipping !== false;
+          return requiresShipping && !sku;
+        })
+        .map(({ item, index }) => ({
+          index,
+          title: item?.title || "untitled",
+          variantId:
+            Number.isFinite(Number(item?.variant_id)) && Number(item?.variant_id) > 0
+              ? Number(item?.variant_id)
+              : null,
+        }));
+
+      return {
+        updatedOrder: { ...order, line_items: patchedLineItems } as ShopifyOrderPayload,
+        attempted: missingShippableLines.length,
+        resolved,
+        unresolved,
+      };
+    });
+
+    order = skuResolution.updatedOrder as ShopifyOrderPayload;
+
+    if (skuResolution.unresolved.length > 0) {
+      const unresolvedSummary = skuResolution.unresolved
+        .slice(0, 5)
+        .map(
+          (l: { index: number; title: string; variantId: number | null }) =>
+            `${l.title} (line=${l.index}, variant=${l.variantId ?? "n/a"})`
+        )
+        .join(", ");
+      await publishStatus(
+        "resolve-line-skus",
+        "failed",
+        `Unable to resolve SKU for ${skuResolution.unresolved.length} shippable line(s)`
+      );
+      throw new Error(
+        `[D365] Missing SKU/ItemNumber after Shopify variant refresh for ${shopifyOrderName}; ` +
+          `attempted=${skuResolution.attempted}; resolved=${skuResolution.resolved}; ` +
+          `unresolved=${skuResolution.unresolved.length}; sample=${unresolvedSummary}`
+      );
+    }
+
+    await publishStatus(
+      "resolve-line-skus",
+      "completed",
+      skuResolution.resolved > 0
+        ? `Resolved ${skuResolution.resolved} missing SKU line(s) from Shopify variants`
+        : "No missing shippable SKUs found"
+    );
 
     // Comprehensive order validation - all checks in one place
     await publishStatus("validate-order", "running", "Validating order");

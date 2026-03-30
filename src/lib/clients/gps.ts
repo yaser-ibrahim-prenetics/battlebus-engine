@@ -377,7 +377,7 @@ export async function createOutboundOrder(
     reqTime: epochInSeconds().toString(),
   };
 
-  console.log(`[GPS] Creating outbound order: ${JSON.stringify(payload)}`);
+  console.log(`[GPS] Creating outbound order for ${data.length} item(s), warehouse=${warehouseName}`);
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`);
@@ -404,7 +404,7 @@ export async function createOutboundOrder(
     warehouseName
   );
 
-  console.log(`[GPS] Response: ${JSON.stringify(result)}`);
+  console.log(`[GPS] Response: code=${result.code}, msg=${result.msg}`);
 
   // Check for inventory-related errors
   // GPS API returns Chinese error messages:

@@ -28,6 +28,84 @@ function buildUrl(endpoint: string): string {
 }
 
 /**
+ * Resolve latest SKU values by Shopify variant IDs via Admin GraphQL.
+ * Returns a map keyed by numeric variant ID (legacyResourceId).
+ */
+export async function getVariantSkusByVariantIds(
+  variantIds: Array<number | string>
+): Promise<Record<string, string>> {
+  const normalizedIds = Array.from(
+    new Set(
+      variantIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+        .map((id) => Math.trunc(id))
+    )
+  );
+
+  if (normalizedIds.length === 0) return {};
+
+  const url = buildUrl(`/graphql.json`);
+  const result: Record<string, string> = {};
+  const chunkSize = 100;
+
+  for (let i = 0; i < normalizedIds.length; i += chunkSize) {
+    const chunk = normalizedIds.slice(i, i + chunkSize);
+    const gqlIds = chunk.map((id) => `gid://shopify/ProductVariant/${id}`);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({
+        query: `
+          query VariantSkus($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on ProductVariant {
+                id
+                legacyResourceId
+                sku
+              }
+            }
+          }
+        `,
+        variables: { ids: gqlIds },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to fetch variant SKUs: ${response.status} - ${error}`);
+    }
+
+    const payload = await response.json();
+    if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+      throw new Error(
+        `Failed to fetch variant SKUs: ${payload.errors
+          .map((e: any) => e?.message || "Unknown GraphQL error")
+          .join("; ")}`
+      );
+    }
+
+    const nodes = Array.isArray(payload?.data?.nodes) ? payload.data.nodes : [];
+    for (const node of nodes) {
+      if (!node) continue;
+      const sku = typeof node.sku === "string" ? node.sku.trim() : "";
+      if (!sku) continue;
+      const legacyId =
+        node.legacyResourceId != null ? String(node.legacyResourceId) : "";
+      if (legacyId) {
+        result[legacyId] = sku;
+        continue;
+      }
+      const gid = typeof node.id === "string" ? node.id : "";
+      const fallbackId = gid.split("/").pop() || "";
+      if (fallbackId) result[fallbackId] = sku;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Get inventory levels per location for an inventory item
  * Returns location-wise breakdown of inventory
  */

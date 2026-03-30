@@ -1,5 +1,9 @@
 # Testing Guide
 
+For full test cases across all flows (goals, preconditions, constraints, expected behavior, results tracking):
+
+- `docs/FLOW_TEST_CASES.md`
+
 ## Prerequisites
 
 1. **Install dependencies:**
