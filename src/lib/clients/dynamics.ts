@@ -1133,6 +1133,20 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
 
   if (!response.ok) {
     const error = await response.text();
+    if (response.status === 404) {
+      // Some D365 environments do not expose this custom action. In those tenants,
+      // return invoicing may already be handled by the fulfilment("return") call.
+      console.warn(
+        `[D365] postReturnOrderInvoice endpoint not found (404) for ${salesOrderNumber}; ` +
+          `treating as non-fatal for this environment`
+      );
+      return {
+        creditNoteNumber: null,
+        success: true,
+        skipped: true,
+        reason: "endpoint_not_found",
+      };
+    }
     throw new Error(
       `[D365] Failed to post return invoice for ${salesOrderNumber}: ${response.status} - ${error}`
     );
@@ -1143,6 +1157,7 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
   return {
     creditNoteNumber: result.creditNoteNumber,
     success: true,
+    skipped: false,
   };
 }
 

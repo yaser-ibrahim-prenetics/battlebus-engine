@@ -314,6 +314,15 @@ export const processRefund = inngest.createFunction(
           dataAreaId,
           invoiceDate: new Date(),
         });
+        if (result.skipped) {
+          console.warn(
+            `[Refund ${refundId}] D365 return invoice step skipped: ${result.reason || "unknown"}`
+          );
+          return {
+            status: "skipped",
+            reason: result.reason || "unknown",
+          };
+        }
         console.log(
           `[Refund ${refundId}] D365 return invoice posted: credit note ${result.creditNoteNumber}`
         );
