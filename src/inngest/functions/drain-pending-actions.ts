@@ -74,7 +74,17 @@ export const drainPendingActions = inngest.createFunction(
         }
 
         if (emittedForOrder > 0 || hasCancelAction) {
-          clearedOrderIds.push(order.shopify_order_id);
+          const clearKey =
+            (order.shopify_order_id && String(order.shopify_order_id).trim()) ||
+            (order.platform_order_id && String(order.platform_order_id).trim()) ||
+            "";
+          if (clearKey) {
+            clearedOrderIds.push(clearKey);
+          } else {
+            console.warn(
+              `[PendingActions] Skip bulk-clear key for order name=${order.shopify_order_name} — no shopify_order_id or platform_order_id`
+            );
+          }
         }
       }
 

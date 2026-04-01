@@ -79,7 +79,9 @@ export async function getPendingActions(
 }
 
 export interface PendingActionOrder {
-  shopify_order_id: string;
+  shopify_order_id: string | null;
+  /** Hub may only have this set for some rows */
+  platform_order_id?: string | null;
   shopify_order_name: string;
   pending_actions: PendingAction[];
 }
