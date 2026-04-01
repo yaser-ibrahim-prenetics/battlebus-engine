@@ -16,6 +16,7 @@ import {
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForRefund } from "@/lib/services/d365-refund-order-resolution";
+import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 
 export const processRefund = inngest.createFunction(
   {
@@ -39,9 +40,21 @@ export const processRefund = inngest.createFunction(
     },
     triggers: [{ event: "shopify/refund.created" }],
   },
-  async ({ event, step }) => {
+  async ({ event, step, runId }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
     const refund = refundJson as ShopifyRefundPayload;
+
+    const refundTrace = {
+      refundId: String(refundId),
+      shopifyOrderId: String(shopifyOrderId),
+      inngestRunId: String(runId ?? ""),
+    };
+
+    logRefundTraceLifecycle({
+      ...refundTrace,
+      phase: "process_refund_start",
+      fromDrain: Boolean((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain),
+    });
 
     if (config.features.dryRunMode) {
       return {
@@ -53,7 +66,14 @@ export const processRefund = inngest.createFunction(
 
     // 1. Get Shopify Order first (needed for order name lookup)
     const shopifyOrder = await step.run("get-shopify-order", async () => {
-      return shopify.getOrder(shopifyOrderId);
+      const order = await shopify.getOrder(shopifyOrderId);
+      logRefundTraceLifecycle({
+        ...refundTrace,
+        phase: "shopify_order_loaded",
+        orderName: order?.name ?? null,
+        orderNumericId: order?.id != null ? String(order.id) : null,
+      });
+      return order;
     });
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
@@ -62,10 +82,19 @@ export const processRefund = inngest.createFunction(
     // of which entity row it lives under) and both `#IM8-123` / `IM8-123` variants — a single default
     // dataAreaId alone can miss US vs UK legal entities.
     const d365Order = await step.run("get-d365-order", async () => {
-      return resolveD365OrderHeaderForRefund({
+      const header = await resolveD365OrderHeaderForRefund({
         shopifyOrderId: String(shopifyOrderId),
         shopifyOrder,
+        trace: refundTrace,
       });
+      logRefundTraceLifecycle({
+        ...refundTrace,
+        phase: "get_d365_order_step_result",
+        resolved: Boolean(header),
+        salesOrderNumber: header?.SalesOrderNumber ?? null,
+        headerDataAreaId: header?.dataAreaId ?? null,
+      });
+      return header;
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
@@ -93,14 +122,20 @@ export const processRefund = inngest.createFunction(
         console.log(
           JSON.stringify({
             msg: "[PendingActions] refund_deferred_pending_action_stored",
+            ...refundTrace,
             ...payload,
           })
         );
         return payload;
       });
+      logRefundTraceLifecycle({
+        ...refundTrace,
+        phase: "process_refund_deferred",
+        queuedRefundStepOutput: queuedRefund,
+      });
       console.log(
         `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — ` +
-          `D365 header not resolved (Vercel: search logs for refund_deferred_pending_action_stored, [D365Resolve], [SupabaseOrderLookup])`
+          `D365 header not resolved (Vercel: search logs for RefundTraceLifecycle, D365ODataTrace, [D365Resolve], [SupabaseOrderLookup])`
       );
       return {
         status: "deferred",

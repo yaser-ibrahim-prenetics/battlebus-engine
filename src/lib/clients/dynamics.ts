@@ -5,6 +5,7 @@
 // Uses THK custom API endpoints (not generic OData)
 
 import { config } from "../config";
+import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -1222,7 +1223,8 @@ export async function getLotIdMap(
  */
 export async function getSalesOrderByShopifyId(
   shopifyOrderId: string,
-  dataAreaId: string = config.dynamics.dataAreaId
+  dataAreaId: string = config.dynamics.dataAreaId,
+  trace?: D365ODataTraceContext
 ): Promise<D365SalesOrderHeader | null> {
   console.log(`[D365] Looking up order by Shopify ID: ${shopifyOrderId}`);
 
@@ -1245,11 +1247,40 @@ export async function getSalesOrderByShopifyId(
 
   if (!response.ok) {
     const error = await response.text();
+    if (trace) {
+      logD365ODataTrace({
+        ...trace,
+        op: "SalesOrderHeadersV3_BY_SHOPIFY_REF",
+        dataAreaId,
+        thkShopifyReference: shopifyOrderId,
+        odataFilter: filter,
+        httpStatus: response.status,
+        valueCount: 0,
+        ok: false,
+        errorSnippet: error.slice(0, 500),
+      });
+    }
     throw new Error(`[D365] Failed to get sales order: ${response.status} - ${error}`);
   }
 
   const result = await response.json();
   const order = result.value?.[0] || null;
+
+  if (trace) {
+    const vc = Array.isArray(result.value) ? result.value.length : 0;
+    logD365ODataTrace({
+      ...trace,
+      op: "SalesOrderHeadersV3_BY_SHOPIFY_REF",
+      dataAreaId,
+      thkShopifyReference: shopifyOrderId,
+      odataFilter: filter,
+      httpStatus: response.status,
+      valueCount: vc,
+      matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
+      matchedDataAreaId: order?.dataAreaId ?? null,
+      ok: Boolean(order),
+    });
+  }
 
   if (order) {
     console.log(`[D365] Found order: ${order.SalesOrderNumber}`);
@@ -1268,7 +1299,8 @@ export async function getSalesOrderByShopifyId(
  */
 export async function getSalesOrderByNumber(
   salesOrderNumber: string,
-  dataAreaId: string = config.dynamics.dataAreaId
+  dataAreaId: string = config.dynamics.dataAreaId,
+  trace?: D365ODataTraceContext
 ): Promise<D365SalesOrderHeader | null> {
   const so = String(salesOrderNumber || "").trim();
   const area = String(dataAreaId || "").trim();
@@ -1295,11 +1327,40 @@ export async function getSalesOrderByNumber(
 
   if (!response.ok) {
     const error = await response.text();
+    if (trace) {
+      logD365ODataTrace({
+        ...trace,
+        op: "SalesOrderHeadersV3_BY_SALES_ORDER_NUMBER",
+        dataAreaId: area,
+        salesOrderNumber: so,
+        odataFilter: filter,
+        httpStatus: response.status,
+        valueCount: 0,
+        ok: false,
+        errorSnippet: error.slice(0, 500),
+      });
+    }
     throw new Error(`[D365] Failed to get sales order by number: ${response.status} - ${error}`);
   }
 
   const result = await response.json();
   const order = result.value?.[0] || null;
+
+  if (trace) {
+    const vc = Array.isArray(result.value) ? result.value.length : 0;
+    logD365ODataTrace({
+      ...trace,
+      op: "SalesOrderHeadersV3_BY_SALES_ORDER_NUMBER",
+      dataAreaId: area,
+      salesOrderNumber: so,
+      odataFilter: filter,
+      httpStatus: response.status,
+      valueCount: vc,
+      matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
+      matchedDataAreaId: order?.dataAreaId ?? null,
+      ok: Boolean(order),
+    });
+  }
 
   if (order) {
     console.log(`[D365] Found order by number: ${order.SalesOrderNumber} (${area})`);
