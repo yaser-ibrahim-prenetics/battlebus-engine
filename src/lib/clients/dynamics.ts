@@ -1021,6 +1021,7 @@ export async function createFulfilment(
   req: D365FulfilmentRequest
 ): Promise<{ response: D365ThkApiResponse; request: object }> {
   const { salesOrderNumber, dataAreaId, lines, type, confirmedShippedDate } = req;
+  const normalizedDataAreaId = String(dataAreaId || "").toUpperCase();
 
   const body = {
     _dataContract: {
@@ -1039,7 +1040,7 @@ export async function createFulfilment(
 
         if (line.shippingWarehouseId && line.shippingWarehouseLocationId) {
           // U001 (US) doesn't use warehouse/location in fulfilment
-          if (dataAreaId === "U001") {
+          if (normalizedDataAreaId === "U001") {
             lineData["Warehouse"] = "";
             lineData["Location"] = "";
           } else {
@@ -1190,7 +1191,9 @@ export async function getSalesOrderLines(
 
   const token = await getAuthToken();
   const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
-  const select = "ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount";
+  // Keep select minimal for cross-tenant compatibility:
+  // some environments do not expose SalesQuantity/SalesPrice/LineDiscountAmount on SalesOrderLine.
+  const select = "ItemNumber,InventoryLotId";
   const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?${D365_ODATA_CROSS_COMPANY_QUERY}&$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
   const response = await pacedFetch(url, {
