@@ -72,7 +72,10 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
     });
 
     expect(result?.SalesOrderNumber).toBe("U001-SO-999");
-    expect(supabaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith("6993154474216");
+    expect(supabaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith(
+      "6993154474216",
+      "#IM8-19171"
+    );
     expect(dynamics.getSalesOrderByNumber).toHaveBeenCalled();
   });
 

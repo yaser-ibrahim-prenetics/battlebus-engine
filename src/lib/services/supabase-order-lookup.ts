@@ -29,31 +29,77 @@ export type SupabaseOrderD365Hint = {
   warehouse: string | null;
 };
 
-/** Resolve numeric Shopify order id → row with D365 SO number if Hub has synced it. */
+function rowToHint(data: { d365_order_number: unknown; warehouse: unknown }): SupabaseOrderD365Hint | null {
+  if (!data?.d365_order_number || typeof data.d365_order_number !== "string") {
+    return null;
+  }
+  const num = data.d365_order_number.trim();
+  if (!num) return null;
+  return {
+    d365OrderNumber: num,
+    warehouse: typeof data.warehouse === "string" ? data.warehouse : null,
+  };
+}
+
+/** `#IM8-1`, `IM8-1`, etc. — Hub often keys `id` / `order_number` by order name. */
+function shopifyNameLookupVariants(name: string | null | undefined): string[] {
+  if (!name || typeof name !== "string") return [];
+  const t = name.trim();
+  if (!t) return [];
+  const stripped = t.replace(/^#/, "").trim();
+  if (!stripped) return [];
+  return [...new Set([t, stripped, `#${stripped}`])];
+}
+
+/**
+ * Resolve numeric Shopify order id → row with D365 SO number if Hub has synced it.
+ * Tries: (shopify_order_id | platform_order_id), then shopify_order_name / order_number / id
+ * (Battle Bus webhooks often use order **name** as primary `id`, and numeric id may only live in platform_order_id).
+ */
 export async function fetchD365HintByShopifyOrderId(
-  shopifyOrderId: string
+  shopifyOrderId: string,
+  shopifyOrderName?: string | null
 ): Promise<SupabaseOrderD365Hint | null> {
   const supabase = getClient();
   if (!supabase || !shopifyOrderId) return null;
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select("d365_order_number, warehouse")
-    .eq("shopify_order_id", String(shopifyOrderId).trim())
-    .not("d365_order_number", "is", null)
+  const id = String(shopifyOrderId).trim();
+
+  const base = () =>
+    supabase
+      .from("orders")
+      .select("d365_order_number, warehouse")
+      .not("d365_order_number", "is", null);
+
+  const { data: byId, error: errId } = await base()
+    .or(`shopify_order_id.eq.${id},platform_order_id.eq.${id}`)
     .limit(1)
     .maybeSingle();
 
-  if (error) {
-    console.warn(`[SupabaseOrderLookup] query failed for shopify_order_id=${shopifyOrderId}: ${error.message}`);
-    return null;
+  if (errId) {
+    console.warn(`[SupabaseOrderLookup] id query failed for shopify_order_id=${id}: ${errId.message}`);
   }
-  if (!data?.d365_order_number || typeof data.d365_order_number !== "string") {
-    return null;
+  const fromId = rowToHint(byId || {});
+  if (fromId) return fromId;
+
+  for (const v of shopifyNameLookupVariants(shopifyOrderName)) {
+    for (const column of ["shopify_order_name", "order_number", "id"] as const) {
+      const { data, error } = await base().eq(column, v).limit(1).maybeSingle();
+      if (error) {
+        console.warn(
+          `[SupabaseOrderLookup] ${column}=${v} query failed: ${error.message}`
+        );
+        continue;
+      }
+      const hint = rowToHint(data || {});
+      if (hint) {
+        console.log(
+          `[SupabaseOrderLookup] Matched row by ${column}=${v} (Shopify ref lookup had missed)`
+        );
+        return hint;
+      }
+    }
   }
 
-  return {
-    d365OrderNumber: data.d365_order_number.trim(),
-    warehouse: typeof data.warehouse === "string" ? data.warehouse : null,
-  };
+  return null;
 }

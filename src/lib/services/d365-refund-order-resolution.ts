@@ -44,7 +44,10 @@ export async function resolveD365OrderHeaderForRefund(params: {
     }
   }
 
-  const hint = await fetchD365HintByShopifyOrderId(String(shopifyOrderId));
+  const hint = await fetchD365HintByShopifyOrderId(
+    String(shopifyOrderId),
+    shopifyOrder.name
+  );
   if (hint?.d365OrderNumber) {
     let warehouseArea: string | null = null;
     if (hint.warehouse) {
@@ -69,6 +72,15 @@ export async function resolveD365OrderHeaderForRefund(params: {
         return found;
       }
     }
+    console.warn(
+      `[Refund] Supabase had d365_order_number=${hint.d365OrderNumber} but getSalesOrderByNumber ` +
+        `returned no header in any tried data area — check D365 entity/SO number or dataAreaId list`
+    );
+  } else {
+    console.warn(
+      `[Refund] No Supabase row with d365_order_number for shopifyOrderId=${shopifyOrderId} ` +
+        `(name=${shopifyOrder.name || "n/a"}) — set SUPABASE_* on Battle Bus or ensure Hub synced D365 #`
+    );
   }
 
   return null;
