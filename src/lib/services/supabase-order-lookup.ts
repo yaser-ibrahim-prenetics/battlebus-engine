@@ -29,7 +29,7 @@ export type SupabaseOrderD365Hint = {
   warehouse: string | null;
 };
 
-function rowToHint(data: { d365_order_number: unknown; warehouse: unknown }): SupabaseOrderD365Hint | null {
+function rowToHint(data: Record<string, unknown> | null | undefined): SupabaseOrderD365Hint | null {
   if (!data?.d365_order_number || typeof data.d365_order_number !== "string") {
     return null;
   }
@@ -52,35 +52,22 @@ function shopifyNameLookupVariants(name: string | null | undefined): string[] {
 }
 
 /**
- * Resolve numeric Shopify order id → row with D365 SO number if Hub has synced it.
- * Tries: (shopify_order_id | platform_order_id), then shopify_order_name / order_number / id
- * (Battle Bus webhooks often use order **name** as primary `id`, and numeric id may only live in platform_order_id).
+ * Hub `orders` row → D365 sales order number + warehouse.
+ * Tries **Shopify order name first** (shopify_order_name / order_number / id — Hub keys by name),
+ * then numeric Shopify id (shopify_order_id | platform_order_id).
  */
 export async function fetchD365HintByShopifyOrderId(
   shopifyOrderId: string,
   shopifyOrderName?: string | null
 ): Promise<SupabaseOrderD365Hint | null> {
   const supabase = getClient();
-  if (!supabase || !shopifyOrderId) return null;
-
-  const id = String(shopifyOrderId).trim();
+  if (!supabase) return null;
 
   const base = () =>
     supabase
       .from("orders")
       .select("d365_order_number, warehouse")
       .not("d365_order_number", "is", null);
-
-  const { data: byId, error: errId } = await base()
-    .or(`shopify_order_id.eq.${id},platform_order_id.eq.${id}`)
-    .limit(1)
-    .maybeSingle();
-
-  if (errId) {
-    console.warn(`[SupabaseOrderLookup] id query failed for shopify_order_id=${id}: ${errId.message}`);
-  }
-  const fromId = rowToHint(byId || {});
-  if (fromId) return fromId;
 
   for (const v of shopifyNameLookupVariants(shopifyOrderName)) {
     for (const column of ["shopify_order_name", "order_number", "id"] as const) {
@@ -91,15 +78,24 @@ export async function fetchD365HintByShopifyOrderId(
         );
         continue;
       }
-      const hint = rowToHint(data || {});
+      const hint = rowToHint(data ?? null);
       if (hint) {
-        console.log(
-          `[SupabaseOrderLookup] Matched row by ${column}=${v} (Shopify ref lookup had missed)`
-        );
+        console.log(`[SupabaseOrderLookup] Matched by ${column}=${v} → d365_order_number`);
         return hint;
       }
     }
   }
 
-  return null;
+  const id = String(shopifyOrderId || "").trim();
+  if (!id) return null;
+
+  const { data: byId, error: errId } = await base()
+    .or(`shopify_order_id.eq.${id},platform_order_id.eq.${id}`)
+    .limit(1)
+    .maybeSingle();
+
+  if (errId) {
+    console.warn(`[SupabaseOrderLookup] id query failed for id=${id}: ${errId.message}`);
+  }
+  return rowToHint(byId ?? null);
 }

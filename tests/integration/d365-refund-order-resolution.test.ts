@@ -46,7 +46,7 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
     });
 
     expect(result?.SalesOrderNumber).toBe("U001-SO-1");
-    expect(supabaseLookup.fetchD365HintByShopifyOrderId).not.toHaveBeenCalled();
+    expect(supabaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith("999", "#IM8-100");
   });
 
   it("falls back to Supabase d365_order_number + getSalesOrderByNumber when ref lookup misses", async () => {
