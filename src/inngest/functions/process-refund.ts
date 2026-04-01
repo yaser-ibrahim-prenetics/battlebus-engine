@@ -15,7 +15,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
-import { fetchD365HintByShopifyOrderId } from "@/lib/services/supabase-order-lookup";
+import { resolveD365OrderHeaderForRefund } from "@/lib/services/d365-refund-order-resolution";
 
 export const processRefund = inngest.createFunction(
   {
@@ -62,64 +62,10 @@ export const processRefund = inngest.createFunction(
     // of which entity row it lives under) and both `#IM8-123` / `IM8-123` variants — a single default
     // dataAreaId alone can miss US vs UK legal entities.
     const d365Order = await step.run("get-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
-      }
-      const country = shopifyOrder.shipping_address?.country_code || "US";
-      const envArea = (config.dynamics.dataAreaId || "").toUpperCase();
-      const dataAreaIds = [
-        ...warehouseHelper.getSalesOrderLookupDataAreaCandidates(country),
-        envArea,
-        ...warehouseHelper.getConfiguredWarehouseDataAreaIds(),
-      ].filter(Boolean);
-      const uniqueAreas = [...new Set(dataAreaIds.map((a) => a.toUpperCase()))];
-
-      const rawName = typeof shopifyOrder.name === "string" ? shopifyOrder.name.trim() : "";
-      const stripped = rawName.replace(/^#/, "").trim();
-      const refs = [...new Set([rawName, stripped].filter(Boolean))];
-
-      for (const dataAreaId of uniqueAreas) {
-        for (const ref of refs) {
-          const found = await dynamics.getSalesOrderByShopifyId(ref, dataAreaId);
-          if (found) {
-            return found;
-          }
-        }
-      }
-
-      // Fallback: Hub Supabase often has d365_order_number after order processing even when
-      // THK_ShopifyReference on the D365 header does not match Shopify name variants (#IM8-1 / IM8-1).
-      const hint = await fetchD365HintByShopifyOrderId(String(shopifyOrderId));
-      if (hint?.d365OrderNumber) {
-        let warehouseArea: string | null = null;
-        if (hint.warehouse) {
-          try {
-            warehouseArea = warehouseHelper
-              .getWarehouseConfig(hint.warehouse)
-              .dataAreaId.toUpperCase();
-          } catch {
-            // Label in DB may not match warehouse-config.json key
-          }
-        }
-        const supabaseAreaOrder = [
-          warehouseArea,
-          ...uniqueAreas,
-        ].filter(Boolean) as string[];
-        const supabaseAreas = [...new Set(supabaseAreaOrder)];
-
-        for (const dataAreaId of supabaseAreas) {
-          const found = await dynamics.getSalesOrderByNumber(hint.d365OrderNumber, dataAreaId);
-          if (found) {
-            console.log(
-              `[Refund] Resolved D365 order via Supabase d365_order_number=${hint.d365OrderNumber} ` +
-                `(dataAreaId=${found.dataAreaId || dataAreaId}); Shopify ref lookup had missed`
-            );
-            return found;
-          }
-        }
-      }
-
-      return null;
+      return resolveD365OrderHeaderForRefund({
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrder,
+      });
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
