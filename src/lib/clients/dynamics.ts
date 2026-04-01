@@ -995,6 +995,26 @@ export async function createPrepayment(
 
   if (!response.ok) {
     const error = await response.text();
+    // Idempotency: some tenants return 500 DuplicateKeyException when prepayment
+    // already exists for the same sales order. Treat this as already processed.
+    if (
+      response.status === 500 &&
+      (error.includes("DuplicateKeyException") ||
+        error.toLowerCase().includes("duplicate key"))
+    ) {
+      console.warn(
+        `[D365] Prepayment already exists for ${salesOrderNumber} (DuplicateKeyException); treating as success`
+      );
+      return {
+        response: {
+          status: DYNAMICS_THK_API_SUCCESS_STATUS,
+          Message: "PREPAYMENT_ALREADY_EXISTS",
+          Result: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
+          $id: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
+        },
+        request: body,
+      };
+    }
     throw new Error(
       `[D365] Failed to create prepayment for ${salesOrderNumber}: ${response.status} - ${error}`
     );
