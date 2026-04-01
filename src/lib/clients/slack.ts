@@ -9,7 +9,9 @@ const slackSender = async (
   attachments: ISlackAttachment[]
 ) => {
   const webhookUrl = config.slack.channel[channel];
-  if (!webhookUrl) throw new Error(`Slack webhook URL not configured for channel: ${channel}`);
+  if (!webhookUrl) {
+    return;
+  }
 
   const response = await fetch(webhookUrl, {
     method: "POST",

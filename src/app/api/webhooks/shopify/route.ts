@@ -126,7 +126,14 @@ export async function POST(request: NextRequest) {
 
         if (!signatureValid) {
           console.error(
-            `[Webhook] [${requestId}] ❌ Invalid Shopify signature (after verification)`
+            `[Webhook] [${requestId}] ❌ Invalid Shopify signature (after verification)`,
+            JSON.stringify({
+              shopDomain,
+              topic,
+              bodyBytes: body.length,
+              hmacHeaderPresent: Boolean(hmacHeader),
+              webhookSecretConfigured: Boolean(config.shopify.im8.webhookSecret),
+            })
           );
           return NextResponse.json({ error: "Invalid signature", requestId }, { status: 401 });
         }

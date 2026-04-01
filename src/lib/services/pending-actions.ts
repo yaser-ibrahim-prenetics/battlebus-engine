@@ -47,6 +47,22 @@ async function callHubApi(
   const response = await fetch(url, { method, headers, body: payload });
   if (!response.ok) {
     const text = await response.text();
+    if (
+      response.status === 400 &&
+      text.includes("shopifyOrderId and operation are required")
+    ) {
+      let hubHost = "unknown";
+      try {
+        hubHost = new URL(config.csPlatform.baseUrl).hostname;
+      } catch {
+        /* ignore */
+      }
+      console.error(
+        `[PendingActions] Hub API rejected clear-batch-style body with **legacy** validation. ` +
+          `Deploy latest battle-hub \`api/orders/pending-actions\` to ${hubHost} ` +
+          `(POST must accept operation=clear-batch + shopifyOrderIds[] without shopifyOrderId).`
+      );
+    }
     throw new Error(
       `[PendingActions] Hub API ${method} ${path} failed ${response.status}: ${text}`
     );
