@@ -77,24 +77,36 @@ export const processRefund = inngest.createFunction(
           message: "D365 order not found after drain — refund permanently skipped",
         };
       }
-      await step.run("store-pending-refund", async () => {
+      const queuedRefund = await step.run("queue-refund-pending-action", async () => {
         await storePendingAction(shopifyOrderId, {
           action: "refund",
           eventName: "shopify/refund.created",
           eventData: event.data,
           createdAt: new Date().toISOString(),
         });
-        /** Non-null output so Inngest UI shows the step did work (Dynamics steps are skipped intentionally). */
-        return { queued: true };
+        const payload = {
+          ok: true,
+          step: "queue-refund-pending-action",
+          refundId: String(refundId),
+          shopifyOrderId: String(shopifyOrderId),
+        } as const;
+        console.log(
+          JSON.stringify({
+            msg: "[PendingActions] refund_deferred_pending_action_stored",
+            ...payload,
+          })
+        );
+        return payload;
       });
       console.log(
         `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — ` +
-          `resolveD365OrderHeaderForLifecycle returned null (see Vercel logs: [D365Resolve], [SupabaseOrderLookup])`
+          `D365 header not resolved (Vercel: search logs for refund_deferred_pending_action_stored, [D365Resolve], [SupabaseOrderLookup])`
       );
       return {
         status: "deferred",
         refundId,
         shopifyOrderId,
+        queuedRefund,
         reason:
           "Could not resolve D365 sales order (Supabase d365_order_number + OData). Refund POST to D365 was not run. Check Vercel logs; ensure Hub row + SUPABASE_* on Bus; pending action queued if Hub matched the order id.",
       };
