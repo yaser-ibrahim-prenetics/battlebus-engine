@@ -15,6 +15,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
+import { resolveD365OrderHeaderForRefund } from "@/lib/services/d365-refund-order-resolution";
 
 export const processRefund = inngest.createFunction(
   {
@@ -61,30 +62,10 @@ export const processRefund = inngest.createFunction(
     // of which entity row it lives under) and both `#IM8-123` / `IM8-123` variants — a single default
     // dataAreaId alone can miss US vs UK legal entities.
     const d365Order = await step.run("get-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
-      }
-      const country = shopifyOrder.shipping_address?.country_code || "US";
-      const envArea = (config.dynamics.dataAreaId || "").toUpperCase();
-      const dataAreaIds = [
-        ...warehouseHelper.getSalesOrderLookupDataAreaCandidates(country),
-        envArea,
-      ].filter(Boolean);
-      const uniqueAreas = [...new Set(dataAreaIds)];
-
-      const rawName = typeof shopifyOrder.name === "string" ? shopifyOrder.name.trim() : "";
-      const stripped = rawName.replace(/^#/, "").trim();
-      const refs = [...new Set([rawName, stripped].filter(Boolean))];
-
-      for (const dataAreaId of uniqueAreas) {
-        for (const ref of refs) {
-          const found = await dynamics.getSalesOrderByShopifyId(ref, dataAreaId);
-          if (found) {
-            return found;
-          }
-        }
-      }
-      return null;
+      return resolveD365OrderHeaderForRefund({
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrder,
+      });
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {

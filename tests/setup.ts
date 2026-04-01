@@ -1,4 +1,13 @@
+import { existsSync } from "fs";
+import { resolve } from "path";
+import { config as loadEnv } from "dotenv";
 import { vi } from "vitest";
+
+// Load local secrets for optional integration tests (Supabase, etc.)
+const envLocal = resolve(__dirname, "../.env.local");
+if (existsSync(envLocal)) {
+  loadEnv({ path: envLocal });
+}
 
 process.env.ENABLE_DYNAMICS_SYNC = "true";
 process.env.ENABLE_GPS_SYNC = "true";
