@@ -15,6 +15,16 @@ import { fetchD365HintByShopifyOrderId } from "./supabase-order-lookup";
 
 const MAX_THK_REF_AUDIT_ROWS = 25;
 
+function dynamicsTenantHost(): string {
+  try {
+    const u = config.dynamics.baseUrl?.trim();
+    if (!u) return "";
+    return new URL(u).hostname;
+  } catch {
+    return "";
+  }
+}
+
 export type ResolveD365OrderHeaderInput = {
   shopifyOrderId: string;
   shopifyOrderName: string | null | undefined;
@@ -53,6 +63,14 @@ export type D365HeaderResolutionAudit = {
     | "not_found";
   /** Set when loose SO-number lookup ran */
   salesOrderNumberLooseMatchCount?: number;
+  /** Host from `D365_BASE_URL` — confirms which Dynamics tenant was queried */
+  dynamicsTenantHost?: string;
+  /** `warehouse-config.json` `dataAreaId` when Hub `warehouse` label matched */
+  warehouseHintDataAreaId?: string | null;
+  /** Hub had `d365_order_number` but tenant-wide `SalesOrderNumber` OData returned 0 rows */
+  hubSalesOrderNumberAbsentInDynamicsTenant?: boolean;
+  /** Why resolution failed (mainly `not_found`) */
+  notFoundDiagnosis?: string;
   resolvedHeaderSummary: {
     SalesOrderNumber?: string;
     dataAreaId?: string;
@@ -76,6 +94,8 @@ async function resolveD365OrderHeaderCore(
 
   const odataBySalesOrderNumberDataAreasTried: string[] = [];
   const odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }> = [];
+  const host = dynamicsTenantHost();
+  let looseTotalMatches: number | undefined;
 
   if (!config.features.enableDynamicsSync) {
     return {
@@ -92,6 +112,7 @@ async function resolveD365OrderHeaderCore(
         odataBySalesOrderNumberDataAreasTried,
         odataByThkRefAttempts,
         outcome: "not_found",
+        dynamicsTenantHost: host || undefined,
         resolvedHeaderSummary: null,
       },
     };
@@ -123,6 +144,7 @@ async function resolveD365OrderHeaderCore(
   ];
 
   let preferredAreasForLoose: string[] = [];
+  let warehouseHintDataAreaId: string | null = null;
 
   if (trace) {
     logRefundTraceLifecycle({
@@ -162,8 +184,12 @@ async function resolveD365OrderHeaderCore(
         warehouseArea = warehouseHelper
           .getWarehouseConfig(hint.warehouse)
           .dataAreaId.toUpperCase();
+        warehouseHintDataAreaId = warehouseArea;
       } catch {
-        /* DB label may not match warehouse-config.json */
+        console.warn(
+          `[D365Resolve] Hub warehouse="${hint.warehouse}" has no matching entry in warehouse-config.json — ` +
+            `cannot prefer that legal entity for OData`
+        );
       }
     }
     const byNumberAreas = [
@@ -206,6 +232,8 @@ async function resolveD365OrderHeaderCore(
             odataBySalesOrderNumberDataAreasTried: [...odataBySalesOrderNumberDataAreasTried],
             odataByThkRefAttempts: [],
             outcome: "resolved_by_sales_order_number",
+            dynamicsTenantHost: host || undefined,
+            warehouseHintDataAreaId,
             resolvedHeaderSummary: {
               SalesOrderNumber: found.SalesOrderNumber,
               dataAreaId: found.dataAreaId || dataAreaId,
@@ -265,6 +293,8 @@ async function resolveD365OrderHeaderCore(
             odataBySalesOrderNumberDataAreasTried: [...odataBySalesOrderNumberDataAreasTried],
             odataByThkRefAttempts: [...odataByThkRefAttempts],
             outcome: "resolved_by_thk_shopify_ref",
+            dynamicsTenantHost: host || undefined,
+            warehouseHintDataAreaId,
             resolvedHeaderSummary: {
               SalesOrderNumber: found.SalesOrderNumber,
               dataAreaId: found.dataAreaId || dataAreaId,
@@ -281,6 +311,7 @@ async function resolveD365OrderHeaderCore(
       preferredAreasForLoose,
       trace
     );
+    looseTotalMatches = looseResult.totalMatches;
     const loose = looseResult.header;
     if (loose) {
       if (trace) {
@@ -308,6 +339,8 @@ async function resolveD365OrderHeaderCore(
           odataByThkRefAttempts: [...odataByThkRefAttempts],
           outcome: "resolved_by_sales_order_number_loose",
           salesOrderNumberLooseMatchCount: looseResult.totalMatches,
+          dynamicsTenantHost: host || undefined,
+          warehouseHintDataAreaId,
           resolvedHeaderSummary: {
             SalesOrderNumber: loose.SalesOrderNumber,
             dataAreaId: loose.dataAreaId ?? null,
@@ -325,6 +358,25 @@ async function resolveD365OrderHeaderCore(
     });
   }
 
+  const hubAbsent =
+    Boolean(hint?.d365OrderNumber) &&
+    typeof looseTotalMatches === "number" &&
+    looseTotalMatches === 0;
+
+  if (hubAbsent && hint?.d365OrderNumber) {
+    console.warn(
+      `[D365Resolve] Hub orders.d365_order_number=${hint.d365OrderNumber} not found in ` +
+        `SalesOrderHeadersV3 on ${host || "D365"}. Loose SalesOrderNumber query returned 0 rows. ` +
+        `Fix: update Hub when the SO exists in this tenant, or point Bus D365_* at the environment where the order was created.`
+    );
+  }
+
+  const notFoundDiagnosis = hubAbsent
+    ? `Hub has d365_order_number=${hint?.d365OrderNumber} but that SalesOrderNumber does not exist in Dynamics tenant ${host || "(unknown)"} (loose OData returned 0). Data is stale or Bus uses a different D365 environment than where the order was posted.`
+    : hint?.d365OrderNumber
+      ? `No SalesOrderHeadersV3 row for THK refs tried; SalesOrderNumber ${hint.d365OrderNumber} also unmatched after area + loose queries.`
+      : `No Supabase d365_order_number for this Shopify order; THK_ShopifyReference lookups returned no header.`;
+
   return {
     header: null,
     audit: {
@@ -339,6 +391,10 @@ async function resolveD365OrderHeaderCore(
       odataBySalesOrderNumberDataAreasTried,
       odataByThkRefAttempts,
       outcome: "not_found",
+      dynamicsTenantHost: host || undefined,
+      warehouseHintDataAreaId,
+      hubSalesOrderNumberAbsentInDynamicsTenant: hubAbsent,
+      notFoundDiagnosis,
       resolvedHeaderSummary: null,
     },
   };
