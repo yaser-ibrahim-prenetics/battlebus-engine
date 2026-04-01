@@ -12,6 +12,8 @@ import type { D365ODataTraceContext } from "@/lib/utils/d365-odata-trace";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 import { fetchD365HintByShopifyOrderId } from "./supabase-order-lookup";
 
+const MAX_THK_REF_AUDIT_ROWS = 25;
+
 export type ResolveD365OrderHeaderInput = {
   shopifyOrderId: string;
   shopifyOrderName: string | null | undefined;
@@ -23,14 +25,71 @@ export type ResolveD365OrderHeaderInput = {
   trace?: D365ODataTraceContext;
 };
 
-export async function resolveD365OrderHeaderForLifecycle(
+/** Serializable summary for Inngest step output (not full OData entity). */
+export type D365HeaderResolutionAudit = {
+  /** Step id for support: Supabase runs inside the same `get-d365-order` step */
+  flow: "supabase_orders_then_odata";
+  shopifyOrderId: string;
+  shopifyOrderName: string | null;
+  shippingCountryCode: string;
+  dynamicsSyncDisabled: boolean;
+  /** Result of `fetchD365HintByShopifyOrderId` (Hub `orders` table / service role) */
+  supabaseLookup: {
+    attempted: boolean;
+    d365OrderNumber: string | null;
+    warehouse: string | null;
+  };
+  dataAreaCandidates: string[];
+  thkShopifyReferenceCandidates: string[];
+  /** OData `SalesOrderNumber eq ...` tries */
+  odataBySalesOrderNumberDataAreasTried: string[];
+  /** OData `THK_ShopifyReference eq ...` tries (capped) */
+  odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }>;
+  outcome: "resolved_by_sales_order_number" | "resolved_by_thk_shopify_ref" | "not_found";
+  resolvedHeaderSummary: {
+    SalesOrderNumber?: string;
+    dataAreaId?: string;
+  } | null;
+};
+
+export type ResolveD365OrderHeaderResult = {
+  header: D365SalesOrderHeader | null;
+  audit: D365HeaderResolutionAudit;
+};
+
+async function resolveD365OrderHeaderCore(
   input: ResolveD365OrderHeaderInput
-): Promise<D365SalesOrderHeader | null> {
+): Promise<ResolveD365OrderHeaderResult> {
+  const country = input.shippingCountryCode || "US";
+  const trace = input.trace;
+
+  const shopifyOrderId = String(input.shopifyOrderId);
+  const shopifyOrderName =
+    typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() || null : null;
+
+  const odataBySalesOrderNumberDataAreasTried: string[] = [];
+  const odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }> = [];
+
   if (!config.features.enableDynamicsSync) {
-    return null;
+    return {
+      header: null,
+      audit: {
+        flow: "supabase_orders_then_odata",
+        shopifyOrderId,
+        shopifyOrderName,
+        shippingCountryCode: country,
+        dynamicsSyncDisabled: true,
+        supabaseLookup: { attempted: false, d365OrderNumber: null, warehouse: null },
+        dataAreaCandidates: [],
+        thkShopifyReferenceCandidates: [],
+        odataBySalesOrderNumberDataAreasTried,
+        odataByThkRefAttempts,
+        outcome: "not_found",
+        resolvedHeaderSummary: null,
+      },
+    };
   }
 
-  const country = input.shippingCountryCode || "US";
   const envArea = (config.dynamics.dataAreaId || "").toUpperCase();
   const pref = input.preferredDataAreaId
     ? String(input.preferredDataAreaId).toUpperCase().trim()
@@ -48,7 +107,6 @@ export async function resolveD365OrderHeaderForLifecycle(
     typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() : "";
   const stripped = rawName.replace(/^#/, "").trim();
   const refs = [...new Set([rawName, stripped].filter(Boolean))];
-  const trace = input.trace;
 
   if (trace) {
     logRefundTraceLifecycle({
@@ -65,6 +123,12 @@ export async function resolveD365OrderHeaderForLifecycle(
     String(input.shopifyOrderId),
     input.shopifyOrderName
   );
+
+  const supabaseLookup = {
+    attempted: true,
+    d365OrderNumber: hint?.d365OrderNumber ?? null,
+    warehouse: hint?.warehouse ?? null,
+  };
 
   if (trace) {
     logRefundTraceLifecycle({
@@ -94,11 +158,8 @@ export async function resolveD365OrderHeaderForLifecycle(
     const salesOrderAreas = [...new Set(byNumberAreas)];
 
     for (const dataAreaId of salesOrderAreas) {
-      const found = await dynamics.getSalesOrderByNumber(
-        hint.d365OrderNumber,
-        dataAreaId,
-        trace
-      );
+      odataBySalesOrderNumberDataAreasTried.push(dataAreaId);
+      const found = await dynamics.getSalesOrderByNumber(hint.d365OrderNumber, dataAreaId, trace);
       if (found) {
         console.log(
           `[D365Resolve] Header via Supabase d365_order_number=${hint.d365OrderNumber} ` +
@@ -114,7 +175,26 @@ export async function resolveD365OrderHeaderForLifecycle(
             dataAreaId: found.dataAreaId || dataAreaId,
           });
         }
-        return found;
+        return {
+          header: found,
+          audit: {
+            flow: "supabase_orders_then_odata",
+            shopifyOrderId,
+            shopifyOrderName,
+            shippingCountryCode: country,
+            dynamicsSyncDisabled: false,
+            supabaseLookup,
+            dataAreaCandidates: uniqueAreas,
+            thkShopifyReferenceCandidates: refs,
+            odataBySalesOrderNumberDataAreasTried: [...odataBySalesOrderNumberDataAreasTried],
+            odataByThkRefAttempts: [],
+            outcome: "resolved_by_sales_order_number",
+            resolvedHeaderSummary: {
+              SalesOrderNumber: found.SalesOrderNumber,
+              dataAreaId: found.dataAreaId || dataAreaId,
+            },
+          },
+        };
       }
     }
     console.warn(
@@ -138,6 +218,9 @@ export async function resolveD365OrderHeaderForLifecycle(
 
   for (const dataAreaId of uniqueAreas) {
     for (const ref of refs) {
+      if (odataByThkRefAttempts.length < MAX_THK_REF_AUDIT_ROWS) {
+        odataByThkRefAttempts.push({ dataAreaId, ref });
+      }
       const found = await dynamics.getSalesOrderByShopifyId(ref, dataAreaId, trace);
       if (found) {
         if (trace) {
@@ -151,7 +234,26 @@ export async function resolveD365OrderHeaderForLifecycle(
             dataAreaId: found.dataAreaId || dataAreaId,
           });
         }
-        return found;
+        return {
+          header: found,
+          audit: {
+            flow: "supabase_orders_then_odata",
+            shopifyOrderId,
+            shopifyOrderName,
+            shippingCountryCode: country,
+            dynamicsSyncDisabled: false,
+            supabaseLookup,
+            dataAreaCandidates: uniqueAreas,
+            thkShopifyReferenceCandidates: refs,
+            odataBySalesOrderNumberDataAreasTried: [...odataBySalesOrderNumberDataAreasTried],
+            odataByThkRefAttempts: [...odataByThkRefAttempts],
+            outcome: "resolved_by_thk_shopify_ref",
+            resolvedHeaderSummary: {
+              SalesOrderNumber: found.SalesOrderNumber,
+              dataAreaId: found.dataAreaId || dataAreaId,
+            },
+          },
+        };
       }
     }
   }
@@ -164,5 +266,34 @@ export async function resolveD365OrderHeaderForLifecycle(
     });
   }
 
-  return null;
+  return {
+    header: null,
+    audit: {
+      flow: "supabase_orders_then_odata",
+      shopifyOrderId,
+      shopifyOrderName,
+      shippingCountryCode: country,
+      dynamicsSyncDisabled: false,
+      supabaseLookup,
+      dataAreaCandidates: uniqueAreas,
+      thkShopifyReferenceCandidates: refs,
+      odataBySalesOrderNumberDataAreasTried,
+      odataByThkRefAttempts,
+      outcome: "not_found",
+      resolvedHeaderSummary: null,
+    },
+  };
+}
+
+export async function resolveD365OrderHeaderForLifecycle(
+  input: ResolveD365OrderHeaderInput
+): Promise<D365SalesOrderHeader | null> {
+  return (await resolveD365OrderHeaderCore(input)).header;
+}
+
+/** Use from refund step when Inngest should show non-null output with Supabase + OData audit. */
+export async function resolveD365OrderHeaderForLifecycleWithAudit(
+  input: ResolveD365OrderHeaderInput
+): Promise<ResolveD365OrderHeaderResult> {
+  return resolveD365OrderHeaderCore(input);
 }

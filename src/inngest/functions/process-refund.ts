@@ -15,7 +15,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
-import { resolveD365OrderHeaderForRefund } from "@/lib/services/d365-refund-order-resolution";
+import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 
 export const processRefund = inngest.createFunction(
@@ -81,8 +81,8 @@ export const processRefund = inngest.createFunction(
     // Try shipping-country-routed + all configured data areas (like spock-store finding the SO regardless
     // of which entity row it lives under) and both `#IM8-123` / `IM8-123` variants — a single default
     // dataAreaId alone can miss US vs UK legal entities.
-    const d365Order = await step.run("get-d365-order", async () => {
-      const header = await resolveD365OrderHeaderForRefund({
+    const d365Step = await step.run("get-d365-order", async () => {
+      const { header, audit } = await resolveD365OrderHeaderForRefundWithAudit({
         shopifyOrderId: String(shopifyOrderId),
         shopifyOrder,
         trace: refundTrace,
@@ -94,8 +94,17 @@ export const processRefund = inngest.createFunction(
         salesOrderNumber: header?.SalesOrderNumber ?? null,
         headerDataAreaId: header?.dataAreaId ?? null,
       });
-      return header;
+      /**
+       * Inngest serializes step output — `audit` explains Supabase + OData attempts (no separate step).
+       * `header` is null when deferred; do not expect bare `null` as the whole step output anymore.
+       */
+      return {
+        resolved: Boolean(header),
+        audit,
+        header,
+      };
     });
+    const d365Order = d365Step.header;
 
     if (!d365Order && config.features.enableDynamicsSync) {
       if ((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain) {
