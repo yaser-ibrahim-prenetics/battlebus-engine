@@ -2,7 +2,8 @@
  * Shared Dynamics sales order header resolution for refund, fulfillment, and similar flows.
  * Order of attempt:
  * 1) Supabase `orders` row (Shopify **name** first, then numeric id) → `d365_order_number` → OData by SalesOrderNumber
- * 2) OData `SalesOrderHeadersV3` by `THK_ShopifyReference` (name variants) across candidate data areas
+ * 2) OData `SalesOrderHeadersV3` by `THK_ShopifyReference` (name, numeric id, variants) across candidate data areas
+ * 3) If Hub still has `d365_order_number` but area-scoped reads miss: loose OData by `SalesOrderNumber` only (cross-company), tie-break by preferred data areas
  */
 import type { D365SalesOrderHeader } from "@/lib/types/dynamics";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -45,7 +46,13 @@ export type D365HeaderResolutionAudit = {
   odataBySalesOrderNumberDataAreasTried: string[];
   /** OData `THK_ShopifyReference eq ...` tries (capped) */
   odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }>;
-  outcome: "resolved_by_sales_order_number" | "resolved_by_thk_shopify_ref" | "not_found";
+  outcome:
+    | "resolved_by_sales_order_number"
+    | "resolved_by_thk_shopify_ref"
+    | "resolved_by_sales_order_number_loose"
+    | "not_found";
+  /** Set when loose SO-number lookup ran */
+  salesOrderNumberLooseMatchCount?: number;
   resolvedHeaderSummary: {
     SalesOrderNumber?: string;
     dataAreaId?: string;
@@ -106,7 +113,16 @@ async function resolveD365OrderHeaderCore(
   const rawName =
     typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() : "";
   const stripped = rawName.replace(/^#/, "").trim();
-  const refs = [...new Set([rawName, stripped].filter(Boolean))];
+  const idStr = shopifyOrderId.trim();
+  const refs = [
+    ...new Set(
+      [rawName, stripped, stripped ? `#${stripped}` : "", idStr].filter(
+        (x): x is string => typeof x === "string" && x.length > 0
+      )
+    ),
+  ];
+
+  let preferredAreasForLoose: string[] = [];
 
   if (trace) {
     logRefundTraceLifecycle({
@@ -156,6 +172,7 @@ async function resolveD365OrderHeaderCore(
       ...uniqueAreas,
     ].filter(Boolean) as string[];
     const salesOrderAreas = [...new Set(byNumberAreas)];
+    preferredAreasForLoose = salesOrderAreas;
 
     for (const dataAreaId of salesOrderAreas) {
       odataBySalesOrderNumberDataAreasTried.push(dataAreaId);
@@ -255,6 +272,48 @@ async function resolveD365OrderHeaderCore(
           },
         };
       }
+    }
+  }
+
+  if (hint?.d365OrderNumber && preferredAreasForLoose.length > 0) {
+    const looseResult = await dynamics.getSalesOrderHeadersBySalesOrderNumberLoose(
+      hint.d365OrderNumber,
+      preferredAreasForLoose,
+      trace
+    );
+    const loose = looseResult.header;
+    if (loose) {
+      if (trace) {
+        logRefundTraceLifecycle({
+          ...trace,
+          phase: "lifecycle_done",
+          resolved: true,
+          via: "SalesOrderNumber_loose_OData",
+          salesOrderNumber: loose.SalesOrderNumber,
+          dataAreaId: loose.dataAreaId,
+        });
+      }
+      return {
+        header: loose,
+        audit: {
+          flow: "supabase_orders_then_odata",
+          shopifyOrderId,
+          shopifyOrderName,
+          shippingCountryCode: country,
+          dynamicsSyncDisabled: false,
+          supabaseLookup,
+          dataAreaCandidates: uniqueAreas,
+          thkShopifyReferenceCandidates: refs,
+          odataBySalesOrderNumberDataAreasTried: [...odataBySalesOrderNumberDataAreasTried],
+          odataByThkRefAttempts: [...odataByThkRefAttempts],
+          outcome: "resolved_by_sales_order_number_loose",
+          salesOrderNumberLooseMatchCount: looseResult.totalMatches,
+          resolvedHeaderSummary: {
+            SalesOrderNumber: loose.SalesOrderNumber,
+            dataAreaId: loose.dataAreaId ?? null,
+          },
+        },
+      };
     }
   }
 
