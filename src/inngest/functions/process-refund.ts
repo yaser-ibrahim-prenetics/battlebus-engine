@@ -84,17 +84,19 @@ export const processRefund = inngest.createFunction(
           eventData: event.data,
           createdAt: new Date().toISOString(),
         });
+        /** Non-null output so Inngest UI shows the step did work (Dynamics steps are skipped intentionally). */
+        return { queued: true };
       });
       console.log(
         `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — ` +
-          `no D365 sales order matched THK_ShopifyReference (order name) in any tried data area, or order not written yet`
+          `resolveD365OrderHeaderForLifecycle returned null (see Vercel logs: [D365Resolve], [SupabaseOrderLookup])`
       );
       return {
         status: "deferred",
         refundId,
         shopifyOrderId,
         reason:
-          "D365 SO not found by Shopify reference in any configured data area; queued for replay/drain",
+          "Could not resolve D365 sales order (Supabase d365_order_number + OData). Refund POST to D365 was not run. Check Vercel logs; ensure Hub row + SUPABASE_* on Bus; pending action queued if Hub matched the order id.",
       };
     }
 
