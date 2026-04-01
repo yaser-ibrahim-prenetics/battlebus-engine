@@ -224,28 +224,14 @@ export const processGpsIndividual = inngest.createFunction(
       };
     });
 
-    // Step 6: D365 invoicing (PostPrepayment)
+    // Step 6: D365 invoicing
+    // Align with spock-store behavior: prepayment belongs to order creation flow.
+    // GPS fulfillment should only post packing slip.
     const invoiceResult = await step.run("d365-post-prepayment", async () => {
-      if (dynamicRecord.skipped || !dynamicRecord.salesOrderNumber) {
-        return { skipped: true, reason: "D365 packing slip was skipped" };
-      }
-
-      try {
-        const result = await dynamics.createPrepayment(
-          dynamicRecord.salesOrderNumber,
-          dynamicRecord.dataAreaId!
-        );
-        console.log(`[GPS Individual] D365 prepayment posted for: ${dynamicRecord.salesOrderNumber}`);
-        return { skipped: false, salesOrderNumber: dynamicRecord.salesOrderNumber, result };
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`[GPS Individual] D365 prepayment failed: ${errorMsg}`);
-        await slack.sendWarningMessage(
-          SlackChannelEnum.GPS,
-          `D365 PostPrepayment failed for ${fulfilmentData.shopifyOrderName} (${dynamicRecord.salesOrderNumber}): ${errorMsg}`
-        ).catch(() => {});
-        return { skipped: false, error: errorMsg };
-      }
+      return {
+        skipped: true,
+        reason: "Prepayment is created during order creation; fulfillment only posts packing slip",
+      };
     });
 
     // Step 7: Send completion notification

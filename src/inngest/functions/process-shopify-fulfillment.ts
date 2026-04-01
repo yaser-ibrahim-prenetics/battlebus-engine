@@ -279,59 +279,16 @@ export const processShopifyFulfillment = inngest.createFunction(
     }
 
     // ========================================================================
-    // D365 INVOICING (PostPrepayment) — after packing slip, before PayPal
+    // D365 INVOICING
     // ========================================================================
+    // Align with spock-store behavior: prepayment is part of order creation flow.
+    // Fulfillment flow should only post packing slip / shipment confirmation.
     const invoiceResult = await step.run("d365-post-prepayment", async () => {
-      if (!config.features.enableDynamicsSync || !d365Order?.SalesOrderNumber) {
-        return { status: "skipped", reason: "D365 sync disabled or no sales order" };
-      }
-
-      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
-      const hasSuccessfulFulfillment = fulfillmentResults.some(
-        (r: { status: string }) => r.status === "success"
-      );
-      if (!hasSuccessfulFulfillment) {
-        return { status: "skipped", reason: "No successful fulfillments to invoice" };
-      }
-
-      try {
-        console.log(
-          `[Fulfillment] Prepayment diagnostic context: ${JSON.stringify({
-            shopifyOrderId,
-            shopifyOrderName,
-            salesOrderNumber: d365Order.SalesOrderNumber,
-            dataAreaId,
-            orderTotal: order.total_price,
-            fulfillmentStatus: order.fulfillment_status,
-            financialStatus: order.financial_status,
-            d365SalesOrderStatus: d365Order.SalesOrderStatus,
-            d365ProcessingStatus: d365Order.SalesOrderProcessingStatus,
-            d365InvoiceType: d365Order.InvoiceType,
-            d365OrderTotalAmount: d365Order.OrderTotalAmount,
-            d365SalesAmount: d365Order.THK_SalesAmount,
-            successfulFulfillmentIds: fulfillmentResults
-              .filter((r: { status: string }) => r.status === "success")
-              .map((r: { fulfillmentId: string | number }) => r.fulfillmentId),
-          })}`
-        );
-        const result = await dynamics.createPrepayment(d365Order.SalesOrderNumber, dataAreaId);
-        console.log(`[Fulfillment] D365 prepayment posted for ${shopifyOrderName}: ${d365Order.SalesOrderNumber}`);
-        return { status: "success", salesOrderNumber: d365Order.SalesOrderNumber, result };
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        if (errorMsg.toLowerCase().includes("no invoice amount")) {
-          console.warn(
-            `[Fulfillment] Prepayment failed with 'No invoice amount'. This usually means ` +
-              `D365 has nothing invoiceable left on this sales order at the time PostPrepayment ran.`
-          );
-        }
-        console.error(`[Fulfillment] D365 prepayment failed for ${shopifyOrderName}: ${errorMsg}`);
-        await slack.sendWarningMessage(
-          "dynamics",
-          `D365 PostPrepayment failed for ${shopifyOrderName} (${d365Order.SalesOrderNumber}): ${errorMsg}`
-        ).catch(() => {});
-        return { status: "error", error: errorMsg };
-      }
+      return {
+        status: "skipped",
+        reason:
+          "Prepayment is created during order creation; fulfillment only posts packing slip",
+      };
     });
 
     // ========================================================================

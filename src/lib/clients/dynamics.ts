@@ -1046,6 +1046,23 @@ export async function createPrepayment(
   const result: D365ThkApiResponse = await response.json();
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    const thkMessage = String(result.Message || "");
+    // Some orders are already fully settled / have zero invoiceable amount.
+    // THK returns status=0 with "No invoice amount..." in this case; treat as no-op success.
+    if (thkMessage.toLowerCase().includes("no invoice amount")) {
+      console.warn(
+        `[D365] Prepayment skipped for ${salesOrderNumber}: ${thkMessage.trim() || "No invoice amount"}`
+      );
+      return {
+        response: {
+          status: DYNAMICS_THK_API_SUCCESS_STATUS,
+          Message: "PREPAYMENT_SKIPPED_NO_INVOICE_AMOUNT",
+          Result: "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
+          $id: result.$id || "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
+        },
+        request: body,
+      };
+    }
     console.error(`[D365] PostPrepayment THK response: ${JSON.stringify(result)}`);
     throw new Error(
       `[D365] THK API failed to create prepayment for ${salesOrderNumber}: ${result.Message}` +
