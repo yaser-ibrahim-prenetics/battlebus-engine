@@ -1262,6 +1262,54 @@ export async function getSalesOrderByShopifyId(
   return order;
 }
 
+/**
+ * Get sales order header by D365 sales order number (e.g. U001-SO-496895).
+ * Used when THK_ShopifyReference lookup fails but Hub/Supabase already stores SalesOrderNumber.
+ */
+export async function getSalesOrderByNumber(
+  salesOrderNumber: string,
+  dataAreaId: string = config.dynamics.dataAreaId
+): Promise<D365SalesOrderHeader | null> {
+  const so = String(salesOrderNumber || "").trim();
+  const area = String(dataAreaId || "").trim();
+  if (!so || !area) return null;
+
+  console.log(`[D365] Looking up order by SalesOrderNumber: ${so} (dataAreaId=${area})`);
+
+  if (config.features.dryRunMode) {
+    console.log(`[D365] DRY RUN - Would look up ${so}`);
+    return null;
+  }
+
+  const token = await getAuthToken();
+  const filter = `dataAreaId eq '${area}' and SalesOrderNumber eq '${so}'`;
+  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(filter)}`;
+
+  const response = await pacedFetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`[D365] Failed to get sales order by number: ${response.status} - ${error}`);
+  }
+
+  const result = await response.json();
+  const order = result.value?.[0] || null;
+
+  if (order) {
+    console.log(`[D365] Found order by number: ${order.SalesOrderNumber} (${area})`);
+  } else {
+    console.log(`[D365] No order found for SalesOrderNumber=${so} in ${area}`);
+  }
+
+  return order;
+}
+
 // ============================================================================
 // PRODUCT & INVENTORY SYNC (PLACEHOLDER)
 // ============================================================================
