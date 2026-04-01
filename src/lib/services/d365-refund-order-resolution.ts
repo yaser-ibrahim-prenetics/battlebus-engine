@@ -12,6 +12,8 @@ import {
 export type ShopifyOrderForD365Lookup = {
   name?: string | null;
   shipping_address?: { country_code?: string | null } | null;
+  /** Shopify REST `tags` (comma-separated) — passed through for D365 audit only */
+  tags?: string | null;
 };
 
 type RefundResolveParams = {
@@ -21,11 +23,13 @@ type RefundResolveParams = {
 };
 
 function lifecycleInput(params: RefundResolveParams) {
+  const tags = params.shopifyOrder.tags;
   return {
     shopifyOrderId: params.shopifyOrderId,
     shopifyOrderName: params.shopifyOrder.name,
     shippingCountryCode: params.shopifyOrder.shipping_address?.country_code,
     trace: params.trace,
+    orderTags: typeof tags === "string" && tags.trim() ? tags : null,
   };
 }
 

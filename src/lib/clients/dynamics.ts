@@ -1151,6 +1151,14 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
 // ============================================================================
 
 /**
+ * F&O OData scopes GET requests to the integration user's default company unless
+ * `cross-company=true` is set — `$filter=dataAreaId eq '…'` alone can still return 0 rows.
+ * E2E helpers use this; production reads must match.
+ * @see https://learn.microsoft.com/en-us/dynamics365/fin-ops-core/dev-itpro/data-entities/services-home-page
+ */
+const D365_ODATA_CROSS_COMPANY_QUERY = "cross-company=true";
+
+/**
  * Get Sales Order Lines by Sales Order Number
  * Returns line items with their InventoryLotId for use in fulfillment
  */
@@ -1168,7 +1176,7 @@ export async function getSalesOrderLines(
   const token = await getAuthToken();
   const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
   const select = "ItemNumber,InventoryLotId,SalesQuantity,SalesPrice,LineDiscountAmount";
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?$filter=${encodeURIComponent(filter)}&$select=${select}`;
+  const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?${D365_ODATA_CROSS_COMPANY_QUERY}&$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
   const response = await pacedFetch(url, {
     method: "GET",
@@ -1223,6 +1231,51 @@ function odataQuotedLiteral(value: string): string {
   return String(value || "").replace(/'/g, "''");
 }
 
+async function getSalesOrderHeaderRowsWithV2Fallback(
+  token: string,
+  filter: string
+): Promise<{ rows: D365SalesOrderHeader[]; entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" }> {
+  const v3Url =
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?${D365_ODATA_CROSS_COMPANY_QUERY}` +
+    `&$filter=${encodeURIComponent(filter)}`;
+  const v3Resp = await pacedFetch(v3Url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (v3Resp.ok) {
+    const data = await v3Resp.json();
+    const rows = Array.isArray(data.value) ? (data.value as D365SalesOrderHeader[]) : [];
+    if (rows.length > 0) return { rows, entity: "SalesOrderHeadersV3" };
+  } else {
+    const err = await v3Resp.text();
+    console.warn(`[D365] SalesOrderHeadersV3 lookup failed (${v3Resp.status}); falling back to V2`);
+    console.warn(`[D365] SalesOrderHeadersV3 error: ${err.slice(0, 200)}`);
+  }
+
+  const v2Url =
+    `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2?${D365_ODATA_CROSS_COMPANY_QUERY}` +
+    `&$filter=${encodeURIComponent(filter)}`;
+  const v2Resp = await pacedFetch(v2Url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!v2Resp.ok) {
+    const err = await v2Resp.text();
+    throw new Error(
+      `[D365] SalesOrderHeaders fallback lookup failed: V2 ${v2Resp.status} - ${err.slice(0, 500)}`
+    );
+  }
+  const data = await v2Resp.json();
+  const rows = Array.isArray(data.value) ? (data.value as D365SalesOrderHeader[]) : [];
+  return { rows, entity: "SalesOrderHeadersV2" };
+}
+
 /**
  * GET `SalesOrderHeadersV3` by composite key (often succeeds when $filter returns empty for the same tuple).
  */
@@ -1241,7 +1294,7 @@ export async function getSalesOrderHeaderV3ByKey(
 
   const token = await getAuthToken();
   const segment = `SalesOrderHeadersV3(dataAreaId='${odataQuotedLiteral(area)}',SalesOrderNumber='${odataQuotedLiteral(so)}')`;
-  const url = `${config.dynamics.baseUrl}/data/${segment}`;
+  const url = `${config.dynamics.baseUrl}/data/${segment}?${D365_ODATA_CROSS_COMPANY_QUERY}`;
 
   const response = await pacedFetch(url, {
     method: "GET",
@@ -1324,18 +1377,14 @@ export async function getSalesOrderHeadersBySalesOrderNumberLoose(
 
   const token = await getAuthToken();
   const inner = `SalesOrderNumber eq '${odataQuotedLiteral(so)}'`;
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(inner)}`;
-
-  const response = await pacedFetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
+  let rows: D365SalesOrderHeader[] = [];
+  let entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" = "SalesOrderHeadersV3";
+  try {
+    const result = await getSalesOrderHeaderRowsWithV2Fallback(token, inner);
+    rows = result.rows;
+    entity = result.entity;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (trace) {
       logD365ODataTrace({
         ...trace,
@@ -1343,20 +1392,15 @@ export async function getSalesOrderHeadersBySalesOrderNumberLoose(
         dataAreaId: "_any",
         salesOrderNumber: so,
         odataFilter: inner,
-        httpStatus: response.status,
+        httpStatus: 500,
         valueCount: 0,
         ok: false,
-        errorSnippet: error.slice(0, 500),
+        errorSnippet: message.slice(0, 500),
       });
     }
-    console.warn(
-      `[D365] Loose SalesOrderNumber lookup not available or failed (${response.status}) — ${error.slice(0, 200)}`
-    );
+    console.warn(`[D365] Loose SalesOrderNumber lookup not available or failed — ${message}`);
     return { header: null, totalMatches: 0 };
   }
-
-  const result = await response.json();
-  const rows: D365SalesOrderHeader[] = Array.isArray(result.value) ? result.value : [];
   if (rows.length === 0) {
     if (trace) {
       logD365ODataTrace({
@@ -1365,9 +1409,10 @@ export async function getSalesOrderHeadersBySalesOrderNumberLoose(
         dataAreaId: "_any",
         salesOrderNumber: so,
         odataFilter: inner,
-        httpStatus: response.status,
+        httpStatus: 200,
         valueCount: 0,
         ok: false,
+        salesOrderHeadersEntity: entity,
       });
     }
     return { header: null, totalMatches: 0 };
@@ -1393,11 +1438,12 @@ export async function getSalesOrderHeadersBySalesOrderNumberLoose(
       dataAreaId: chosen.dataAreaId || "_any",
       salesOrderNumber: so,
       odataFilter: inner,
-      httpStatus: response.status,
+      httpStatus: 200,
       valueCount: rows.length,
       matchedSalesOrderNumber: chosen.SalesOrderNumber ?? null,
       matchedDataAreaId: chosen.dataAreaId ?? null,
       ok: true,
+      salesOrderHeadersEntity: entity,
     });
   }
 
@@ -1427,18 +1473,14 @@ export async function getSalesOrderByShopifyId(
 
   const token = await getAuthToken();
   const filter = `dataAreaId eq '${odataQuotedLiteral(dataAreaId)}' and THK_ShopifyReference eq '${odataQuotedLiteral(shopifyOrderId)}'`;
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(filter)}`;
-
-  const response = await pacedFetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
+  let rows: D365SalesOrderHeader[] = [];
+  let entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" = "SalesOrderHeadersV3";
+  try {
+    const result = await getSalesOrderHeaderRowsWithV2Fallback(token, filter);
+    rows = result.rows;
+    entity = result.entity;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (trace) {
       logD365ODataTrace({
         ...trace,
@@ -1446,31 +1488,29 @@ export async function getSalesOrderByShopifyId(
         dataAreaId,
         thkShopifyReference: shopifyOrderId,
         odataFilter: filter,
-        httpStatus: response.status,
+        httpStatus: 500,
         valueCount: 0,
         ok: false,
-        errorSnippet: error.slice(0, 500),
+        errorSnippet: message.slice(0, 500),
       });
     }
-    throw new Error(`[D365] Failed to get sales order: ${response.status} - ${error}`);
+    throw new Error(`[D365] Failed to get sales order: ${message}`);
   }
-
-  const result = await response.json();
-  const order = result.value?.[0] || null;
+  const order = rows[0] || null;
 
   if (trace) {
-    const vc = Array.isArray(result.value) ? result.value.length : 0;
     logD365ODataTrace({
       ...trace,
       op: "SalesOrderHeadersV3_BY_SHOPIFY_REF",
       dataAreaId,
       thkShopifyReference: shopifyOrderId,
       odataFilter: filter,
-      httpStatus: response.status,
-      valueCount: vc,
+      httpStatus: 200,
+      valueCount: rows.length,
       matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
       matchedDataAreaId: order?.dataAreaId ?? null,
       ok: Boolean(order),
+      salesOrderHeadersEntity: entity,
     });
   }
 
@@ -1479,7 +1519,7 @@ export async function getSalesOrderByShopifyId(
   } else {
     console.log(`[D365] No order found for Shopify ID: ${shopifyOrderId}`);
     console.log(`[D365] Query used: ${filter}`);
-    console.log(`[D365] Response: ${JSON.stringify(result)}`);
+    console.log(`[D365] Response rows: ${rows.length} via ${entity}`);
   }
 
   return order;
@@ -1514,18 +1554,14 @@ export async function getSalesOrderByNumber(
     return byKey;
   }
 
-  const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?$filter=${encodeURIComponent(filter)}`;
-
-  const response = await pacedFetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
+  let rows: D365SalesOrderHeader[] = [];
+  let entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" = "SalesOrderHeadersV3";
+  try {
+    const result = await getSalesOrderHeaderRowsWithV2Fallback(token, filter);
+    rows = result.rows;
+    entity = result.entity;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (trace) {
       logD365ODataTrace({
         ...trace,
@@ -1533,31 +1569,29 @@ export async function getSalesOrderByNumber(
         dataAreaId: area,
         salesOrderNumber: so,
         odataFilter: filter,
-        httpStatus: response.status,
+        httpStatus: 500,
         valueCount: 0,
         ok: false,
-        errorSnippet: error.slice(0, 500),
+        errorSnippet: message.slice(0, 500),
       });
     }
-    throw new Error(`[D365] Failed to get sales order by number: ${response.status} - ${error}`);
+    throw new Error(`[D365] Failed to get sales order by number: ${message}`);
   }
-
-  const result = await response.json();
-  const order = result.value?.[0] || null;
+  const order = rows[0] || null;
 
   if (trace) {
-    const vc = Array.isArray(result.value) ? result.value.length : 0;
     logD365ODataTrace({
       ...trace,
       op: "SalesOrderHeadersV3_BY_SALES_ORDER_NUMBER",
       dataAreaId: area,
       salesOrderNumber: so,
       odataFilter: filter,
-      httpStatus: response.status,
-      valueCount: vc,
+      httpStatus: 200,
+      valueCount: rows.length,
       matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
       matchedDataAreaId: order?.dataAreaId ?? null,
       ok: Boolean(order),
+      salesOrderHeadersEntity: entity,
     });
   }
 

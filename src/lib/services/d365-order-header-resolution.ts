@@ -15,6 +15,18 @@ import { fetchD365HintByShopifyOrderId } from "./supabase-order-lookup";
 
 const MAX_THK_REF_AUDIT_ROWS = 25;
 
+function looksLikeHubOrTestOrder(tags: string | null | undefined): boolean {
+  if (!tags || typeof tags !== "string") return false;
+  const t = tags.toLowerCase();
+  return (
+    t.includes("mass-test") ||
+    t.includes("test-order") ||
+    t.includes("battle-hub-test") ||
+    t.includes("battle-hub-bulk") ||
+    t.includes("battle-hub-created")
+  );
+}
+
 function dynamicsTenantHost(): string {
   try {
     const u = config.dynamics.baseUrl?.trim();
@@ -34,6 +46,8 @@ export type ResolveD365OrderHeaderInput = {
   preferredDataAreaId?: string | null;
   /** When set, emits `RefundTraceLifecycle` + passes through to OData trace lines */
   trace?: D365ODataTraceContext;
+  /** Shopify REST `tags` (comma-separated) — audit only */
+  orderTags?: string | null;
 };
 
 /** Serializable summary for Inngest step output (not full OData entity). */
@@ -71,6 +85,8 @@ export type D365HeaderResolutionAudit = {
   hubSalesOrderNumberAbsentInDynamicsTenant?: boolean;
   /** Why resolution failed (mainly `not_found`) */
   notFoundDiagnosis?: string;
+  /** Shopify order tags (comma-separated) — e.g. mass-test / test-order */
+  shopifyOrderTags?: string | null;
   resolvedHeaderSummary: {
     SalesOrderNumber?: string;
     dataAreaId?: string;
@@ -91,6 +107,10 @@ async function resolveD365OrderHeaderCore(
   const shopifyOrderId = String(input.shopifyOrderId);
   const shopifyOrderName =
     typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() || null : null;
+  const orderTags =
+    typeof input.orderTags === "string" && input.orderTags.trim()
+      ? input.orderTags.trim()
+      : null;
 
   const odataBySalesOrderNumberDataAreasTried: string[] = [];
   const odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }> = [];
@@ -113,6 +133,7 @@ async function resolveD365OrderHeaderCore(
         odataByThkRefAttempts,
         outcome: "not_found",
         dynamicsTenantHost: host || undefined,
+        shopifyOrderTags: orderTags,
         resolvedHeaderSummary: null,
       },
     };
@@ -234,6 +255,7 @@ async function resolveD365OrderHeaderCore(
             outcome: "resolved_by_sales_order_number",
             dynamicsTenantHost: host || undefined,
             warehouseHintDataAreaId,
+            shopifyOrderTags: orderTags,
             resolvedHeaderSummary: {
               SalesOrderNumber: found.SalesOrderNumber,
               dataAreaId: found.dataAreaId || dataAreaId,
@@ -295,6 +317,7 @@ async function resolveD365OrderHeaderCore(
             outcome: "resolved_by_thk_shopify_ref",
             dynamicsTenantHost: host || undefined,
             warehouseHintDataAreaId,
+            shopifyOrderTags: orderTags,
             resolvedHeaderSummary: {
               SalesOrderNumber: found.SalesOrderNumber,
               dataAreaId: found.dataAreaId || dataAreaId,
@@ -341,6 +364,7 @@ async function resolveD365OrderHeaderCore(
           salesOrderNumberLooseMatchCount: looseResult.totalMatches,
           dynamicsTenantHost: host || undefined,
           warehouseHintDataAreaId,
+          shopifyOrderTags: orderTags,
           resolvedHeaderSummary: {
             SalesOrderNumber: loose.SalesOrderNumber,
             dataAreaId: loose.dataAreaId ?? null,
@@ -371,11 +395,16 @@ async function resolveD365OrderHeaderCore(
     );
   }
 
-  const notFoundDiagnosis = hubAbsent
+  let notFoundDiagnosis = hubAbsent
     ? `Hub has d365_order_number=${hint?.d365OrderNumber} but that SalesOrderNumber does not exist in Dynamics tenant ${host || "(unknown)"} (loose OData returned 0). Data is stale or Bus uses a different D365 environment than where the order was posted.`
     : hint?.d365OrderNumber
       ? `No SalesOrderHeadersV3 row for THK refs tried; SalesOrderNumber ${hint.d365OrderNumber} also unmatched after area + loose queries.`
       : `No Supabase d365_order_number for this Shopify order; THK_ShopifyReference lookups returned no header.`;
+
+  if (hubAbsent && looksLikeHubOrTestOrder(orderTags)) {
+    notFoundDiagnosis +=
+      " Shopify tags suggest a Hub/mass-test order: Hub may have written d365_order_number without a matching D365 UAT sales order — fix or clear orders.d365_order_number for this row.";
+  }
 
   return {
     header: null,
@@ -395,6 +424,7 @@ async function resolveD365OrderHeaderCore(
       warehouseHintDataAreaId,
       hubSalesOrderNumberAbsentInDynamicsTenant: hubAbsent,
       notFoundDiagnosis,
+      shopifyOrderTags: orderTags,
       resolvedHeaderSummary: null,
     },
   };
