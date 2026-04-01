@@ -295,11 +295,36 @@ export const processShopifyFulfillment = inngest.createFunction(
       }
 
       try {
+        console.log(
+          `[Fulfillment] Prepayment diagnostic context: ${JSON.stringify({
+            shopifyOrderId,
+            shopifyOrderName,
+            salesOrderNumber: d365Order.SalesOrderNumber,
+            dataAreaId,
+            orderTotal: order.total_price,
+            fulfillmentStatus: order.fulfillment_status,
+            financialStatus: order.financial_status,
+            d365SalesOrderStatus: d365Order.SalesOrderStatus,
+            d365ProcessingStatus: d365Order.SalesOrderProcessingStatus,
+            d365InvoiceType: d365Order.InvoiceType,
+            d365OrderTotalAmount: d365Order.OrderTotalAmount,
+            d365SalesAmount: d365Order.THK_SalesAmount,
+            successfulFulfillmentIds: fulfillmentResults
+              .filter((r: { status: string }) => r.status === "success")
+              .map((r: { fulfillmentId: string | number }) => r.fulfillmentId),
+          })}`
+        );
         const result = await dynamics.createPrepayment(d365Order.SalesOrderNumber, dataAreaId);
         console.log(`[Fulfillment] D365 prepayment posted for ${shopifyOrderName}: ${d365Order.SalesOrderNumber}`);
         return { status: "success", salesOrderNumber: d365Order.SalesOrderNumber, result };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
+        if (errorMsg.toLowerCase().includes("no invoice amount")) {
+          console.warn(
+            `[Fulfillment] Prepayment failed with 'No invoice amount'. This usually means ` +
+              `D365 has nothing invoiceable left on this sales order at the time PostPrepayment ran.`
+          );
+        }
         console.error(`[Fulfillment] D365 prepayment failed for ${shopifyOrderName}: ${errorMsg}`);
         await slack.sendWarningMessage(
           "dynamics",

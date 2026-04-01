@@ -966,6 +966,7 @@ export async function createPrepayment(
   };
 
   console.log(`[D365] Creating prepayment for: ${salesOrderNumber}`);
+  console.log(`[D365] PostPrepayment request payload: ${JSON.stringify(body)}`);
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would create prepayment for ${salesOrderNumber}`);
@@ -995,6 +996,28 @@ export async function createPrepayment(
 
   if (!response.ok) {
     const error = await response.text();
+    let parsed: {
+      Message?: string;
+      ExceptionType?: string;
+      ActivityId?: string;
+    } | null = null;
+    try {
+      parsed = JSON.parse(error) as {
+        Message?: string;
+        ExceptionType?: string;
+        ActivityId?: string;
+      };
+    } catch {
+      parsed = null;
+    }
+    if (parsed) {
+      console.error(
+        `[D365] PostPrepayment HTTP error details: ` +
+          `ExceptionType=${parsed.ExceptionType || "n/a"}, ` +
+          `ActivityId=${parsed.ActivityId || "n/a"}, ` +
+          `Message=${parsed.Message || "n/a"}`
+      );
+    }
     // Idempotency: some tenants return 500 DuplicateKeyException when prepayment
     // already exists for the same sales order. Treat this as already processed.
     if (
@@ -1023,8 +1046,10 @@ export async function createPrepayment(
   const result: D365ThkApiResponse = await response.json();
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    console.error(`[D365] PostPrepayment THK response: ${JSON.stringify(result)}`);
     throw new Error(
-      `[D365] THK API failed to create prepayment for ${salesOrderNumber}: ${result.Message}`
+      `[D365] THK API failed to create prepayment for ${salesOrderNumber}: ${result.Message}` +
+        `${result.Result ? ` (Result=${result.Result})` : ""}`
     );
   }
 
