@@ -31,6 +31,7 @@ import {
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
+import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
@@ -94,20 +95,21 @@ export const processShopifyFulfillment = inngest.createFunction(
       };
     }
 
-    // Get D365 order
+    // Get D365 order (Supabase d365_order_number by Shopify name first — same as refund)
     const d365Order = await step.run("get-d365-order", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return null;
-      }
-
-      // Determine data area from first non-GPS fulfillment location
       const nonGpsFulfillment = fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps);
-      const dataAreaId = nonGpsFulfillment
-        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "") ?? config.dynamics.dataAreaId
+      const preferredDataAreaId = nonGpsFulfillment
+        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "") ??
+          config.dynamics.dataAreaId
         : config.dynamics.dataAreaId;
 
-      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
-      return dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
+      const orderPayload = order as ShopifyOrderPayload;
+      return resolveD365OrderHeaderForLifecycle({
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName: shopifyOrderName || orderPayload?.name,
+        shippingCountryCode: orderPayload?.shipping_address?.country_code,
+        preferredDataAreaId,
+      });
     });
 
     if (!d365Order) {
