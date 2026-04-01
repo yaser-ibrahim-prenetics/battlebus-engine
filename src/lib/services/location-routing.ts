@@ -27,6 +27,7 @@ import { createClient } from "@supabase/supabase-js";
 import { config } from "@/lib/config";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import warehouseConfig from "../mappings/warehouse-config.json";
 
 // ============================================================================
 // Types
@@ -570,6 +571,78 @@ export async function findLocationByWarehouseName(
       String(m.warehouseName || "").trim().toLowerCase() === name
   );
   return match || null;
+}
+
+// ---------------------------------------------------------------------------
+// Stord: Shopify location ID missing from Hub (rename / new warehouse in Shopify)
+// ---------------------------------------------------------------------------
+
+type OrderLineForStordCheck = {
+  requires_shipping?: boolean;
+  gift_card?: boolean;
+  fulfillment_service?: string;
+};
+
+/** True when every shippable line uses Shopify's Stord fulfillment service. */
+export function orderShippableLinesAllUseStordFulfillment(order: {
+  line_items?: OrderLineForStordCheck[];
+}): boolean {
+  const lines = order.line_items || [];
+  const shippable = lines.filter(
+    (li) => li?.requires_shipping !== false && li?.gift_card !== true
+  );
+  if (shippable.length === 0) return false;
+  return shippable.every(
+    (li) => String(li?.fulfillment_service || "").toLowerCase() === "stord"
+  );
+}
+
+/**
+ * Which Stord Battle Hub profile to use for a ship-to country.
+ * Mirrors EU vs non-EU split (same country bucket as GPS UK routing).
+ */
+export function stordWarehouseNameForShipCountry(
+  countryCode: string
+): "STORD ATL Location" | "STORD EU Location" {
+  const code = (countryCode || "").toUpperCase();
+  const table = warehouseConfig.countryRouting as Record<string, string>;
+  return table[code] === "GPS UK Warehouse" ? "STORD EU Location" : "STORD ATL Location";
+}
+
+/**
+ * When the fulfillment FO points at a Shopify location ID that is not yet in
+ * Battle Hub, but the order is only Stord-fulfilled lines, route using the
+ * existing STORD ATL or STORD EU location row (warehouse + dataAreaId).
+ */
+export async function resolveStordHubWhenFulfillmentLocationUnmapped(
+  order: { line_items?: OrderLineForStordCheck[] },
+  countryCode: string,
+  store = "im8"
+): Promise<{
+  warehouseName: string;
+  dataAreaId: string;
+  hubShopifyLocationId: string;
+} | null> {
+  if (!orderShippableLinesAllUseStordFulfillment(order)) return null;
+
+  const whName = stordWarehouseNameForShipCountry(countryCode);
+  const hub = await findLocationByWarehouseName(whName, store);
+  if (!hub?.shopifyLocationId || !hub.warehouseName || !hub.dynamicsDataAreaId) {
+    return null;
+  }
+
+  const dataAreaId = await getDataAreaIdForLocationAndCountry(
+    hub.shopifyLocationId,
+    countryCode,
+    store
+  );
+  if (!dataAreaId) return null;
+
+  return {
+    warehouseName: hub.warehouseName,
+    dataAreaId,
+    hubShopifyLocationId: hub.shopifyLocationId,
+  };
 }
 
 /**

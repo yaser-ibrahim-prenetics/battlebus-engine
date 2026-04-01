@@ -57,6 +57,16 @@ interface InventorySyncPayload {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!config.features.enableInventorySync) {
+      return NextResponse.json(
+        {
+          error: "Inventory sync is disabled",
+          hint: "Set ENABLE_INVENTORY_SYNC=true to allow mesh sync writes.",
+        },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const fromPlatform = searchParams.get("from") as Platform | null;
     const toPlatforms = searchParams

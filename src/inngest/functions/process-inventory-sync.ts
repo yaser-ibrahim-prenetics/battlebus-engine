@@ -16,6 +16,7 @@ import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { config } from "@/lib/config";
 
 export const processInventorySync = inngest.createFunction(
   {
@@ -34,6 +35,16 @@ export const processInventorySync = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     const { inventoryItemId, locationId, shopifyStore, inventoryJson } = event.data;
     const inventory = inventoryJson as ShopifyInventoryLevelPayload;
+
+    if (!config.features.enableInventorySync) {
+      console.log(`[InventorySync] Skipped — ENABLE_INVENTORY_SYNC is false`);
+      return {
+        status: "skipped",
+        reason: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
+        inventoryItemId,
+        locationId,
+      };
+    }
 
     console.log(`[InventorySync] ========================================`);
     console.log(`[InventorySync] Processing inventory update from ${shopifyStore}`);

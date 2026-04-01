@@ -563,57 +563,63 @@ export async function POST(request: NextRequest) {
 
       // Inventory level updated - sync stock levels to D365 & GPS via mesh
       case "inventory_levels/update":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);
-        // Use the mesh API pattern - send to mesh which routes to destinations
-        const sentDynamics = await sendInngestEvent(
-          {
-            id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-            name: "inventory/sync",
-            data: {
-              source: "shopify",
-              destination: "dynamics",
-              payload: {
-                inventoryItemId: String(payload.inventory_item_id),
-                locationId: String(payload.location_id),
-                available: payload.available,
-                quantity: payload.available,
-                action: "update",
-                source: "shopify",
-                timestamp: payload.updated_at || new Date().toISOString(),
-              },
-            },
-          },
-          requestId
-        );
-        // Also sync to GPS warehouse
-        const sentGps = await sendInngestEvent(
-          {
-            id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-            name: "inventory/sync",
-            data: {
-              source: "shopify",
-              destination: "gps",
-              payload: {
-                inventoryItemId: String(payload.inventory_item_id),
-                locationId: String(payload.location_id),
-                available: payload.available,
-                quantity: payload.available,
-                action: "update",
-                source: "shopify",
-                timestamp: payload.updated_at || new Date().toISOString(),
-              },
-            },
-          },
-          requestId
-        );
-        if (sentDynamics && sentGps) {
+        if (!config.features.enableInventorySync) {
           console.log(
-            `[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`
+            `[Webhook] [${requestId}] ⏭️  inventory_levels/update ignored (ENABLE_INVENTORY_SYNC=false)`
           );
         } else {
-          console.log(
-            `[Webhook] [${requestId}] ⚠️  Queued inventory/sync events (Inngest unavailable)`
+          console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);
+          // Use the mesh API pattern - send to mesh which routes to destinations
+          const sentDynamics = await sendInngestEvent(
+            {
+              id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+              name: "inventory/sync",
+              data: {
+                source: "shopify",
+                destination: "dynamics",
+                payload: {
+                  inventoryItemId: String(payload.inventory_item_id),
+                  locationId: String(payload.location_id),
+                  available: payload.available,
+                  quantity: payload.available,
+                  action: "update",
+                  source: "shopify",
+                  timestamp: payload.updated_at || new Date().toISOString(),
+                },
+              },
+            },
+            requestId
           );
+          // Also sync to GPS warehouse
+          const sentGps = await sendInngestEvent(
+            {
+              id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+              name: "inventory/sync",
+              data: {
+                source: "shopify",
+                destination: "gps",
+                payload: {
+                  inventoryItemId: String(payload.inventory_item_id),
+                  locationId: String(payload.location_id),
+                  available: payload.available,
+                  quantity: payload.available,
+                  action: "update",
+                  source: "shopify",
+                  timestamp: payload.updated_at || new Date().toISOString(),
+                },
+              },
+            },
+            requestId
+          );
+          if (sentDynamics && sentGps) {
+            console.log(
+              `[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`
+            );
+          } else {
+            console.log(
+              `[Webhook] [${requestId}] ⚠️  Queued inventory/sync events (Inngest unavailable)`
+            );
+          }
         }
         break;
 

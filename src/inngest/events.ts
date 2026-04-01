@@ -23,6 +23,8 @@ export type ShopifyRefundCreatedEvent = {
     shopifyStore: string;
     refundJson: ShopifyRefundPayload;
     receivedAt: string;
+    /** Set when replaying from drain-pending-actions (do not re-queue indefinitely). */
+    fromDrain?: boolean;
   };
 };
 

@@ -163,6 +163,11 @@ export const config = {
     enabledShopifyRiskMock: false,
     enabledShopifyOrderMock: false,
     enabledShopifyCreateFulfillmentMock: false,
+    /**
+     * Cross-system inventory pushes (Shopify ↔ D365 ↔ GPS mesh, webhooks, full sync).
+     * When false, inventory can still be read via list/unified APIs and Hub cache refresh (sync-gps).
+     */
+    enableInventorySync: process.env.ENABLE_INVENTORY_SYNC !== "false",
     enabledGpsOutboundMock: false,
   },
 

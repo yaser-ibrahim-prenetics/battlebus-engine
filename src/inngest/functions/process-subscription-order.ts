@@ -32,6 +32,7 @@ import {
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
   findLocationByWarehouseName,
+  resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse } from "@/lib/helpers/warehouse";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
@@ -337,6 +338,26 @@ export const processSubscriptionOrder = inngest.createFunction(
           warehouseNameFromLocation = intendedWarehouse;
           console.log(
             `[Subscription Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
+          );
+        }
+      }
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        const stordHub = await resolveStordHubWhenFulfillmentLocationUnmapped(
+          order,
+          country_code,
+          "im8"
+        );
+        if (stordHub) {
+          const unknownLoc = fulfillmentLocationId;
+          locationDataAreaId = stordHub.dataAreaId;
+          warehouseNameFromLocation = stordHub.warehouseName;
+          fulfillmentLocationId = Number(stordHub.hubShopifyLocationId);
+          console.warn(
+            `[Subscription Routing] ${shopifyOrderName}: fulfillment location ${unknownLoc} is not in Battle Hub; ` +
+              `all lines use fulfillment_service=stord — using configured "${stordHub.warehouseName}" ` +
+              `(hub Shopify location id ${stordHub.hubShopifyLocationId}). ` +
+              `Add or update this location in Battle Hub (shopify_location_id=${unknownLoc}).`
           );
         }
       }

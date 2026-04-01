@@ -98,6 +98,18 @@ export const processInventoryMesh = inngest.createFunction(
   },
   async ({ event, step }: { event: any; step: any }) => {
     const { source, destination, payload } = event.data;
+
+    if (!config.features.enableInventorySync) {
+      console.log(
+        `[InventoryMesh] Skipped ${source} → ${destination} — ENABLE_INVENTORY_SYNC is false`
+      );
+      return {
+        status: "skipped",
+        reason: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
+        source,
+        destination,
+      };
+    }
     const inventory = payload as InventorySyncPayload;
 
     console.log(`[InventoryMesh] ========================================`);

@@ -698,6 +698,8 @@ export interface ShopifyOrder {
   tags: string;
   customer: ShopifyCustomer | null;
   refunds: ShopifyRefund[];
+  /** Present on many API responses; used for FX / refund rate extraction. */
+  transactions?: ShopifyTransaction[];
 }
 
 export interface ShopifyLineItem {

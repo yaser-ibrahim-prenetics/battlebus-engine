@@ -99,7 +99,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
             const result = await inventorySync.runReconciliation(
               MONITORED_SKUS,
               warehouse,
-              true // autoSync enabled
+              config.features.enableInventorySync // when false: discrepancy report only, no writes
             );
             return result;
           } catch (error) {
@@ -202,16 +202,17 @@ export const triggerInventoryReconciliation = inngest.createFunction(
   },
   async ({ step, event }: { step: any; event: any }) => {
     const { skus, warehouse, autoSync = false } = event.data;
+    const effectiveAutoSync = Boolean(autoSync && config.features.enableInventorySync);
 
     console.log(
-      `[InventoryReconciliation] Manual trigger: ${skus?.length || "all"} SKUs, warehouse: ${warehouse || "all"}, autoSync: ${autoSync}`
+      `[InventoryReconciliation] Manual trigger: ${skus?.length || "all"} SKUs, warehouse: ${warehouse || "all"}, autoSync: ${effectiveAutoSync}${!config.features.enableInventorySync && autoSync ? " (forced off: ENABLE_INVENTORY_SYNC=false)" : ""}`
     );
 
     const skusToCheck = skus || MONITORED_SKUS;
 
     // Run reconciliation
     const result = await step.run("run-reconciliation", async () => {
-      return inventorySync.runReconciliation(skusToCheck, warehouse, autoSync);
+      return inventorySync.runReconciliation(skusToCheck, warehouse, effectiveAutoSync);
     });
 
     // Calculate discrepancies for reporting
@@ -241,6 +242,17 @@ export const syncSkuInventory = inngest.createFunction(
   },
   async ({ step, event }: { step: any; event: any }) => {
     const { sku, source, destination, warehouse } = event.data;
+
+    if (!config.features.enableInventorySync) {
+      console.log(`[InventorySync] Skipped ${sku} — ENABLE_INVENTORY_SYNC is false`);
+      return {
+        status: "skipped",
+        reason: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
+        sku,
+        source,
+        destination,
+      };
+    }
 
     console.log(
       `[InventorySync] Syncing ${sku}: ${source} -> ${destination} (${warehouse || "all"})`

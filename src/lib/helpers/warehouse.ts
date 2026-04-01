@@ -358,6 +358,32 @@ export function getActiveRoutingTable(): {
 }
 
 /**
+ * Distinct `dataAreaId` values from warehouse-config (e.g. U001, H007).
+ * Used for D365 `SalesOrderHeadersV3` lookup by `THK_ShopifyReference` when the
+ * legal entity that created the order is not known (e.g. refunds).
+ */
+export function getConfiguredWarehouseDataAreaIds(): string[] {
+  const ids = new Set<string>();
+  for (const w of Object.values(warehouseConfig.warehouses) as WarehouseConfig[]) {
+    if (w.dataAreaId) {
+      ids.add(w.dataAreaId.toUpperCase());
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Preferred order of data areas to try for Shopify reference lookup: country-routed
+ * warehouse first (matches `process-shopify-order` when location routing is not used),
+ * then remaining configured areas.
+ */
+export function getSalesOrderLookupDataAreaCandidates(shippingCountryCode: string): string[] {
+  const routed = resolveCountryRouting(shippingCountryCode || "US").dataAreaId.toUpperCase();
+  const rest = getConfiguredWarehouseDataAreaIds().filter((id) => id !== routed);
+  return [routed, ...rest].filter(Boolean);
+}
+
+/**
  * Get GPS warehouse code for API calls
  */
 export function getGpsWarehouseCode(warehouseName: string): string {

@@ -29,6 +29,7 @@ import {
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
   findLocationByWarehouseName,
+  resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse } from "@/lib/helpers/warehouse";
 import { shouldSplitFulfillmentOrder, isDomesticOrder } from "@/lib/helpers/split";
@@ -159,7 +160,6 @@ export const processShopifyOrder = inngest.createFunction(
     name: "Process Shopify Order",
     idempotency: "event.data.shopifyOrderId",
     retries: RETRY_CONFIGS.DEFAULT,
-    triggers: [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
     throttle: {
       ...THROTTLE_CONFIGS.DYNAMICS,
       key: "event.data.shopifyStore",
@@ -175,6 +175,7 @@ export const processShopifyOrder = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.FULFILLMENT,
       key: "event.data.shopifyOrderId",
     },
+    triggers: [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   },
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
     const { shopifyOrderId: rawShopifyOrderId, shopifyOrderName, orderJson } = event.data;
@@ -404,6 +405,18 @@ export const processShopifyOrder = inngest.createFunction(
     order = skuResolution.updatedOrder as ShopifyOrderPayload;
 
     if (skuResolution.unresolved.length > 0) {
+      const lineItemsAfterPatch = Array.isArray(order?.line_items) ? order.line_items : [];
+      const unresolvedIdx = new Set(
+        skuResolution.unresolved.map((u: { index: number }) => u.index)
+      );
+      const filteredLineItems = lineItemsAfterPatch.filter((_, idx) => !unresolvedIdx.has(idx));
+
+      const hasShippableWithSku = filteredLineItems.some((item: any) => {
+        const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
+        const requiresShipping = item?.requires_shipping !== false;
+        return requiresShipping && !!sku;
+      });
+
       const unresolvedSummary = skuResolution.unresolved
         .slice(0, 5)
         .map(
@@ -411,25 +424,46 @@ export const processShopifyOrder = inngest.createFunction(
             `${l.title} (line=${l.index}, variant=${l.variantId ?? "n/a"})`
         )
         .join(", ");
+
+      if (!hasShippableWithSku) {
+        await publishStatus(
+          "resolve-line-skus",
+          "failed",
+          `Unable to resolve SKU for ${skuResolution.unresolved.length} shippable line(s)`
+        );
+        throw new Error(
+          `[D365] Missing SKU/ItemNumber after Shopify variant refresh for ${shopifyOrderName}; ` +
+            `attempted=${skuResolution.attempted}; resolved=${skuResolution.resolved}; ` +
+            `unresolved=${skuResolution.unresolved.length}; sample=${unresolvedSummary}`
+        );
+      }
+
+      console.warn(
+        `[Order] Excluding ${skuResolution.unresolved.length} shippable line(s) with no SKU in Shopify ` +
+          `(GraphQL variant has empty SKU). Remaining lines go to D365/GPS. Sample: ${unresolvedSummary}`
+      );
+      await slack.sendWarningMessage(
+        SlackChannelEnum.SHOPIFY,
+        `Order ${shopifyOrderName}: excluded ${skuResolution.unresolved.length} shippable line(s) without ItemNumber in Shopify — processing remaining SKUs only. Sample: ${unresolvedSummary}`
+      );
+
+      order = { ...order, line_items: filteredLineItems } as ShopifyOrderPayload;
       await publishStatus(
         "resolve-line-skus",
-        "failed",
-        `Unable to resolve SKU for ${skuResolution.unresolved.length} shippable line(s)`
+        "completed",
+        skuResolution.resolved > 0
+          ? `Resolved ${skuResolution.resolved} line(s); excluded ${skuResolution.unresolved.length} unresolvable line(s)`
+          : `Excluded ${skuResolution.unresolved.length} shippable line(s) with empty variant SKU; remaining lines proceed`
       );
-      throw new Error(
-        `[D365] Missing SKU/ItemNumber after Shopify variant refresh for ${shopifyOrderName}; ` +
-          `attempted=${skuResolution.attempted}; resolved=${skuResolution.resolved}; ` +
-          `unresolved=${skuResolution.unresolved.length}; sample=${unresolvedSummary}`
+    } else {
+      await publishStatus(
+        "resolve-line-skus",
+        "completed",
+        skuResolution.resolved > 0
+          ? `Resolved ${skuResolution.resolved} missing SKU line(s) from Shopify variants`
+          : "No missing shippable SKUs found"
       );
     }
-
-    await publishStatus(
-      "resolve-line-skus",
-      "completed",
-      skuResolution.resolved > 0
-        ? `Resolved ${skuResolution.resolved} missing SKU line(s) from Shopify variants`
-        : "No missing shippable SKUs found"
-    );
 
     // Comprehensive order validation - all checks in one place
     await publishStatus("validate-order", "running", "Validating order");
@@ -559,6 +593,26 @@ export const processShopifyOrder = inngest.createFunction(
           warehouseNameFromLocation = intendedWarehouse;
           console.log(
             `[Order Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
+          );
+        }
+      }
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        const stordHub = await resolveStordHubWhenFulfillmentLocationUnmapped(
+          order,
+          countryCode,
+          "im8"
+        );
+        if (stordHub) {
+          const unknownLoc = fulfillmentLocationId;
+          locationDataAreaId = stordHub.dataAreaId;
+          warehouseNameFromLocation = stordHub.warehouseName;
+          fulfillmentLocationId = Number(stordHub.hubShopifyLocationId);
+          console.warn(
+            `[Order Routing] ${shopifyOrderName}: fulfillment location ${unknownLoc} is not in Battle Hub; ` +
+              `all lines use fulfillment_service=stord — using configured "${stordHub.warehouseName}" ` +
+              `(hub Shopify location id ${stordHub.hubShopifyLocationId}). ` +
+              `Add or update this location in Battle Hub (shopify_location_id=${unknownLoc}) so routing stays explicit.`
           );
         }
       }

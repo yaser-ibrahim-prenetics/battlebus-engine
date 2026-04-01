@@ -50,6 +50,23 @@ export const processInventoryFullSync = inngest.createFunction(
     const { syncId, steps, skus, dryRun = false, requestedBy } = event.data;
     const ch = inventorySyncChannel({ syncId });
 
+    if (!config.features.enableInventorySync) {
+      const reason = "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)";
+      console.log(`[InventoryFullSync] Skipped: ${reason}`);
+      try {
+        await publish(ch.status, {
+          syncId,
+          step: "result",
+          status: "failed",
+          message: reason,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn("[InventoryFullSync] publish skipped status failed:", e);
+      }
+      return { syncId, success: false, skipped: true, reason };
+    }
+
     console.log(`[InventoryFullSync] ========================================`);
     console.log(`[InventoryFullSync] Starting full sync: ${syncId}`);
     console.log(`[InventoryFullSync] Steps: ${steps.join(" → ")}`);

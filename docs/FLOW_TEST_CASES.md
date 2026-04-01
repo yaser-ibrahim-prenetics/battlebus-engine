@@ -95,11 +95,11 @@ Verify that a Shopify order (`orders/paid` or `orders/created`) is correctly pro
 
 | Case | Actual result | Status | Evidence | Tester | Date | Notes |
 |---|---|---|---|---|---|---|
-| TC-ORD-001 |  |  |  |  |  |  |
-| TC-ORD-002 |  |  |  |  |  |  |
-| TC-ORD-003 |  |  |  |  |  |  |
-| TC-ORD-004 |  |  |  |  |  |  |
-| TC-ORD-005 |  |  |  |  |  |  |
+| TC-ORD-001 | D365 SO `U001-SO-496889`; GPS outbound `OBS1352603310RX`; Hub order **completed**, **All Synced** | Pass | Shopify **IM8-19150**; Inngest run `01KN14VR4C3W…`; warehouse **GPS Warehouse**; line SKU `IM8-FG-000035` |  | 2026-03-31 | Paid Mar 31 ~1:12 PM; fulfillment still unfulfilled at Shopify (expected pre-ship). |
+| TC-ORD-002 | D365 SO `U001-SO-496899`; no GPS order; Hub **Reached Stord** / Stord path | Pass | Shopify **IM8-19183**; Inngest run `01KN1HR9FY1F…`; warehouse **STORD ATL Location**; SKU `IM8-FG-000224` |  | 2026-03-31 | Matches Stord/non-GPS. **Also observed:** IM8-19153 **HK Warehouse** — D365 `H007-SO-101831`, GPS **N/A** (additional non-GPS datapoint). |
+| TC-ORD-003 | D365 SO `H007-SO-101830`; GPS UK `OBS2262603310RV`; Hub **All Synced** | Pass | Shopify **IM8-19152**; Inngest run `01KN14VRHQXW…`; warehouse **GPS UK Warehouse** (`H007`); line `IM8-FG-000035` |  | 2026-03-31 | Paid Mar 31 ~1:12 PM. |
+| TC-ORD-004 | — | Skipped | — |  | 2026-03-31 | Not executed in this batch (only single-line test orders). |
+| TC-ORD-005 | — | Skipped | — |  | 2026-03-31 | Hub **Rerun** / duplicate-event idempotency not executed in this batch. |
 
 ---
 
@@ -368,10 +368,10 @@ Verify that refunds create a negative sales order line in D365, post a return fu
 
 | Case | Actual result | Status | Evidence | Tester | Date | Notes |
 |---|---|---|---|---|---|---|
-| TC-REF-001 |  |  |  |  |  |  |
+| TC-REF-001 | Not verified in this run (credit note / negative line / return fulfilment not confirmed in D365 UI) | Blocked | Shopify **IM8-19176**; Hub shows D365 `U001-SO-496895`, financial **refunded** |  | 2026-03-31 | Refund function may have **deferred** (see TC-REF-004). After `drain-pending-actions` or replay, re-check D365 for return line + `post-return-invoice` credit note. |
 | TC-REF-002 |  |  |  |  |  |  |
 | TC-REF-003 |  |  |  |  |  |  |
-| TC-REF-004 |  |  |  |  |  |  |
+| TC-REF-004 | `process-shopify-refund` completed with **`store-pending-refund`**: `get-shopify-order` → `get-d365-order` → deferred because **D365 SO was not returned** at refund time (`d365Order` null). Run marked **deferred**, not full D365 refund steps. | Pass | Shopify **IM8-19176** (Daniel Davis, Charlotte); Inngest **01KN1TAKDCWZ67KZEH0N4S619X**; Hub order-processing run **01KN1HR2HW73…** |  | 2026-03-31 | **Why no immediate D365 refund:** `process-refund.ts` only calls `create-d365-refund-line` when `getSalesOrderByShopifyId(shopifyOrder.name)` succeeds. If refund webhook runs **before** that lookup can see the SO (race) or lookup mismatch, refund is **queued** on `orders.pending_actions`. **Fix ops:** ensure order sync completed; run **Flow 7** drain or wait for cron; optional manual replay of `shopify/refund.created`. |
 | TC-REF-005 |  |  |  |  |  |  |
 
 ---
@@ -716,7 +716,7 @@ Fill this after completing all flows:
 
 | Flow | Total cases | Pass | Fail | Blocked | Skipped |
 |---|---|---|---|---|---|
-| 1. Order creation |  |  |  |  |  |
+| 1. Order creation | 5 | 3 | 0 | 0 | 2 |
 | 2. Null SKU recovery |  |  |  |  |  |
 | 3. Backorder & retry |  |  |  |  |  |
 | 4. Cancellation |  |  |  |  |  |

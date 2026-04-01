@@ -6,7 +6,8 @@ import * as warehouseHelper from "@/lib/helpers/warehouse";
 import * as exchangeHelper from "@/lib/helpers/exchange";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import type { ShopifyRefundPayload } from "../events";
+import type { ShopifyRefundCreatedEvent, ShopifyRefundPayload } from "../events";
+import { computeRefundAmountShopifyPresentment } from "@/lib/utils/shopify-refund-amount";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -37,7 +38,7 @@ export const processRefund = inngest.createFunction(
     },
     triggers: [{ event: "shopify/refund.created" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
     const refund = refundJson as ShopifyRefundPayload;
 
@@ -55,16 +56,39 @@ export const processRefund = inngest.createFunction(
     });
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
-    // Use order name since THK_ShopifyReference stores the order name (e.g., #D365-GPS-123)
+    // THK_ShopifyReference is set from Shopify order `name` at header creation (see toD365SalesOrderHeaderV3).
+    // Try shipping-country-routed + all configured data areas (like spock-store finding the SO regardless
+    // of which entity row it lives under) and both `#IM8-123` / `IM8-123` variants — a single default
+    // dataAreaId alone can miss US vs UK legal entities.
     const d365Order = await step.run("get-d365-order", async () => {
       if (!config.features.enableDynamicsSync) {
         return null;
       }
-      return dynamics.getSalesOrderByShopifyId(shopifyOrder.name);
+      const country = shopifyOrder.shipping_address?.country_code || "US";
+      const envArea = (config.dynamics.dataAreaId || "").toUpperCase();
+      const dataAreaIds = [
+        ...warehouseHelper.getSalesOrderLookupDataAreaCandidates(country),
+        envArea,
+      ].filter(Boolean);
+      const uniqueAreas = [...new Set(dataAreaIds)];
+
+      const rawName = typeof shopifyOrder.name === "string" ? shopifyOrder.name.trim() : "";
+      const stripped = rawName.replace(/^#/, "").trim();
+      const refs = [...new Set([rawName, stripped].filter(Boolean))];
+
+      for (const dataAreaId of uniqueAreas) {
+        for (const ref of refs) {
+          const found = await dynamics.getSalesOrderByShopifyId(ref, dataAreaId);
+          if (found) {
+            return found;
+          }
+        }
+      }
+      return null;
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
-      if ((event.data as any).fromDrain) {
+      if ((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain) {
         return {
           status: "failed",
           refundId,
@@ -81,13 +105,15 @@ export const processRefund = inngest.createFunction(
         });
       });
       console.log(
-        `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — D365 order not yet created`
+        `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — ` +
+          `no D365 sales order matched THK_ShopifyReference (order name) in any tried data area, or order not written yet`
       );
       return {
         status: "deferred",
         refundId,
         shopifyOrderId,
-        reason: "D365 order not yet created, refund queued for replay",
+        reason:
+          "D365 SO not found by Shopify reference in any configured data area; queued for replay/drain",
       };
     }
 
@@ -95,31 +121,36 @@ export const processRefund = inngest.createFunction(
       return { status: "skipped", reason: "Dynamics sync disabled" };
     }
 
-    // 3. Determine Warehouse and Refund SKU
+    // 3. Refund SKU + return sites: legal entity comes from the D365 header (dataAreaId).
+    // Return warehouse / location must match that entity’s profile — not shipping country alone.
     const warehouseInfo = await step.run("determine-warehouse-info", async () => {
-      const dataAreaId = (d365Order?.dataAreaId || config.dynamics.dataAreaId || "").toUpperCase();
+      let dataAreaId = (
+        d365Order?.dataAreaId ||
+        config.dynamics.dataAreaId ||
+        ""
+      )
+        .toUpperCase()
+        .trim();
+      if (!dataAreaId) {
+        dataAreaId = warehouseHelper.getDefaultWarehouse().dataAreaId.toUpperCase();
+      }
       const countryCode = shopifyOrder.shipping_address?.country_code || "US";
       const warehouseName = warehouseHelper.determineWarehouse(countryCode);
+      const areaProfile = warehouseHelper.getWarehouseConfigForDataAreaId(dataAreaId);
       const refundSku = warehouseHelper.getRefundSku(warehouseName, dataAreaId);
-      const returnConfig = warehouseHelper.getReturnConfig(warehouseName);
 
       return {
         dataAreaId,
         warehouseName,
         refundSku,
-        returnConfig,
+        returnConfig: areaProfile.return,
       };
     });
 
     // 4. Calculate Refund Amount (for the negative line price)
     // Note: In spock-store, price is positive, quantity is negative (-1).
     const refundAmount = await step.run("calculate-refund-amount", async () => {
-      const totalAmount =
-        refund.transactions
-          ?.filter((tx) => tx.kind === "refund" && tx.status === "success")
-          .reduce((sum, tx) => sum + parseFloat(tx.amount || "0"), 0) || 0;
-
-      return totalAmount;
+      return computeRefundAmountShopifyPresentment(refund);
     });
 
     // 4b. Convert refund amount to USD if order is in a different currency
@@ -264,6 +295,11 @@ export const processRefund = inngest.createFunction(
       }
     });
 
+    const creditNoteNumber =
+      invoiceResult.status === "success" && "creditNoteNumber" in invoiceResult
+        ? invoiceResult.creditNoteNumber
+        : undefined;
+
     const result = {
       status: "success",
       refundId,
@@ -274,8 +310,7 @@ export const processRefund = inngest.createFunction(
       exchangeRateInfo,
       refundSku: warehouseInfo.refundSku,
       lotId: refundLine.InventoryLotId,
-      creditNoteNumber:
-        invoiceResult.status === "success" ? invoiceResult.creditNoteNumber : undefined,
+      creditNoteNumber,
       invoiceResult: invoiceResult.status,
       processedAt: new Date().toISOString(),
     };

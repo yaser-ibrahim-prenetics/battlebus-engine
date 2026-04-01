@@ -395,6 +395,17 @@ export async function queryShopifyInventory(
 export async function syncGpsToD365(sku: string, warehouseName: string): Promise<SyncResult> {
   console.log(`[InventorySync] Syncing GPS -> D365: ${sku} in ${warehouseName}`);
 
+  if (!config.features.enableInventorySync) {
+    return {
+      success: false,
+      message: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
+      sku,
+      source: "gps",
+      destination: "d365",
+      error: "INVENTORY_SYNC_DISABLED",
+    };
+  }
+
   const mapping = await getWarehouseMapping(warehouseName);
   if (!mapping) {
     return {
@@ -500,6 +511,17 @@ export async function syncD365ToShopify(
   dataAreaId: string = config.dynamics.dataAreaId
 ): Promise<SyncResult> {
   console.log(`[InventorySync] Syncing D365 -> Shopify: ${sku}`);
+
+  if (!config.features.enableInventorySync) {
+    return {
+      success: false,
+      message: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
+      sku,
+      source: "d365",
+      destination: "shopify",
+      error: "INVENTORY_SYNC_DISABLED",
+    };
+  }
 
   try {
     // Get D365 inventory level
