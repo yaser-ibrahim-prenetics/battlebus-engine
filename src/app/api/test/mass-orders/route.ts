@@ -507,9 +507,9 @@ export async function POST(req: NextRequest) {
       testRunId: providedRunId,
     } = body;
 
-    if (typeof count !== "number" || count < 1 || count > 500) {
+    if (typeof count !== "number" || count < 1 || count > 10000) {
       return jsonWithCors(
-        { error: "count must be 1–500" },
+        { error: "count must be 1–10000" },
         { status: 400 },
         req.headers.get("origin")
       );
