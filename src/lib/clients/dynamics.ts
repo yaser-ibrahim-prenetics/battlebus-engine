@@ -1173,6 +1173,28 @@ export async function createFulfilment(
   );
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    const thkMessage = String(result.Message || "").toLowerCase();
+    const isAlreadyProcessedLikeState =
+      thkMessage.includes("over qty") ||
+      thkMessage.includes("already invoiced") ||
+      thkMessage.includes("partially invoiced");
+
+    // THK may return status=0 for idempotent-ish states where shipment can't be posted again
+    // because the line is already processed/invoiced. Treat as non-fatal to keep sync progressing.
+    if (isAlreadyProcessedLikeState) {
+      console.warn(
+        `[D365] Fulfilment treated as idempotent success for ${salesOrderNumber}: ${result.Message}`
+      );
+      return {
+        response: {
+          status: DYNAMICS_THK_API_SUCCESS_STATUS,
+          Message: "FULFILMENT_ALREADY_PROCESSED",
+          Result: result.Result || "",
+          $id: result.$id || "FULFILMENT_ALREADY_PROCESSED",
+        },
+        request: body,
+      };
+    }
     throw new Error(
       `[D365] THK API failed to create fulfilment for ${salesOrderNumber}: ${result.Message}`
     );
