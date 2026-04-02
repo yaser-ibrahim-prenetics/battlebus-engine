@@ -4,6 +4,7 @@ import { config } from "@/lib/config";
 import {
   extractGpsFulfilmentData,
   getDataAreaId,
+  getFulfilmentConfig,
   isValidGpsWarehouse,
 } from "@/lib/helpers/warehouse";
 import { filterDummySkus } from "@/lib/utils/validation";
@@ -25,6 +26,7 @@ import * as slack from "@/lib/clients/slack";
 import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
+import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
@@ -176,11 +178,13 @@ export const processGpsIndividual = inngest.createFunction(
       const dataAreaId = getDataAreaId(warehouse);
       console.log(`[GPS Individual] Syncing to D365 with dataAreaId: ${dataAreaId}`);
 
-      // Find D365 order by Shopify order name
-      const d365Order = await dynamics.getSalesOrderByShopifyId(
-        fulfilmentData.shopifyOrderName,
-        dataAreaId
-      );
+      // Use the same resolver flow as other lifecycle handlers (Supabase hint + OData fallbacks).
+      const d365Order = await resolveD365OrderHeaderForLifecycle({
+        shopifyOrderId: String(shopifyOrder.id),
+        shopifyOrderName: fulfilmentData.shopifyOrderName || shopifyOrder.name,
+        shippingCountryCode: shopifyOrder.shipping_address?.country_code,
+        preferredDataAreaId: dataAreaId,
+      });
       if (!d365Order?.SalesOrderNumber) {
         console.log(`[GPS Individual] D365 order not found for ${fulfilmentData.shopifyOrderName}`);
         return { skipped: true, reason: `D365 order not found ${fulfilmentData.shopifyOrderName}` };
@@ -199,6 +203,8 @@ export const processGpsIndividual = inngest.createFunction(
       const shippedDate =
         fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
 
+      const fulfilmentConfig = getFulfilmentConfig(warehouse);
+
       // Create fulfilment (packing slip)
       await dynamics.createFulfilment({
         salesOrderNumber: d365Order.SalesOrderNumber,
@@ -209,9 +215,9 @@ export const processGpsIndividual = inngest.createFunction(
           itemNumber: item.sku,
           quantity: item.quantity,
           trackingNumber: fulfilmentData.trackingNumber,
-          shippingSiteId: "",
-          shippingWarehouseId: "",
-          shippingWarehouseLocationId: "",
+          shippingSiteId: fulfilmentConfig.shippingSiteId,
+          shippingWarehouseId: fulfilmentConfig.shippingWarehouseId,
+          shippingWarehouseLocationId: fulfilmentConfig.shippingWarehouseLocationId,
           lotId: lotIdMap[item.sku] || "",
         })),
       });

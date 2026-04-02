@@ -958,6 +958,7 @@ export async function createPrepayment(
   salesOrderNumber: string,
   dataAreaId: string
 ): Promise<{ response: D365ThkApiResponse; request: object }> {
+  const endpoint = `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/PostPrepayment`;
   const body = {
     _dataContract: {
       DataAreaId: dataAreaId,
@@ -966,7 +967,7 @@ export async function createPrepayment(
   };
 
   console.log(`[D365] Creating prepayment for: ${salesOrderNumber}`);
-  console.log(`[D365] PostPrepayment request payload: ${JSON.stringify(body)}`);
+  console.log(`[D365][API] PostPrepayment request: ${JSON.stringify({ endpoint, body })}`);
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would create prepayment for ${salesOrderNumber}`);
@@ -982,17 +983,14 @@ export async function createPrepayment(
   }
 
   const token = await getAuthToken();
-  const response = await pacedFetch(
-    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/PostPrepayment`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await pacedFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -1044,6 +1042,9 @@ export async function createPrepayment(
   }
 
   const result: D365ThkApiResponse = await response.json();
+  console.log(
+    `[D365][API] PostPrepayment response: ${JSON.stringify({ endpoint, httpStatus: 200, result })}`
+  );
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
     const thkMessage = String(result.Message || "");
@@ -1082,6 +1083,7 @@ export async function createPrepayment(
 export async function createFulfilment(
   req: D365FulfilmentRequest
 ): Promise<{ response: D365ThkApiResponse; request: object }> {
+  const endpoint = `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`;
   const { salesOrderNumber, dataAreaId, lines, type, confirmedShippedDate } = req;
   const normalizedDataAreaId = String(dataAreaId || "").toUpperCase();
 
@@ -1117,6 +1119,7 @@ export async function createFulfilment(
   };
 
   console.log(`[D365] Creating fulfilment for: ${salesOrderNumber}`);
+  console.log(`[D365][API] Fulfilment request: ${JSON.stringify({ endpoint, body })}`);
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would create fulfilment for ${salesOrderNumber}`);
@@ -1132,26 +1135,33 @@ export async function createFulfilment(
   }
 
   const token = await getAuthToken();
-  const response = await pacedFetch(
-    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const response = await pacedFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
+    console.error(
+      `[D365][API] Fulfilment error response: ${JSON.stringify({
+        endpoint,
+        httpStatus: response.status,
+        error: error.slice(0, 4000),
+      })}`
+    );
     throw new Error(
       `[D365] Failed to create fulfilment for ${salesOrderNumber}: ${response.status} - ${error}`
     );
   }
 
   const result: D365ThkApiResponse = await response.json();
+  console.log(
+    `[D365][API] Fulfilment response: ${JSON.stringify({ endpoint, httpStatus: 200, result })}`
+  );
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
     throw new Error(
@@ -1166,6 +1176,7 @@ export async function createFulfilment(
 
 export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest) {
   const { salesOrderNumber, dataAreaId, invoiceDate } = req;
+  const endpoint = `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_SalesOrderService/postReturnOrderInvoice`;
   const body = {
     salesOrderNumber,
     dataAreaId,
@@ -1182,17 +1193,15 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
   }
 
   const token = await getAuthToken();
-  const response = await pacedFetch(
-    `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_SalesOrderService/postReturnOrderInvoice`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  console.log(`[D365][API] PostReturnOrderInvoice request: ${JSON.stringify({ endpoint, body })}`);
+  const response = await pacedFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const error = await response.text();
@@ -1216,6 +1225,9 @@ export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest)
   }
 
   const result = await response.json();
+  console.log(
+    `[D365][API] PostReturnOrderInvoice response: ${JSON.stringify({ endpoint, httpStatus: 200, result })}`
+  );
   console.log(`[D365] Posted return invoice: ${result.creditNoteNumber}`);
   return {
     creditNoteNumber: result.creditNoteNumber,
