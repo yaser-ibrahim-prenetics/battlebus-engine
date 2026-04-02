@@ -177,6 +177,23 @@ export const processShopifyFulfillment = inngest.createFunction(
             lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
           }));
 
+          const missingLotIdSkus = fulfillmentLines
+            .filter((line) => !String(line.lotId || "").trim())
+            .map((line) => line.itemNumber);
+          if (missingLotIdSkus.length > 0) {
+            console.warn(
+              `[D365][LotIdDebug] Missing lot IDs before fulfilment call: ${JSON.stringify({
+                shopifyOrderName,
+                salesOrderNumber: d365Order.SalesOrderNumber,
+                dataAreaId,
+                fulfillmentId: fulfillment.id,
+                fulfillmentSkus: filteredItems.map((item) => item.sku),
+                lotMapKeys: Object.keys(lotIdMap),
+                missingLotIdSkus,
+              })}`
+            );
+          }
+
           // Create D365 packing slip
           await dynamics.createFulfilment({
             dataAreaId,
