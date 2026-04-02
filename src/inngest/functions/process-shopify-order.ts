@@ -657,6 +657,8 @@ export const processShopifyOrder = inngest.createFunction(
     const country_code = routingResult.countryCode;
 
     let salesOrderNumber: string | undefined;
+    /** Captured from D365 line create responses — persisted on Hub `orders.state` for fulfillment Lotid fallback. */
+    let d365InventoryLotsBySku: Record<string, string> = {};
     try {
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
@@ -728,9 +730,9 @@ export const processShopifyOrder = inngest.createFunction(
         `Creating ${lineItems.length} line items`,
         { totalLines: lineItems.length }
       );
-      await step.run("create-d365-lines", async () => {
+      const lineCreationResult = await step.run("create-d365-lines", async () => {
         if (skipD365) {
-          return lineItems;
+          return { lineItems, d365InventoryLotsBySku: {} as Record<string, string> };
         }
 
         const invalidLines = lineItems
@@ -762,7 +764,7 @@ export const processShopifyOrder = inngest.createFunction(
           lineItems.map((line) =>
             (async () => {
               try {
-                await retryWithBackoff(
+                const created = await retryWithBackoff(
                   () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }),
                   {
                     label: `D365 line ${line.itemNumber}`,
@@ -772,7 +774,12 @@ export const processShopifyOrder = inngest.createFunction(
                     },
                   }
                 );
-                return { skipped: false as const, itemNumber: line.itemNumber };
+                const lot = created?.InventoryLotId ? String(created.InventoryLotId).trim() : "";
+                return {
+                  skipped: false as const,
+                  itemNumber: line.itemNumber,
+                  inventoryLotId: lot,
+                };
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 // Keep spock-store service SKU behavior, but tolerate missing setup in D365 envs.
@@ -804,8 +811,24 @@ export const processShopifyOrder = inngest.createFunction(
             }
           );
         }
-        return lineItems;
+        const d365InventoryLotsBySku: Record<string, string> = {};
+        for (const r of lineResults) {
+          if (r.skipped) continue;
+          const sku = String(r.itemNumber || "").trim().toUpperCase();
+          const lot = "inventoryLotId" in r ? String(r.inventoryLotId || "").trim() : "";
+          if (sku && lot) {
+            d365InventoryLotsBySku[sku] = lot;
+          }
+        }
+        if (Object.keys(d365InventoryLotsBySku).length > 0) {
+          console.log(
+            `[D365] Captured InventoryLotId per SKU for ${salesOrderNo}:`,
+            d365InventoryLotsBySku
+          );
+        }
+        return { lineItems, d365InventoryLotsBySku };
       });
+      d365InventoryLotsBySku = lineCreationResult.d365InventoryLotsBySku || {};
       await publishStatus(
         "d365.create-lines",
         "completed",
@@ -1361,6 +1384,9 @@ export const processShopifyOrder = inngest.createFunction(
             gpsOrderId,
             gpsSkipped, // Pass GPS skip status for sync tracking
             orderJson: order,
+            ...(Object.keys(d365InventoryLotsBySku).length > 0
+              ? { state: { d365InventoryLotsBySku } }
+              : {}),
           },
           { inngestIdempotencyKey, inngestRunId }
         );
@@ -1388,6 +1414,9 @@ export const processShopifyOrder = inngest.createFunction(
             lastError: null,
             lastErrorType: null,
             retryAt: null,
+            ...(Object.keys(d365InventoryLotsBySku).length > 0
+              ? { state: { d365InventoryLotsBySku } }
+              : {}),
           },
           { inngestIdempotencyKey, inngestRunId }
         );

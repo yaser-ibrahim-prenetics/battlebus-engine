@@ -27,6 +27,7 @@ import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
+import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
@@ -198,8 +199,12 @@ export const processGpsIndividual = inngest.createFunction(
         return { skipped: true, reason: "No valid line items" };
       }
 
-      // Get lotId mapping from D365 sales order lines
-      const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+      const supabaseLotMap = await fetchD365InventoryLotsByShopifyOrder(
+        String(shopifyOrder.id),
+        fulfilmentData.shopifyOrderName || shopifyOrder.name
+      );
+      const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+      const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
       const shippedDate =
         fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
 

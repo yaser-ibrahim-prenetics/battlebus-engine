@@ -32,6 +32,7 @@ import {
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
+import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
@@ -140,6 +141,11 @@ export const processShopifyFulfillment = inngest.createFunction(
       const results = [];
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
+      const supabaseLotMap = await fetchD365InventoryLotsByShopifyOrder(
+        String(shopifyOrderId),
+        shopifyOrderName || order?.name
+      );
+
       for (const fulfillment of fulfillments) {
         // Skip dummy/adjustment fulfillments
         if (isDummyFulfillment(fulfillment)) {
@@ -162,8 +168,9 @@ export const processShopifyFulfillment = inngest.createFunction(
             continue;
           }
 
-          // Get lotId mapping from D365 sales order lines
-          const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId);
+          // OData lines first; Hub snapshot from order create fills gaps (SKU lag / partial reads).
+          const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId);
+          const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
 
           const fulfillmentLines = filteredItems.map((item) => ({
             // getLotIdMap keys are normalized to uppercase for resilient SKU matching.

@@ -1328,6 +1328,27 @@ export async function getLotIdMap(
   return lotIdMap;
 }
 
+/**
+ * Merge multiple SKU → InventoryLotId maps (e.g. OData first, Hub snapshot fills gaps).
+ * First map wins per SKU; later maps only add keys not yet set.
+ */
+export function mergeLotIdMaps(
+  ...maps: Array<Record<string, string> | null | undefined>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of maps) {
+    if (!m) continue;
+    for (const [k, v] of Object.entries(m)) {
+      const key = String(k).trim().toUpperCase();
+      const val = String(v || "").trim();
+      if (!key || !val) continue;
+      if (out[key]) continue;
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
 /** Escape a string for use inside OData single-quoted literals (incl. filter + key segments). */
 function odataQuotedLiteral(value: string): string {
   return String(value || "").replace(/'/g, "''");

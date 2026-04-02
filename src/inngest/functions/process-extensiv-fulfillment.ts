@@ -17,6 +17,7 @@ import * as slack from "@/lib/clients/slack";
 import { ExtensivOrderConfirmPayload } from "../events";
 import { filterDummySkus } from "@/lib/utils/validation";
 import { THROTTLE_CONFIGS, RETRY_CONFIGS, CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
+import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
 
 export const processExtensivFulfillment = inngest.createFunction(
   {
@@ -136,8 +137,12 @@ export const processExtensivFulfillment = inngest.createFunction(
         // Filter dummy SKUs
         const lineItemsFiltered = filterDummySkus(shopifyOrder.line_items) as ILineItem[];
 
-        // Get lotId mapping from D365 sales order lines
-        const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+        const supabaseLotMap = await fetchD365InventoryLotsByShopifyOrder(
+          String(shopifyOrderId),
+          shopifyOrderName
+        );
+        const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
+        const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
 
         // Create D365 packing slip
         await dynamics.createFulfilment({
