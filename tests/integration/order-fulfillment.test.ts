@@ -154,25 +154,25 @@ describe("Order Fulfillment Flow (Integration)", () => {
     });
   });
 
-  describe("GPS fulfillment from webhook is skipped", () => {
-    it("skips GPS fulfillments since they use cron-gps-sync", async () => {
+  describe("GPS fulfillment from webhook is processed", () => {
+    it("treats GPS location like other warehouses — manual Shopify fulfillment syncs to D365", async () => {
       const gpsFulfillment: ShopifyFulfillment = {
         ...stordFulfillment,
         id: 5010,
         location_id: 79527313640,
       };
 
-      const isGps = isGpsFulfillment(gpsFulfillment.location_id || "");
-      expect(isGps).toBe(true);
+      expect(isGpsFulfillment(gpsFulfillment.location_id || "")).toBe(true);
 
-      const result = await harness.step.run("check-fulfillment-source", async () => {
-        if (isGps) {
-          return { status: "skipped_gps", reason: "Handled by GPS sync cron" };
-        }
-        return { status: "process" };
+      const result = await harness.step.run("process-fulfillments", async () => {
+        return {
+          fulfillmentId: gpsFulfillment.id,
+          status: "success",
+          source: "Direct",
+        };
       });
 
-      expect(result.status).toBe("skipped_gps");
+      expect(result.status).toBe("success");
     });
   });
 

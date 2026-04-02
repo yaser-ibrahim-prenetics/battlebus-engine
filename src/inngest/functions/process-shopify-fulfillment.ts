@@ -2,8 +2,8 @@
 // SHOPIFY FULFILLMENT → D365 SYNC
 // ============================================================================
 // Handles orders/fulfilled webhook from Shopify
-// Used for STORD (Shopify plugin) and HK Warehouse fulfillments
-// GPS fulfillments are handled by cron-gps-sync.ts (polling)
+// STORD, HK warehouse, and GPS locations: manual fulfillments in Shopify post packing slip to D365.
+// cron-gps-sync also emits this event with fromGpsSync for the automated GPS ship path.
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
@@ -67,41 +67,25 @@ export const processShopifyFulfillment = inngest.createFunction(
       isStord: isStordFulfillment(f.location_id || ""),
     }));
 
-    // Skip GPS fulfillments from webhook echo (automatic Shopify webhook after cron
-    // created the fulfillment) to prevent double D365 processing.
-    // Allow through when:
-    //   - fromGpsSync: true  (cron-driven GPS fulfillment)
-    //   - fromManualFulfillment: true  (Hub manual fulfillment)
-    const gpsOnly = fulfillmentSources.every((s: { isGps: boolean }) => s.isGps);
     const isFromGpsSync = (event.data as any).fromGpsSync === true;
-    const isManualFulfillment = !!(event.data as any).fromManualFulfillment;
-
-    if (gpsOnly && !isFromGpsSync && !isManualFulfillment) {
-      return {
-        status: "skipped_gps",
-        shopifyOrderId,
-        shopifyOrderName,
-        reason: "GPS fulfillments from webhook echo - handled by cron-gps-sync or manual action",
-      };
-    }
 
     if (config.features.dryRunMode) {
-      return {
+      return await step.run("dry-run", async () => ({
         status: "dry_run",
         shopifyOrderId,
         shopifyOrderName,
         fulfillmentCount: fulfillments.length,
         sources: fulfillmentSources,
-      };
+      }));
     }
 
     // Get D365 order (Supabase d365_order_number by Shopify name first — same as refund)
     const d365Order = await step.run("get-d365-order", async () => {
-      const nonGpsFulfillment = fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps);
-      const preferredDataAreaId = nonGpsFulfillment
-        ? getDataAreaIdFromLocation(nonGpsFulfillment.locationId || "") ??
-          config.dynamics.dataAreaId
-        : config.dynamics.dataAreaId;
+      const fulfillmentForDataArea =
+        fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps) ?? fulfillmentSources[0];
+      const preferredDataAreaId =
+        getDataAreaIdFromLocation(fulfillmentForDataArea?.locationId || "") ??
+        config.dynamics.dataAreaId;
 
       const orderPayload = order as ShopifyOrderPayload;
       return resolveD365OrderHeaderForLifecycle({
@@ -157,16 +141,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
       for (const fulfillment of fulfillments) {
-        // Skip GPS fulfillments
-        if (isGpsFulfillment(fulfillment.location_id || "")) {
-          results.push({
-            fulfillmentId: fulfillment.id,
-            status: "skipped_gps",
-            reason: "Handled by GPS sync cron",
-          });
-          continue;
-        }
-
         // Skip dummy/adjustment fulfillments
         if (isDummyFulfillment(fulfillment)) {
           results.push({
