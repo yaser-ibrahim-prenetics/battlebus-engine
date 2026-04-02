@@ -169,22 +169,26 @@ export const processShopifyFulfillment = inngest.createFunction(
           }
 
           // OData lines first; Hub snapshot from order create fills gaps (SKU lag / partial reads).
-          const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId);
-          const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
+          let lotIdMap = dynamics.mergeLotIdMaps(
+            await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId),
+            supabaseLotMap
+          );
 
-          const fulfillmentLines = filteredItems.map((item) => ({
-            // getLotIdMap keys are normalized to uppercase for resilient SKU matching.
-            // createFulfilment will throw if any line still has no Lotid.
-            itemNumber: item.sku,
-            quantity: item.quantity,
-            trackingNumber: fulfillment.tracking_number || "",
-            shippingSiteId: "Prenetics",
-            shippingWarehouseId: "",
-            shippingWarehouseLocationId: "",
-            lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
-          }));
+          const buildFulfillmentLines = () =>
+            filteredItems.map((item) => ({
+              // getLotIdMap keys are normalized to uppercase for resilient SKU matching.
+              // createFulfilment will throw if any line still has no Lotid.
+              itemNumber: item.sku,
+              quantity: item.quantity,
+              trackingNumber: fulfillment.tracking_number || "",
+              shippingSiteId: "Prenetics",
+              shippingWarehouseId: "",
+              shippingWarehouseLocationId: "",
+              lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
+            }));
 
-          const missingLotIdSkus = fulfillmentLines
+          let fulfillmentLines = buildFulfillmentLines();
+          let missingLotIdSkus = fulfillmentLines
             .filter((line) => !String(line.lotId || "").trim())
             .map((line) => line.itemNumber);
           if (missingLotIdSkus.length > 0) {
@@ -199,6 +203,30 @@ export const processShopifyFulfillment = inngest.createFunction(
                 missingLotIdSkus,
               })}`
             );
+
+            // Enforce "lot IDs come from Dynamics": re-fetch latest SalesOrderLines once before posting.
+            const refreshedOdataLotMap = await dynamics.getLotIdMap(
+              d365Order.SalesOrderNumber!,
+              dataAreaId
+            );
+            lotIdMap = dynamics.mergeLotIdMaps(refreshedOdataLotMap, lotIdMap);
+            fulfillmentLines = buildFulfillmentLines();
+            missingLotIdSkus = fulfillmentLines
+              .filter((line) => !String(line.lotId || "").trim())
+              .map((line) => line.itemNumber);
+
+            if (missingLotIdSkus.length > 0) {
+              console.warn(
+                `[D365][LotIdDebug] Missing lot IDs after Dynamics refetch: ${JSON.stringify({
+                  shopifyOrderName,
+                  salesOrderNumber: d365Order.SalesOrderNumber,
+                  dataAreaId,
+                  fulfillmentId: fulfillment.id,
+                  lotMapKeys: Object.keys(lotIdMap),
+                  missingLotIdSkus,
+                })}`
+              );
+            }
           }
 
           // Create D365 packing slip

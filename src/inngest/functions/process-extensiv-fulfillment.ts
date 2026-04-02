@@ -141,16 +141,12 @@ export const processExtensivFulfillment = inngest.createFunction(
           String(shopifyOrderId),
           shopifyOrderName
         );
-        const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
-        const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
-
-        // Create D365 packing slip
-        await dynamics.createFulfilment({
-          salesOrderNumber: d365Order.SalesOrderNumber,
-          dataAreaId,
-          type: "PackingSlip",
-          confirmedShippedDate: new Date().toISOString().split("T")[0],
-          lines: lineItemsFiltered.map((item: ILineItem) => ({
+        let lotIdMap = dynamics.mergeLotIdMaps(
+          await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId),
+          supabaseLotMap
+        );
+        const buildLines = () =>
+          lineItemsFiltered.map((item: ILineItem) => ({
             itemNumber: item.sku,
             quantity: item.quantity,
             trackingNumber,
@@ -158,7 +154,36 @@ export const processExtensivFulfillment = inngest.createFunction(
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
             lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
-          })),
+          }));
+
+        let lines = buildLines();
+        const missingLotIdSkus = lines
+          .filter((line) => !String(line.lotId || "").trim())
+          .map((line) => line.itemNumber);
+        if (missingLotIdSkus.length > 0) {
+          console.warn(
+            `[Extensiv][LotIdDebug] Missing lot IDs before fulfilment call: ${JSON.stringify({
+              shopifyOrderName,
+              salesOrderNumber: d365Order.SalesOrderNumber,
+              dataAreaId,
+              lotMapKeys: Object.keys(lotIdMap),
+              missingLotIdSkus,
+            })}`
+          );
+          lotIdMap = dynamics.mergeLotIdMaps(
+            await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId),
+            lotIdMap
+          );
+          lines = buildLines();
+        }
+
+        // Create D365 packing slip
+        await dynamics.createFulfilment({
+          salesOrderNumber: d365Order.SalesOrderNumber,
+          dataAreaId,
+          type: "PackingSlip",
+          confirmedShippedDate: new Date().toISOString().split("T")[0],
+          lines,
         });
 
         console.log(`[Extensiv] Created D365 packing slip for ${d365Order.SalesOrderNumber}`);

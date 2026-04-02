@@ -203,20 +203,16 @@ export const processGpsIndividual = inngest.createFunction(
         String(shopifyOrder.id),
         fulfilmentData.shopifyOrderName || shopifyOrder.name
       );
-      const odataLotMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId);
-      const lotIdMap = dynamics.mergeLotIdMaps(odataLotMap, supabaseLotMap);
+      let lotIdMap = dynamics.mergeLotIdMaps(
+        await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId),
+        supabaseLotMap
+      );
       const shippedDate =
         fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
 
       const fulfilmentConfig = getFulfilmentConfig(warehouse);
-
-      // Create fulfilment (packing slip)
-      await dynamics.createFulfilment({
-        salesOrderNumber: d365Order.SalesOrderNumber,
-        dataAreaId,
-        type: "PackingSlip",
-        confirmedShippedDate: shippedDate,
-        lines: (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => ({
+      const buildLines = () =>
+        (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => ({
           itemNumber: item.sku,
           quantity: item.quantity,
           trackingNumber: fulfilmentData.trackingNumber,
@@ -224,7 +220,36 @@ export const processGpsIndividual = inngest.createFunction(
           shippingWarehouseId: fulfilmentConfig.shippingWarehouseId,
           shippingWarehouseLocationId: fulfilmentConfig.shippingWarehouseLocationId,
           lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
-        })),
+        }));
+
+      let lines = buildLines();
+      let missingLotIdSkus = lines
+        .filter((line) => !String(line.lotId || "").trim())
+        .map((line) => line.itemNumber);
+      if (missingLotIdSkus.length > 0) {
+        console.warn(
+          `[GPS Individual][LotIdDebug] Missing lot IDs before fulfilment call: ${JSON.stringify({
+            shopifyOrderName: fulfilmentData.shopifyOrderName || shopifyOrder.name,
+            salesOrderNumber: d365Order.SalesOrderNumber,
+            dataAreaId,
+            lotMapKeys: Object.keys(lotIdMap),
+            missingLotIdSkus,
+          })}`
+        );
+        lotIdMap = dynamics.mergeLotIdMaps(
+          await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId),
+          lotIdMap
+        );
+        lines = buildLines();
+      }
+
+      // Create fulfilment (packing slip)
+      await dynamics.createFulfilment({
+        salesOrderNumber: d365Order.SalesOrderNumber,
+        dataAreaId,
+        type: "PackingSlip",
+        confirmedShippedDate: shippedDate,
+        lines,
       });
 
       console.log(`[GPS Individual] Created D365 packing slip for: ${d365Order.SalesOrderNumber}`);
