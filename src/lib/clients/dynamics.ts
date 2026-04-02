@@ -1086,6 +1086,15 @@ export async function createFulfilment(
   const endpoint = `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`;
   const { salesOrderNumber, dataAreaId, lines, type, confirmedShippedDate } = req;
   const normalizedDataAreaId = String(dataAreaId || "").toUpperCase();
+  const linesMissingLotId = lines
+    .filter((line) => !String(line.lotId || "").trim())
+    .map((line) => line.itemNumber);
+
+  if (linesMissingLotId.length > 0) {
+    throw new Error(
+      `[D365] Missing Lotid for fulfilment lines on ${salesOrderNumber}: ${linesMissingLotId.join(", ")}`
+    );
+  }
 
   const body = {
     _dataContract: {
@@ -1310,7 +1319,8 @@ export async function getLotIdMap(
   const lotIdMap: Record<string, string> = {};
   for (const line of lines) {
     if (line.ItemNumber && line.InventoryLotId) {
-      lotIdMap[line.ItemNumber] = line.InventoryLotId;
+      const normalizedItemNumber = String(line.ItemNumber).trim().toUpperCase();
+      lotIdMap[normalizedItemNumber] = line.InventoryLotId;
     }
   }
 

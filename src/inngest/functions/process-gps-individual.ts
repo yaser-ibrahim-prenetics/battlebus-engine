@@ -218,7 +218,7 @@ export const processGpsIndividual = inngest.createFunction(
           shippingSiteId: fulfilmentConfig.shippingSiteId,
           shippingWarehouseId: fulfilmentConfig.shippingWarehouseId,
           shippingWarehouseLocationId: fulfilmentConfig.shippingWarehouseLocationId,
-          lotId: lotIdMap[item.sku] || "",
+          lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
         })),
       });
 

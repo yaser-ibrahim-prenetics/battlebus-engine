@@ -152,7 +152,7 @@ export const processExtensivFulfillment = inngest.createFunction(
             shippingSiteId: "",
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
-            lotId: lotIdMap[item.sku] || "",
+            lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
           })),
         });
 

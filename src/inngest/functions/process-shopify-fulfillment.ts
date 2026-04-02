@@ -166,13 +166,15 @@ export const processShopifyFulfillment = inngest.createFunction(
           const lotIdMap = await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId);
 
           const fulfillmentLines = filteredItems.map((item) => ({
+            // getLotIdMap keys are normalized to uppercase for resilient SKU matching.
+            // createFulfilment will throw if any line still has no Lotid.
             itemNumber: item.sku,
             quantity: item.quantity,
             trackingNumber: fulfillment.tracking_number || "",
             shippingSiteId: "Prenetics",
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
-            lotId: lotIdMap[item.sku] || "",
+            lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
           }));
 
           // Create D365 packing slip
