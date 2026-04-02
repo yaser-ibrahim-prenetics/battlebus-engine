@@ -181,7 +181,7 @@ export const processExtensivFulfillment = inngest.createFunction(
         await dynamics.createFulfilment({
           salesOrderNumber: d365Order.SalesOrderNumber,
           dataAreaId,
-          type: "PackingSlip",
+          type: "shipment",
           confirmedShippedDate: new Date().toISOString().split("T")[0],
           lines,
         });

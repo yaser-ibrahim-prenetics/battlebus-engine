@@ -147,7 +147,8 @@ export interface D365FulfilmentLine {
 export interface D365FulfilmentRequest {
   salesOrderNumber: string;
   dataAreaId: string;
-  type: "PackingSlip" | "Invoice" | "return";
+  // Spock-store parity: THK fulfilment endpoint uses "shipment" for outbound shipments.
+  type: "shipment" | "PackingSlip" | "Invoice" | "return";
   confirmedShippedDate: string;
   lines: D365FulfilmentLine[];
 }

@@ -247,7 +247,7 @@ export const processGpsIndividual = inngest.createFunction(
       await dynamics.createFulfilment({
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
-        type: "PackingSlip",
+        type: "shipment",
         confirmedShippedDate: shippedDate,
         lines,
       });

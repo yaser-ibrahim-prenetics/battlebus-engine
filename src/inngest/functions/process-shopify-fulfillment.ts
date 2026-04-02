@@ -233,7 +233,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           await dynamics.createFulfilment({
             dataAreaId,
             salesOrderNumber: d365Order.SalesOrderNumber!,
-            type: "PackingSlip",
+            type: "shipment",
             confirmedShippedDate: fulfillment.created_at
               ? new Date(fulfillment.created_at).toISOString().split("T")[0]
               : new Date().toISOString().split("T")[0],
