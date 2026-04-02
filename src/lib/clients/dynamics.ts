@@ -1096,13 +1096,64 @@ export async function createFulfilment(
     );
   }
 
-  const body = {
+  type DynamicsFulfilmentErrorKind =
+    | "over_qty"
+    | "fully_invoiced"
+    | "partially_invoiced"
+    | "unknown";
+
+  const getInvoicedItemNumbersFromError = (
+    normalizedErrorMessage: string,
+    itemNumbers: string[]
+  ): string[] => {
+    const invoicedItemNumbers = new Set<string>();
+    for (const itemNumber of itemNumbers) {
+      if (normalizedErrorMessage.includes(String(itemNumber || "").toLowerCase())) {
+        invoicedItemNumbers.add(itemNumber);
+      }
+    }
+    return Array.from(invoicedItemNumbers);
+  };
+
+  const classifyDynamicsFulfilmentError = (
+    errorMessage: string,
+    itemNumbers: string[]
+  ): { kind: DynamicsFulfilmentErrorKind; invoicedItemNumbers: string[] } => {
+    const normalizedErrorMessage = String(errorMessage || "").toLowerCase();
+    if (normalizedErrorMessage.includes("over qty")) {
+      return { kind: "over_qty", invoicedItemNumbers: [] };
+    }
+    if (normalizedErrorMessage.includes("fully invoiced")) {
+      return { kind: "fully_invoiced", invoicedItemNumbers: [] };
+    }
+    if (normalizedErrorMessage.includes("partially invoiced")) {
+      return {
+        kind: "partially_invoiced",
+        invoicedItemNumbers: getInvoicedItemNumbersFromError(normalizedErrorMessage, itemNumbers),
+      };
+    }
+    return { kind: "unknown", invoicedItemNumbers: [] };
+  };
+
+  const excludeInvoicedFulfilmentLines = (
+    fulfilmentLines: D365FulfilmentLine[],
+    invoicedItemNumbers: string[]
+  ): D365FulfilmentLine[] => {
+    const invoicedItemNumberSet = new Set(
+      invoicedItemNumbers.map((itemNumber) => String(itemNumber || "").toLowerCase())
+    );
+    return fulfilmentLines.filter(
+      (line) => !invoicedItemNumberSet.has(String(line.itemNumber || "").toLowerCase())
+    );
+  };
+
+  const buildFulfilmentBody = (fulfilmentLines: D365FulfilmentLine[]) => ({
     _dataContract: {
       DataAreaId: dataAreaId,
       Type: type,
       D365FOSalesOrder: salesOrderNumber,
       ConfirmedShippedDate: confirmedShippedDate,
-      Lines: lines.map((line) => {
+      Lines: fulfilmentLines.map((line) => {
         const lineData: Record<string, unknown> = {
           ItemNumber: line.itemNumber,
           Quantity: line.quantity,
@@ -1125,10 +1176,7 @@ export async function createFulfilment(
         return lineData;
       }),
     },
-  };
-
-  console.log(`[D365] Creating fulfilment for: ${salesOrderNumber}`);
-  console.log(`[D365][API] Fulfilment request: ${JSON.stringify({ endpoint, body })}`);
+  });
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would create fulfilment for ${salesOrderNumber}`);
@@ -1139,49 +1187,68 @@ export async function createFulfilment(
         Result: "DRY_RUN_RESULT",
         $id: "DRY_RUN_ID",
       },
-      request: body,
+      request: buildFulfilmentBody(lines),
     };
   }
 
-  const token = await getAuthToken();
-  const response = await pacedFetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let dynamicsFulfilmentLines = [...lines];
+  // Retry loop only for THK "partially invoiced" by excluding invoiced items.
+  while (true) {
+    const body = buildFulfilmentBody(dynamicsFulfilmentLines);
+    console.log(`[D365] Creating fulfilment for: ${salesOrderNumber}`);
+    console.log(`[D365][API] Fulfilment request: ${JSON.stringify({ endpoint, body })}`);
 
-  if (!response.ok) {
-    const error = await response.text();
-    console.error(
-      `[D365][API] Fulfilment error response: ${JSON.stringify({
-        endpoint,
-        httpStatus: response.status,
-        error: error.slice(0, 4000),
+    const token = await getAuthToken();
+    const response = await pacedFetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(
+        `[D365][API] Fulfilment error response: ${JSON.stringify({
+          endpoint,
+          httpStatus: response.status,
+          error: error.slice(0, 4000),
+        })}`
+      );
+      throw new Error(
+        `[D365] Failed to create fulfilment for ${salesOrderNumber}: ${response.status} - ${error}`
+      );
+    }
+
+    const result: D365ThkApiResponse = await response.json();
+    console.log(
+      `[D365][API] Fulfilment response: ${JSON.stringify({ endpoint, httpStatus: 200, result })}`
+    );
+
+    if (result.status === DYNAMICS_THK_API_SUCCESS_STATUS) {
+      console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
+      return { response: result, request: body };
+    }
+
+    const errorMessage = result.Message || "";
+    const classifiedError = classifyDynamicsFulfilmentError(
+      errorMessage,
+      dynamicsFulfilmentLines.map((line) => line.itemNumber)
+    );
+    console.warn(
+      `[D365][FulfilmentClassifier] ${JSON.stringify({
+        salesOrderNumber,
+        dataAreaId,
+        kind: classifiedError.kind,
+        message: errorMessage,
+        lineItemNumbers: dynamicsFulfilmentLines.map((line) => line.itemNumber),
+        invoicedItemNumbers: classifiedError.invoicedItemNumbers,
       })}`
     );
-    throw new Error(
-      `[D365] Failed to create fulfilment for ${salesOrderNumber}: ${response.status} - ${error}`
-    );
-  }
 
-  const result: D365ThkApiResponse = await response.json();
-  console.log(
-    `[D365][API] Fulfilment response: ${JSON.stringify({ endpoint, httpStatus: 200, result })}`
-  );
-
-  if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
-    const thkMessage = String(result.Message || "").toLowerCase();
-    const isAlreadyProcessedLikeState =
-      thkMessage.includes("over qty") ||
-      thkMessage.includes("already invoiced") ||
-      thkMessage.includes("partially invoiced");
-
-    // THK may return status=0 for idempotent-ish states where shipment can't be posted again
-    // because the line is already processed/invoiced. Treat as non-fatal to keep sync progressing.
-    if (isAlreadyProcessedLikeState) {
+    if (classifiedError.kind === "over_qty" || classifiedError.kind === "fully_invoiced") {
       console.warn(
         `[D365] Fulfilment treated as idempotent success for ${salesOrderNumber}: ${result.Message}`
       );
@@ -1195,14 +1262,61 @@ export async function createFulfilment(
         request: body,
       };
     }
+
+    if (classifiedError.kind === "partially_invoiced") {
+      const { invoicedItemNumbers } = classifiedError;
+      if (invoicedItemNumbers.length === 0) {
+        console.error(
+          `[D365] THK partially invoiced response could not be mapped to current fulfilment lines for ${salesOrderNumber}: ${result.Message}`
+        );
+        throw new Error(
+          `[D365] THK partially invoiced response did not include a known item number for ${salesOrderNumber}: ${result.Message}`
+        );
+      }
+      const filteredDynamicsFulfilmentLines = excludeInvoicedFulfilmentLines(
+        dynamicsFulfilmentLines,
+        invoicedItemNumbers
+      );
+      if (filteredDynamicsFulfilmentLines.length === dynamicsFulfilmentLines.length) {
+        console.error(
+          `[D365] THK partially invoiced response did not reduce fulfilment lines for ${salesOrderNumber}; refusing blind retry`
+        );
+        throw new Error(
+          `[D365] THK partially invoiced response did not reduce fulfilment lines for ${salesOrderNumber}: ${result.Message}`
+        );
+      }
+      if (filteredDynamicsFulfilmentLines.length === 0) {
+        console.warn(
+          `[D365] Fulfilment treated as idempotent success for ${salesOrderNumber}; all lines already invoiced: ${invoicedItemNumbers.join(", ")}`
+        );
+        return {
+          response: {
+            status: DYNAMICS_THK_API_SUCCESS_STATUS,
+            Message: "FULFILMENT_ALREADY_PROCESSED",
+            Result: result.Result || "",
+            $id: result.$id || "FULFILMENT_ALREADY_PROCESSED",
+          },
+          request: body,
+        };
+      }
+      console.warn(
+        `[D365] Retrying fulfilment for ${salesOrderNumber} with ${
+          filteredDynamicsFulfilmentLines.length
+        } non-invoiced lines; skipping invoiced SKUs: ${invoicedItemNumbers.join(", ")}`
+      );
+      dynamicsFulfilmentLines = filteredDynamicsFulfilmentLines;
+      continue;
+    }
+
+    console.error(
+      `[D365] Fulfilment hard failure for ${salesOrderNumber}: ${result.Message}${
+        result.Result ? ` (Result=${result.Result})` : ""
+      }`
+    );
     throw new Error(
       `[D365] THK API failed to create fulfilment for ${salesOrderNumber}: ${result.Message}`
     );
   }
-
-  console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
-
-  return { response: result, request: body };
 }
 
 export async function postReturnOrderInvoice(req: D365ReturnOrderInvoiceRequest) {
