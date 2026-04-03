@@ -50,6 +50,11 @@ describe("SKU Transformers", () => {
       expect(mapShopifySkuToDynamics("IM8-FG-000171")).toBe("IM8-FG-000064");
       expect(mapShopifySkuToDynamics("PRE-FG-000127")).toBe("PRE-FG-000021");
     });
+
+    it("resolves chained SKU swaps to final Dynamics SKU", () => {
+      expect(mapShopifySkuToDynamics("IM8-FG-000078")).toBe("IM8-FG-000007");
+      expect(mapShopifySkuToDynamics("IM8-FG-000082")).toBe("IM8-FG-000040");
+    });
   });
 
   describe("mapDynamicsSkuToShopify", () => {

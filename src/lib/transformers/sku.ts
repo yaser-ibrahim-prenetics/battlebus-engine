@@ -71,21 +71,34 @@ export function getRewardMapping(): Record<string, string> {
  * Applies refill mapping first, then merge mapping if exists, otherwise returns original
  */
 export function mapShopifySkuToDynamics(shopifySku: string): string {
-  // Check refill mapping first (e.g., IM8-FG-000010 -> IM8-FG-000035)
   const refillMapping = getRefillMapping();
-  if (refillMapping[shopifySku]) {
-    console.log(`[SKU] Refill mapping: ${shopifySku} -> ${refillMapping[shopifySku]}`);
-    return refillMapping[shopifySku];
-  }
-
-  // Then check merge mapping
   const mergeMapping = getShopifyToDynamicsMapping();
-  if (mergeMapping[shopifySku]) {
-    console.log(`[SKU] Merge mapping: ${shopifySku} -> ${mergeMapping[shopifySku]}`);
-    return mergeMapping[shopifySku];
-  }
 
-  return shopifySku;
+  // Some SKUs require chained remaps (e.g. A -> B -> C). Resolve until stable.
+  let current = shopifySku;
+  const seen = new Set<string>([current]);
+
+  while (true) {
+    const refillMapped = refillMapping[current];
+    if (refillMapped && refillMapped !== current) {
+      console.log(`[SKU] Refill mapping: ${current} -> ${refillMapped}`);
+      current = refillMapped;
+      if (seen.has(current)) return current;
+      seen.add(current);
+      continue;
+    }
+
+    const mergeMapped = mergeMapping[current];
+    if (mergeMapped && mergeMapped !== current) {
+      console.log(`[SKU] Merge mapping: ${current} -> ${mergeMapped}`);
+      current = mergeMapped;
+      if (seen.has(current)) return current;
+      seen.add(current);
+      continue;
+    }
+
+    return current;
+  }
 }
 
 /**

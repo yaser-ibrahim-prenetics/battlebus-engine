@@ -366,11 +366,20 @@ export async function POST(request: NextRequest) {
             tracking_number: trackingInfo.number,
             tracking_company: trackingInfo.company,
             tracking_url: trackingInfo.url || null,
-            line_items: targetFulfillmentOrder?.line_items?.map((li: any) => ({
-              id: li.line_item_id,
-              sku: li.sku || li.variant_sku || "",
-              quantity: li.quantity || li.fulfillable_quantity || 1,
-            })) || [],
+            // Use actual fulfilled line items returned by Shopify to avoid stale/mismatched
+            // fulfillment-order snapshots causing downstream D365 lotId lookup failures.
+            line_items:
+              (fulfillment as any)?.line_items?.map((li: any) => ({
+                id: li.id || li.line_item_id,
+                sku: li.sku || li.variant_sku || "",
+                quantity: li.quantity || 1,
+              })) ||
+              targetFulfillmentOrder?.line_items?.map((li: any) => ({
+                id: li.line_item_id,
+                sku: li.sku || li.variant_sku || "",
+                quantity: li.quantity || li.fulfillable_quantity || 1,
+              })) ||
+              [],
             created_at: new Date().toISOString(),
           },
         ],

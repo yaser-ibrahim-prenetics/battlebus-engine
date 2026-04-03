@@ -12,6 +12,7 @@ import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import * as paypal from "@/lib/clients/paypal";
 import * as shopifyClient from "@/lib/clients/shopify";
+import { mapShopifySkuToDynamics } from "@/lib/transformers/sku";
 import type {
   ShopifyOrderPayload,
   ShopifyFulfillment,
@@ -33,6 +34,12 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+
+function normalizeSkuForLotLookup(rawSku: unknown): string {
+  const sku = String(rawSku || "").trim();
+  if (!sku) return "";
+  return mapShopifySkuToDynamics(sku).trim().toUpperCase();
+}
 
 export const processShopifyFulfillment = inngest.createFunction(
   {
@@ -141,6 +148,39 @@ export const processShopifyFulfillment = inngest.createFunction(
       const results = [];
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
+      // Build a stable map from Shopify order line_item.id -> normalized SKU used in D365.
+      // This protects fulfillment when webhook/item SKU labels drift after order creation.
+      let orderLineSkuById: Record<string, string> = {};
+      const orderPayload = order as ShopifyOrderPayload | null;
+      if (Array.isArray(orderPayload?.line_items) && orderPayload.line_items.length > 0) {
+        for (const li of orderPayload.line_items as Array<any>) {
+          const lineItemId = Number(li?.id);
+          if (!Number.isFinite(lineItemId) || lineItemId <= 0) continue;
+          const normalizedSku = normalizeSkuForLotLookup(li?.sku);
+          if (!normalizedSku) continue;
+          orderLineSkuById[String(Math.trunc(lineItemId))] = normalizedSku;
+        }
+      } else {
+        try {
+          const freshOrder = await shopifyClient.getOrder(String(shopifyOrderId));
+          if (Array.isArray((freshOrder as any)?.line_items)) {
+            for (const li of (freshOrder as any).line_items as Array<any>) {
+              const lineItemId = Number(li?.id);
+              if (!Number.isFinite(lineItemId) || lineItemId <= 0) continue;
+              const normalizedSku = normalizeSkuForLotLookup(li?.sku);
+              if (!normalizedSku) continue;
+              orderLineSkuById[String(Math.trunc(lineItemId))] = normalizedSku;
+            }
+          }
+        } catch (error) {
+          console.warn(
+            `[D365][LotIdDebug] Could not fetch order line-item SKU map for fallback on ${shopifyOrderName}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+
       const supabaseLotMap = await fetchD365InventoryLotsByShopifyOrder(
         String(shopifyOrderId),
         shopifyOrderName || order?.name
@@ -176,15 +216,45 @@ export const processShopifyFulfillment = inngest.createFunction(
 
           const buildFulfillmentLines = () =>
             filteredItems.map((item) => ({
+              // Prefer fulfillment item SKU, but fall back to order line item SKU when needed.
+              // `item.id` on fulfillment line items maps to Shopify order line_item.id.
+              itemNumber: (() => {
+                const rawFulfillmentSku = String(item.sku || "").trim();
+                const normalizedFulfillmentSku = normalizeSkuForLotLookup(rawFulfillmentSku);
+                const lineItemId = Number((item as any)?.id);
+                const lineItemSkuFromOrder =
+                  Number.isFinite(lineItemId) && lineItemId > 0
+                    ? orderLineSkuById[String(Math.trunc(lineItemId))] || ""
+                    : "";
+                const normalizedOrderLineSku = normalizeSkuForLotLookup(lineItemSkuFromOrder);
+                const chosenSku =
+                  normalizedFulfillmentSku ||
+                  normalizedOrderLineSku ||
+                  String(rawFulfillmentSku || "").trim();
+                return chosenSku;
+              })(),
               // getLotIdMap keys are normalized to uppercase for resilient SKU matching.
               // createFulfilment will throw if any line still has no Lotid.
-              itemNumber: item.sku,
               quantity: item.quantity,
               trackingNumber: fulfillment.tracking_number || "",
               shippingSiteId: "Prenetics",
               shippingWarehouseId: "",
               shippingWarehouseLocationId: "",
-              lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
+              lotId: (() => {
+                const rawFulfillmentSku = String(item.sku || "").trim();
+                const normalizedFulfillmentSku = normalizeSkuForLotLookup(rawFulfillmentSku);
+                const lineItemId = Number((item as any)?.id);
+                const normalizedOrderLineSku =
+                  Number.isFinite(lineItemId) && lineItemId > 0
+                    ? normalizeSkuForLotLookup(orderLineSkuById[String(Math.trunc(lineItemId))] || "")
+                    : "";
+                return (
+                  lotIdMap[normalizedFulfillmentSku] ||
+                  lotIdMap[normalizedOrderLineSku] ||
+                  lotIdMap[String(rawFulfillmentSku || "").trim().toUpperCase()] ||
+                  ""
+                );
+              })(),
             }));
 
           let fulfillmentLines = buildFulfillmentLines();
