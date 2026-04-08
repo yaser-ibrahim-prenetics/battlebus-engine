@@ -651,6 +651,8 @@ export function isGpsInventoryError(msg: string | undefined): boolean {
     lower.includes("insufficient") ||
     msg.includes("库存不足") ||
     msg.includes("未维护新品") ||
+    msg.includes("sku有误") ||
+    msg.includes("未通过审核") ||
     lower.includes("cannot be reserved") ||
     (lower.includes("inventory") && lower.includes("error"))
   );
@@ -669,6 +671,9 @@ export function classifyGpsError(msg: string | undefined): GpsInventoryErrorType
     return "out_of_stock";
   }
   if (msg.includes("未维护新品")) {
+    return "unmaintained_product";
+  }
+  if (msg.includes("sku有误") || msg.includes("未通过审核")) {
     return "unmaintained_product";
   }
   if (msg.toLowerCase().includes("cannot be reserved")) {

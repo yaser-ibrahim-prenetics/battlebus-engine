@@ -106,6 +106,7 @@ function isNonRetryableOrderError(message: string): boolean {
     (m.includes("item number") && m.includes("does not exist")) ||
     m.includes("sku有误") ||
     m.includes("未维护新品") ||
+    m.includes("未通过审核") ||
     m.includes("unknown warehouse") ||
     m.includes("unsupported warehouse") ||
     m.includes("unsupported virtual warehouse") ||

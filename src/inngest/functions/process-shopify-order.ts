@@ -104,7 +104,9 @@ function isInventoryIssueError(message: string): boolean {
     m.includes("cannot be reserved") ||
     (m.includes("item number") && m.includes("does not exist")) ||
     m.includes("库存不足") ||
-    m.includes("未维护新品")
+    m.includes("未维护新品") ||
+    m.includes("sku有误") ||
+    m.includes("未通过审核")
   );
 }
 
@@ -118,6 +120,7 @@ function isNonRetryableOrderError(message: string): boolean {
     (m.includes("item number") && m.includes("does not exist")) ||
     m.includes("sku有误") ||
     m.includes("未维护新品") ||
+    m.includes("未通过审核") ||
     // Warehouse/configuration issues
     m.includes("unknown warehouse") ||
     m.includes("unsupported warehouse") ||
@@ -139,6 +142,9 @@ function inferInventoryErrorType(message: string): string {
     return "inventory_insufficient";
   }
   if (m.includes("未维护新品")) {
+    return "unmaintained_product";
+  }
+  if (m.includes("sku有误") || m.includes("未通过审核")) {
     return "unmaintained_product";
   }
   return "out_of_stock";
