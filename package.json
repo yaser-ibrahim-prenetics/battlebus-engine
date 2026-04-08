@@ -23,6 +23,7 @@
     "test:api": "npx tsx scripts/test-api-connections.ts",
     "test:gps-product": "npx tsx scripts/test-gps-product-sync.ts",
     "test:d365-product": "npx tsx scripts/test-d365-product-sync.ts",
+    "test:d365-fulfillment-order": "npx tsx scripts/test-d365-fulfillment-order.ts",
     "test:product-hub": "npx tsx scripts/test-product-to-hub.ts"
   },
   "dependencies": {

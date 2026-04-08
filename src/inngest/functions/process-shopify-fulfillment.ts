@@ -25,11 +25,13 @@ import {
   getDataAreaIdFromLocation,
   filterDummySkus,
 } from "@/lib/utils/validation";
+import { getWarehouseConfigForDataAreaId } from "@/lib/helpers/warehouse";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
+  BACKORDER_CONFIGS,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
@@ -39,6 +41,18 @@ function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
   if (!sku) return "";
   return mapShopifySkuToDynamics(sku).trim().toUpperCase();
+}
+
+function isFulfillmentInventoryIssueError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return (
+    m.includes("cannot be reserved") ||
+    m.includes("only 0.00 are available") ||
+    m.includes("inventory insufficient") ||
+    m.includes("out of stock") ||
+    m.includes("库存不足") ||
+    m.includes("unmaintained new product")
+  );
 }
 
 export const processShopifyFulfillment = inngest.createFunction(
@@ -147,6 +161,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
       const results = [];
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+      let backorderQueued = false;
 
       // Build a stable map from Shopify order line_item.id -> normalized SKU used in D365.
       // This protects fulfillment when webhook/item SKU labels drift after order creation.
@@ -187,6 +202,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       );
 
       for (const fulfillment of fulfillments) {
+        let fulfillmentSkuCandidates: string[] = [];
         // Skip dummy/adjustment fulfillments
         if (isDummyFulfillment(fulfillment)) {
           results.push({
@@ -199,6 +215,9 @@ export const processShopifyFulfillment = inngest.createFunction(
         try {
           // Filter out dummy SKUs and map to D365 format
           const filteredItems = filterDummySkus<ShopifyFulfillmentLineItem>(fulfillment.line_items);
+          fulfillmentSkuCandidates = filteredItems
+            .map((item) => String(item.sku || "").trim())
+            .filter(Boolean);
 
           if (filteredItems.length === 0) {
             results.push({
@@ -330,6 +349,40 @@ export const processShopifyFulfillment = inngest.createFunction(
             status: "error",
             error: errorMsg,
           });
+
+          if (!backorderQueued && isFulfillmentInventoryIssueError(errorMsg)) {
+            backorderQueued = true;
+            const failedSkus = fulfillmentSkuCandidates;
+            const warehouseName = (() => {
+              try {
+                const cfg = getWarehouseConfigForDataAreaId(dataAreaId);
+                return cfg.name;
+              } catch {
+                return `DataArea-${dataAreaId}`;
+              }
+            })();
+
+            await inngest.send({
+              name: "backorder/created",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: d365Order.SalesOrderNumber,
+                warehouse: warehouseName,
+                errorMessage: errorMsg,
+                errorType: "inventory_insufficient",
+                failedSkus,
+                retryCount: 0,
+                maxRetries: BACKORDER_CONFIGS.maxRetries,
+                orderJson: order,
+                createdAt: new Date().toISOString(),
+                source: "shopify/order.fulfilled",
+              },
+            });
+            console.warn(
+              `[Backorder] Queued from fulfillment for ${shopifyOrderName}: ${errorMsg}; SKUs=${failedSkus.join(", ")}`
+            );
+          }
         }
       }
 
