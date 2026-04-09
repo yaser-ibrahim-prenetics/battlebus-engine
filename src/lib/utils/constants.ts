@@ -22,7 +22,7 @@ export const THROTTLE_CONFIGS = {
   // D365 service protection limits allow 6000 requests/5min = 20/sec
   // Default 15/sec leaves headroom
   DYNAMICS: {
-    limit: envInt("THROTTLE_DYNAMICS_LIMIT", 15),
+    limit: envInt("THROTTLE_DYNAMICS_LIMIT", 20),
     period: (process.env.THROTTLE_DYNAMICS_PERIOD || "1s") as "1s",
   },
   // Shopify REST API allows 40 requests/sec with leaky bucket
@@ -58,10 +58,10 @@ export const THROTTLE_CONFIGS = {
 
 export const CONCURRENCY_CONFIGS = {
   ORDER_PROCESSING: {
-    limit: envInt("CONCURRENCY_ORDER_PROCESSING", 3),
+    limit: envInt("CONCURRENCY_ORDER_PROCESSING", 8),
   },
   FULFILLMENT: {
-    limit: envInt("CONCURRENCY_FULFILLMENT", 1),
+    limit: envInt("CONCURRENCY_FULFILLMENT", 3),
   },
   REFUND: {
     limit: envInt("CONCURRENCY_REFUND", 1),
@@ -70,7 +70,7 @@ export const CONCURRENCY_CONFIGS = {
     limit: envInt("CONCURRENCY_CANCELLATION", 1),
   },
   STANDARD: {
-    limit: envInt("CONCURRENCY_STANDARD", 2),
+    limit: envInt("CONCURRENCY_STANDARD", 5),
   },
   CRON: {
     limit: envInt("CONCURRENCY_CRON", 1),

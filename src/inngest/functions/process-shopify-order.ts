@@ -181,6 +181,10 @@ export const processShopifyOrder = inngest.createFunction(
       ...RATE_LIMIT_CONFIGS.FULFILLMENT,
       key: "event.data.shopifyOrderId",
     },
+    cancelOn: [{ event: "shopify/order.cancelled", match: "data.shopifyOrderId" }],
+    priority: {
+      run: "event.data.isSubscription ? 100 : 0",
+    },
     triggers: [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   },
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {

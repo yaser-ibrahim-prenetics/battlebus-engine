@@ -179,8 +179,8 @@ export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
 
 // Client-side pacing layer (in addition to Inngest throttle/rateLimit)
 // This protects D365 from short bursts when multiple functions run concurrently.
-const _d365MinIntervalParsed = parseInt(process.env.D365_CLIENT_MIN_INTERVAL_MS || "80", 10);
-const D365_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_d365MinIntervalParsed) ? 80 : _d365MinIntervalParsed);
+const _d365MinIntervalParsed = parseInt(process.env.D365_CLIENT_MIN_INTERVAL_MS || "30", 10);
+const D365_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_d365MinIntervalParsed) ? 30 : _d365MinIntervalParsed);
 let d365LastRequestAt = 0;
 
 async function pacedFetch(

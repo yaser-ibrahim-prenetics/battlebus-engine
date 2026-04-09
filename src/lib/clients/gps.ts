@@ -10,8 +10,8 @@ import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
 
-const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
-const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 120 : _omsMinIntervalParsed);
+const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
+const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 50 : _omsMinIntervalParsed);
 const _omsMaxRetriesParsed = parseInt(process.env.OMS_CLIENT_MAX_RETRIES || "3", 10);
 const OMS_MAX_RETRIES = Math.max(1, Number.isNaN(_omsMaxRetriesParsed) ? 3 : _omsMaxRetriesParsed);
 const _omsRetryBaseParsed = parseInt(process.env.OMS_CLIENT_RETRY_BASE_MS || "300", 10);
@@ -85,17 +85,33 @@ async function withOmsPacing<T>(warehouseKey: string, fn: () => Promise<T>): Pro
  * Recursively sorts the keys of an object or array to maintain consistency when generating hash.
  * This is CRITICAL for GPS API authentication.
  */
+const _sortCache = new Map<string, any>();
+
 function deepSortKeys<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+
+  // Use JSON key for cache lookup
+  const cacheKey = JSON.stringify(obj);
+  const cached = _sortCache.get(cacheKey);
+  if (cached) return cached;
+
+  // Keep cache bounded
+  if (_sortCache.size > 500) _sortCache.clear();
+
+  let result: T;
   if (Array.isArray(obj)) {
-    return obj.map((item) => deepSortKeys(item)) as T;
-  } else if (obj !== null && typeof obj === "object") {
+    result = obj.map((item) => deepSortKeys(item)) as T;
+  } else {
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(obj).sort()) {
       sorted[key] = deepSortKeys((obj as Record<string, unknown>)[key]);
     }
-    return sorted as T;
+    result = sorted as T;
   }
-  return obj;
+
+  _sortCache.set(cacheKey, result);
+  return result;
 }
 
 /**
