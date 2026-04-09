@@ -342,12 +342,14 @@ export const processShopifyOrder = inngest.createFunction(
     }
 
     await publishStatus(
-      "resolve-line-skus",
+      "prepare-order",
       "running",
-      "Resolving missing line SKUs from Shopify variants"
+      "Resolving SKUs, validating order, and determining warehouse routing"
     );
-    const skuResolution = await step.run("resolve-missing-line-skus", async () => {
-      const lineItems = Array.isArray(order?.line_items) ? order.line_items : [];
+    const prepareResult = await step.run("prepare-order", async () => {
+      // --- 1. Resolve missing line SKUs ---
+      let currentOrder = order;
+      const lineItems = Array.isArray(currentOrder?.line_items) ? currentOrder.line_items : [];
       const missingShippableLines = lineItems
         .map((item: any, index: number) => ({ item, index }))
         .filter(({ item }) => {
@@ -356,133 +358,262 @@ export const processShopifyOrder = inngest.createFunction(
           return requiresShipping && !sku;
         });
 
+      let skuResolution: {
+        attempted: number;
+        resolved: number;
+        unresolved: Array<{ index: number; title: string; variantId: number | null }>;
+      };
+
       if (missingShippableLines.length === 0) {
-        return {
-          updatedOrder: order,
-          attempted: 0,
-          resolved: 0,
-          unresolved: [] as Array<{ index: number; title: string; variantId: number | null }>,
-        };
+        skuResolution = { attempted: 0, resolved: 0, unresolved: [] };
+      } else {
+        const variantIds = missingShippableLines
+          .map(({ item }) => Number(item?.variant_id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+
+        const latestSkuByVariantId =
+          variantIds.length > 0 ? await getVariantSkusByVariantIds(variantIds) : {};
+
+        let resolved = 0;
+        const patchedLineItems = lineItems.map((item: any) => {
+          const currentSku = typeof item?.sku === "string" ? item.sku.trim() : "";
+          const requiresShipping = item?.requires_shipping !== false;
+          if (!requiresShipping || currentSku) return item;
+
+          const variantId = Number(item?.variant_id);
+          const latestSku =
+            Number.isFinite(variantId) && variantId > 0
+              ? latestSkuByVariantId[String(Math.trunc(variantId))]
+              : "";
+          if (!latestSku) return item;
+          resolved += 1;
+          return { ...item, sku: latestSku };
+        });
+
+        const unresolved = patchedLineItems
+          .map((item: any, index: number) => ({ item, index }))
+          .filter(({ item }) => {
+            const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
+            const requiresShipping = item?.requires_shipping !== false;
+            return requiresShipping && !sku;
+          })
+          .map(({ item, index }) => ({
+            index,
+            title: item?.title || "untitled",
+            variantId:
+              Number.isFinite(Number(item?.variant_id)) && Number(item?.variant_id) > 0
+                ? Number(item?.variant_id)
+                : null,
+          }));
+
+        currentOrder = { ...currentOrder, line_items: patchedLineItems } as ShopifyOrderPayload;
+        skuResolution = { attempted: missingShippableLines.length, resolved, unresolved };
       }
 
-      const variantIds = missingShippableLines
-        .map(({ item }) => Number(item?.variant_id))
-        .filter((id) => Number.isFinite(id) && id > 0);
+      // --- Handle unresolved SKUs ---
+      if (skuResolution.unresolved.length > 0) {
+        const lineItemsAfterPatch = Array.isArray(currentOrder?.line_items) ? currentOrder.line_items : [];
+        const unresolvedIdx = new Set(
+          skuResolution.unresolved.map((u: { index: number }) => u.index)
+        );
+        const filteredLineItems = lineItemsAfterPatch.filter((_, idx) => !unresolvedIdx.has(idx));
 
-      const latestSkuByVariantId =
-        variantIds.length > 0 ? await getVariantSkusByVariantIds(variantIds) : {};
-
-      let resolved = 0;
-      const patchedLineItems = lineItems.map((item: any) => {
-        const currentSku = typeof item?.sku === "string" ? item.sku.trim() : "";
-        const requiresShipping = item?.requires_shipping !== false;
-        if (!requiresShipping || currentSku) return item;
-
-        const variantId = Number(item?.variant_id);
-        const latestSku =
-          Number.isFinite(variantId) && variantId > 0
-            ? latestSkuByVariantId[String(Math.trunc(variantId))]
-            : "";
-        if (!latestSku) return item;
-        resolved += 1;
-        return { ...item, sku: latestSku };
-      });
-
-      const unresolved = patchedLineItems
-        .map((item: any, index: number) => ({ item, index }))
-        .filter(({ item }) => {
+        const hasShippableWithSku = filteredLineItems.some((item: any) => {
           const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
           const requiresShipping = item?.requires_shipping !== false;
-          return requiresShipping && !sku;
-        })
-        .map(({ item, index }) => ({
-          index,
-          title: item?.title || "untitled",
-          variantId:
-            Number.isFinite(Number(item?.variant_id)) && Number(item?.variant_id) > 0
-              ? Number(item?.variant_id)
-              : null,
-        }));
+          return requiresShipping && !!sku;
+        });
+
+        const unresolvedSummary = skuResolution.unresolved
+          .slice(0, 5)
+          .map(
+            (l: { index: number; title: string; variantId: number | null }) =>
+              `${l.title} (line=${l.index}, variant=${l.variantId ?? "n/a"})`
+          )
+          .join(", ");
+
+        if (!hasShippableWithSku) {
+          await publishStatus(
+            "resolve-line-skus",
+            "failed",
+            `Unable to resolve SKU for ${skuResolution.unresolved.length} shippable line(s)`
+          );
+          throw new Error(
+            `[D365] Missing SKU/ItemNumber after Shopify variant refresh for ${shopifyOrderName}; ` +
+              `attempted=${skuResolution.attempted}; resolved=${skuResolution.resolved}; ` +
+              `unresolved=${skuResolution.unresolved.length}; sample=${unresolvedSummary}`
+          );
+        }
+
+        console.warn(
+          `[Order] Excluding ${skuResolution.unresolved.length} shippable line(s) with no SKU in Shopify ` +
+            `(GraphQL variant has empty SKU). Remaining lines go to D365/GPS. Sample: ${unresolvedSummary}`
+        );
+        await slack.sendWarningMessage(
+          SlackChannelEnum.SHOPIFY,
+          `Order ${shopifyOrderName}: excluded ${skuResolution.unresolved.length} shippable line(s) without ItemNumber in Shopify — processing remaining SKUs only. Sample: ${unresolvedSummary}`
+        );
+
+        currentOrder = { ...currentOrder, line_items: filteredLineItems } as ShopifyOrderPayload;
+        await publishStatus(
+          "resolve-line-skus",
+          "completed",
+          skuResolution.resolved > 0
+            ? `Resolved ${skuResolution.resolved} line(s); excluded ${skuResolution.unresolved.length} unresolvable line(s)`
+            : `Excluded ${skuResolution.unresolved.length} shippable line(s) with empty variant SKU; remaining lines proceed`
+        );
+      } else {
+        await publishStatus(
+          "resolve-line-skus",
+          "completed",
+          skuResolution.resolved > 0
+            ? `Resolved ${skuResolution.resolved} missing SKU line(s) from Shopify variants`
+            : "No missing shippable SKUs found"
+        );
+      }
+
+      // --- 2. Validate order ---
+      await publishStatus("validate-order", "running", "Validating order");
+      const validation = await validateOrderCompletely(currentOrder, shopifyOrderId, shopifyOrderName);
+
+      if (!validation.valid || validation.skip) {
+        return { type: "validation_failed" as const, validation, updatedOrder: currentOrder };
+      }
+
+      await publishStatus("validate-order", "completed", "Order validation passed");
+
+      // --- 3. Determine warehouse routing ---
+      const countryCode =
+        currentOrder.shipping_address?.country_code || currentOrder.billing_address?.country_code || "US";
+
+      const intendedLocationId = getIntendedLocationIdFromOrder(currentOrder);
+
+      let fulfillmentLocationId: number | null = null;
+      try {
+        const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+        fulfillmentLocationId = selectPreferredFulfillmentLocationId(fulfillmentOrders as any[]);
+      } catch (error) {
+        console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
+      }
+
+      if (!fulfillmentLocationId && intendedLocationId) {
+        fulfillmentLocationId = intendedLocationId;
+        console.log(
+          `[Order Routing] Using intended_location_id=${intendedLocationId} from order note attributes for ${shopifyOrderName}`
+        );
+      }
+
+      if (!fulfillmentLocationId) {
+        const expectedWarehouseName = determineWarehouse(countryCode);
+        const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
+        if (hubLocation?.shopifyLocationId) {
+          fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
+          console.warn(
+            `[Order Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
+              `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
+          );
+        } else {
+          throw new Error(
+            `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
+              `Configure the location in Battle Hub Locations settings.`
+          );
+        }
+      }
+
+      let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+        fulfillmentLocationId,
+        countryCode,
+        "im8"
+      );
+      let warehouseNameFromLocation = await getWarehouseNameForLocation(
+        fulfillmentLocationId,
+        "im8"
+      );
+
+      if (
+        intendedLocationId &&
+        intendedLocationId !== fulfillmentLocationId &&
+        String(warehouseNameFromLocation || "")
+          .toLowerCase()
+          .includes("virtual")
+      ) {
+        const intendedWarehouse = await getWarehouseNameForLocation(intendedLocationId, "im8");
+        if (intendedWarehouse && !String(intendedWarehouse).toLowerCase().includes("virtual")) {
+          fulfillmentLocationId = intendedLocationId;
+          locationDataAreaId = await getDataAreaIdForLocationAndCountry(
+            fulfillmentLocationId,
+            countryCode,
+            "im8"
+          );
+          warehouseNameFromLocation = intendedWarehouse;
+          console.log(
+            `[Order Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
+          );
+        }
+      }
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        const stordHub = await resolveStordHubWhenFulfillmentLocationUnmapped(
+          currentOrder,
+          countryCode,
+          "im8"
+        );
+        if (stordHub) {
+          const unknownLoc = fulfillmentLocationId;
+          locationDataAreaId = stordHub.dataAreaId;
+          warehouseNameFromLocation = stordHub.warehouseName;
+          fulfillmentLocationId = Number(stordHub.hubShopifyLocationId);
+          console.warn(
+            `[Order Routing] ${shopifyOrderName}: fulfillment location ${unknownLoc} is not in Battle Hub; ` +
+              `all lines use fulfillment_service=stord — using configured "${stordHub.warehouseName}" ` +
+              `(hub Shopify location id ${stordHub.hubShopifyLocationId}). ` +
+              `Add or update this location in Battle Hub (shopify_location_id=${unknownLoc}) so routing stays explicit.`
+          );
+        }
+      }
+
+      if (!locationDataAreaId || !warehouseNameFromLocation) {
+        const routingContext = await getLocationRoutingDebugContext(
+          fulfillmentLocationId,
+          countryCode,
+          "im8"
+        );
+        throw new Error(
+          `[Order Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${countryCode}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled. Context: ${routingContext}`
+        );
+      }
+
+      if (String(warehouseNameFromLocation).toLowerCase().includes("virtual")) {
+        const routingContext = await getLocationRoutingDebugContext(
+          fulfillmentLocationId,
+          countryCode,
+          "im8"
+        );
+        throw new Error(
+          `[Order Routing] Unsupported virtual warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Configure a real fulfillment location in Shopify and Battle Hub. Context: ${routingContext}`
+        );
+      }
+
+      console.log(
+        `[Order Routing] Location ${fulfillmentLocationId} + country ${countryCode} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
+      );
 
       return {
-        updatedOrder: { ...order, line_items: patchedLineItems } as ShopifyOrderPayload,
-        attempted: missingShippableLines.length,
-        resolved,
-        unresolved,
+        type: "ready" as const,
+        validation,
+        updatedOrder: currentOrder,
+        routingResult: {
+          warehouseName: warehouseNameFromLocation as WarehouseName,
+          dataAreaId: locationDataAreaId,
+          countryCode,
+          routingSource: "location" as const,
+        },
       };
     });
 
-    order = skuResolution.updatedOrder as ShopifyOrderPayload;
-
-    if (skuResolution.unresolved.length > 0) {
-      const lineItemsAfterPatch = Array.isArray(order?.line_items) ? order.line_items : [];
-      const unresolvedIdx = new Set(
-        skuResolution.unresolved.map((u: { index: number }) => u.index)
-      );
-      const filteredLineItems = lineItemsAfterPatch.filter((_, idx) => !unresolvedIdx.has(idx));
-
-      const hasShippableWithSku = filteredLineItems.some((item: any) => {
-        const sku = typeof item?.sku === "string" ? item.sku.trim() : "";
-        const requiresShipping = item?.requires_shipping !== false;
-        return requiresShipping && !!sku;
-      });
-
-      const unresolvedSummary = skuResolution.unresolved
-        .slice(0, 5)
-        .map(
-          (l: { index: number; title: string; variantId: number | null }) =>
-            `${l.title} (line=${l.index}, variant=${l.variantId ?? "n/a"})`
-        )
-        .join(", ");
-
-      if (!hasShippableWithSku) {
-        await publishStatus(
-          "resolve-line-skus",
-          "failed",
-          `Unable to resolve SKU for ${skuResolution.unresolved.length} shippable line(s)`
-        );
-        throw new Error(
-          `[D365] Missing SKU/ItemNumber after Shopify variant refresh for ${shopifyOrderName}; ` +
-            `attempted=${skuResolution.attempted}; resolved=${skuResolution.resolved}; ` +
-            `unresolved=${skuResolution.unresolved.length}; sample=${unresolvedSummary}`
-        );
-      }
-
-      console.warn(
-        `[Order] Excluding ${skuResolution.unresolved.length} shippable line(s) with no SKU in Shopify ` +
-          `(GraphQL variant has empty SKU). Remaining lines go to D365/GPS. Sample: ${unresolvedSummary}`
-      );
-      await slack.sendWarningMessage(
-        SlackChannelEnum.SHOPIFY,
-        `Order ${shopifyOrderName}: excluded ${skuResolution.unresolved.length} shippable line(s) without ItemNumber in Shopify — processing remaining SKUs only. Sample: ${unresolvedSummary}`
-      );
-
-      order = { ...order, line_items: filteredLineItems } as ShopifyOrderPayload;
-      await publishStatus(
-        "resolve-line-skus",
-        "completed",
-        skuResolution.resolved > 0
-          ? `Resolved ${skuResolution.resolved} line(s); excluded ${skuResolution.unresolved.length} unresolvable line(s)`
-          : `Excluded ${skuResolution.unresolved.length} shippable line(s) with empty variant SKU; remaining lines proceed`
-      );
-    } else {
-      await publishStatus(
-        "resolve-line-skus",
-        "completed",
-        skuResolution.resolved > 0
-          ? `Resolved ${skuResolution.resolved} missing SKU line(s) from Shopify variants`
-          : "No missing shippable SKUs found"
-      );
-    }
-
-    // Comprehensive order validation - all checks in one place
-    await publishStatus("validate-order", "running", "Validating order");
-    const validation = await step.run("validate-order-completely", async () => {
-      return validateOrderCompletely(order, shopifyOrderId, shopifyOrderName);
-    });
-
-    // Handle validation failures
-    if (!validation.valid || validation.skip) {
+    // Handle validation failures (returned from within the consolidated step)
+    if (prepareResult.type === "validation_failed") {
+      const validation = prepareResult.validation;
       await publishStatus("validate-order", "skipped", validation.reason);
       await publishResult("skipped", { error: validation.reason });
 
@@ -528,139 +659,9 @@ export const processShopifyOrder = inngest.createFunction(
       };
     }
 
-    await publishStatus("validate-order", "completed", "Order validation passed");
-
-    // Determine warehouse and DataAreaId using Hub location settings.
-    const resolveRouting = async () => {
-      const countryCode =
-        order.shipping_address?.country_code || order.billing_address?.country_code || "US";
-
-      const intendedLocationId = getIntendedLocationIdFromOrder(order);
-
-      let fulfillmentLocationId: number | null = null;
-      try {
-        const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-        fulfillmentLocationId = selectPreferredFulfillmentLocationId(fulfillmentOrders as any[]);
-      } catch (error) {
-        console.warn(`[Order Routing] Could not fetch fulfillment orders: ${error}`);
-      }
-
-      if (!fulfillmentLocationId && intendedLocationId) {
-        fulfillmentLocationId = intendedLocationId;
-        console.log(
-          `[Order Routing] Using intended_location_id=${intendedLocationId} from order note attributes for ${shopifyOrderName}`
-        );
-      }
-
-      // Last resort: Shopify gave us only a virtual location.
-      // Use the static country-routing table to look up the expected warehouse name,
-      // then resolve the actual Battle Hub location for that warehouse.
-      // This still reads all config (dataAreaId, warehouse) from Hub location settings.
-      if (!fulfillmentLocationId) {
-        const expectedWarehouseName = determineWarehouse(countryCode);
-        const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
-        if (hubLocation?.shopifyLocationId) {
-          fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
-          console.warn(
-            `[Order Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
-              `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${countryCode} + Battle Hub config.`
-          );
-        } else {
-          throw new Error(
-            `[Order Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${countryCode} (expected warehouse: ${expectedWarehouseName}). ` +
-              `Configure the location in Battle Hub Locations settings.`
-          );
-        }
-      }
-
-      let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-        fulfillmentLocationId,
-        countryCode,
-        "im8"
-      );
-      let warehouseNameFromLocation = await getWarehouseNameForLocation(
-        fulfillmentLocationId,
-        "im8"
-      );
-
-      // Shopify may assign a virtual location for some queued/unassigned FOs.
-      // For Battle Hub generated tests/reruns, honor intended_location_id when present.
-      if (
-        intendedLocationId &&
-        intendedLocationId !== fulfillmentLocationId &&
-        String(warehouseNameFromLocation || "")
-          .toLowerCase()
-          .includes("virtual")
-      ) {
-        const intendedWarehouse = await getWarehouseNameForLocation(intendedLocationId, "im8");
-        if (intendedWarehouse && !String(intendedWarehouse).toLowerCase().includes("virtual")) {
-          fulfillmentLocationId = intendedLocationId;
-          locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-            fulfillmentLocationId,
-            countryCode,
-            "im8"
-          );
-          warehouseNameFromLocation = intendedWarehouse;
-          console.log(
-            `[Order Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
-          );
-        }
-      }
-
-      if (!locationDataAreaId || !warehouseNameFromLocation) {
-        const stordHub = await resolveStordHubWhenFulfillmentLocationUnmapped(
-          order,
-          countryCode,
-          "im8"
-        );
-        if (stordHub) {
-          const unknownLoc = fulfillmentLocationId;
-          locationDataAreaId = stordHub.dataAreaId;
-          warehouseNameFromLocation = stordHub.warehouseName;
-          fulfillmentLocationId = Number(stordHub.hubShopifyLocationId);
-          console.warn(
-            `[Order Routing] ${shopifyOrderName}: fulfillment location ${unknownLoc} is not in Battle Hub; ` +
-              `all lines use fulfillment_service=stord — using configured "${stordHub.warehouseName}" ` +
-              `(hub Shopify location id ${stordHub.hubShopifyLocationId}). ` +
-              `Add or update this location in Battle Hub (shopify_location_id=${unknownLoc}) so routing stays explicit.`
-          );
-        }
-      }
-
-      if (!locationDataAreaId || !warehouseNameFromLocation) {
-        const routingContext = await getLocationRoutingDebugContext(
-          fulfillmentLocationId,
-          countryCode,
-          "im8"
-        );
-        throw new Error(
-          `[Order Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${countryCode}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled. Context: ${routingContext}`
-        );
-      }
-
-      if (String(warehouseNameFromLocation).toLowerCase().includes("virtual")) {
-        const routingContext = await getLocationRoutingDebugContext(
-          fulfillmentLocationId,
-          countryCode,
-          "im8"
-        );
-        throw new Error(
-          `[Order Routing] Unsupported virtual warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Configure a real fulfillment location in Shopify and Battle Hub. Context: ${routingContext}`
-        );
-      }
-
-      console.log(
-        `[Order Routing] Location ${fulfillmentLocationId} + country ${countryCode} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
-      );
-      return {
-        warehouseName: warehouseNameFromLocation as WarehouseName,
-        dataAreaId: locationDataAreaId,
-        countryCode,
-        routingSource: "location" as const,
-      };
-    };
-
-    const routingResult = await step.run("determine-warehouse-routing", resolveRouting);
+    order = prepareResult.updatedOrder as ShopifyOrderPayload;
+    const routingResult = prepareResult.routingResult!;
+    await publishStatus("prepare-order", "completed", "Order prepared: SKUs resolved, validated, routing determined");
 
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;
@@ -673,224 +674,237 @@ export const processShopifyOrder = inngest.createFunction(
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
 
-      // 2. Check for existing D365 order (idempotency check)
-      // Use shopifyOrderName since THK_ShopifyReference stores the order name (e.g., IM8-14931)
-      await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
-      const existingOrder = await step.run("check-existing-d365-order", async () => {
+      // 2. Create D365 order: check existing → header → lines → confirm (single step)
+      await publishStatus("create-d365-order", "running", "Creating D365 sales order");
+      const d365Result = await step.run("create-d365-order", async () => {
+        // Check for existing D365 order (idempotency check)
+        await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
         if (skipD365) {
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
-          return null;
+        } else {
+          console.log(
+            `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
+          );
+          const existing = await dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
+          if (existing) {
+            await publishStatus(
+              "d365.check-existing",
+              "completed",
+              `Existing order found: ${existing.SalesOrderNumber}`,
+              { d365OrderNumber: existing.SalesOrderNumber }
+            );
+            return {
+              type: "already_exists" as const,
+              salesOrderNumber: existing.SalesOrderNumber,
+              lineItems: [] as any[],
+              d365InventoryLotsBySku: {} as Record<string, string>,
+            };
+          }
         }
-        console.log(
-          `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
-        );
-        return dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
-      });
-      await publishStatus("d365.check-existing", "completed", "No existing order found");
+        await publishStatus("d365.check-existing", "completed", "No existing order found");
 
-      if (existingOrder) {
+        // Create D365 Header
+        await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
+        const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+        let d365Header;
+        if (skipD365) {
+          d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
+        } else {
+          d365Header = await retryWithBackoff(() => dynamics.createSalesOrderHeaderV3(headerRequest), {
+            label: `D365 header ${shopifyOrderName}`,
+          });
+        }
+
+        const salesOrderNo = d365Header.SalesOrderNumber;
+        if (!salesOrderNo) {
+          throw new Error(`[D365] Missing SalesOrderNumber for ${shopifyOrderName}`);
+        }
         await publishStatus(
-          "d365.check-existing",
+          "d365.create-header",
           "completed",
-          `Existing order found: ${existingOrder.SalesOrderNumber}`,
-          { d365OrderNumber: existingOrder.SalesOrderNumber }
+          `Header created: ${salesOrderNo}`,
+          { d365OrderNumber: salesOrderNo }
         );
+
+        // Create D365 Lines - parallel creation
+        const lineItems = toD365SalesOrderLines(order, salesOrderNo, warehouseName, true, dataAreaId);
+        lineItems.forEach((item) => {
+          item.dataAreaId = dataAreaId;
+        });
+        await publishStatus(
+          "d365.create-lines",
+          "running",
+          `Creating ${lineItems.length} line items`,
+          { totalLines: lineItems.length }
+        );
+
+        let d365InventoryLotsBySku: Record<string, string> = {};
+
+        if (skipD365) {
+          // no-op
+        } else {
+          const invalidLines = lineItems
+            .map((line, index) => ({ line, index }))
+            .filter(
+              ({ line }) =>
+                typeof line.itemNumber !== "string" ||
+                line.itemNumber.trim().length === 0 ||
+                !Number.isFinite(line.quantity) ||
+                line.quantity <= 0
+            );
+          if (invalidLines.length > 0) {
+            const details = invalidLines
+              .slice(0, 5)
+              .map(({ line, index }) => ({
+                index,
+                itemNumber: line.itemNumber,
+                quantity: line.quantity,
+                price: line.price,
+              }));
+            throw new Error(
+              `[D365] Missing SKU/ItemNumber in create-d365-lines for ${shopifyOrderName} (${salesOrderNo}); ` +
+                `invalidLines=${invalidLines.length}; details=${JSON.stringify(details)} ` +
+                `(missing SKU/ItemNumber is non-retryable)`
+            );
+          }
+
+          const lineResults = await Promise.all(
+            lineItems.map((line) =>
+              (async () => {
+                try {
+                  const created = await retryWithBackoff(
+                    () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }),
+                    {
+                      label: `D365 line ${line.itemNumber}`,
+                      shouldRetry: (err) => {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        return !isNonRetryableOrderError(msg);
+                      },
+                    }
+                  );
+                  const lot = created?.InventoryLotId ? String(created.InventoryLotId).trim() : "";
+                  return {
+                    skipped: false as const,
+                    itemNumber: line.itemNumber,
+                    inventoryLotId: lot,
+                  };
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (isServiceSkuItemNumber(line.itemNumber) && isD365ItemNotFoundError(msg)) {
+                    console.warn(
+                      `[D365] Skipping missing service SKU line ${line.itemNumber} for ${salesOrderNo}: ${msg}`
+                    );
+                    return {
+                      skipped: true as const,
+                      itemNumber: line.itemNumber,
+                      error: msg,
+                    };
+                  }
+                  throw err;
+                }
+              })()
+            )
+          );
+          const skippedServiceLines = lineResults.filter((r) => r.skipped);
+          if (skippedServiceLines.length > 0) {
+            await publishStatus(
+              "d365.create-lines",
+              "running",
+              `Skipped ${skippedServiceLines.length} missing service SKU lines`,
+              {
+                skippedServiceSkus: skippedServiceLines.map((s) => s.itemNumber),
+                skippedCount: skippedServiceLines.length,
+              }
+            );
+          }
+          for (const r of lineResults) {
+            if (r.skipped) continue;
+            const sku = String(r.itemNumber || "").trim().toUpperCase();
+            const lot = "inventoryLotId" in r ? String(r.inventoryLotId || "").trim() : "";
+            if (sku && lot) {
+              d365InventoryLotsBySku[sku] = lot;
+            }
+          }
+          if (Object.keys(d365InventoryLotsBySku).length > 0) {
+            console.log(
+              `[D365] Captured InventoryLotId per SKU for ${salesOrderNo}:`,
+              d365InventoryLotsBySku
+            );
+          }
+        }
+
+        await publishStatus(
+          "d365.create-lines",
+          "completed",
+          `Created ${lineItems.length} line items`,
+          { totalLines: lineItems.length }
+        );
+
+        // Confirm D365 Order with exponential backoff
+        await publishStatus("d365.confirm-order", "running", "Confirming D365 sales order");
+        if (!skipD365) {
+          const backoffMs = [500, 1000, 2000];
+
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              await dynamics.confirmSalesOrder(salesOrderNo, dataAreaId);
+              if (attempt > 1) {
+                await publishStatus(
+                  "d365.confirm-order",
+                  "running",
+                  `Confirmed on attempt ${attempt}`,
+                  { attempt }
+                );
+              }
+              break;
+            } catch (error) {
+              const isNotFoundError =
+                error instanceof Error && error.message.includes("does not exist");
+              if (isNotFoundError && attempt < 3) {
+                const waitMs = backoffMs[attempt - 1];
+                await publishStatus(
+                  "d365.confirm-order",
+                  "running",
+                  `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`,
+                  { attempt, maxAttempts: 3, waitMs }
+                );
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+              } else {
+                throw error;
+              }
+            }
+          }
+        }
+        await publishStatus("d365.confirm-order", "completed", "D365 order confirmed");
+
+        return {
+          type: "created" as const,
+          salesOrderNumber: salesOrderNo,
+          lineItems,
+          d365InventoryLotsBySku,
+        };
+      });
+
+      // Handle existing order early return
+      if (d365Result.type === "already_exists") {
         return {
           status: "already_exists",
-          d365OrderNumber: existingOrder.SalesOrderNumber,
+          d365OrderNumber: d365Result.salesOrderNumber,
           shopifyOrderId,
         };
       }
 
-      await publishStatus("create-d365-order", "running", "Creating D365 sales order");
+      salesOrderNumber = d365Result.salesOrderNumber;
+      const salesOrderNo = salesOrderNumber!;
+      d365InventoryLotsBySku = d365Result.d365InventoryLotsBySku || {};
+      const lineItems = d365Result.lineItems;
 
-      // 2a. Create D365 Header
-      await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
-      const d365Header = await step.run("create-d365-header", async () => {
-        const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
-        if (skipD365) {
-          return { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
-        }
-        return retryWithBackoff(() => dynamics.createSalesOrderHeaderV3(headerRequest), {
-          label: `D365 header ${shopifyOrderName}`,
-        });
-      });
-
-      salesOrderNumber = d365Header.SalesOrderNumber;
-      if (!salesOrderNumber) {
-        throw new Error(`[D365] Missing SalesOrderNumber for ${shopifyOrderName}`);
-      }
-      const salesOrderNo = salesOrderNumber;
       await publishStatus(
-        "d365.create-header",
+        "create-d365-order",
         "completed",
-        `Header created: ${salesOrderNo}`,
+        `D365 order created: ${salesOrderNo}`,
         { d365OrderNumber: salesOrderNo }
       );
-
-      // 2b. Create D365 Lines - OPTIMIZED: Parallel creation instead of sequential
-      const lineItems = toD365SalesOrderLines(order, salesOrderNo, warehouseName, true, dataAreaId);
-      // Update all line items with the correct dataAreaId from location routing
-      lineItems.forEach((item) => {
-        item.dataAreaId = dataAreaId;
-      });
-      await publishStatus(
-        "d365.create-lines",
-        "running",
-        `Creating ${lineItems.length} line items`,
-        { totalLines: lineItems.length }
-      );
-      const lineCreationResult = await step.run("create-d365-lines", async () => {
-        if (skipD365) {
-          return { lineItems, d365InventoryLotsBySku: {} as Record<string, string> };
-        }
-
-        const invalidLines = lineItems
-          .map((line, index) => ({ line, index }))
-          .filter(
-            ({ line }) =>
-              typeof line.itemNumber !== "string" ||
-              line.itemNumber.trim().length === 0 ||
-              !Number.isFinite(line.quantity) ||
-              line.quantity <= 0
-          );
-        if (invalidLines.length > 0) {
-          const details = invalidLines
-            .slice(0, 5)
-            .map(({ line, index }) => ({
-              index,
-              itemNumber: line.itemNumber,
-              quantity: line.quantity,
-              price: line.price,
-            }));
-          throw new Error(
-            `[D365] Missing SKU/ItemNumber in create-d365-lines for ${shopifyOrderName} (${salesOrderNo}); ` +
-              `invalidLines=${invalidLines.length}; details=${JSON.stringify(details)} ` +
-              `(missing SKU/ItemNumber is non-retryable)`
-          );
-        }
-
-        const lineResults = await Promise.all(
-          lineItems.map((line) =>
-            (async () => {
-              try {
-                const created = await retryWithBackoff(
-                  () => dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }),
-                  {
-                    label: `D365 line ${line.itemNumber}`,
-                    shouldRetry: (err) => {
-                      const msg = err instanceof Error ? err.message : String(err);
-                      return !isNonRetryableOrderError(msg);
-                    },
-                  }
-                );
-                const lot = created?.InventoryLotId ? String(created.InventoryLotId).trim() : "";
-                return {
-                  skipped: false as const,
-                  itemNumber: line.itemNumber,
-                  inventoryLotId: lot,
-                };
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                // Keep spock-store service SKU behavior, but tolerate missing setup in D365 envs.
-                // Product SKU failures are still hard failures.
-                if (isServiceSkuItemNumber(line.itemNumber) && isD365ItemNotFoundError(msg)) {
-                  console.warn(
-                    `[D365] Skipping missing service SKU line ${line.itemNumber} for ${salesOrderNo}: ${msg}`
-                  );
-                  return {
-                    skipped: true as const,
-                    itemNumber: line.itemNumber,
-                    error: msg,
-                  };
-                }
-                throw err;
-              }
-            })()
-          )
-        );
-        const skippedServiceLines = lineResults.filter((r) => r.skipped);
-        if (skippedServiceLines.length > 0) {
-          await publishStatus(
-            "d365.create-lines",
-            "running",
-            `Skipped ${skippedServiceLines.length} missing service SKU lines`,
-            {
-              skippedServiceSkus: skippedServiceLines.map((s) => s.itemNumber),
-              skippedCount: skippedServiceLines.length,
-            }
-          );
-        }
-        const d365InventoryLotsBySku: Record<string, string> = {};
-        for (const r of lineResults) {
-          if (r.skipped) continue;
-          const sku = String(r.itemNumber || "").trim().toUpperCase();
-          const lot = "inventoryLotId" in r ? String(r.inventoryLotId || "").trim() : "";
-          if (sku && lot) {
-            d365InventoryLotsBySku[sku] = lot;
-          }
-        }
-        if (Object.keys(d365InventoryLotsBySku).length > 0) {
-          console.log(
-            `[D365] Captured InventoryLotId per SKU for ${salesOrderNo}:`,
-            d365InventoryLotsBySku
-          );
-        }
-        return { lineItems, d365InventoryLotsBySku };
-      });
-      d365InventoryLotsBySku = lineCreationResult.d365InventoryLotsBySku || {};
-      await publishStatus(
-        "d365.create-lines",
-        "completed",
-        `Created ${lineItems.length} line items`,
-        { totalLines: lineItems.length }
-      );
-
-      // 2c. Confirm D365 Order - OPTIMIZED: Smart retry replaces fixed 5s wait
-      // Instead of always waiting 5s, we try immediately and only wait on "not found" errors
-      // This saves 5+ seconds on most orders where propagation is instant
-      await publishStatus("d365.confirm-order", "running", "Confirming D365 sales order");
-      await step.run("confirm-d365-order", async () => {
-        if (skipD365) {
-          return;
-        }
-
-        // OPTIMIZATION: Exponential backoff starting at 500ms instead of fixed 5s wait
-        // Typical success: 1st or 2nd attempt (0-1s total)
-        // Worst case: 500ms + 1000ms + 2000ms = 3.5s (still faster than old 5s + 3s*3)
-        const backoffMs = [500, 1000, 2000];
-
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            await dynamics.confirmSalesOrder(salesOrderNo, dataAreaId);
-            if (attempt > 1) {
-              await publishStatus(
-                "d365.confirm-order",
-                "running",
-                `Confirmed on attempt ${attempt}`,
-                { attempt }
-              );
-            }
-            return;
-          } catch (error) {
-            const isNotFoundError =
-              error instanceof Error && error.message.includes("does not exist");
-            if (isNotFoundError && attempt < 3) {
-              const waitMs = backoffMs[attempt - 1];
-              await publishStatus(
-                "d365.confirm-order",
-                "running",
-                `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`,
-                { attempt, maxAttempts: 3, waitMs }
-              );
-              await new Promise((resolve) => setTimeout(resolve, waitMs));
-            } else {
-              throw error;
-            }
-          }
-        }
-      });
-      await publishStatus("d365.confirm-order", "completed", "D365 order confirmed");
 
       // OPTIMIZATION: Run D365 prepayment + GPS payload building in PARALLEL
       // This saves ~4s by overlapping these independent operations
@@ -1020,17 +1034,24 @@ export const processShopifyOrder = inngest.createFunction(
         await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
       }
 
-      await publishStatus(
-        "create-d365-order",
-        "completed",
-        `D365 order created: ${salesOrderNo}`,
-        { d365OrderNumber: salesOrderNo }
-      );
+      // 3c+4. Fulfillment split check + GPS send + metafield (single step)
+      await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
 
-      // 3c. Fulfillment order splitting (optional, non-blocking)
-      // For international orders exceeding the split threshold, split the fulfillment order
-      // so multiple shipments can be created from different inventory pools
-      await step.run("check-fulfillment-split", async () => {
+      if (shouldSendToRealGps && gpsOrderPayload) {
+        await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
+          warehouse: warehouseName,
+        });
+      } else if (!shouldSendToRealGps) {
+        await publishStatus(
+          "gps.send-order",
+          "skipped",
+          `GPS sync not required - ${warehouseName} uses Shopify app`,
+          { warehouse: warehouseName }
+        );
+      }
+
+      const gpsResult = await step.run("send-to-warehouse", async () => {
+        // --- Fulfillment order splitting (optional, non-blocking) ---
         try {
           const orderTotal = parseFloat(order.total_price || "0");
           const countryCode = country_code || "US";
@@ -1042,84 +1063,75 @@ export const processShopifyOrder = inngest.createFunction(
             `(total=${orderTotal}, threshold=${splitDecision.threshold}, country=${countryCode})`
           );
 
-          if (!splitDecision.shouldSplit) {
-            return { split: false, reason: splitDecision.reason };
-          }
+          if (splitDecision.shouldSplit) {
+            const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+            const openFO = fulfillmentOrders?.find(
+              (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+            );
 
-          // Fetch fulfillment orders to get the GID for splitting
-          const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-          const openFO = fulfillmentOrders?.find(
-            (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
-          );
+            if (!openFO) {
+              console.warn(`[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`);
+            } else {
+              const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
+              const foLineItems = (openFO as any).line_items || [];
 
-          if (!openFO) {
-            console.warn(`[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`);
-            return { split: false, reason: "no_open_fulfillment_order" };
-          }
+              if (foLineItems.length < 2) {
+                console.log(`[Fulfillment Split] Only ${foLineItems.length} line item(s), cannot split`);
+              } else {
+                const midpoint = Math.ceil(foLineItems.length / 2);
+                const splitLineItems = foLineItems.slice(midpoint).map((li: any) => ({
+                  fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
+                  quantity: li.quantity || li.fulfillable_quantity || 1,
+                }));
 
-          const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
-          const lineItems = (openFO as any).line_items || [];
+                const graphqlUrl = `https://${config.shopify.im8.shopDomain}/admin/api/${config.shopify.im8.apiVersion}/graphql.json`;
+                const mutation = `
+                  mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
+                    fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
+                      fulfillmentOrders { id }
+                      userErrors { field message }
+                    }
+                  }
+                `;
 
-          if (lineItems.length < 2) {
-            console.log(`[Fulfillment Split] Only ${lineItems.length} line item(s), cannot split`);
-            return { split: false, reason: "single_line_item" };
-          }
+                const graphqlResponse = await fetch(graphqlUrl, {
+                  method: "POST",
+                  headers: {
+                    "X-Shopify-Access-Token": config.shopify.im8.accessToken,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    query: mutation,
+                    variables: {
+                      fulfillmentOrderId: fulfillmentOrderGid,
+                      fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
+                    },
+                  }),
+                });
 
-          // Split: move the second half of line items into a new fulfillment order
-          const midpoint = Math.ceil(lineItems.length / 2);
-          const splitLineItems = lineItems.slice(midpoint).map((li: any) => ({
-            fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
-            quantity: li.quantity || li.fulfillable_quantity || 1,
-          }));
+                const graphqlResult = await graphqlResponse.json();
+                const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
 
-          const graphqlUrl = `https://${config.shopify.im8.shopDomain}/admin/api/${config.shopify.im8.apiVersion}/graphql.json`;
-          const mutation = `
-            mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
-              fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
-                fulfillmentOrders { id }
-                userErrors { field message }
+                if (userErrors && userErrors.length > 0) {
+                  const errorMsg = userErrors.map((e: any) => e.message).join(", ");
+                  console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
+                  await slack.sendWarningMessage(
+                    SlackChannelEnum.SHOPIFY,
+                    `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
+                  );
+                } else {
+                  const newFOs = graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
+                  console.log(`[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`);
+
+                  await slack.sendOrderMessage(
+                    SlackChannelEnum.SHOPIFY,
+                    `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
+                    `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
+                  );
+                }
               }
             }
-          `;
-
-          const graphqlResponse = await fetch(graphqlUrl, {
-            method: "POST",
-            headers: {
-              "X-Shopify-Access-Token": config.shopify.im8.accessToken,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              query: mutation,
-              variables: {
-                fulfillmentOrderId: fulfillmentOrderGid,
-                fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
-              },
-            }),
-          });
-
-          const graphqlResult = await graphqlResponse.json();
-          const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
-
-          if (userErrors && userErrors.length > 0) {
-            const errorMsg = userErrors.map((e: any) => e.message).join(", ");
-            console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
-            await slack.sendWarningMessage(
-              SlackChannelEnum.SHOPIFY,
-              `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
-            );
-            return { split: false, reason: "shopify_user_error", error: errorMsg };
           }
-
-          const newFOs = graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
-          console.log(`[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`);
-
-          await slack.sendOrderMessage(
-            SlackChannelEnum.SHOPIFY,
-            `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
-            `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
-          );
-
-          return { split: true, fulfillmentOrderCount: newFOs.length, reason: splitDecision.reason };
         } catch (error) {
           // Non-blocking: log warning and continue without splitting
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1128,33 +1140,9 @@ export const processShopifyOrder = inngest.createFunction(
             SlackChannelEnum.SHOPIFY,
             `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
           );
-          return { split: false, reason: "error", error: errorMsg };
         }
-      });
 
-      // 4. Send to GPS (if applicable)
-      // Only GPS warehouses need syncing - Stord has its own Shopify app
-      await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
-
-      // 4b. Send to GPS warehouse + store metafield in SINGLE step
-      // OPTIMIZATION: Consolidated GPS send + metafield store into one step
-      // This eliminates ~4s of Inngest step overhead
-      if (shouldSendToRealGps && gpsOrderPayload) {
-        await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
-          warehouse: warehouseName,
-        });
-      } else if (!shouldSendToRealGps) {
-        // Skip GPS sync for non-GPS warehouses (e.g., Stord - handled by Shopify app)
-        await publishStatus(
-          "gps.send-order",
-          "skipped",
-          `GPS sync not required - ${warehouseName} uses Shopify app`,
-          { warehouse: warehouseName }
-        );
-      }
-
-      const gpsResult = await step.run("send-to-gps-and-store-metafield", async () => {
-        // If GPS is enabled and we have a payload, make the real call
+        // --- Send to GPS + store metafield ---
         if (shouldSendToRealGps && gpsOrderPayload) {
           try {
             const result = await gps.createOutboundOrder(
@@ -1162,7 +1150,6 @@ export const processShopifyOrder = inngest.createFunction(
               warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
             );
 
-            // OPTIMIZATION: Store metafield immediately after GPS success (same step)
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
             if (gpsOrderNo) {
               await setGpsOrderMetafield(shopifyOrderId, {
@@ -1183,8 +1170,6 @@ export const processShopifyOrder = inngest.createFunction(
               return { type: "out_of_stock", error: error.message };
             }
 
-            // Handle other GPS errors gracefully - don't fail the entire order
-            // The order has already been created in D365, so we log the error and continue
             const errorMessage = error instanceof Error ? error.message : String(error);
             const isGpsApiError = errorMessage.includes("GPS API error");
 
@@ -1212,7 +1197,6 @@ export const processShopifyOrder = inngest.createFunction(
           }
         }
 
-        // Skip if GPS not enabled or not a GPS warehouse
         if (!shouldSendToRealGps) {
           return {
             type: "skipped",
@@ -1383,53 +1367,56 @@ export const processShopifyOrder = inngest.createFunction(
 
       // IMPORTANT: Do not overwrite backorder status with a generic "order created" update.
       if (!routedToBackorder) {
-        await csPlatform.sendOrderCreated(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber: salesOrderNo,
-            warehouse: warehouseName,
-            gpsOrderId,
-            gpsSkipped, // Pass GPS skip status for sync tracking
-            orderJson: order,
-            ...(Object.keys(d365InventoryLotsBySku).length > 0
-              ? { state: { d365InventoryLotsBySku } }
-              : {}),
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
-
-        // Explicitly close any stale backorder/error state on success
-        // (especially important for reruns that recover from prior failures).
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber: salesOrderNo,
-            warehouse: warehouseName,
-            gpsOrderId,
-            status: "completed",
-            processingStatus: "completed",
-            d365SyncStatus: "synced",
-            gpsSyncStatus:
-              gpsResult?.type === "real"
-                ? "synced"
-                : gpsSkipped
-                  ? "skipped"
-                  : "pending",
-            lastError: null,
-            lastErrorType: null,
-            retryAt: null,
-            ...(Object.keys(d365InventoryLotsBySku).length > 0
-              ? { state: { d365InventoryLotsBySku } }
-              : {}),
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
+        // Fire-and-forget: notify Battle Hub without blocking the return.
+        // These are non-critical notifications — the order is already processed.
+        Promise.allSettled([
+          csPlatform.sendOrderCreated(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNo,
+              warehouse: warehouseName,
+              gpsOrderId,
+              gpsSkipped, // Pass GPS skip status for sync tracking
+              orderJson: order,
+              ...(Object.keys(d365InventoryLotsBySku).length > 0
+                ? { state: { d365InventoryLotsBySku } }
+                : {}),
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          ),
+          // Explicitly close any stale backorder/error state on success
+          // (especially important for reruns that recover from prior failures).
+          csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNo,
+              warehouse: warehouseName,
+              gpsOrderId,
+              status: "completed",
+              processingStatus: "completed",
+              d365SyncStatus: "synced",
+              gpsSyncStatus:
+                gpsResult?.type === "real"
+                  ? "synced"
+                  : gpsSkipped
+                    ? "skipped"
+                    : "pending",
+              lastError: null,
+              lastErrorType: null,
+              retryAt: null,
+              ...(Object.keys(d365InventoryLotsBySku).length > 0
+                ? { state: { d365InventoryLotsBySku } }
+                : {}),
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          ),
+        ]).catch(() => {});
       }
 
       if (routedToBackorder) {
