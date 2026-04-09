@@ -674,9 +674,9 @@ export const processShopifyOrder = inngest.createFunction(
       // D365 calls controlled by ENABLE_DYNAMICS_SYNC
       const skipD365 = !config.features.enableDynamicsSync;
 
-      // 2. Create D365 order: check existing → header → lines → confirm (single step)
+      // MEGA-STEP: D365 create + prepayment + GPS payload + GPS send (single step to minimise checkpoint overhead)
       await publishStatus("create-d365-order", "running", "Creating D365 sales order");
-      const d365Result = await step.run("create-d365-order", async () => {
+      const fulfillResult = await step.run("fulfill-order", async () => {
         // Check for existing D365 order (idempotency check)
         await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
         if (skipD365) {
@@ -877,181 +877,89 @@ export const processShopifyOrder = inngest.createFunction(
         }
         await publishStatus("d365.confirm-order", "completed", "D365 order confirmed");
 
-        return {
-          type: "created" as const,
-          salesOrderNumber: salesOrderNo,
-          lineItems,
-          d365InventoryLotsBySku,
-        };
-      });
-
-      // Handle existing order early return
-      if (d365Result.type === "already_exists") {
-        return {
-          status: "already_exists",
-          d365OrderNumber: d365Result.salesOrderNumber,
-          shopifyOrderId,
-        };
-      }
-
-      salesOrderNumber = d365Result.salesOrderNumber;
-      const salesOrderNo = salesOrderNumber!;
-      d365InventoryLotsBySku = d365Result.d365InventoryLotsBySku || {};
-      const lineItems = d365Result.lineItems;
-
-      await publishStatus(
-        "create-d365-order",
-        "completed",
-        `D365 order created: ${salesOrderNo}`,
-        { d365OrderNumber: salesOrderNo }
-      );
-
-      // OPTIMIZATION: Run D365 prepayment + GPS payload building in PARALLEL
-      // This saves ~4s by overlapping these independent operations
-      const prepaymentAmount = calculatePrepaymentAmount(order);
-      // Only sync to GPS if warehouse is actually a GPS warehouse
-      // Stord orders are already syncing via Shopify app, so skip GPS sync for Stord
-      const shouldSendToRealGps =
-        shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
-
-      // Start both operations simultaneously
-      if (prepaymentAmount > 0) {
         await publishStatus(
-          "d365.create-prepayment",
-          "running",
-          `Creating prepayment: $${prepaymentAmount.toFixed(2)}`,
-          { amount: prepaymentAmount }
+          "create-d365-order",
+          "completed",
+          `D365 order created: ${salesOrderNo}`,
+          { d365OrderNumber: salesOrderNo }
         );
-      }
-      await publishStatus("gps.build-payload", "running", "Transforming order to GPS format");
 
-      // Run prepayment and GPS payload building in parallel using Promise.all with step.run
-      const [prepaymentResult, gpsOrderPayload] = await Promise.all([
-        // 3. Create Prepayment (runs in parallel)
-        step.run("create-d365-prepayment", async () => {
-          if (skipD365 || prepaymentAmount <= 0) {
-            return { success: true, amount: prepaymentAmount };
-          }
+        // --- Prepayment (non-blocking) ---
+        const prepaymentAmount = calculatePrepaymentAmount(order);
+        let prepaymentResult: { success: boolean; amount: number; error?: string } = {
+          success: true,
+          amount: prepaymentAmount,
+        };
 
+        if (!skipD365 && prepaymentAmount > 0) {
+          await publishStatus(
+            "d365.create-prepayment",
+            "running",
+            `Creating prepayment: $${prepaymentAmount.toFixed(2)}`,
+            { amount: prepaymentAmount }
+          );
           try {
             await dynamics.createPrepayment(salesOrderNo, dataAreaId);
-            return { success: true, amount: prepaymentAmount };
+            await publishStatus(
+              "d365.create-prepayment",
+              "completed",
+              `Prepayment created: $${prepaymentAmount.toFixed(2)}`,
+              { amount: prepaymentAmount }
+            );
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             const isNumberSequenceError =
               errorMessage.includes("Number sequence") &&
               errorMessage.includes("has been exceeded");
 
-            if (isNumberSequenceError) {
-              // D365 number sequence exceeded - this is a configuration issue
-              // Log as skipped and continue processing (prepayment is not critical for fulfillment)
-              await publishStatus(
-                "d365.create-prepayment",
-                "skipped",
-                `Prepayment skipped: D365 number sequence exceeded. Order will continue without prepayment.`,
-                {
-                  amount: prepaymentAmount,
-                  error: "number_sequence_exceeded",
-                  salesOrderNumber: salesOrderNo,
-                }
-              );
-
-              await slack.sendWarningMessage(
-                SlackChannelEnum.SHOPIFY,
-                `⚠️ [D365] Number sequence exceeded for prepayment\n` +
-                  `Order: ${shopifyOrderName} (${salesOrderNo})\n` +
-                  `Error: ${errorMessage}\n` +
-                  `Action Required: Extend number sequence U001-JBN in D365`
-              );
-
-              return {
-                success: false,
-                amount: prepaymentAmount,
-                error: "number_sequence_exceeded",
-              };
-            }
-
-            // For other prepayment errors, still log but don't fail the order
             await publishStatus(
               "d365.create-prepayment",
               "skipped",
-              `Prepayment failed: ${errorMessage}. Order will continue without prepayment.`,
+              `Prepayment ${isNumberSequenceError ? "skipped: D365 number sequence exceeded" : `failed: ${errorMessage}`}. Order will continue without prepayment.`,
               {
                 amount: prepaymentAmount,
-                error: errorMessage,
-                  salesOrderNumber: salesOrderNo,
+                error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
+                salesOrderNumber: salesOrderNo,
               }
             );
 
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
-              `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
+              isNumberSequenceError
+                ? `⚠️ [D365] Number sequence exceeded for prepayment\nOrder: ${shopifyOrderName} (${salesOrderNo})\nError: ${errorMessage}\nAction Required: Extend number sequence U001-JBN in D365`
+                : `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
             );
 
-            return { success: false, amount: prepaymentAmount, error: errorMessage };
+            prepaymentResult = {
+              success: false,
+              amount: prepaymentAmount,
+              error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
+            };
           }
-        }),
-
-        // 4a. Build GPS payload (runs in parallel with prepayment)
-        step.run("build-gps-payload", async () => {
-          try {
-            return toGpsOutboundOrder(order, salesOrderNo, warehouseName);
-          } catch (error) {
-            await slack.sendWarningMessage(
-              "gps",
-              `Failed to build GPS payload for ${shopifyOrderName}: ${error}`
-            );
-            return null;
-          }
-        }),
-      ]);
-
-      // Publish results after parallel completion
-      if (prepaymentAmount > 0) {
-        if (prepaymentResult.success) {
-          await publishStatus(
-            "d365.create-prepayment",
-            "completed",
-            `Prepayment created: $${prepaymentAmount.toFixed(2)}`,
-            { amount: prepaymentAmount }
-          );
         }
-        // If prepayment failed, status was already published in the step.run catch block
-      }
 
-      if (gpsOrderPayload) {
-        const itemCount = gpsOrderPayload.productList?.length || 0;
-        await publishStatus(
-          "gps.build-payload",
-          "completed",
-          `Payload built with ${itemCount} items`,
-          {
+        // --- Build GPS payload ---
+        await publishStatus("gps.build-payload", "running", "Transforming order to GPS format");
+        const shouldSendToRealGps =
+          shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
+        let gpsOrderPayload: ReturnType<typeof toGpsOutboundOrder> | null = null;
+        try {
+          gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
+          const itemCount = gpsOrderPayload?.productList?.length || 0;
+          await publishStatus("gps.build-payload", "completed", `Payload built with ${itemCount} items`, {
             itemCount,
             warehouse: warehouseName,
-          }
-        );
-      } else {
-        await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
-      }
+          });
+        } catch (error) {
+          await slack.sendWarningMessage(
+            "gps",
+            `Failed to build GPS payload for ${shopifyOrderName}: ${error}`
+          );
+          await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
+        }
 
-      // 3c+4. Fulfillment split check + GPS send + metafield (single step)
-      await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
-
-      if (shouldSendToRealGps && gpsOrderPayload) {
-        await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
-          warehouse: warehouseName,
-        });
-      } else if (!shouldSendToRealGps) {
-        await publishStatus(
-          "gps.send-order",
-          "skipped",
-          `GPS sync not required - ${warehouseName} uses Shopify app`,
-          { warehouse: warehouseName }
-        );
-      }
-
-      const gpsResult = await step.run("send-to-warehouse", async () => {
         // --- Fulfillment order splitting (optional, non-blocking) ---
+        await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
         try {
           const orderTotal = parseFloat(order.total_price || "0");
           const countryCode = country_code || "US";
@@ -1133,7 +1041,6 @@ export const processShopifyOrder = inngest.createFunction(
             }
           }
         } catch (error) {
-          // Non-blocking: log warning and continue without splitting
           const errorMsg = error instanceof Error ? error.message : String(error);
           console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
           await slack.sendWarningMessage(
@@ -1144,6 +1051,9 @@ export const processShopifyOrder = inngest.createFunction(
 
         // --- Send to GPS + store metafield ---
         if (shouldSendToRealGps && gpsOrderPayload) {
+          await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
+            warehouse: warehouseName,
+          });
           try {
             const result = await gps.createOutboundOrder(
               gpsOrderPayload,
@@ -1163,15 +1073,26 @@ export const processShopifyOrder = inngest.createFunction(
               );
             }
 
-            return { type: "real", result, metafieldStored: !!gpsOrderNo };
+            return {
+              type: "fulfillment_complete" as const,
+              salesOrderNumber: salesOrderNo,
+              lineItems,
+              d365InventoryLotsBySku,
+              gpsResult: { type: "real" as const, result, metafieldStored: !!gpsOrderNo },
+            };
           } catch (error) {
             if (error instanceof OutOfStockError) {
               console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
-              return { type: "out_of_stock", error: error.message };
+              return {
+                type: "fulfillment_complete" as const,
+                salesOrderNumber: salesOrderNo,
+                lineItems,
+                d365InventoryLotsBySku,
+                gpsResult: { type: "out_of_stock" as const, error: error.message },
+              };
             }
 
             const errorMessage = error instanceof Error ? error.message : String(error);
-            const isGpsApiError = errorMessage.includes("GPS API error");
 
             await publishStatus(
               "gps.send-order",
@@ -1193,18 +1114,53 @@ export const processShopifyOrder = inngest.createFunction(
                 `D365 order created successfully, but GPS sync failed.`
             );
 
-            return { type: "failed", error: errorMessage };
+            return {
+              type: "fulfillment_complete" as const,
+              salesOrderNumber: salesOrderNo,
+              lineItems,
+              d365InventoryLotsBySku,
+              gpsResult: { type: "failed" as const, error: errorMessage },
+            };
           }
         }
 
         if (!shouldSendToRealGps) {
-          return {
-            type: "skipped",
-            reason: `GPS sync not required - ${warehouseName} uses Shopify app`,
-          };
+          await publishStatus(
+            "gps.send-order",
+            "skipped",
+            `GPS sync not required - ${warehouseName} uses Shopify app`,
+            { warehouse: warehouseName }
+          );
         }
-        return { type: "skipped", reason: "GPS sync disabled or no payload" };
+
+        return {
+          type: "fulfillment_complete" as const,
+          salesOrderNumber: salesOrderNo,
+          lineItems,
+          d365InventoryLotsBySku,
+          gpsResult: {
+            type: "skipped" as const,
+            reason: !shouldSendToRealGps
+              ? `GPS sync not required - ${warehouseName} uses Shopify app`
+              : "GPS sync disabled or no payload",
+          },
+        };
       });
+
+      // Handle existing order early return
+      if (fulfillResult.type === "already_exists") {
+        return {
+          status: "already_exists",
+          d365OrderNumber: fulfillResult.salesOrderNumber,
+          shopifyOrderId,
+        };
+      }
+
+      // Extract results from the mega-step
+      salesOrderNumber = fulfillResult.salesOrderNumber;
+      const salesOrderNo = salesOrderNumber!;
+      d365InventoryLotsBySku = fulfillResult.d365InventoryLotsBySku || {};
+      const gpsResult = fulfillResult.gpsResult;
 
       // Publish GPS result
       if (gpsResult.type === "real" && "result" in gpsResult) {
@@ -1213,10 +1169,7 @@ export const processShopifyOrder = inngest.createFunction(
           "gps.send-order",
           "completed",
           `GPS order created: ${gpsOrderNo || "OK"}`,
-          {
-            gpsOrderNo,
-            warehouse: warehouseName,
-          }
+          { gpsOrderNo, warehouse: warehouseName }
         );
         if (gpsOrderNo) {
           await publishStatus(
@@ -1225,9 +1178,6 @@ export const processShopifyOrder = inngest.createFunction(
             `Metafield stored: ${gpsOrderNo}`,
             { gpsOrderNo }
           );
-
-          // Persist GPS reference to Battle Hub immediately after creation
-          // so the order detail view can show gps_order_no even if later steps fail.
           await csPlatform.sendOrderUpdate(
             {
               id: shopifyOrderId,
@@ -1243,7 +1193,6 @@ export const processShopifyOrder = inngest.createFunction(
           );
         }
       } else if (gpsResult.type === "failed") {
-        // Status already published in the catch block above
         console.log(`[GPS] Order processing will continue despite GPS failure`);
       } else if (gpsResult.type === "skipped") {
         await publishStatus("gps.send-order", "skipped", "GPS sync not required for this order");
@@ -1251,14 +1200,14 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Handle inventory errors — emit to backorder queue for durable retry
       let routedToBackorder = false;
-      if (gpsResult.type === "out_of_stock" && gpsOrderPayload) {
+      if (gpsResult.type === "out_of_stock") {
         const oosError = "error" in gpsResult ? gpsResult.error : "Unknown";
         const { classifyGpsError } = await import("@/lib/clients/gps");
         const errorType = classifyGpsError(oosError);
         const failedSkus =
-          gpsOrderPayload.productList?.map(
-            (p: { sku?: string; itemNumber?: string }) => p.sku || p.itemNumber || "unknown"
-          ) || [];
+          order?.line_items
+            ?.map((p: { sku?: string }) => p.sku || "unknown")
+            .filter(Boolean) || [];
 
         await publishStatus(
           "gps.send-order",
@@ -1272,7 +1221,6 @@ export const processShopifyOrder = inngest.createFunction(
           `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`
         );
 
-        // Emit backorder event for durable retry with step.waitForEvent
         await step.run("emit-backorder-event", async () => {
           await inngest.send({
             name: "backorder/created",
@@ -1285,7 +1233,6 @@ export const processShopifyOrder = inngest.createFunction(
               errorType,
               failedSkus,
               retryCount: 0,
-              // Out-of-stock/master-data issues should be parked, not loop-retried.
               maxRetries: 0,
               createdAt: new Date().toISOString(),
             },
@@ -1293,7 +1240,6 @@ export const processShopifyOrder = inngest.createFunction(
         });
         routedToBackorder = true;
 
-        // Notify Battle Hub
         await csPlatform.sendOrderUpdate(
           {
             id: shopifyOrderId,
@@ -1346,7 +1292,6 @@ export const processShopifyOrder = inngest.createFunction(
         }
       }
 
-      // Publish final success result
       if (routedToBackorder) {
         await publishResult("failed", {
           d365OrderNumber: salesOrderNo,
@@ -1361,14 +1306,7 @@ export const processShopifyOrder = inngest.createFunction(
         });
       }
 
-      // Pending lifecycle actions (fulfill/cancel/refund that arrived during processing)
-      // are drained automatically by the cron-based drain-pending-actions sweep.
-      // No per-order trigger needed.
-
-      // IMPORTANT: Do not overwrite backorder status with a generic "order created" update.
       if (!routedToBackorder) {
-        // Fire-and-forget: notify Battle Hub without blocking the return.
-        // These are non-critical notifications — the order is already processed.
         Promise.allSettled([
           csPlatform.sendOrderCreated(
             {
@@ -1379,7 +1317,7 @@ export const processShopifyOrder = inngest.createFunction(
               d365OrderNumber: salesOrderNo,
               warehouse: warehouseName,
               gpsOrderId,
-              gpsSkipped, // Pass GPS skip status for sync tracking
+              gpsSkipped,
               orderJson: order,
               ...(Object.keys(d365InventoryLotsBySku).length > 0
                 ? { state: { d365InventoryLotsBySku } }
@@ -1387,8 +1325,6 @@ export const processShopifyOrder = inngest.createFunction(
             },
             { inngestIdempotencyKey, inngestRunId }
           ),
-          // Explicitly close any stale backorder/error state on success
-          // (especially important for reruns that recover from prior failures).
           csPlatform.sendOrderUpdate(
             {
               id: shopifyOrderId,
