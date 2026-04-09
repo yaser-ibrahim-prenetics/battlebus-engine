@@ -109,19 +109,26 @@ async function listEnvs(pid: string): Promise<VercelEnvVar[]> {
   return all;
 }
 
-async function triggerRedeploy(project: "hub" | "inngest"): Promise<{
+async function triggerRedeploy(
+  project: "hub" | "inngest",
+  options?: { hookOverride?: string }
+): Promise<{
   required: boolean;
   triggered: boolean;
   message: string;
 }> {
-  const hookUrl = deployHookUrl(project);
+  const hookUrl = (options?.hookOverride || deployHookUrl(project)).trim();
   if (!hookUrl) {
+    const hint =
+      project === "hub"
+        ? "Set VERCEL_HUB_DEPLOY_HOOK_URL (or VERCEL_DEPLOY_HOOK_URL_HUB) on Battle Bus."
+        : "Set VERCEL_INNGEST_DEPLOY_HOOK_URL (or VERCEL_DEPLOY_HOOK_URL_INNGEST) on Battle Bus.";
     return {
       required: true,
       triggered: false,
       message:
         `Environment variables changed for "${project}", but no deploy hook is configured. ` +
-        "Redeploy is required for changes to take effect.",
+        `Redeploy is required for changes to take effect. ${hint}`,
     };
   }
 
@@ -268,6 +275,12 @@ export async function POST(request: NextRequest) {
   }
 
   const results: Array<{ key: string; status: "upserted" | "error"; message?: string }> = [];
+  const inputByKey = new Map<string, string>();
+  for (const rawVar of vars as Array<{ key?: string; value?: string }>) {
+    if (typeof rawVar?.key === "string" && typeof rawVar?.value === "string") {
+      inputByKey.set(rawVar.key, rawVar.value);
+    }
+  }
 
   for (const v of vars as Array<{
     key: string;
@@ -325,9 +338,21 @@ export async function POST(request: NextRequest) {
 
   const succeeded = results.filter((r) => r.status === "upserted").length;
   const failed = results.filter((r) => r.status === "error").length;
+
+  // Allow redeploy to trigger immediately when hook URL is being set
+  // in the same config update request (before next deployment restarts API).
+  const hookOverride =
+    project === "hub"
+      ? inputByKey.get("VERCEL_HUB_DEPLOY_HOOK_URL") ||
+        inputByKey.get("VERCEL_DEPLOY_HOOK_URL_HUB") ||
+        ""
+      : inputByKey.get("VERCEL_INNGEST_DEPLOY_HOOK_URL") ||
+        inputByKey.get("VERCEL_DEPLOY_HOOK_URL_INNGEST") ||
+        "";
+
   const redeploy =
     succeeded > 0
-      ? await triggerRedeploy(project)
+      ? await triggerRedeploy(project, { hookOverride })
       : {
           required: false,
           triggered: false,
