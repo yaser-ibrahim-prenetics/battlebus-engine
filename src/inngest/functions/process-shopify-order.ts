@@ -1174,6 +1174,51 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Handle existing order early return
       if (syncResult.type === "already_exists") {
+        await publishStatus(
+          "create-d365-order",
+          "completed",
+          `Existing D365 order reused: ${syncResult.salesOrderNumber}`,
+          { d365OrderNumber: syncResult.salesOrderNumber, reused: true }
+        );
+
+        await publishResult("success", {
+          d365OrderNumber: syncResult.salesOrderNumber,
+          warehouse: warehouseName,
+        });
+
+        await Promise.allSettled([
+          csPlatform.sendOrderCreated(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: syncResult.salesOrderNumber,
+              warehouse: warehouseName,
+              orderJson: order,
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          ),
+          csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: syncResult.salesOrderNumber,
+              warehouse: warehouseName,
+              status: "completed",
+              processingStatus: "completed",
+              d365SyncStatus: "synced",
+              gpsSyncStatus: "pending",
+              lastError: null,
+              lastErrorType: null,
+              retryAt: null,
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          ),
+        ]).catch(() => {});
+
         return {
           status: "already_exists",
           d365OrderNumber: syncResult.salesOrderNumber,
