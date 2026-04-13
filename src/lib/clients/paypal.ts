@@ -5,6 +5,7 @@
 // Pushes tracking numbers to PayPal for seller protection
 
 import { config } from "../config";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // ============================================================================
 // TYPES
@@ -169,6 +170,7 @@ export async function syncTrackingBatch(
     return { tracker_identifiers: [], errors: [] };
   }
 
+  const _start = Date.now();
   const accessToken = await getAuthToken();
   const url = `${getBaseUrl()}/v1/shipping/trackers-batch`;
 
@@ -213,6 +215,7 @@ export async function syncTrackingBatch(
     `[PayPal] Batch tracking sync complete: ${result.tracker_identifiers?.length || 0} processed, ${result.errors?.length || 0} errors`
   );
 
+  await logFlowEvent({ flow: "paypal", client: "paypal", step: "syncTrackingBatch", status: "completed", durationMs: Date.now() - _start, payload: { trackersSubmitted: trackers.length, trackersProcessed: result.tracker_identifiers?.length || 0, errors: result.errors?.length || 0 } });
   return result;
 }
 

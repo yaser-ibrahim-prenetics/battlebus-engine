@@ -36,6 +36,7 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -80,6 +81,10 @@ export const processShopifyFulfillment = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
     const order = orderJson as ShopifyOrderPayload;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
 
     // Identify fulfillment source for routing
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
@@ -517,6 +522,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
     }
 
+    await logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
     return {
       status: "success",
       shopifyOrderId,

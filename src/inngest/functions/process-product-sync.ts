@@ -15,6 +15,7 @@ import * as csPlatform from "@/lib/clients/cs-platform";
 import * as shopify from "@/lib/clients/shopify";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processProductSync = inngest.createFunction(
   {
@@ -29,8 +30,20 @@ export const processProductSync = inngest.createFunction(
     ],
   },
   async ({ event, step }: { event: any; step: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { productId, productTitle, shopifyStore, productJson } = event.data;
     const product = productJson as ShopifyProductPayload;
+
+    await logFlowEvent({
+      flow: "product_sync",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { productId, productTitle, shopifyStore, eventName: event.name },
+    });
 
     console.log(`[ProductSync] ========================================`);
     console.log(
@@ -72,6 +85,17 @@ export const processProductSync = inngest.createFunction(
           d365Result,
           gpsResult,
         });
+      });
+
+      await logFlowEvent({
+        flow: "product_sync",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { productId, productTitle, shopifyStore, deleted: true },
       });
 
       return {
@@ -226,6 +250,17 @@ export const processProductSync = inngest.createFunction(
 
     console.log(`[ProductSync] ✅ Completed: ${JSON.stringify(result)}`);
     console.log(`[ProductSync] ========================================`);
+
+    await logFlowEvent({
+      flow: "product_sync",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { productId, productTitle, shopifyStore, eventName: event.name },
+    });
 
     return result;
   }

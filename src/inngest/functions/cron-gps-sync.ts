@@ -20,6 +20,7 @@ import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
 import { createClient } from "@supabase/supabase-js";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
@@ -34,8 +35,31 @@ export const syncGpsFulfillments = inngest.createFunction(
     throttle: THROTTLE_CONFIGS.CRON,
     triggers: [{ cron: `*/${config.gps.scheduleIntervalMinutes} * * * *` }],
   },
-  async ({ step }: { step: any }) => {
+  async ({ step, event }: { step: any; event: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({
+      flow: "gps_sync",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { batchSize: BATCH_SIZE },
+    });
+
     if (!config.features.enableGpsSync) {
+      await logFlowEvent({
+        flow: "gps_sync",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { skipped: true, reason: "gps_sync_disabled" },
+      });
       return { status: "skipped", reason: "GPS sync disabled" };
     }
 
@@ -49,6 +73,16 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     // If no fulfilled orders, return with all statuses for visibility
     if (fulfilledOrders.length === 0) {
+      await logFlowEvent({
+        flow: "gps_sync",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { totalOrdersChecked: allOrderStatuses.length, fulfilledCount: 0 },
+      });
       return {
         status: "success",
         message: "No fulfilled GPS orders found in configured time window",
@@ -100,6 +134,21 @@ export const syncGpsFulfillments = inngest.createFunction(
         `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${fulfilledOrders.length} GPS orders processed.`
       );
     }
+
+    await logFlowEvent({
+      flow: "gps_sync",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: {
+        totalOrdersChecked: allOrderStatuses.length,
+        fulfilledCount: totalFulfilled,
+        errors: totalErrors,
+      },
+    });
 
     return {
       status: "completed",

@@ -8,6 +8,7 @@
 import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 /**
  * Process Cancel Action
@@ -25,6 +26,10 @@ export const processActionCancel = inngest.createFunction(
   },
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, reason, source } = event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "hub_cancel", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { reason, source } });
 
     // Log the action
     await step.run("log-cancel-action", async () => {
@@ -48,6 +53,7 @@ export const processActionCancel = inngest.createFunction(
       }
     });
 
+    await logFlowEvent({ flow: "hub_cancel", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "cancel",
@@ -78,6 +84,10 @@ export const processActionRefund = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } =
       event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "hub_refund", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { refundId, amount, restock } });
 
     // Log the action
     await step.run("log-refund-action", async () => {
@@ -86,9 +96,7 @@ export const processActionRefund = inngest.createFunction(
       return { logged: true };
     });
 
-    // Note: D365 credit note is handled by the shopify/refund.created webhook flow
-    // This function just provides real-time tracking
-
+    await logFlowEvent({ flow: "hub_refund", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "refund",
@@ -129,6 +137,10 @@ export const processActionFulfill = inngest.createFunction(
       carrier,
       source,
     } = event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "hub_fulfill", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentId, fulfillmentType, trackingNumber } });
 
     // Log the action
     await step.run("log-fulfill-action", async () => {
@@ -140,9 +152,7 @@ export const processActionFulfill = inngest.createFunction(
       return { logged: true };
     });
 
-    // Note: D365 sync is handled by the shopify/order.fulfilled webhook flow
-    // This function just provides real-time tracking
-
+    await logFlowEvent({ flow: "hub_fulfill", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "fulfill",

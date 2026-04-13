@@ -11,6 +11,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import { gpsSimulationStore, type SimulatedFulfillment } from "@/lib/stores/gps-simulation";
 import { getGpsWarehouseFromLocation } from "@/lib/utils/validation";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const simulateGpsFulfillment = inngest.createFunction(
   {
@@ -20,9 +21,31 @@ export const simulateGpsFulfillment = inngest.createFunction(
     triggers: [{ event: "gps/simulate.fulfillment" }],
   },
   async ({ event, step }: { event: any; step: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { minutesAgo = 5, orderNames = [] } = event.data;
 
+    await logFlowEvent({
+      flow: "gps_simulate",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { minutesAgo, orderNamesCount: orderNames.length },
+    });
+
     if (!config.features.enableGpsFulfillmentSimulation) {
+      await logFlowEvent({
+        flow: "gps_simulate",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { disabled: true },
+      });
       return {
         status: "disabled",
         message:
@@ -60,6 +83,16 @@ export const simulateGpsFulfillment = inngest.createFunction(
     });
 
     if (recentOrders.length === 0) {
+      await logFlowEvent({
+        flow: "gps_simulate",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { minutesAgo, noOrders: true },
+      });
       return {
         status: "no_orders",
         message: `No orders found in the last ${minutesAgo} minutes`,
@@ -135,6 +168,20 @@ export const simulateGpsFulfillment = inngest.createFunction(
     await step.run("mark-fulfilled", async () => {
       gpsSimulationStore.markMultipleFulfilled(fulfillments);
       return { count: fulfillments.length };
+    });
+
+    await logFlowEvent({
+      flow: "gps_simulate",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: {
+        marked: fulfillments.length,
+        orderNames: fulfillments.map((f) => f.platformOrderNo),
+      },
     });
 
     return {

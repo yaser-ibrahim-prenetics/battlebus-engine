@@ -7,6 +7,7 @@
 import crypto from "crypto";
 import { config } from "../config";
 import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
+import { logFlowEvent } from "../services/supabase-flow-logs";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 
@@ -219,6 +220,7 @@ export async function getAllLocations(): Promise<
  * Get Order by ID
  */
 export async function getOrder(orderId: string | number): Promise<ShopifyOrder> {
+  const startedAt = Date.now();
   const url = buildUrl(`/orders/${orderId}.json`);
 
   const response = await fetch(url, {
@@ -228,10 +230,33 @@ export async function getOrder(orderId: string | number): Promise<ShopifyOrder> 
 
   if (!response.ok) {
     const error = await response.text();
+    await logFlowEvent({
+      level: "error",
+      flow: "external_api_call",
+      step: "shopify_get_order",
+      client: "shopify",
+      shopifyOrderId: String(orderId),
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      errorType: `http_${response.status}`,
+      errorMessage: error.slice(0, 500),
+      payload: { endpoint: "/orders/:id.json" },
+    });
     throw new Error(`Failed to get Shopify order: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
+  await logFlowEvent({
+    level: "info",
+    flow: "external_api_call",
+    step: "shopify_get_order",
+    client: "shopify",
+    shopifyOrderId: String(orderId),
+    shopifyOrderName: data?.order?.name,
+    status: "completed",
+    durationMs: Date.now() - startedAt,
+    payload: { endpoint: "/orders/:id.json", httpStatus: response.status },
+  });
   return data.order;
 }
 

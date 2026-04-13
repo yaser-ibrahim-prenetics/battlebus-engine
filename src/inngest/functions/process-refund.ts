@@ -17,6 +17,7 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processRefund = inngest.createFunction(
   {
@@ -43,6 +44,7 @@ export const processRefund = inngest.createFunction(
   async ({ event, step, runId }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
     const refund = refundJson as ShopifyRefundPayload;
+    const _flowStart = Date.now();
 
     const refundTrace = {
       refundId: String(refundId),
@@ -55,6 +57,8 @@ export const processRefund = inngest.createFunction(
       phase: "process_refund_start",
       fromDrain: Boolean((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain),
     });
+
+    await logFlowEvent({ flow: "refund", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), payload: { refundId: String(refundId) } });
 
     if (config.features.dryRunMode) {
       return {
@@ -377,6 +381,7 @@ export const processRefund = inngest.createFunction(
       refundType,
     });
 
+    await logFlowEvent({ flow: "refund", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName: shopifyOrder.name, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber } });
     return result;
   }
 );

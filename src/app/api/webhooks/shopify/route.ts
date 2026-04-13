@@ -8,6 +8,7 @@ import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 function validateWebhookPayload(topic: string | null, payload: any): string | null {
   if (!topic) return "Missing x-shopify-topic header";
@@ -98,6 +99,20 @@ export async function POST(request: NextRequest) {
       shopDomain,
       webhookId,
       apiVersion,
+    });
+    await logFlowEvent({
+      level: "info",
+      flow: "shopify_webhook",
+      step: "received",
+      client: "shopify",
+      requestId,
+      status: "started",
+      payload: {
+        topic,
+        shopDomain,
+        webhookId,
+        apiVersion,
+      },
     });
 
     // Verify webhook signature
@@ -304,8 +319,40 @@ export async function POST(request: NextRequest) {
             console.log(
               `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
             );
+            await logFlowEvent({
+              level: "info",
+              flow: "shopify_webhook",
+              step: "dispatch_inngest",
+              client: "inngest",
+              requestId,
+              shopifyOrderId: String(payload.id),
+              shopifyOrderName: payload.name,
+              status: "completed",
+              payload: {
+                topic,
+                eventName: "shopify/order.paid",
+                internalEventId,
+                idempotencyKey,
+              },
+            });
           } catch (error) {
             console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
+            await logFlowEvent({
+              level: "error",
+              flow: "shopify_webhook",
+              step: "dispatch_inngest",
+              client: "inngest",
+              requestId,
+              shopifyOrderId: String(payload.id),
+              shopifyOrderName: payload.name,
+              status: "failed",
+              errorType: "inngest_send_failed",
+              errorMessage: error instanceof Error ? error.message : String(error),
+              payload: {
+                topic,
+                eventName: "shopify/order.paid",
+              },
+            });
             if (process.env.NODE_ENV === "development") {
               console.warn(
                 `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
@@ -635,6 +682,16 @@ export async function POST(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime;
+    await logFlowEvent({
+      level: "info",
+      flow: "shopify_webhook",
+      step: "completed",
+      client: "shopify",
+      requestId,
+      status: "completed",
+      durationMs: duration,
+      payload: { topic, shopDomain },
+    });
     console.log(`[Webhook] [${requestId}] ✅ Completed in ${duration}ms`);
     console.log(`[Webhook] [${requestId}] ========================================`);
 
@@ -652,6 +709,17 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     const duration = Date.now() - startTime;
+    await logFlowEvent({
+      level: "error",
+      flow: "shopify_webhook",
+      step: "failed",
+      client: "shopify",
+      requestId,
+      status: "failed",
+      durationMs: duration,
+      errorType: "webhook_handler_error",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
     console.error(
       `[Webhook] [${requestId}] ❌ Error processing Shopify webhook (${duration}ms):`,
       error

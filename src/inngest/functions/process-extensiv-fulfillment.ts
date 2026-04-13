@@ -18,6 +18,7 @@ import { ExtensivOrderConfirmPayload } from "../events";
 import { filterDummySkus } from "@/lib/utils/validation";
 import { THROTTLE_CONFIGS, RETRY_CONFIGS, CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processExtensivFulfillment = inngest.createFunction(
   {
@@ -40,6 +41,10 @@ export const processExtensivFulfillment = inngest.createFunction(
     } = event.data;
 
     const orderConfirm = eventJson as ExtensivOrderConfirmPayload;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "extensiv_fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderName, payload: { extensivOrderId, trackingNumber } });
 
     console.log(
       `[Extensiv] Processing fulfillment for ${shopifyOrderName} (Extensiv ID: ${extensivOrderId})`
@@ -201,6 +206,7 @@ export const processExtensivFulfillment = inngest.createFunction(
       `✅ Extensiv fulfillment processed: ${shopifyOrderName} | Tracking: ${trackingNumber} | Carrier: ${carrier}`
     );
 
+    await logFlowEvent({ flow: "extensiv_fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { extensivOrderId, trackingNumber, d365Status: d365Result.status } });
     return {
       status: "success",
       wmsEventId,
@@ -227,6 +233,10 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
   },
   async ({ event, step }: { event: any; step: any }) => {
     const { wmsEventId, receiverId, referenceNum, eventJson } = event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "extensiv_receiver", step: "start", status: "started", runId: _runId, payload: { receiverId, referenceNum } });
 
     console.log(
       `[Extensiv] Processing receiver confirm for ${referenceNum} (Receiver ID: ${receiverId})`
@@ -249,6 +259,7 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
       `📦 Extensiv receiver confirmed: ${referenceNum} | Receiver ID: ${receiverId}`
     );
 
+    await logFlowEvent({ flow: "extensiv_receiver", step: "done", status: "completed", runId: _runId, durationMs: Date.now() - _flowStart, payload: { receiverId, referenceNum } });
     return {
       status: "acknowledged",
       wmsEventId,

@@ -16,6 +16,7 @@ import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord" | "extensiv";
 
@@ -97,12 +98,34 @@ export const processInventoryMesh = inngest.createFunction(
     triggers: [{ event: "inventory/sync" }],
   },
   async ({ event, step }: { event: any; step: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { source, destination, payload } = event.data;
+
+    await logFlowEvent({
+      flow: "inventory_mesh",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { source, destination, sku: (payload as InventorySyncPayload)?.sku },
+    });
 
     if (!config.features.enableInventorySync) {
       console.log(
         `[InventoryMesh] Skipped ${source} → ${destination} — ENABLE_INVENTORY_SYNC is false`
       );
+      await logFlowEvent({
+        flow: "inventory_mesh",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { source, destination, skipped: true },
+      });
       return {
         status: "skipped",
         reason: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
@@ -200,6 +223,24 @@ export const processInventoryMesh = inngest.createFunction(
         );
       });
     }
+
+    await logFlowEvent({
+      flow: "inventory_mesh",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: {
+        source,
+        destination,
+        sku: inventory.sku,
+        locationId: inventory.locationId,
+        warehouseId: inventory.warehouseId,
+        success: result.success,
+      },
+    });
 
     return result;
   }

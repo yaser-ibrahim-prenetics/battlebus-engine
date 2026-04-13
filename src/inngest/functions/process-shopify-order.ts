@@ -47,6 +47,7 @@ import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -235,6 +236,18 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       try {
+        await logFlowEvent({
+          level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
+          flow: "order_paid",
+          step: stepName,
+          runId: inngestRunId,
+          shopifyOrderId,
+          shopifyOrderName,
+          status,
+          durationMs,
+          errorMessage: status === "failed" ? message : undefined,
+          payload: data,
+        });
         await publish(ch.status, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,
@@ -258,6 +271,18 @@ export const processShopifyOrder = inngest.createFunction(
       resultData?: { d365OrderNumber?: string; gpsOrderNo?: string; warehouse?: string; error?: string }
     ) => {
       try {
+        await logFlowEvent({
+          level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
+          flow: "order_paid",
+          step: "result",
+          runId: inngestRunId,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: resultData?.d365OrderNumber,
+          status,
+          errorMessage: resultData?.error,
+          payload: resultData,
+        });
         await publish(ch.result, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,

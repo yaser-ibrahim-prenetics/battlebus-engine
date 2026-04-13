@@ -10,6 +10,7 @@ import { THROTTLE_CONFIGS, CONCURRENCY_CONFIGS, RETRY_CONFIGS } from "@/lib/util
 
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 const processGpsBatchConfig = Object.freeze({
   id: "process-gps-batch",
@@ -26,6 +27,11 @@ export const processGpsBatch = inngest.createFunction(
   { ...processGpsBatchConfig, triggers: [{ event: "gps/batch.process" }] },
   async ({ event, step }: { event: any; step: any }) => {
     const { gpsOrderIds, warehouse, batchId } = event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "gps_batch", step: "start", status: "started", runId: _runId, payload: { batchId, orderCount: gpsOrderIds?.length, warehouse } });
+
     console.log(`[GPS Batch] Starting batch ${batchId} with ${gpsOrderIds.length} orders`);
 
     // Step 1: Fetch GPS order details in batches
@@ -150,6 +156,7 @@ export const processGpsBatch = inngest.createFunction(
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
     });
 
+    await logFlowEvent({ flow: "gps_batch", step: "done", status: "completed", runId: _runId, durationMs: Date.now() - _flowStart, payload: { batchId, eventsTriggered: eventResults.length, validOrders: validOrders.length } });
     return {
       batchId,
       status: "completed",

@@ -28,6 +28,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
@@ -50,6 +51,10 @@ export const processGpsIndividual = inngest.createFunction(
   { ...processGpsIndividualConfig, triggers: [{ event: "gps/individual.fulfilment" }] },
   async ({ event, step }: { event: any; step: any }) => {
     const { fulfilmentPayload, warehouse } = event.data;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "gps_fulfillment", step: "start", status: "started", runId: _runId, payload: { warehouse, gpsOrderNo: event.data.gpsOrderNo } });
 
     // Step 1: Validate and extract fulfilment data
     const fulfilmentData = await step.run("validate-fulfilment-payload", async () => {
@@ -297,6 +302,7 @@ export const processGpsIndividual = inngest.createFunction(
       });
     });
 
+    await logFlowEvent({ flow: "gps_fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderName: fulfilmentData.shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { gpsOrderNo: fulfilmentData.gpsOrderNo, trackingNumber: fulfilmentData.trackingNumber } });
     return {
       status: "success",
       gpsOrderNo: fulfilmentData.gpsOrderNo,

@@ -5,6 +5,7 @@
 
 import { config } from "../config";
 import * as crypto from "crypto";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 type ExtensivWarehouseName = "Charlotte Warehouse";
 
@@ -199,6 +200,7 @@ export async function createOrder(
     },
   };
 
+  const _start = Date.now();
   console.log(`[Extensiv] Creating order ${request.referenceNum}`);
 
   if (!config.extensiv.enabled) {
@@ -228,6 +230,7 @@ export async function createOrder(
   const data = await response.json();
   console.log(`[Extensiv] Order created: ${data.ReadOnly?.OrderId}`);
 
+  await logFlowEvent({ flow: "extensiv", client: "extensiv", step: "createOrder", status: "completed", durationMs: Date.now() - _start, payload: { referenceNum: request.referenceNum, orderId: data.ReadOnly?.OrderId } });
   return { response: data, request: body };
 }
 

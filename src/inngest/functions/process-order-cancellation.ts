@@ -13,6 +13,7 @@ import {
 import { ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { storePendingAction } from "@/lib/services/pending-actions";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processOrderCancellation = inngest.createFunction(
   {
@@ -39,8 +40,12 @@ export const processOrderCancellation = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     const { shopifyOrderId, shopifyOrderName, cancelReason, orderJson } = event.data;
     const shopifyOrderPayload = orderJson as ShopifyOrderPayload;
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const isGpsWarehouse = (name?: string | null): name is "GPS Warehouse" | "GPS UK Warehouse" =>
       name === "GPS Warehouse" || name === "GPS UK Warehouse";
+
+    await logFlowEvent({ flow: "cancellation", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { cancelReason } });
 
     if (config.features.dryRunMode) {
       return {
@@ -294,6 +299,7 @@ export const processOrderCancellation = inngest.createFunction(
       shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
     });
 
+    await logFlowEvent({ flow: "cancellation", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { gpsCancellationStatus: gpsCancellation.status } });
     return result;
   }
 );

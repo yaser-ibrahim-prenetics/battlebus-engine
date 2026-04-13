@@ -22,6 +22,7 @@ import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { upsertLocation, deactivateLocation } from "@/lib/services/location-routing";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // Location name from Shopify is the warehouse (no separate warehouse field).
 // Data area must be configured explicitly in Battle Hub. Do not infer defaults here.
@@ -43,9 +44,21 @@ export const processLocationSync = inngest.createFunction(
     ],
   },
   async ({ event, step }: { event: any; step: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { locationId, locationName, shopifyStore, locationJson } = event.data;
     const isCreate = event.name === "shopify/location.created";
     const isDelete = event.name === "shopify/location.deleted";
+
+    await logFlowEvent({
+      flow: "location_sync",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { locationId, locationName, shopifyStore, eventName: event.name },
+    });
 
     console.log(`[LocationSync] ========================================`);
     console.log(
@@ -73,6 +86,17 @@ export const processLocationSync = inngest.createFunction(
         } catch (err) {
           console.error("[LocationSync] Failed to notify Hub of deletion:", err);
         }
+      });
+
+      await logFlowEvent({
+        flow: "location_sync",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { locationId, locationName, shopifyStore, deleted: true },
       });
 
       return { status: "deleted", locationId, locationName, processedAt: new Date().toISOString() };
@@ -151,6 +175,18 @@ export const processLocationSync = inngest.createFunction(
 
     console.log(`[LocationSync] ✅ ${JSON.stringify(result)}`);
     console.log(`[LocationSync] ========================================`);
+
+    await logFlowEvent({
+      flow: "location_sync",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { locationId, locationName, shopifyStore, eventName: event.name },
+    });
+
     return result;
   }
 );

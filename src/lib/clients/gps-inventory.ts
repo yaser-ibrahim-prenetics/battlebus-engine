@@ -13,6 +13,7 @@
 
 import crypto from "crypto";
 import { config } from "../config";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
@@ -154,6 +155,7 @@ export async function queryOmsInventory(options: {
   const { region = "UK", sku, page = 1, pageSize = 100 } = options;
   const creds = getCredentials(region);
 
+  const _start = Date.now();
   console.log(`[GPS-Inventory] Querying OMS inventory (region=${region}, sku=${sku || "all"})`);
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -221,6 +223,7 @@ export async function queryOmsInventory(options: {
 
   console.warn("[GPS-Inventory] No inventory endpoints responded successfully");
   console.warn("[GPS-Inventory] This may mean inventory API is not available on this account");
+  await logFlowEvent({ flow: "gps_inventory", client: "gps_inventory", step: "queryOmsInventory", status: "failed", level: "warn", durationMs: Date.now() - _start, payload: { region, sku } });
   return [];
 }
 

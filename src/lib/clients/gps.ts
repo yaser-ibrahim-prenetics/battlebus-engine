@@ -9,6 +9,7 @@ import { config, GPS_STATUS } from "../config";
 import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
+import { logFlowEvent } from "../services/supabase-flow-logs";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
 const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 50 : _omsMinIntervalParsed);
@@ -310,6 +311,7 @@ async function postOms<TResponse>(
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= OMS_MAX_RETRIES; attempt++) {
+    const startedAt = Date.now();
     const timestamp = epochInSeconds().toString();
     const payload = {
       appKey,
@@ -331,6 +333,21 @@ async function postOms<TResponse>(
       );
 
       if (!response.ok) {
+        await logFlowEvent({
+          level: "error",
+          flow: "external_api_call",
+          step: "gps_http",
+          client: "gps",
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          errorType: `http_${response.status}`,
+          payload: {
+            endpointPath,
+            warehouseName,
+            attempt,
+            maxAttempts: OMS_MAX_RETRIES,
+          },
+        });
         if (
           attempt < OMS_MAX_RETRIES &&
           (response.status === 429 || response.status >= 500)
@@ -343,6 +360,23 @@ async function postOms<TResponse>(
 
       const json = (await response.json()) as any;
       const code = normalizeOmsCode(json?.code);
+      await logFlowEvent({
+        level: code === 200 ? "info" : "error",
+        flow: "external_api_call",
+        step: "gps_http",
+        client: "gps",
+        status: code === 200 ? "completed" : "failed",
+        durationMs: Date.now() - startedAt,
+        errorType: code === 200 ? undefined : `gps_code_${code}`,
+        errorMessage: code === 200 ? undefined : String(json?.msg || "GPS error"),
+        payload: {
+          endpointPath,
+          warehouseName,
+          attempt,
+          maxAttempts: OMS_MAX_RETRIES,
+          code,
+        },
+      });
       if (code === 200) {
         return json as TResponse;
       }
@@ -354,6 +388,22 @@ async function postOms<TResponse>(
 
       return json as TResponse;
     } catch (error) {
+      await logFlowEvent({
+        level: "error",
+        flow: "external_api_call",
+        step: "gps_http",
+        client: "gps",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        errorType: "network_or_runtime_error",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        payload: {
+          endpointPath,
+          warehouseName,
+          attempt,
+          maxAttempts: OMS_MAX_RETRIES,
+        },
+      });
       lastError = error;
       if (attempt >= OMS_MAX_RETRIES) break;
       await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));

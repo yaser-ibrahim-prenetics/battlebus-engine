@@ -17,6 +17,7 @@ import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { config } from "@/lib/config";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processInventorySync = inngest.createFunction(
   {
@@ -33,11 +34,33 @@ export const processInventorySync = inngest.createFunction(
     triggers: [{ event: "shopify/inventory.updated" }],
   },
   async ({ event, step }: { event: any; step: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { inventoryItemId, locationId, shopifyStore, inventoryJson } = event.data;
     const inventory = inventoryJson as ShopifyInventoryLevelPayload;
 
+    await logFlowEvent({
+      flow: "inventory_webhook",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { inventoryItemId, locationId, shopifyStore },
+    });
+
     if (!config.features.enableInventorySync) {
       console.log(`[InventorySync] Skipped — ENABLE_INVENTORY_SYNC is false`);
+      await logFlowEvent({
+        flow: "inventory_webhook",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { inventoryItemId, locationId, shopifyStore, skipped: true },
+      });
       return {
         status: "skipped",
         reason: "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)",
@@ -102,6 +125,17 @@ export const processInventorySync = inngest.createFunction(
 
     console.log(`[InventorySync] ✅ Completed: ${JSON.stringify(result)}`);
     console.log(`[InventorySync] ========================================`);
+
+    await logFlowEvent({
+      flow: "inventory_webhook",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { inventoryItemId, locationId, shopifyStore, available: inventory.available },
+    });
 
     return result;
   }

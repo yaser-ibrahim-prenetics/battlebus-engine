@@ -17,6 +17,7 @@ import * as gpsInventory from "@/lib/clients/gps-inventory";
 import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // Types for sync progress
 interface StepResult {
@@ -47,8 +48,20 @@ export const processInventoryFullSync = inngest.createFunction(
     concurrency: [{ limit: 1 }],
   },
   async ({ event, step, publish }: { event: any; step: any; publish: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
     const { syncId, steps, skus, dryRun = false, requestedBy } = event.data;
     const ch = inventorySyncChannel({ syncId });
+
+    await logFlowEvent({
+      flow: "inventory_full_sync",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { syncId, steps, skuCount: skus?.length, dryRun, requestedBy },
+    });
 
     if (!config.features.enableInventorySync) {
       const reason = "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)";
@@ -64,6 +77,16 @@ export const processInventoryFullSync = inngest.createFunction(
       } catch (e) {
         console.warn("[InventoryFullSync] publish skipped status failed:", e);
       }
+      await logFlowEvent({
+        flow: "inventory_full_sync",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { syncId, skipped: true, reason },
+      });
       return { syncId, success: false, skipped: true, reason };
     }
 
@@ -381,6 +404,17 @@ export const processInventoryFullSync = inngest.createFunction(
     );
     console.log(`[InventoryFullSync] Drift detected: ${summary.totalDriftDetected}`);
     console.log(`[InventoryFullSync] ========================================`);
+
+    await logFlowEvent({
+      flow: "inventory_full_sync",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { syncId, success: overallSuccess, totalDurationMs, dryRun },
+    });
 
     return {
       syncId,

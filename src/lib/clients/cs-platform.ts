@@ -5,6 +5,7 @@
 
 import { config } from "@/lib/config";
 import crypto from "crypto";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 interface OrderEvent {
   event: string;
@@ -32,6 +33,7 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     return;
   }
 
+  const _start = Date.now();
   try {
     const payload = JSON.stringify(event);
     const signature = generateSignature(payload);
@@ -56,13 +58,15 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     if (!response.ok) {
       const error = await response.text();
       console.error(`[CS Platform] Failed to send event ${event.event}: ${error}`);
+      await logFlowEvent({ flow: "cs_platform", client: "cs_platform", step: event.event, status: "failed", level: "error", durationMs: Date.now() - _start, errorMessage: error, shopifyOrderName: event.data?.shopifyOrderName });
       throw new Error(`CS Platform webhook failed: ${error}`);
     }
 
     console.log(`[CS Platform] ✅ Sent event: ${event.event}`);
+    await logFlowEvent({ flow: "cs_platform", client: "cs_platform", step: event.event, status: "completed", durationMs: Date.now() - _start, shopifyOrderName: event.data?.shopifyOrderName });
   } catch (error) {
     console.error(`[CS Platform] Error sending event ${event.event}:`, error);
-    // Don't throw - webhook failures shouldn't break order processing
+    await logFlowEvent({ flow: "cs_platform", client: "cs_platform", step: event.event, status: "failed", level: "error", durationMs: Date.now() - _start, errorMessage: error instanceof Error ? error.message : String(error), shopifyOrderName: event.data?.shopifyOrderName }).catch(() => {});
   }
 }
 

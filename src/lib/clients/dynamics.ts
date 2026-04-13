@@ -6,6 +6,7 @@
 
 import { config } from "../config";
 import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
+import { logFlowEvent } from "../services/supabase-flow-logs";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -187,6 +188,9 @@ async function pacedFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): Promise<Response> {
+  const startedAt = Date.now();
+  const url = String(input);
+  const method = String(init?.method || "GET").toUpperCase();
   // Circuit breaker gate — throws CircuitOpenError if circuit is open
   const isProbe = circuitPreFlight();
 
@@ -201,6 +205,21 @@ async function pacedFetch(
 
   try {
     const response = await fetch(input, init);
+    await logFlowEvent({
+      level: response.ok ? "info" : "error",
+      flow: "external_api_call",
+      step: "d365_http",
+      client: "d365",
+      status: response.ok ? "completed" : "failed",
+      durationMs: Date.now() - startedAt,
+      errorType: response.ok ? undefined : `http_${response.status}`,
+      payload: {
+        method,
+        url,
+        httpStatus: response.status,
+        isProbe,
+      },
+    });
 
     // Treat 5xx as failures for circuit breaker purposes
     if (response.status >= 500) {
@@ -211,6 +230,17 @@ async function pacedFetch(
 
     return response;
   } catch (err) {
+    await logFlowEvent({
+      level: "error",
+      flow: "external_api_call",
+      step: "d365_http",
+      client: "d365",
+      status: "failed",
+      durationMs: Date.now() - startedAt,
+      errorType: "network_or_runtime_error",
+      errorMessage: err instanceof Error ? err.message : String(err),
+      payload: { method, url, isProbe },
+    });
     circuitRecordFailure();
     throw err;
   }

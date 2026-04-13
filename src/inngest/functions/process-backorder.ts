@@ -27,6 +27,7 @@ import { toGpsOutboundOrder, shouldSendToGps } from "@/lib/transformers/order";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
 import type { ShopifyOrderPayload } from "../events";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const processBackorder = inngest.createFunction(
   {
@@ -63,6 +64,11 @@ export const processBackorder = inngest.createFunction(
       event.data.triggeredBy === "manual" ||
       event.data.triggeredBy === "manual_bulk";
     const manualRetryOnly = !autoRetryEnabled;
+
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({ flow: "backorder", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, payload: { errorType, warehouse, retryCount } });
 
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
@@ -461,6 +467,7 @@ export const processBackorder = inngest.createFunction(
       );
     });
 
+    await logFlowEvent({ flow: "backorder", step: "done", status: "failed", level: "error", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, durationMs: Date.now() - _flowStart, errorType, errorMessage, payload: { retryCount: maxRetries } });
     return {
       status: "exhausted",
       shopifyOrderId,

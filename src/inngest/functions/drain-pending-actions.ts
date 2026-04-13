@@ -20,6 +20,7 @@ import {
 } from "@/lib/services/pending-actions";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 export const drainPendingActions = inngest.createFunction(
   {
@@ -31,7 +32,20 @@ export const drainPendingActions = inngest.createFunction(
     concurrency: { limit: 1 },
     triggers: [{ cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` }],
   },
-  async ({ step }: { step: any }) => {
+  async ({ step, event }: { step: any; event: any }) => {
+    const _flowStart = Date.now();
+    const _runId = (event as any).id;
+
+    await logFlowEvent({
+      flow: "pending_actions_drain",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: { intervalMinutes: config.pendingActions.drainIntervalMinutes },
+    });
+
     // ── Step 1: Fetch all orders with pending actions + emit all events ───
     const drainResult = await step.run("sweep-and-emit", async () => {
       const orders = await getAllPendingActionOrders();
@@ -104,12 +118,37 @@ export const drainPendingActions = inngest.createFunction(
     });
 
     if (drainResult.cleared.length === 0) {
+      await logFlowEvent({
+        flow: "pending_actions_drain",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: { status: "idle", processed: 0 },
+      });
       return { status: "idle", processed: 0 };
     }
 
     // ── Step 2: Bulk-clear all processed orders in one update ─────────────
     await step.run("bulk-clear", async () => {
       await clearPendingActionsBatch(drainResult.cleared);
+    });
+
+    await logFlowEvent({
+      flow: "pending_actions_drain",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      shopifyOrderId: event.data?.shopifyOrderId,
+      shopifyOrderName: event.data?.shopifyOrderName,
+      payload: {
+        processed: drainResult.count,
+        eventsEmitted: drainResult.emitted.length,
+        ordersCleared: drainResult.cleared.length,
+      },
     });
 
     return {
