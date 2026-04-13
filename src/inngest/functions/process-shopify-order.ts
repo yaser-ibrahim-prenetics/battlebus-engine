@@ -700,8 +700,8 @@ export const processShopifyOrder = inngest.createFunction(
       const skipD365 = !config.features.enableDynamicsSync;
 
       // MEGA-STEP: D365 create + prepayment + GPS payload + GPS send (single step to minimise checkpoint overhead)
-      await publishStatus("create-d365-order", "running", "Creating D365 sales order");
-      const fulfillResult = await step.run("fulfill-order", async () => {
+      await publishStatus("create-d365-order", "running", "Syncing paid order to D365 and GPS");
+      const syncResult = await step.run("sync-order", async () => {
         // Check for existing D365 order (idempotency check)
         await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
         if (skipD365) {
@@ -1099,7 +1099,7 @@ export const processShopifyOrder = inngest.createFunction(
             }
 
             return {
-              type: "fulfillment_complete" as const,
+              type: "sync_complete" as const,
               salesOrderNumber: salesOrderNo,
               lineItems,
               d365InventoryLotsBySku,
@@ -1109,7 +1109,7 @@ export const processShopifyOrder = inngest.createFunction(
             if (error instanceof OutOfStockError) {
               console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
               return {
-                type: "fulfillment_complete" as const,
+                type: "sync_complete" as const,
                 salesOrderNumber: salesOrderNo,
                 lineItems,
                 d365InventoryLotsBySku,
@@ -1140,7 +1140,7 @@ export const processShopifyOrder = inngest.createFunction(
             );
 
             return {
-              type: "fulfillment_complete" as const,
+              type: "sync_complete" as const,
               salesOrderNumber: salesOrderNo,
               lineItems,
               d365InventoryLotsBySku,
@@ -1159,7 +1159,7 @@ export const processShopifyOrder = inngest.createFunction(
         }
 
         return {
-          type: "fulfillment_complete" as const,
+          type: "sync_complete" as const,
           salesOrderNumber: salesOrderNo,
           lineItems,
           d365InventoryLotsBySku,
@@ -1173,19 +1173,19 @@ export const processShopifyOrder = inngest.createFunction(
       });
 
       // Handle existing order early return
-      if (fulfillResult.type === "already_exists") {
+      if (syncResult.type === "already_exists") {
         return {
           status: "already_exists",
-          d365OrderNumber: fulfillResult.salesOrderNumber,
+          d365OrderNumber: syncResult.salesOrderNumber,
           shopifyOrderId,
         };
       }
 
       // Extract results from the mega-step
-      salesOrderNumber = fulfillResult.salesOrderNumber;
+      salesOrderNumber = syncResult.salesOrderNumber;
       const salesOrderNo = salesOrderNumber!;
-      d365InventoryLotsBySku = fulfillResult.d365InventoryLotsBySku || {};
-      const gpsResult = fulfillResult.gpsResult;
+      d365InventoryLotsBySku = syncResult.d365InventoryLotsBySku || {};
+      const gpsResult = syncResult.gpsResult;
 
       // Publish GPS result
       if (gpsResult.type === "real" && "result" in gpsResult) {
