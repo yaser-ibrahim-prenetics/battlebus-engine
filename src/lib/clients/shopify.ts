@@ -519,14 +519,50 @@ export async function getOrderTransactions(
   return data.transactions;
 }
 
+function normalizeShopifyShopDomain(domain: string | null | undefined): string {
+  return (domain || "").toLowerCase().trim();
+}
+
+/**
+ * Pick the webhook signing secret for the store that sent the webhook.
+ * Shopify signs with the secret shown in that shop's admin (per custom app / subscription).
+ * This must follow `x-shopify-shop-domain`, not `SHOPIFY_STORE_MODE`, so production
+ * webhooks still verify when the deployment defaults to test API credentials for other calls.
+ */
+export function resolveShopifyWebhookSecret(shopDomain: string | null | undefined): string {
+  const d = normalizeShopifyShopDomain(shopDomain);
+  const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
+  const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+  if (prodD && d === prodD) {
+    return config.shopify.production.webhookSecret;
+  }
+  if (testD && d === testD) {
+    return config.shopify.test.webhookSecret;
+  }
+  return config.shopify.im8.webhookSecret;
+}
+
+/** For logs only — which credential bucket was used for webhook HMAC. */
+export function shopifyWebhookSecretSource(shopDomain: string | null | undefined): string {
+  const d = normalizeShopifyShopDomain(shopDomain);
+  const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
+  const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+  if (prodD && d === prodD) return "SHOPIFY_PROD_WEBHOOK_SECRET";
+  if (testD && d === testD) return "SHOPIFY_TEST_WEBHOOK_SECRET";
+  return "active-store (SHOPIFY_STORE_MODE)";
+}
+
 /**
  * Verify Shopify Webhook Signature
+ * @param shopDomain - `x-shopify-shop-domain`; used to select PROD vs TEST webhook secret
  */
-export function verifyWebhookSignature(body: string, hmacHeader: string): boolean {
-  const hash = crypto
-    .createHmac("sha256", config.shopify.im8.webhookSecret)
-    .update(body, "utf8")
-    .digest("base64");
+export function verifyWebhookSignature(
+  body: string,
+  hmacHeader: string,
+  shopDomain?: string | null): boolean {
+  const secret = resolveShopifyWebhookSecret(shopDomain);
+  if (!secret) return false;
+  const hash = crypto.createHmac("sha256", secret).update(body, "utf8").digest("base64");
 
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader));
 }

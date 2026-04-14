@@ -5,7 +5,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
-import { verifyWebhookSignature } from "@/lib/clients/shopify";
+import {
+  verifyWebhookSignature,
+  resolveShopifyWebhookSecret,
+  shopifyWebhookSecretSource,
+} from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
@@ -80,7 +84,8 @@ export async function POST(request: NextRequest) {
     const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
     const topic = request.headers.get("x-shopify-topic");
     const shopDomain = request.headers.get("x-shopify-shop-domain");
-    const effectiveShopDomain = shopDomain || config.shopify.im8.shopDomain || "im8";
+    const effectiveShopDomain = shopDomain || config.shopify.im8.shopDomain || "";
+    const secretShopDomain = effectiveShopDomain || null;
     const webhookId = request.headers.get("x-shopify-webhook-id");
     const apiVersion = request.headers.get("x-shopify-api-version");
 
@@ -120,8 +125,9 @@ export async function POST(request: NextRequest) {
     const isDev = process.env.NODE_ENV !== "production";
     let signatureValid = true;
 
-    // Check if webhook secret is configured
-    if (!config.shopify.im8.webhookSecret) {
+    // Secret for HMAC: matches x-shopify-shop-domain to SHOPIFY_PROD_* vs SHOPIFY_TEST_*
+    const webhookSecretForShop = resolveShopifyWebhookSecret(secretShopDomain);
+    if (!webhookSecretForShop) {
       console.log(
         `[Webhook] [${requestId}] ⚠️  Webhook secret not configured - skipping signature verification`
       );
@@ -133,7 +139,7 @@ export async function POST(request: NextRequest) {
         );
       } else {
         try {
-          signatureValid = verifyWebhookSignature(body, hmacHeader);
+          signatureValid = verifyWebhookSignature(body, hmacHeader, secretShopDomain);
         } catch (err) {
           // crypto.timingSafeEqual throws if buffer lengths differ
           console.error(`[Webhook] [${requestId}] ❌ Error verifying Shopify signature:`, err);
@@ -148,7 +154,8 @@ export async function POST(request: NextRequest) {
               topic,
               bodyBytes: body.length,
               hmacHeaderPresent: Boolean(hmacHeader),
-              webhookSecretConfigured: Boolean(config.shopify.im8.webhookSecret),
+              webhookSecretConfigured: Boolean(webhookSecretForShop),
+              webhookSecretSource: shopifyWebhookSecretSource(secretShopDomain),
             })
           );
           return NextResponse.json({ error: "Invalid signature", requestId }, { status: 401 });
