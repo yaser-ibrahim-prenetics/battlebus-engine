@@ -12,7 +12,6 @@ function SimulationPanel() {
   const simulateOrder = async () => {
     setLoading(true);
     setResult(null);
-
     try {
       const response = await fetch("/api/webhooks/shopify", {
         method: "POST",

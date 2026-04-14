@@ -25,7 +25,8 @@
     "test:d365-product": "npx tsx scripts/test-d365-product-sync.ts",
     "test:d365-fulfillment-order": "npx tsx scripts/test-d365-fulfillment-order.ts",
     "test:slack-errors": "npx tsx scripts/test-slack-error-notifications.ts",
-    "test:product-hub": "npx tsx scripts/test-product-to-hub.ts"
+    "test:product-hub": "npx tsx scripts/test-product-to-hub.ts",
+    "vercel:push-env": "bash scripts/vercel-push-env-from-file.sh"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",

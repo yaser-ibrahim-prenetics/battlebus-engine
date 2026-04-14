@@ -13,8 +13,53 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+// ---------------------------------------------------------------------------
+// Shopify store mode — selects SHOPIFY_PROD_* vs SHOPIFY_TEST_* only.
+// D365 and GPS always use the single D365_* / GPS_* / GPS_UK_* env var sets.
+//
+// Resolution: SHOPIFY_STORE_MODE → else NODE_ENV (production vs test).
+// On Vercel Preview, set SHOPIFY_STORE_MODE=test explicitly (NODE_ENV is often production).
+// ---------------------------------------------------------------------------
+const shopifyStoreMode: "production" | "test" =
+  process.env.SHOPIFY_STORE_MODE === "production"
+    ? "production"
+    : process.env.SHOPIFY_STORE_MODE === "test"
+      ? "test"
+      : process.env.NODE_ENV === "production"
+        ? "production"
+        : "test";
+
+const _shopifyProd = {
+  shopDomain: process.env.SHOPIFY_PROD_SHOP_DOMAIN || "",
+  accessToken: process.env.SHOPIFY_PROD_ACCESS_TOKEN || "",
+  apiVersion: process.env.SHOPIFY_PROD_API_VERSION || process.env.SHOPIFY_API_VERSION || "2024-07",
+  webhookSecret: process.env.SHOPIFY_PROD_WEBHOOK_SECRET || "",
+  locations: {
+    gps: process.env.SHOPIFY_PROD_LOCATION_GPS || "",
+    gpsUk: process.env.SHOPIFY_PROD_LOCATION_GPS_UK || "",
+    stord: process.env.SHOPIFY_PROD_LOCATION_STORD || "",
+    hkWarehouse: process.env.SHOPIFY_PROD_LOCATION_HK || "",
+  },
+};
+
+const _shopifyTest = {
+  shopDomain: process.env.SHOPIFY_TEST_SHOP_DOMAIN || "",
+  accessToken: process.env.SHOPIFY_TEST_ACCESS_TOKEN || "",
+  apiVersion: process.env.SHOPIFY_TEST_API_VERSION || process.env.SHOPIFY_API_VERSION || "2024-07",
+  webhookSecret: process.env.SHOPIFY_TEST_WEBHOOK_SECRET || "",
+  locations: {
+    gps: process.env.SHOPIFY_TEST_LOCATION_GPS || "",
+    gpsUk: process.env.SHOPIFY_TEST_LOCATION_GPS_UK || "",
+    stord: process.env.SHOPIFY_TEST_LOCATION_STORD || "",
+    hkWarehouse: process.env.SHOPIFY_TEST_LOCATION_HK || "",
+  },
+};
+
+/** Active Shopify credentials — resolved from SHOPIFY_STORE_MODE / NODE_ENV. */
+const _shopifyActive = shopifyStoreMode === "production" ? _shopifyProd : _shopifyTest;
+
 export const config = {
-  // Dynamics 365 Configuration
+  // Dynamics 365 Configuration (single env set)
   dynamics: {
     baseUrl: process.env.D365_BASE_URL || "",
     tenantId: process.env.D365_TENANT_ID || "",
@@ -50,7 +95,8 @@ export const config = {
     gpsFulfilledStatus: 3,
     fulfillmentHoursBack: safeParseInt(process.env.GPS_FULFILLMENT_HOURS_BACK, 80),
     inventorySyncIntervalMinutes: safeParseInt(
-      process.env.GPS_INVENTORY_SYNC_INTERVAL_MINUTES, 120
+      process.env.GPS_INVENTORY_SYNC_INTERVAL_MINUTES,
+      120
     ),
   },
 
@@ -88,20 +134,15 @@ export const config = {
   },
 
   // Shopify Configuration (IM8 Store)
+  // Active credentials are selected by SHOPIFY_STORE_MODE (production | test).
   shopify: {
-    im8: {
-      shopDomain: process.env.SHOPIFY_IM8_SHOP_DOMAIN || "",
-      accessToken: process.env.SHOPIFY_IM8_ACCESS_TOKEN || "",
-      apiVersion: process.env.SHOPIFY_API_VERSION || "2024-07",
-      webhookSecret: process.env.SHOPIFY_IM8_WEBHOOK_SECRET || "",
-      // Location IDs — prefer Hub/Supabase location-routing over these env fallbacks
-      locations: {
-        gps: process.env.SHOPIFY_LOCATION_GPS || "",
-        gpsUk: process.env.SHOPIFY_LOCATION_GPS_UK || "",
-        stord: process.env.SHOPIFY_LOCATION_STORD || "",
-        hkWarehouse: process.env.SHOPIFY_LOCATION_HK || "",
-      },
-    },
+    storeMode: shopifyStoreMode,
+    /** Resolved active store — all API clients use this. */
+    im8: _shopifyActive,
+    /** Full production credential set — available for explicit cross-env calls. */
+    production: _shopifyProd,
+    /** Full test credential set — available for explicit cross-env calls. */
+    test: _shopifyTest,
     enabledRiskCheck: true,
   },
 
@@ -257,7 +298,23 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
   }
 
   if (!config.shopify.im8.accessToken) {
-    errors.push("SHOPIFY_IM8_ACCESS_TOKEN is required");
+    const modeVar =
+      config.shopify.storeMode === "production"
+        ? "SHOPIFY_PROD_ACCESS_TOKEN"
+        : "SHOPIFY_TEST_ACCESS_TOKEN";
+    errors.push(
+      `${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`
+    );
+  }
+
+  if (!config.shopify.im8.shopDomain) {
+    const modeVar =
+      config.shopify.storeMode === "production"
+        ? "SHOPIFY_PROD_SHOP_DOMAIN"
+        : "SHOPIFY_TEST_SHOP_DOMAIN";
+    errors.push(
+      `${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`
+    );
   }
 
   if (config.csPlatform.enabled) {

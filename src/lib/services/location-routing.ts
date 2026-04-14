@@ -28,6 +28,10 @@ import { config } from "@/lib/config";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import warehouseConfig from "../mappings/warehouse-config.json";
+import {
+  PRODUCTION_LOCATION_MAPPINGS,
+  isProductionEnvironment,
+} from "../mappings/production-location-ids";
 
 // ============================================================================
 // Types
@@ -142,11 +146,13 @@ function rowToMapping(row: any): LocationMapping {
   };
 }
 
-// No hardcoded fallback mappings.
-// Locations are the source of truth in Supabase, seeded from Shopify via webhooks
-// or the /api/locations/seed endpoint.  When Supabase is unavailable the cache
-// returns an empty array and routing falls back to the country-level table in
-// warehouse-config.json.
+// Location source-of-truth priority:
+//   1. Supabase `locations` table  (live — preferred)
+//   2. Battle Hub /api/locations/mappings  (fallback when Supabase is unavailable)
+//   3. Persisted file-based cache snapshot  (fallback when both APIs are down)
+//   4. Hardcoded production IDs  (last-resort for production deployments)
+// Country-level routing from warehouse-config.json kicks in only for
+// determineWarehouse(), which is used when no location ID can be resolved at all.
 
 // ============================================================================
 // Fetch & cache
@@ -258,6 +264,21 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
       ttl: DEFAULT_TTL,
     };
     return snapshotMappings;
+  }
+
+  // Last-resort: use hardcoded production location IDs when running in a
+  // production environment and all dynamic sources are unavailable.
+  if (isProductionEnvironment() && PRODUCTION_LOCATION_MAPPINGS.length > 0) {
+    console.warn(
+      `[LocationRouting] ⚠️ All dynamic sources exhausted — falling back to ${PRODUCTION_LOCATION_MAPPINGS.length} hardcoded production location mappings. ` +
+        `Check Supabase connectivity and Battle Hub availability.`
+    );
+    locationCache = {
+      mappings: PRODUCTION_LOCATION_MAPPINGS,
+      lastFetched: new Date(),
+      ttl: DEFAULT_TTL,
+    };
+    return PRODUCTION_LOCATION_MAPPINGS;
   }
 
   locationCache = { mappings: [], lastFetched: new Date(), ttl: DEFAULT_TTL };
