@@ -533,6 +533,13 @@ export function resolveShopifyWebhookSecret(shopDomain: string | null | undefine
   const d = normalizeShopifyShopDomain(shopDomain);
   const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
   const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+
+  // Same hostname in PROD and TEST env (misconfiguration) — use SHOPIFY_STORE_MODE
+  if (prodD && testD && prodD === testD && d === prodD) {
+    return config.shopify.storeMode === "production"
+      ? config.shopify.production.webhookSecret
+      : config.shopify.test.webhookSecret;
+  }
   if (prodD && d === prodD) {
     return config.shopify.production.webhookSecret;
   }
@@ -547,9 +554,12 @@ export function shopifyWebhookSecretSource(shopDomain: string | null | undefined
   const d = normalizeShopifyShopDomain(shopDomain);
   const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
   const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+  if (prodD && testD && prodD === testD && d === prodD) {
+    return `duplicate SHOPIFY_*_SHOP_DOMAIN → SHOPIFY_${config.shopify.storeMode === "production" ? "PROD" : "TEST"}_WEBHOOK_SECRET`;
+  }
   if (prodD && d === prodD) return "SHOPIFY_PROD_WEBHOOK_SECRET";
   if (testD && d === testD) return "SHOPIFY_TEST_WEBHOOK_SECRET";
-  return "active-store (SHOPIFY_STORE_MODE)";
+  return "active-store (SHOPIFY_STORE_MODE; set SHOPIFY_TEST_SHOP_DOMAIN to match test store hostname)";
 }
 
 /**

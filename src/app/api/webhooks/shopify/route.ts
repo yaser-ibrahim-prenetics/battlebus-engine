@@ -138,6 +138,9 @@ export async function POST(request: NextRequest) {
           `[Webhook] [${requestId}] ⚠️  Skipping HMAC verification in development (hmac='test')`
         );
       } else {
+        console.log(
+          `[Webhook] [${requestId}] HMAC secret bucket: ${shopifyWebhookSecretSource(secretShopDomain)} (shop=${secretShopDomain || "unknown"})`
+        );
         try {
           signatureValid = verifyWebhookSignature(body, hmacHeader, secretShopDomain);
         } catch (err) {

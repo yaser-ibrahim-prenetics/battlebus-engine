@@ -36,4 +36,31 @@ describe("resolveShopifyWebhookSecret", () => {
     const { resolveShopifyWebhookSecret } = await import("../shopify");
     expect(resolveShopifyWebhookSecret("dev.myshopify.com")).toBe("secret-test");
   });
+
+  it("when PROD and TEST shop domains are identical, uses SHOPIFY_STORE_MODE to pick secret", async () => {
+    process.env.SHOPIFY_PROD_SHOP_DOMAIN = "same.myshopify.com";
+    process.env.SHOPIFY_TEST_SHOP_DOMAIN = "same.myshopify.com";
+    process.env.SHOPIFY_PROD_WEBHOOK_SECRET = "secret-prod";
+    process.env.SHOPIFY_TEST_WEBHOOK_SECRET = "secret-test";
+    process.env.SHOPIFY_PROD_ACCESS_TOKEN = "x";
+    process.env.SHOPIFY_TEST_ACCESS_TOKEN = "y";
+
+    process.env.SHOPIFY_STORE_MODE = "test";
+    process.env.NODE_ENV = "production";
+    const modTest = await import("../shopify");
+    expect(modTest.resolveShopifyWebhookSecret("same.myshopify.com")).toBe("secret-test");
+
+    vi.resetModules();
+    process.env = { ...envSnapshot };
+    process.env.SHOPIFY_PROD_SHOP_DOMAIN = "same.myshopify.com";
+    process.env.SHOPIFY_TEST_SHOP_DOMAIN = "same.myshopify.com";
+    process.env.SHOPIFY_PROD_WEBHOOK_SECRET = "secret-prod";
+    process.env.SHOPIFY_TEST_WEBHOOK_SECRET = "secret-test";
+    process.env.SHOPIFY_PROD_ACCESS_TOKEN = "x";
+    process.env.SHOPIFY_TEST_ACCESS_TOKEN = "y";
+    process.env.SHOPIFY_STORE_MODE = "production";
+    process.env.NODE_ENV = "production";
+    const modProd = await import("../shopify");
+    expect(modProd.resolveShopifyWebhookSecret("same.myshopify.com")).toBe("secret-prod");
+  });
 });
