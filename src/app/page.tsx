@@ -19,7 +19,6 @@ function SimulationPanel() {
         headers: {
           "Content-Type": "application/json",
           "x-shopify-topic": "orders/paid",
-          "x-shopify-shop-domain": "im8-test.myshopify.com",
         },
         body: JSON.stringify({
           id: Date.now(),

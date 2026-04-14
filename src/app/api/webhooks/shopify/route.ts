@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
     const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
     const topic = request.headers.get("x-shopify-topic");
     const shopDomain = request.headers.get("x-shopify-shop-domain");
+    const effectiveShopDomain = shopDomain || config.shopify.im8.shopDomain || "im8";
     const webhookId = request.headers.get("x-shopify-webhook-id");
     const apiVersion = request.headers.get("x-shopify-api-version");
 
@@ -247,7 +248,7 @@ export async function POST(request: NextRequest) {
             data: {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               orderJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -285,7 +286,7 @@ export async function POST(request: NextRequest) {
               data: {
                 shopifyOrderId: String(payload.id),
                 shopifyOrderName: payload.name,
-                shopifyStore: shopDomain || "im8",
+                shopifyStore: effectiveShopDomain,
                 subscriptionContractId,
                 orderJson: payload,
                 receivedAt: new Date().toISOString(),
@@ -308,7 +309,7 @@ export async function POST(request: NextRequest) {
               data: {
                 shopifyOrderId: String(payload.id),
                 shopifyOrderName: payload.name,
-                shopifyStore: shopDomain || "im8",
+                shopifyStore: effectiveShopDomain,
                 orderJson: payload,
                 receivedAt: new Date().toISOString(),
                 inngestIdempotencyKey: idempotencyKey,
@@ -376,7 +377,7 @@ export async function POST(request: NextRequest) {
               data: {
                 shopifyOrderId: String(payload.id),
                 shopifyOrderName: payload.name,
-                shopifyStore: shopDomain || "im8",
+                shopifyStore: effectiveShopDomain,
                 orderJson: payload,
                 receivedAt: new Date().toISOString(),
               },
@@ -405,7 +406,7 @@ export async function POST(request: NextRequest) {
             data: {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               orderJson: payload,
               cancelledAt: payload.cancelled_at || new Date().toISOString(),
               cancelReason: payload.cancel_reason || null,
@@ -432,7 +433,7 @@ export async function POST(request: NextRequest) {
             data: {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               orderJson: payload,
               fulfillments: payload.fulfillments || [],
               receivedAt: new Date().toISOString(),
@@ -457,7 +458,7 @@ export async function POST(request: NextRequest) {
             data: {
               shopifyOrderId: String(payload.order_id),
               refundId: String(payload.id),
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               refundJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -481,7 +482,7 @@ export async function POST(request: NextRequest) {
             data: {
               productId: String(payload.id),
               productTitle: payload.title,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               productJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -505,7 +506,7 @@ export async function POST(request: NextRequest) {
             data: {
               productId: String(payload.id),
               productTitle: payload.title,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               productJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -529,7 +530,7 @@ export async function POST(request: NextRequest) {
             data: {
               productId: String(payload.id),
               productTitle: payload.title || "Unknown",
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               productJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -553,7 +554,7 @@ export async function POST(request: NextRequest) {
             data: {
               locationId: String(payload.id),
               locationName: payload.name,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               locationJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -577,7 +578,7 @@ export async function POST(request: NextRequest) {
             data: {
               locationId: String(payload.id),
               locationName: payload.name,
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               locationJson: payload,
               receivedAt: new Date().toISOString(),
             },
@@ -601,7 +602,7 @@ export async function POST(request: NextRequest) {
             data: {
               locationId: String(payload.id),
               locationName: payload.name || "Unknown",
-              shopifyStore: shopDomain || "im8",
+              shopifyStore: effectiveShopDomain,
               locationJson: payload,
               receivedAt: new Date().toISOString(),
             },

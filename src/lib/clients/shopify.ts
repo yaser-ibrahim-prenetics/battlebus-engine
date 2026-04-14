@@ -29,6 +29,35 @@ function buildUrl(endpoint: string): string {
 }
 
 /**
+ * Execute a Shopify Admin GraphQL request using shared store config.
+ */
+export async function shopifyAdminGraphql<T = any>(
+  query: string,
+  variables: Record<string, unknown> = {}
+): Promise<T> {
+  const response = await fetch(buildUrl(`/graphql.json`), {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Shopify GraphQL request failed: ${response.status} - ${error}`);
+  }
+
+  const payload = await response.json();
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    const msg = payload.errors
+      .map((e: any) => e?.message || "Unknown GraphQL error")
+      .join("; ");
+    throw new Error(`Shopify GraphQL request failed: ${msg}`);
+  }
+
+  return payload as T;
+}
+
+/**
  * Resolve latest SKU values by Shopify variant IDs via Admin GraphQL.
  * Returns a map keyed by numeric variant ID (legacyResourceId).
  */
