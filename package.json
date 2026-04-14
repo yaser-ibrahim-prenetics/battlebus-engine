@@ -19,6 +19,7 @@
     "test:unit": "vitest run --testPathPattern='src/.*/(__tests__|__test__)/'",
     "test:integration": "vitest run --testPathPattern='tests/integration/'",
     "test:e2e": "vitest run --testPathPattern='tests/e2e/' --testTimeout=120000",
+    "test:e2e:shopify-stores": "vitest run tests/e2e/shopify-store-routing.test.ts",
     "test:coverage": "vitest run --coverage",
     "test:api": "npx tsx scripts/test-api-connections.ts",
     "test:gps-product": "npx tsx scripts/test-gps-product-sync.ts",
