@@ -247,18 +247,47 @@ export async function getAllLocations(): Promise<
 
 /**
  * Get Order by ID
+ * @param shopDomainForCredentials - optional `*.myshopify.com` host to pick PROD vs TEST API token
  */
-export async function getOrder(orderId: string | number): Promise<ShopifyOrder> {
+export async function getOrder(
+  orderId: string | number,
+  shopDomainForCredentials?: string | null
+): Promise<ShopifyOrder> {
   const startedAt = Date.now();
-  const url = buildUrl(`/orders/${orderId}.json`);
+  const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders/${orderId}.json`;
+  const requestDebug = {
+    shopDomainHintFromEvent: shopDomainForCredentials ?? null,
+    credentialSource: shopifyAdminApiCredentialSource(shopDomainForCredentials),
+    requestUrl: url,
+    resolvedShopDomain: c.shopDomain,
+    apiVersion: c.apiVersion,
+    accessTokenPreview: maskShopifyAccessToken(c.accessToken),
+    storeMode: config.shopify.storeMode,
+  };
+  console.log(`[Shopify] getOrder ${orderId}:`, JSON.stringify(requestDebug));
+
+  const headers = {
+    "X-Shopify-Access-Token": c.accessToken,
+    "Content-Type": "application/json",
+  };
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers,
   });
 
   if (!response.ok) {
     const error = await response.text();
+    const hint401 =
+      response.status === 401
+        ? " Token/shop mismatch: ensure SHOPIFY_PROD_* and SHOPIFY_TEST_* match each store, and pass event.data.shopifyStore on refetch when SHOPIFY_STORE_MODE differs from the webhook shop."
+        : "";
+    console.error(`[Shopify] getOrder failed ${orderId}:`, {
+      ...requestDebug,
+      httpStatus: response.status,
+      bodyPreview: error.slice(0, 300),
+    });
     await logFlowEvent({
       level: "error",
       flow: "external_api_call",
@@ -269,9 +298,9 @@ export async function getOrder(orderId: string | number): Promise<ShopifyOrder> 
       durationMs: Date.now() - startedAt,
       errorType: `http_${response.status}`,
       errorMessage: error.slice(0, 500),
-      payload: { endpoint: "/orders/:id.json" },
+      payload: { endpoint: "/orders/:id.json", shopifyRequest: requestDebug },
     });
-    throw new Error(`Failed to get Shopify order: ${response.status} - ${error}`);
+    throw new Error(`Failed to get Shopify order: ${response.status} - ${error}${hint401}`);
   }
 
   const data = await response.json();
@@ -473,19 +502,27 @@ export async function getUnfulfilledOrders(
 
 /**
  * Search Orders by Name (e.g., IM8-1001)
+ * @param shopDomainForCredentials - optional `*.myshopify.com` host to pick PROD vs TEST API token
  */
-export async function searchOrdersByName(orderName: string): Promise<IShopifyOrder[]> {
+export async function searchOrdersByName(
+  orderName: string,
+  shopDomainForCredentials?: string | null
+): Promise<IShopifyOrder[]> {
   if (config.features.enabledShopifyOrderMock) {
     const mockData = await import("../mocks/shopify/orders.json");
     console.log(`Using mock shopify order data for order ${orderName}`);
     return mockData.orders;
   }
 
-  const url = buildUrl(`/orders.json?name=${encodeURIComponent(orderName)}&status=any`);
+  const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders.json?name=${encodeURIComponent(orderName)}&status=any`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: {
+      "X-Shopify-Access-Token": c.accessToken,
+      "Content-Type": "application/json",
+    },
   });
 
   if (!response.ok) {
@@ -521,6 +558,70 @@ export async function getOrderTransactions(
 
 function normalizeShopifyShopDomain(domain: string | null | undefined): string {
   return (domain || "").toLowerCase().trim();
+}
+
+export interface ShopifyAdminApiCredentials {
+  shopDomain: string;
+  accessToken: string;
+  apiVersion: string;
+}
+
+/**
+ * Admin API token + host for REST/GraphQL calls. When `shopDomain` is set (full myshopify
+ * hostname from Hub or webhooks), selects PROD vs TEST credentials the same way as webhook HMAC.
+ * When omitted, uses the active store from SHOPIFY_STORE_MODE (`config.shopify.im8`).
+ */
+export function resolveShopifyAdminCredentials(
+  shopDomain: string | null | undefined
+): ShopifyAdminApiCredentials {
+  const d = normalizeShopifyShopDomain(shopDomain);
+  const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
+  const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+
+  let bucket: "production" | "test" | "active" = "active";
+  if (prodD && testD && prodD === testD && d === prodD) {
+    bucket = config.shopify.storeMode === "production" ? "production" : "test";
+  } else if (prodD && d === prodD) {
+    bucket = "production";
+  } else if (testD && d === testD) {
+    bucket = "test";
+  }
+
+  const src =
+    bucket === "production"
+      ? config.shopify.production
+      : bucket === "test"
+        ? config.shopify.test
+        : config.shopify.im8;
+
+  return {
+    shopDomain: src.shopDomain,
+    accessToken: src.accessToken,
+    apiVersion: src.apiVersion,
+  };
+}
+
+/** Safe token fingerprint for logs (never log full Admin API tokens). */
+export function maskShopifyAccessToken(token: string | null | undefined): string {
+  const t = String(token || "");
+  if (!t) return "(empty)";
+  if (t.length <= 12) return `(${t.length} chars)`;
+  return `${t.slice(0, 8)}…${t.slice(-4)} (${t.length} chars)`;
+}
+
+/**
+ * Which env bucket was used for Admin REST/GraphQL credentials (for debugging 401s).
+ */
+export function shopifyAdminApiCredentialSource(shopDomain: string | null | undefined): string {
+  const d = normalizeShopifyShopDomain(shopDomain);
+  const prodD = normalizeShopifyShopDomain(config.shopify.production.shopDomain);
+  const testD = normalizeShopifyShopDomain(config.shopify.test.shopDomain);
+  if (prodD && testD && prodD === testD && d === prodD) {
+    return `duplicate SHOPIFY_*_SHOP_DOMAIN → SHOPIFY_${config.shopify.storeMode === "production" ? "PROD" : "TEST"}_* (Admin token)`;
+  }
+  if (prodD && d === prodD) return "SHOPIFY_PROD_ACCESS_TOKEN + SHOPIFY_PROD_SHOP_DOMAIN";
+  if (testD && d === testD) return "SHOPIFY_TEST_ACCESS_TOKEN + SHOPIFY_TEST_SHOP_DOMAIN";
+  return `active store SHOPIFY_STORE_MODE=${config.shopify.storeMode} → config.shopify.im8 (${config.shopify.im8.shopDomain})`;
 }
 
 /**
@@ -631,17 +732,21 @@ export async function setGpsOrderMetafield(
 
 /**
  * Get GPS order metafield from a Shopify order
+ * @param shopDomainForCredentials - optional `*.myshopify.com` host to pick PROD vs TEST API token
  */
 export async function getGpsOrderMetafield(
-  orderId: string | number
+  orderId: string | number,
+  shopDomainForCredentials?: string | null
 ): Promise<GpsOrderMetafield | null> {
-  const url = buildUrl(
-    `/orders/${orderId}/metafields.json?namespace=${GPS_METAFIELD_NAMESPACE}&key=${GPS_METAFIELD_KEY}`
-  );
+  const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders/${orderId}/metafields.json?namespace=${GPS_METAFIELD_NAMESPACE}&key=${GPS_METAFIELD_KEY}`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: {
+      "X-Shopify-Access-Token": c.accessToken,
+      "Content-Type": "application/json",
+    },
   });
 
   if (!response.ok) {

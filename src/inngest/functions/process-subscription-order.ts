@@ -183,6 +183,7 @@ export const processSubscriptionOrder = inngest.createFunction(
       shopifyOrderId: rawShopifyOrderId,
       shopifyOrderName,
       subscriptionContractId,
+      shopifyStore,
     } = event.data;
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
@@ -208,7 +209,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     // STEP 1: Re-fetch order to get the latest tags (Skio applies tags async)
     // =========================================================================
     const refreshedOrder = await step.run("refetch-order-for-tags", async () => {
-      const fresh = await shopifyGetOrder(shopifyOrderId);
+      const fresh = await shopifyGetOrder(shopifyOrderId, shopifyStore);
       console.log(
         `[Subscription] Refetched ${shopifyOrderName}. Tags: "${fresh.tags || "(none)"}"`
       );
@@ -233,7 +234,7 @@ export const processSubscriptionOrder = inngest.createFunction(
 
       // Re-fetch once more
       const reOrderAfterWait = await step.run("refetch-after-tag-wait", async () => {
-        const fresh = await shopifyGetOrder(shopifyOrderId);
+        const fresh = await shopifyGetOrder(shopifyOrderId, shopifyStore);
         console.log(
           `[Subscription] Post-wait refetch ${shopifyOrderName}. Tags: "${fresh.tags || "(none)"}"`
         );

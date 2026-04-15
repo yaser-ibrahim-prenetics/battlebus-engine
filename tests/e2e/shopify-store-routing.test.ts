@@ -120,6 +120,46 @@ describe("E2E: im8health vs testing-im8store (config + webhook HMAC + locations)
     expect(verifyWebhookSignature(body, hmac, SHOPIFY_PRODUCTION_HOST)).toBe(true);
   });
 
+  it("resolveShopifyAdminCredentials: production hostname uses PROD token even when SHOPIFY_STORE_MODE=test", async () => {
+    process.env.SHOPIFY_STORE_MODE = "test";
+    process.env.NODE_ENV = "production";
+    process.env.SHOPIFY_PROD_SHOP_DOMAIN = SHOPIFY_PRODUCTION_HOST;
+    process.env.SHOPIFY_PROD_ACCESS_TOKEN = "token_prod";
+    process.env.SHOPIFY_PROD_API_VERSION = "2024-01";
+    process.env.SHOPIFY_TEST_SHOP_DOMAIN = SHOPIFY_TESTING_HOST;
+    process.env.SHOPIFY_TEST_ACCESS_TOKEN = "token_test";
+    process.env.SHOPIFY_TEST_API_VERSION = "2024-01";
+    process.env.SHOPIFY_PROD_WEBHOOK_SECRET = "w";
+    process.env.SHOPIFY_TEST_WEBHOOK_SECRET = "w";
+
+    const { resolveShopifyAdminCredentials } = await import("@/lib/clients/shopify");
+    const prod = resolveShopifyAdminCredentials(SHOPIFY_PRODUCTION_HOST);
+    expect(prod.shopDomain).toBe(SHOPIFY_PRODUCTION_HOST);
+    expect(prod.accessToken).toBe("token_prod");
+
+    const test = resolveShopifyAdminCredentials(SHOPIFY_TESTING_HOST);
+    expect(test.shopDomain).toBe(SHOPIFY_TESTING_HOST);
+    expect(test.accessToken).toBe("token_test");
+  });
+
+  it("resolveShopifyAdminCredentials: no hostname uses active store (SHOPIFY_STORE_MODE)", async () => {
+    process.env.SHOPIFY_STORE_MODE = "test";
+    process.env.NODE_ENV = "production";
+    process.env.SHOPIFY_PROD_SHOP_DOMAIN = SHOPIFY_PRODUCTION_HOST;
+    process.env.SHOPIFY_PROD_ACCESS_TOKEN = "token_prod";
+    process.env.SHOPIFY_PROD_API_VERSION = "2024-01";
+    process.env.SHOPIFY_TEST_SHOP_DOMAIN = SHOPIFY_TESTING_HOST;
+    process.env.SHOPIFY_TEST_ACCESS_TOKEN = "token_test";
+    process.env.SHOPIFY_TEST_API_VERSION = "2024-01";
+    process.env.SHOPIFY_PROD_WEBHOOK_SECRET = "w";
+    process.env.SHOPIFY_TEST_WEBHOOK_SECRET = "w";
+
+    const { resolveShopifyAdminCredentials } = await import("@/lib/clients/shopify");
+    const active = resolveShopifyAdminCredentials(undefined);
+    expect(active.shopDomain).toBe(SHOPIFY_TESTING_HOST);
+    expect(active.accessToken).toBe("token_test");
+  });
+
   it("static location mappings use TEST location env when mode is test", async () => {
     process.env.SHOPIFY_STORE_MODE = "test";
     process.env.NODE_ENV = "test";

@@ -200,7 +200,12 @@ export const processShopifyOrder = inngest.createFunction(
     triggers: [{ event: "shopify/order.created" }, { event: "shopify/order.paid" }],
   },
   async ({ event, step, publish, runId }: { event: any; step: any; publish: any; runId: any }) => {
-    const { shopifyOrderId: rawShopifyOrderId, shopifyOrderName, orderJson } = event.data;
+    const {
+      shopifyOrderId: rawShopifyOrderId,
+      shopifyOrderName,
+      orderJson,
+      shopifyStore,
+    } = event.data;
     const ch = orderChannel({ orderName: shopifyOrderName });
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
@@ -333,7 +338,7 @@ export const processShopifyOrder = inngest.createFunction(
       await publishStatus("wait-for-tags", "skipped", "Rerun: skipping tag wait delay");
       const refreshedOrder = await step.run("refetch-order-rerun-no-delay", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
-        const freshOrder = await getOrder(shopifyOrderId);
+        const freshOrder = await getOrder(shopifyOrderId, shopifyStore);
         console.log(
           `[Order] Refetched order ${shopifyOrderName} without delay (rerun). Tags: ${freshOrder.tags || "none"}`
         );
@@ -367,7 +372,7 @@ export const processShopifyOrder = inngest.createFunction(
 
       const refreshedOrder = await step.run("refetch-order-after-delay", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
-        const freshOrder = await getOrder(shopifyOrderId);
+        const freshOrder = await getOrder(shopifyOrderId, shopifyStore);
         console.log(
           `[Order] Refetched order ${shopifyOrderName} after ${TAG_WAIT_DURATION} delay. Tags: ${freshOrder.tags || "none"}`
         );

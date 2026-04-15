@@ -5,7 +5,8 @@
 // for use by battle-cs when opening an order.
 //
 // Input:
-//   POST { orderName: string }   // Shopify order name (e.g., "#1234") or numeric ID
+//   POST { orderName: string, shopDomain?: string }   // order name (e.g. "#1234") or numeric ID;
+//   shopDomain: optional *.myshopify.com host so PROD vs TEST Admin token matches the store
 
 import { NextRequest, NextResponse } from "next/server";
 import * as shopify from "@/lib/clients/shopify";
@@ -13,7 +14,7 @@ import * as shopify from "@/lib/clients/shopify";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { orderName, orderId } = body ?? {};
+    const { orderName, orderId, shopDomain } = body ?? {};
 
     // Support both orderName and orderId for backward compatibility
     const identifier = orderName || orderId;
@@ -22,6 +23,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "orderName or orderId is required" }, { status: 400 });
     }
 
+    const shopDomainHint =
+      typeof shopDomain === "string" && shopDomain.trim() ? shopDomain.trim() : undefined;
+
     // Try to parse as numeric ID first
     const numericId = Number(identifier);
     let order: any;
@@ -29,11 +33,11 @@ export async function POST(request: NextRequest) {
 
     if (Number.isFinite(numericId)) {
       // It's a numeric ID, use getOrder directly
-      order = await shopify.getOrder(numericId);
+      order = await shopify.getOrder(numericId, shopDomainHint);
       actualOrderId = numericId;
     } else {
       // It's an order name (e.g., "#1234"), search by name
-      const orders = await shopify.searchOrdersByName(identifier);
+      const orders = await shopify.searchOrdersByName(identifier, shopDomainHint);
       if (!orders || orders.length === 0) {
         return NextResponse.json({ error: `Order ${identifier} not found` }, { status: 404 });
       }
@@ -43,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     let gpsMetafield: unknown = null;
     try {
-      gpsMetafield = await shopify.getGpsOrderMetafield(actualOrderId);
+      gpsMetafield = await shopify.getGpsOrderMetafield(actualOrderId, shopDomainHint);
     } catch (err) {
       console.warn("[Shopify Order Details] Failed to load GPS metafield:", err);
     }
