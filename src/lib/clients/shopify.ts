@@ -255,6 +255,12 @@ export async function getOrder(
 ): Promise<ShopifyOrder> {
   const startedAt = Date.now();
   const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  if (!c.accessToken?.trim()) {
+    const src = shopifyAdminApiCredentialSource(shopDomainForCredentials);
+    throw new Error(
+      `Shopify Admin token is missing for getOrder (${orderId}). ${src} — set SHOPIFY_PROD_ACCESS_TOKEN / SHOPIFY_TEST_ACCESS_TOKEN in env.`
+    );
+  }
   const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders/${orderId}.json`;
   const requestDebug = {
     shopDomainHintFromEvent: shopDomainForCredentials ?? null,
@@ -281,7 +287,12 @@ export async function getOrder(
     const error = await response.text();
     const hint401 =
       response.status === 401
-        ? " Token/shop mismatch: ensure SHOPIFY_PROD_* and SHOPIFY_TEST_* match each store, and pass event.data.shopifyStore on refetch when SHOPIFY_STORE_MODE differs from the webhook shop."
+        ? " Shopify returned 401: the Admin API access token is not accepted for this shop (revoked, wrong app, typo in Vercel, or using test token as prod). Regenerate the token in Shopify Admin → Settings → Apps → [your custom app] → API credentials, then update SHOPIFY_PROD_ACCESS_TOKEN / SHOPIFY_TEST_* to match that shop. If credentials are correct, ensure event.data.shopifyStore is set on Inngest replays."
+        : "";
+    const hint403 =
+      response.status === 403 &&
+      /read_orders|merchant approval|scope/i.test(error)
+        ? " Add Admin API scope read_orders (and related order scopes you need) on the custom app: Settings → Apps and sales channels → Develop apps → [app] → Configuration → Admin API scopes → enable read_orders → Save → Install app / update install so the merchant approves new scopes → Reveal Admin API access token again if Shopify prompts, then update SHOPIFY_*_ACCESS_TOKEN in Vercel."
         : "";
     console.error(`[Shopify] getOrder failed ${orderId}:`, {
       ...requestDebug,
@@ -300,7 +311,7 @@ export async function getOrder(
       errorMessage: error.slice(0, 500),
       payload: { endpoint: "/orders/:id.json", shopifyRequest: requestDebug },
     });
-    throw new Error(`Failed to get Shopify order: ${response.status} - ${error}${hint401}`);
+    throw new Error(`Failed to get Shopify order: ${response.status} - ${error}${hint401}${hint403}`);
   }
 
   const data = await response.json();

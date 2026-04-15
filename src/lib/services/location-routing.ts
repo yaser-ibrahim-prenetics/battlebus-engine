@@ -29,7 +29,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import {
-  PRODUCTION_LOCATION_MAPPINGS,
+  ACTIVE_SHOPIFY_LOCATION_MAPPINGS,
   isProductionEnvironment,
 } from "../mappings/production-location-ids";
 
@@ -151,8 +151,35 @@ function rowToMapping(row: any): LocationMapping {
 //   2. Battle Hub /api/locations/mappings  (fallback when Supabase is unavailable)
 //   3. Persisted file-based cache snapshot  (fallback when both APIs are down)
 //   4. Hardcoded production IDs  (last-resort for production deployments)
+// After (1)–(3), we **merge** ACTIVE_SHOPIFY_LOCATION_MAPPINGS (SHOPIFY_PROD_* or
+// SHOPIFY_TEST_* per SHOPIFY_STORE_MODE) for any shopifyLocationId not already in the list.
 // Country-level routing from warehouse-config.json kicks in only for
 // determineWarehouse(), which is used when no location ID can be resolved at all.
+
+/**
+ * Adds env location rows for the active store mode (prod vs test) when Hub/Supabase omits that ID.
+ */
+function mergeStaticProductionLocationOverrides(dynamic: LocationMapping[]): LocationMapping[] {
+  if (!ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length) return dynamic;
+  const byId = new Map<string, LocationMapping>();
+  for (const m of dynamic) {
+    byId.set(m.shopifyLocationId, m);
+  }
+  let added = 0;
+  for (const s of ACTIVE_SHOPIFY_LOCATION_MAPPINGS) {
+    if (!s.shopifyLocationId) continue;
+    if (!byId.has(s.shopifyLocationId)) {
+      byId.set(s.shopifyLocationId, { ...s });
+      added++;
+    }
+  }
+  if (added > 0) {
+    console.log(
+      `[LocationRouting] Merged ${added} location(s) from active SHOPIFY_PROD_* or SHOPIFY_TEST_* env (per SHOPIFY_STORE_MODE); IDs missing from Hub/Supabase`
+    );
+  }
+  return Array.from(byId.values());
+}
 
 // ============================================================================
 // Fetch & cache
@@ -238,19 +265,20 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
     locationCache &&
     now - locationCache.lastFetched.getTime() < locationCache.ttl
   ) {
-    return locationCache.mappings;
+    return mergeStaticProductionLocationOverrides(locationCache.mappings);
   }
 
   const mappings = await fetchLocationMappings();
   if (mappings.length > 0) {
-    locationCache = { mappings, lastFetched: new Date(), ttl: DEFAULT_TTL };
-    await writeLocationSnapshot(mappings);
-    return mappings;
+    const finalized = mergeStaticProductionLocationOverrides(mappings);
+    locationCache = { mappings: finalized, lastFetched: new Date(), ttl: DEFAULT_TTL };
+    await writeLocationSnapshot(finalized);
+    return finalized;
   }
 
   if (locationCache?.mappings?.length) {
     console.warn("[LocationRouting] Using stale in-memory cache (refresh returned 0 mappings)");
-    return locationCache.mappings;
+    return mergeStaticProductionLocationOverrides(locationCache.mappings);
   }
 
   const snapshotMappings = await readLocationSnapshot();
@@ -258,27 +286,28 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
     console.warn(
       `[LocationRouting] Using persisted cache snapshot with ${snapshotMappings.length} mappings`
     );
+    const finalized = mergeStaticProductionLocationOverrides(snapshotMappings);
     locationCache = {
-      mappings: snapshotMappings,
+      mappings: finalized,
       lastFetched: new Date(),
       ttl: DEFAULT_TTL,
     };
-    return snapshotMappings;
+    return finalized;
   }
 
   // Last-resort: use hardcoded production location IDs when running in a
   // production environment and all dynamic sources are unavailable.
-  if (isProductionEnvironment() && PRODUCTION_LOCATION_MAPPINGS.length > 0) {
+  if (isProductionEnvironment() && ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length > 0) {
     console.warn(
-      `[LocationRouting] ⚠️ All dynamic sources exhausted — falling back to ${PRODUCTION_LOCATION_MAPPINGS.length} hardcoded production location mappings. ` +
+      `[LocationRouting] ⚠️ All dynamic sources exhausted — falling back to ${ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length} env location mappings (active store mode). ` +
         `Check Supabase connectivity and Battle Hub availability.`
     );
     locationCache = {
-      mappings: PRODUCTION_LOCATION_MAPPINGS,
+      mappings: ACTIVE_SHOPIFY_LOCATION_MAPPINGS,
       lastFetched: new Date(),
       ttl: DEFAULT_TTL,
     };
-    return PRODUCTION_LOCATION_MAPPINGS;
+    return ACTIVE_SHOPIFY_LOCATION_MAPPINGS;
   }
 
   locationCache = { mappings: [], lastFetched: new Date(), ttl: DEFAULT_TTL };

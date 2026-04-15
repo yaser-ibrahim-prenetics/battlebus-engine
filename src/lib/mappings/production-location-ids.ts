@@ -4,24 +4,14 @@
 // Hardcoded-shape location mappings whose IDs come from Vercel environment
 // variables — no values are hardcoded in this file.
 //
-// This is used as the last-resort fallback inside location-routing.ts when:
-//   1. Supabase is unavailable or returns 0 active locations
-//   2. The Hub API fallback also fails
-//   3. The persisted file-based cache snapshot is empty
+// In location-routing.ts these rows are:
+//   • Merged into Hub/Supabase results when a SHOPIFY_*_LOCATION_* ID is missing there
+//   • Used as last-resort fallback when Supabase, Hub, and the file snapshot all yield nothing
 //
-// VERCEL SETUP
-// ─────────────────────────────────────────────────────────────────────────────
-// Production environment  →  set SHOPIFY_STORE_MODE=production, then fill in:
-//   SHOPIFY_PROD_LOCATION_GPS        Shopify location ID for GPS Warehouse (US)
-//   SHOPIFY_PROD_LOCATION_GPS_UK     Shopify location ID for GPS UK Warehouse
-//   SHOPIFY_PROD_LOCATION_STORD      Shopify location ID for STORD ATL
-//   SHOPIFY_PROD_LOCATION_HK         Shopify location ID for HK Warehouse
-//
-// Test / Preview environment  →  set SHOPIFY_STORE_MODE=test, then fill in:
-//   SHOPIFY_TEST_LOCATION_GPS
-//   SHOPIFY_TEST_LOCATION_GPS_UK
-//   SHOPIFY_TEST_LOCATION_STORD
-//   SHOPIFY_TEST_LOCATION_HK
+// Which env vars apply: exactly one set, chosen by SHOPIFY_STORE_MODE (see config.ts).
+//   SHOPIFY_STORE_MODE=production  →  SHOPIFY_PROD_LOCATION_GPS, _GPS_UK, _STORD, _HK
+//   SHOPIFY_STORE_MODE=test        →  SHOPIFY_TEST_LOCATION_GPS, _GPS_UK, _STORD, _HK
+// If unset, NODE_ENV=production implies production mode; otherwise test.
 //
 // HOW TO GET THE IDs
 //   Shopify Admin → Settings → Locations → click a location → copy the
@@ -35,13 +25,10 @@ import type { LocationMapping } from "@/lib/services/location-routing";
 const STORE = "im8";
 
 /**
- * Builds the static location mappings from the currently active Shopify
- * credential set (resolved via SHOPIFY_STORE_MODE / NODE_ENV in config.ts).
- *
- * Returns only entries whose location ID is non-empty — partially configured
- * stores are handled gracefully.
+ * Builds env-backed location rows for the **active** store mode only:
+ * prod vars when mode is production, test vars when mode is test.
  */
-function buildProductionLocationMappings(): LocationMapping[] {
+function buildActiveShopifyLocationMappings(): LocationMapping[] {
   const locs = config.shopify.im8.locations;
 
   const entries: Array<Omit<LocationMapping, "active"> & { shopifyLocationId: string }> = [
@@ -108,10 +95,11 @@ function buildProductionLocationMappings(): LocationMapping[] {
 }
 
 /**
- * Static location mappings derived from the active Shopify env var set.
+ * Env-backed location mappings for the current SHOPIFY_STORE_MODE (PROD_* vs TEST_*).
  * Evaluated once at module load; restart the process to pick up env changes.
  */
-export const PRODUCTION_LOCATION_MAPPINGS: LocationMapping[] = buildProductionLocationMappings();
+export const ACTIVE_SHOPIFY_LOCATION_MAPPINGS: LocationMapping[] =
+  buildActiveShopifyLocationMappings();
 
 /**
  * Returns `true` when the process is running in a production-like environment.

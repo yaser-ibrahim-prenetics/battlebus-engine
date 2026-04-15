@@ -207,6 +207,11 @@ export const processShopifyOrder = inngest.createFunction(
       shopifyStore,
     } = event.data;
     const ch = orderChannel({ orderName: shopifyOrderName });
+    /** Inngest Realtime `publish` is only injected when the run opts into channels; guard to avoid TypeError. */
+    const publishToRealtime = async (channel: unknown, payload: Record<string, unknown>) => {
+      if (typeof publish !== "function") return;
+      await publish(channel, payload);
+    };
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
       String(rawShopifyOrderId || "").includes("-rerun-");
@@ -264,7 +269,7 @@ export const processShopifyOrder = inngest.createFunction(
           errorMessage: status === "failed" ? message : undefined,
           payload: data,
         });
-        await publish(ch.status, {
+        await publishToRealtime(ch.status, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,
             inngestRunId,
@@ -299,7 +304,7 @@ export const processShopifyOrder = inngest.createFunction(
           errorMessage: resultData?.error,
           payload: resultData,
         });
-        await publish(ch.result, {
+        await publishToRealtime(ch.result, {
             orderName: shopifyOrderName,
             inngestIdempotencyKey,
             inngestRunId,
@@ -354,7 +359,7 @@ export const processShopifyOrder = inngest.createFunction(
       );
       const refreshedOrder = await step.run("refetch-order-no-delay", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
-        const freshOrder = await getOrder(shopifyOrderId);
+        const freshOrder = await getOrder(shopifyOrderId, shopifyStore);
         console.log(
           `[Order] Refetched order ${shopifyOrderName} (tag wait disabled). Tags: ${freshOrder.tags || "none"}`
         );

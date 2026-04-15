@@ -21,6 +21,7 @@
     "test:e2e": "vitest run --testPathPattern='tests/e2e/' --testTimeout=120000",
     "test:e2e:shopify-stores": "vitest run tests/e2e/shopify-store-routing.test.ts",
     "shopify:verify-token": "npx tsx scripts/verify-shopify-admin-token.ts",
+    "shopify:probe-order-versions": "npx tsx scripts/verify-shopify-admin-token.ts --probe-order-versions",
     "test:coverage": "vitest run --coverage",
     "test:api": "npx tsx scripts/test-api-connections.ts",
     "test:gps-product": "npx tsx scripts/test-gps-product-sync.ts",

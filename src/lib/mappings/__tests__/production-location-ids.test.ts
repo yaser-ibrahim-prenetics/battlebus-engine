@@ -18,11 +18,11 @@ describe("production-location-ids", () => {
     process.env.SHOPIFY_TEST_LOCATION_STORD = "83243204840";
     process.env.SHOPIFY_TEST_LOCATION_HK = "";
 
-    const { PRODUCTION_LOCATION_MAPPINGS } = await import("../production-location-ids");
+    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } = await import("../production-location-ids");
 
-    expect(PRODUCTION_LOCATION_MAPPINGS).toHaveLength(3);
+    expect(ACTIVE_SHOPIFY_LOCATION_MAPPINGS).toHaveLength(3);
     const byWh = Object.fromEntries(
-      PRODUCTION_LOCATION_MAPPINGS.map((m) => [m.warehouseName, m.shopifyLocationId])
+      ACTIVE_SHOPIFY_LOCATION_MAPPINGS.map((m) => [m.warehouseName, m.shopifyLocationId])
     );
     expect(byWh["GPS Warehouse"]).toBe("79527313640");
     expect(byWh["GPS UK Warehouse"]).toBe("82997936360");
@@ -39,10 +39,10 @@ describe("production-location-ids", () => {
     process.env.SHOPIFY_PROD_LOCATION_STORD = "333";
     process.env.SHOPIFY_PROD_LOCATION_HK = "444";
 
-    const { PRODUCTION_LOCATION_MAPPINGS } = await import("../production-location-ids");
+    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } = await import("../production-location-ids");
 
-    expect(PRODUCTION_LOCATION_MAPPINGS).toHaveLength(4);
-    expect(PRODUCTION_LOCATION_MAPPINGS.map((m) => m.shopifyLocationId).sort()).toEqual([
+    expect(ACTIVE_SHOPIFY_LOCATION_MAPPINGS).toHaveLength(4);
+    expect(ACTIVE_SHOPIFY_LOCATION_MAPPINGS.map((m) => m.shopifyLocationId).sort()).toEqual([
       "111",
       "222",
       "333",

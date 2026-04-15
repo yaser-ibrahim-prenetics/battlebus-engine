@@ -52,6 +52,10 @@ export const processInventoryFullSync = inngest.createFunction(
     const _runId = (event as any).id;
     const { syncId, steps, skus, dryRun = false, requestedBy } = event.data;
     const ch = inventorySyncChannel({ syncId });
+    const publishToRealtime = async (channel: unknown, payload: Record<string, unknown>) => {
+      if (typeof publish !== "function") return;
+      await publish(channel, payload);
+    };
 
     await logFlowEvent({
       flow: "inventory_full_sync",
@@ -67,7 +71,7 @@ export const processInventoryFullSync = inngest.createFunction(
       const reason = "Inventory sync disabled (ENABLE_INVENTORY_SYNC=false)";
       console.log(`[InventoryFullSync] Skipped: ${reason}`);
       try {
-        await publish(ch.status, {
+        await publishToRealtime(ch.status, {
           syncId,
           step: "result",
           status: "failed",
@@ -109,7 +113,7 @@ export const processInventoryFullSync = inngest.createFunction(
       // Publish "running" status BEFORE the step (side effects outside step.run)
       console.log(`[InventoryFullSync] Publishing GPS running status`);
       try {
-        await publish(ch.status, {
+        await publishToRealtime(ch.status, {
           syncId,
           step: "gps",
           status: "running",
@@ -178,7 +182,7 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step (side effects outside step.run)
-      await publish(ch.status, {
+      await publishToRealtime(ch.status, {
         syncId,
         step: "gps",
         status: gpsResult.success ? "completed" : "failed",
@@ -203,7 +207,7 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("d365")) {
       // Publish "running" status BEFORE the step
-      await publish(ch.status, {
+      await publishToRealtime(ch.status, {
         syncId,
         step: "d365",
         status: "running",
@@ -275,7 +279,7 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step
-      await publish(ch.status, {
+      await publishToRealtime(ch.status, {
         syncId,
         step: "d365",
         status: d365Result.success ? "completed" : "failed",
@@ -295,7 +299,7 @@ export const processInventoryFullSync = inngest.createFunction(
     // ========================================================================
     if (steps.includes("shopify")) {
       // Publish "running" status BEFORE the step
-      await publish(ch.status, {
+      await publishToRealtime(ch.status, {
         syncId,
         step: "shopify",
         status: "running",
@@ -343,7 +347,7 @@ export const processInventoryFullSync = inngest.createFunction(
       });
 
       // Publish completion status AFTER the step
-      await publish(ch.status, {
+      await publishToRealtime(ch.status, {
         syncId,
         step: "shopify",
         status: shopifyResult.success ? "completed" : "failed",
@@ -387,7 +391,7 @@ export const processInventoryFullSync = inngest.createFunction(
     };
 
     // Publish final result (no step.run needed - publish is a side effect)
-    await publish(ch.status, {
+    await publishToRealtime(ch.status, {
       syncId,
       step: "result",
       status: overallSuccess ? "completed" : "failed",
