@@ -27,6 +27,7 @@ import {
   filterServiceSkus,
   filterDummySkus,
   explodeBundleLines,
+  isDummySku,
 } from "./sku";
 import {
   getWarehouseConfig,
@@ -236,6 +237,15 @@ export function toD365SalesOrderLines(
         `[D365] Missing SKU on shippable Shopify line item for ${order.name}: ` +
           `${item.title || "untitled"} (variant=${item.variant_id || "n/a"}, product=${item.product_id || "n/a"})`
       );
+    }
+
+    // Match GPS: dummy/test SKUs (IM8-FG-G*) are not released products in D365 — skip lines.
+    const mappedSku = mapShopifySkuToDynamics(rawSku);
+    if (isDummySku(mappedSku)) {
+      console.warn(
+        `[Transformers] Skipping dummy/test SKU for D365 ${order.name}: ${mappedSku} (no released item in D365)`
+      );
+      continue;
     }
 
     const line = toD365SalesOrderLine(

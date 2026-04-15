@@ -206,6 +206,19 @@ describe("Order Transformers", () => {
       expect(giftCardLine).toBeUndefined();
     });
 
+    it("skips dummy IM8-FG-G* test SKUs (not released in D365), same as GPS path", () => {
+      const order = loadFixture("gpsUsOrder");
+      order.line_items = [
+        {
+          ...order.line_items[0],
+          sku: "IM8-FG-G00003",
+          title: "Placeholder test SKU",
+        },
+      ];
+      const lines = toD365SalesOrderLines(order, "U001-SO-100", "GPS Warehouse");
+      expect(lines.some((l) => l.itemNumber === "IM8-FG-G00003")).toBe(false);
+    });
+
     it("omits shipping/tax lines when includeShippingAndTax is false", () => {
       const order = loadFixture("gpsUsOrder");
       const lines = toD365SalesOrderLines(order, "U001-SO-100", "GPS Warehouse", false);
