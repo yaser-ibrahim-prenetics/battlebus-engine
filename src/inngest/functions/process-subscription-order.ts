@@ -211,11 +211,13 @@ export const processSubscriptionOrder = inngest.createFunction(
     );
     let order = event.data.orderJson as ShopifyOrderPayload;
 
-    const _flowStart = Date.now();
     const _runId = (event as any).id;
     const inngestIdempotencyKey = `shopify-subscription-renewed-${shopifyOrderId}`;
 
     logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
+
+    // Durable start time for processing_summary (must live inside step.run for Inngest replays).
+    const flowStartedAt = await step.run("subscription-flow-started-at", async () => Date.now());
 
     console.log(`[Subscription] ========================================`);
     console.log(
@@ -715,23 +717,25 @@ export const processSubscriptionOrder = inngest.createFunction(
     );
     console.log(`[Subscription] ========================================`);
 
-    const totalProcessingMs = Date.now() - _flowStart;
-    logFlowEvent({
-      flow: "subscription_renewal",
-      step: "processing_summary",
-      status: finalStatus === "completed" ? "completed" : finalStatus,
-      runId: _runId,
-      shopifyOrderId,
-      shopifyOrderName,
-      d365OrderNumber,
-      durationMs: totalProcessingMs,
-      payload: {
-        totalProcessingMs,
-        gpsOrderId: gpsResult.gpsOrderId,
-        warehouse: warehouseName,
-      },
+    await step.run("subscription-processing-summary", async () => {
+      const totalProcessingMs = Date.now() - flowStartedAt;
+      logFlowEvent({
+        flow: "subscription_renewal",
+        step: "processing_summary",
+        status: finalStatus === "completed" ? "completed" : finalStatus,
+        runId: _runId,
+        shopifyOrderId,
+        shopifyOrderName,
+        d365OrderNumber,
+        durationMs: totalProcessingMs,
+        payload: {
+          totalProcessingMs,
+          gpsOrderId: gpsResult.gpsOrderId,
+          warehouse: warehouseName,
+        },
+      });
+      await flushFlowLogs();
     });
-    await flushFlowLogs();
 
     return {
       status: finalStatus,
