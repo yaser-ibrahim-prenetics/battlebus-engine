@@ -52,7 +52,8 @@ export const processBackorder = inngest.createFunction(
     const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
 
     const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
-    const maxRetries = event.data.maxRetries ||
+    // Respect explicit maxRetries=0 from producer (park only, no auto-retry).
+    const maxRetries = event.data.maxRetries ??
       (autoRetryEnabled ? BACKORDER_CONFIGS.autoRetryMaxAttempts : BACKORDER_CONFIGS.maxRetries);
     const retryIntervalHours = autoRetryEnabled
       ? BACKORDER_CONFIGS.autoRetryIntervalHours
