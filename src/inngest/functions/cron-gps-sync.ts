@@ -22,6 +22,9 @@ import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
 import { createClient } from "@supabase/supabase-js";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
+/** GPS status 5 = 异常 (Exception). Any inventory-related exceptionDesc is routed to backorder. */
+const GPS_EXCEPTION_STATUS = 5;
+
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
 // Process orders in small batches to avoid serverless timeouts
@@ -69,7 +72,44 @@ export const syncGpsFulfillments = inngest.createFunction(
       return getAllFulfilledGpsOrders();
     });
 
-    const { fulfilledOrders, allOrderStatuses } = gpsResult;
+    const { fulfilledOrders, allOrderStatuses, exceptionOrders } = gpsResult;
+
+    // Route GPS exception orders (status 5) to the backorder queue
+    if (exceptionOrders.length > 0) {
+      await step.run("route-gps-exception-orders", async () => {
+        for (const exc of exceptionOrders) {
+          const isInventory = gps.isGpsInventoryError(exc.exceptionDesc);
+          const errorType = gps.classifyGpsError(exc.exceptionDesc);
+          console.warn(
+            `[GPS Sync] Exception order ${exc.gpsOrderId} (${exc.shopifyOrderName}): "${exc.exceptionDesc}" — inventory=${isInventory}`
+          );
+          await slack.sendWarningMessage(
+            "gpslow",
+            `[GPS Exception] ${exc.shopifyOrderName} (GPS: ${exc.gpsOrderId})\n` +
+              `Reason: ${exc.exceptionDesc}\n` +
+              `Warehouse: ${exc.warehouse}\n` +
+              `${isInventory ? "→ Routing to backorder queue" : "→ Needs manual review"}`
+          );
+          if (isInventory) {
+            await inngest.send({
+              name: "backorder/created",
+              data: {
+                shopifyOrderId: exc.shopifyOrderId,
+                shopifyOrderName: exc.shopifyOrderName,
+                d365OrderNumber: "",
+                warehouse: exc.warehouse,
+                errorMessage: exc.exceptionDesc,
+                errorType,
+                failedSkus: [],
+                retryCount: 0,
+                maxRetries: 0,
+                createdAt: new Date().toISOString(),
+              },
+            });
+          }
+        }
+      });
+    }
 
     // If no fulfilled orders, return with all statuses for visibility
     if (fulfilledOrders.length === 0) {
@@ -81,12 +121,17 @@ export const syncGpsFulfillments = inngest.createFunction(
         durationMs: Date.now() - _flowStart,
         shopifyOrderId: event.data?.shopifyOrderId,
         shopifyOrderName: event.data?.shopifyOrderName,
-        payload: { totalOrdersChecked: allOrderStatuses.length, fulfilledCount: 0 },
+        payload: {
+          totalOrdersChecked: allOrderStatuses.length,
+          fulfilledCount: 0,
+          exceptionCount: exceptionOrders.length,
+        },
       });
       return {
         status: "success",
         message: "No fulfilled GPS orders found in configured time window",
         totalOrdersChecked: allOrderStatuses.length,
+        exceptionOrders,
         allOrderStatuses, // Show all orders and their GPS statuses
       };
     }
@@ -128,10 +173,10 @@ export const syncGpsFulfillments = inngest.createFunction(
       console.log(`[GPS Sync] Summary: No GPS orders fulfilled in last ${hoursBack} hours`);
     }
 
-    if (totalFulfilled > 0 || totalErrors > 0) {
+    if (totalFulfilled > 0 || totalErrors > 0 || exceptionOrders.length > 0) {
       await slack.sendInfoMessage(
         "gps",
-        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors out of ${fulfilledOrders.length} GPS orders processed.`
+        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors, ${exceptionOrders.length} exceptions out of ${fulfilledOrders.length + exceptionOrders.length} GPS orders processed.`
       );
     }
 
@@ -147,6 +192,7 @@ export const syncGpsFulfillments = inngest.createFunction(
         totalOrdersChecked: allOrderStatuses.length,
         fulfilledCount: totalFulfilled,
         errors: totalErrors,
+        exceptionCount: exceptionOrders.length,
       },
     });
 
@@ -156,6 +202,7 @@ export const syncGpsFulfillments = inngest.createFunction(
       fulfilledCount: totalFulfilled,
       fulfilledOrderIds: allFulfilledOrderIds,
       errors: totalErrors,
+      exceptionOrders,
       allOrderStatuses, // Show all orders and their GPS statuses
       batches: processedBatches,
     };
@@ -184,6 +231,7 @@ type GpsOrderStatusSummary = {
   trackingNumber?: string;
   carrier?: string;
   outboundTime?: string;
+  exceptionDesc?: string;
 };
 
 // GPS status codes
@@ -196,10 +244,20 @@ const GPS_STATUS_TEXT: Record<number, string> = {
   5: "Exception",
 };
 
+// GPS exception orders that need to be routed to backorder
+type GpsExceptionOrder = {
+  shopifyOrderName: string;
+  shopifyOrderId: string;
+  gpsOrderId: string;
+  exceptionDesc: string;
+  warehouse: GpsWarehouseName;
+};
+
 // Result type including all order statuses for visibility
 type GpsSyncResult = {
   fulfilledOrders: FulfilledGpsOrder[];
   allOrderStatuses: GpsOrderStatusSummary[];
+  exceptionOrders: GpsExceptionOrder[];
 };
 
 // Get GPS order data from Supabase (instead of Shopify metafields), query GPS API, filter for status 3
@@ -284,7 +342,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   }
 
   if (gpsOrderData.length === 0) {
-    return { fulfilledOrders: [], allOrderStatuses: [] };
+    return { fulfilledOrders: [], allOrderStatuses: [], exceptionOrders: [] };
   }
 
   // Step 2: Create mapping from GPS order ID to Shopify order data
@@ -324,6 +382,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   // Step 3: Query GPS in batches for each warehouse and filter for status 3 within configured hours
   const allFulfilledOrders: FulfilledGpsOrder[] = [];
   const allOrderStatuses: GpsOrderStatusSummary[] = [];
+  const allExceptionOrders: GpsExceptionOrder[] = [];
   const hoursBack = config.gps.fulfillmentHoursBack;
   const timeWindowAgo = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
 
@@ -379,7 +438,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           });
         }
 
-        // Collect ALL order statuses for visibility
+        // Collect ALL order statuses for visibility; detect exception orders (status 5)
         for (const gpsOrder of gpsData) {
           const shopifyData = gpsOrderIdToShopifyData.get(gpsOrder.outboundOrderNo);
           allOrderStatuses.push({
@@ -393,7 +452,23 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
             trackingNumber: gpsOrder.logisticsTrackNo || undefined,
             carrier: gpsOrder.logisticsCarrier || undefined,
             outboundTime: gpsOrder.outboundTime || undefined,
+            exceptionDesc: gpsOrder.exceptionDesc || undefined,
           });
+
+          // Collect exception orders (GPS status 5 = 异常) for backorder routing
+          if (gpsOrder.status === GPS_EXCEPTION_STATUS && gpsOrder.exceptionDesc && shopifyData) {
+            console.warn(
+              `[GPS Sync] [${warehouse}] Exception order: ${gpsOrder.outboundOrderNo} ` +
+                `(${shopifyData.shopifyOrderName}) — ${gpsOrder.exceptionDesc}`
+            );
+            allExceptionOrders.push({
+              shopifyOrderName: shopifyData.shopifyOrderName,
+              shopifyOrderId: shopifyData.shopifyOrderId,
+              gpsOrderId: gpsOrder.outboundOrderNo,
+              exceptionDesc: gpsOrder.exceptionDesc,
+              warehouse,
+            });
+          }
         }
 
         // Filter for fulfilled orders (status 3) within configured time window
@@ -454,10 +529,12 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
 
   console.log(`[GPS Sync] Total orders checked: ${allOrderStatuses.length}`);
   console.log(`[GPS Sync] Total fulfilled orders: ${allFulfilledOrders.length}`);
+  console.log(`[GPS Sync] Total exception orders: ${allExceptionOrders.length}`);
 
   return {
     fulfilledOrders: allFulfilledOrders,
     allOrderStatuses,
+    exceptionOrders: allExceptionOrders,
   };
 }
 

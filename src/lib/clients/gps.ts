@@ -227,6 +227,8 @@ export interface GpsGetOrdersDetailResponse {
     logisticsCarrier: string;
     platformOrderNo: string;
     outboundTime: string;
+    /** Present when status=5 (异常) or status=7 (获取面单异常) */
+    exceptionDesc?: string;
   }[];
 }
 
