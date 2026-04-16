@@ -22,10 +22,16 @@ import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
   toD365SalesOrderLines,
+  toOrderLineRecords,
   toGpsOutboundOrder,
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
+import {
+  saveOrderLines,
+  updateOrderLineLotId,
+  type OrderLineRecord,
+} from "@/lib/services/supabase-order-lines";
 import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
@@ -877,6 +883,39 @@ export const processShopifyOrder = inngest.createFunction(
               d365InventoryLotsBySku
             );
           }
+
+          // Build set of D365 item numbers that were skipped (SKU not released in D365).
+          // Do NOT save those to order_lines — they can't be fulfilled.
+          const skippedItemNumbers = new Set(
+            lineResults.filter((r) => r.skipped).map((r) => r.itemNumber.toUpperCase())
+          );
+
+          // Persist all order lines (product + service) to Supabase so fulfillment
+          // can replay shipping/tax lines to Dynamics. Lot IDs come from D365's
+          // createSalesOrderLine response, captured above in d365InventoryLotsBySku.
+          const lineRecords: OrderLineRecord[] = toOrderLineRecords(
+            order,
+            salesOrderNo,
+            warehouseName,
+            dataAreaId
+          )
+            .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
+            .map((r) => ({
+              shopify_order_id: String(shopifyOrderId),
+              shopify_order_name: shopifyOrderName || order.name,
+              shopify_line_item_id: r.shopifyLineItemId,
+              shopify_sku: r.shopifySku,
+              d365_item_number: r.d365ItemNumber,
+              d365_sales_order_number: salesOrderNo,
+              data_area_id: dataAreaId,
+              quantity: r.quantity,
+              price: r.price,
+              // Lot ID from D365 createSalesOrderLine response — used at fulfillment time
+              dynamics_inventory_lot_id:
+                d365InventoryLotsBySku[r.d365ItemNumber.toUpperCase()] ?? null,
+              is_service_line: r.isServiceLine,
+            }));
+          await saveOrderLines(lineRecords);
         }
 
         await publishStatus(

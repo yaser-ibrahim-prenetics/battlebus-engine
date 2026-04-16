@@ -36,6 +36,10 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+import {
+  fetchUnfulfilledServiceLines,
+  markServiceLinesFulfilled,
+} from "@/lib/services/supabase-order-lines";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
@@ -206,6 +210,14 @@ export const processShopifyFulfillment = inngest.createFunction(
         shopifyOrderName || order?.name
       );
 
+      // Load saved service lines (shipping + tax) for this order.
+      // They will be appended to the FIRST successful D365 fulfillment call (spock-store parity).
+      const unfulfilledServiceLines = await fetchUnfulfilledServiceLines(
+        String(shopifyOrderId),
+        shopifyOrderName || order?.name
+      );
+      let serviceLinesFulfilled = false;
+
       for (const fulfillment of fulfillments) {
         let fulfillmentSkuCandidates: string[] = [];
         // Skip dummy/adjustment fulfillments
@@ -323,6 +335,31 @@ export const processShopifyFulfillment = inngest.createFunction(
             }
           }
 
+          // Append service lines (shipping + tax) to the FIRST successful fulfillment.
+          // Mirrors spock-store: service lines are sent once and then marked fulfilled.
+          const serviceLinesToAppend =
+            !serviceLinesFulfilled && unfulfilledServiceLines.length > 0
+              ? unfulfilledServiceLines
+              : [];
+          const fulfilmentLinesWithService = [
+            ...fulfillmentLines,
+            ...serviceLinesToAppend.map((sl) => ({
+              itemNumber: sl.d365_item_number,
+              quantity: sl.quantity,
+              lotId: sl.dynamics_inventory_lot_id ?? "",
+              trackingNumber: "",
+              shippingSiteId: "Prenetics",
+              shippingWarehouseId: "",
+              shippingWarehouseLocationId: "",
+            })),
+          ];
+
+          if (serviceLinesToAppend.length > 0) {
+            console.log(
+              `[D365][ServiceLines] Appending ${serviceLinesToAppend.length} service line(s) to fulfillment for ${shopifyOrderName}: ${serviceLinesToAppend.map((l) => l.d365_item_number).join(", ")}`
+            );
+          }
+
           // Create D365 packing slip
           await dynamics.createFulfilment({
             dataAreaId,
@@ -331,8 +368,17 @@ export const processShopifyFulfillment = inngest.createFunction(
             confirmedShippedDate: fulfillment.created_at
               ? new Date(fulfillment.created_at).toISOString().split("T")[0]
               : new Date().toISOString().split("T")[0],
-            lines: fulfillmentLines,
+            lines: fulfilmentLinesWithService,
           });
+
+          // Mark service lines fulfilled so they are not sent again on subsequent fulfillments
+          if (serviceLinesToAppend.length > 0) {
+            serviceLinesFulfilled = true;
+            await markServiceLinesFulfilled(
+              String(shopifyOrderId),
+              serviceLinesToAppend.map((l) => l.shopify_line_item_id)
+            );
+          }
 
           results.push({
             fulfillmentId: fulfillment.id,

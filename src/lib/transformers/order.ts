@@ -28,6 +28,7 @@ import {
   filterDummySkus,
   explodeBundleLines,
   isDummySku,
+  isServiceSku,
 } from "./sku";
 import {
   getWarehouseConfig,
@@ -296,6 +297,114 @@ export function toD365SalesOrderLines(
   }
 
   return lines;
+}
+
+// ============================================================================
+// ORDER LINE RECORDS (for Supabase persistence)
+// ============================================================================
+
+export interface D365OrderLineRecord {
+  /** Shopify line_item.id, or synthetic 'shipping' / 'tax' for service lines */
+  shopifyLineItemId: string;
+  /** Original Shopify SKU (before D365 mapping) */
+  shopifySku: string | null;
+  d365ItemNumber: string;
+  quantity: number;
+  price: number;
+  isServiceLine: boolean;
+}
+
+/**
+ * Produces a list of D365 order line records annotated with their Shopify line
+ * item ID (or synthetic 'shipping' / 'tax'). Used to persist order lines to
+ * Supabase so fulfillment can replay service lines without reconstructing them.
+ *
+ * Follows the same logic as toD365SalesOrderLines; keep in sync when that changes.
+ */
+export function toOrderLineRecords(
+  order: ShopifyOrderPayload,
+  salesOrderNumber: string,
+  warehouseName: string,
+  dataAreaIdOverride?: string
+): D365OrderLineRecord[] {
+  const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
+    ? (dataAreaIdOverride || "").toUpperCase()
+    : getWarehouseConfig(warehouseName).dataAreaId;
+  const currency = order.currency || "USD";
+  const discountCodes = order.discount_codes?.map((d) => d.code);
+  const skuTransformer = createShopifyToDynamicsLineTransformer();
+
+  const countryCode =
+    order.shipping_address?.country_code || order.billing_address?.country_code || undefined;
+
+  const records: D365OrderLineRecord[] = [];
+  const lineItems = getLineItems(order);
+
+  for (const item of lineItems) {
+    if (item.gift_card) continue;
+    const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
+    if (!rawSku) {
+      if (item.requires_shipping === false) continue;
+      // Shippable line with no SKU — same guard as toD365SalesOrderLines
+      continue;
+    }
+    const mappedSku = mapShopifySkuToDynamics(rawSku);
+    if (isDummySku(mappedSku)) continue;
+
+    const d365Line = toD365SalesOrderLine(
+      { ...item, sku: rawSku },
+      salesOrderNumber,
+      dataAreaId,
+      currency,
+      discountCodes,
+      countryCode
+    );
+    const transformedLine = skuTransformer(d365Line);
+
+    // Bundles explode into components — each component gets the parent line item id
+    const componentLines = explodeBundleLines([transformedLine]);
+    for (const comp of componentLines) {
+      // Detect service lines by SKU pattern (IM8-SER-* / PRE-SER-*) — same as spock-store isServiceSkuLineItem
+      records.push({
+        shopifyLineItemId: String(item.id),
+        shopifySku: rawSku,
+        d365ItemNumber: comp.itemNumber,
+        quantity: comp.quantity,
+        price: comp.price,
+        isServiceLine: isServiceSku(comp.itemNumber),
+      });
+    }
+  }
+
+  // Shipping service line — synthetic shopifyLineItemId 'shipping', detected by IM8-SER-* SKU
+  const shippingCost = calculateShippingCost(order);
+  if (shippingCost > 0) {
+    const shippingSku = getShippingSku(warehouseName, dataAreaId);
+    records.push({
+      shopifyLineItemId: "shipping",
+      shopifySku: null,
+      d365ItemNumber: shippingSku,
+      quantity: 1,
+      price: shippingCost,
+      isServiceLine: isServiceSku(shippingSku), // true: IM8-SER-000002 / IM8-SER-000003
+    });
+  }
+
+  // Tax + duty service line — synthetic shopifyLineItemId 'tax', detected by IM8-SER-* SKU
+  const taxAndDuty = calculateTaxAmount(order) + calculateDutyAmount(order);
+  if (taxAndDuty > 0) {
+    const taxSku = getTaxSku(warehouseName, dataAreaId);
+    records.push({
+      shopifyLineItemId: "tax",
+      shopifySku: null,
+      d365ItemNumber: taxSku,
+      quantity: 1,
+      price: taxAndDuty,
+      isServiceLine: isServiceSku(taxSku), // true: IM8-SER-000004
+    });
+  }
+
+  return records;
 }
 
 // ============================================================================
