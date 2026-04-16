@@ -213,6 +213,7 @@ export const processSubscriptionOrder = inngest.createFunction(
 
     const _flowStart = Date.now();
     const _runId = (event as any).id;
+    const inngestIdempotencyKey = `shopify-subscription-renewed-${shopifyOrderId}`;
 
     await logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
 
@@ -690,13 +691,17 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     await step.run("notify-cs-platform", async () => {
       try {
+        const finalStatus = gpsResult.status === "backorder" ? "backorder" : "completed";
         await csPlatform.sendOrderUpdate({
           shopifyOrderId,
           shopifyOrderName,
           d365OrderNumber,
-          status: gpsResult.status === "backorder" ? "backorder" : "processing",
+          status: finalStatus,
           warehouse: warehouseName,
           subscriptionContractId,
+        }, {
+          inngestIdempotencyKey,
+          inngestRunId: _runId,
         });
       } catch (err) {
         console.warn(`[Subscription] CS Platform notify failed:`, err);
