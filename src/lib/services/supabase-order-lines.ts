@@ -184,6 +184,45 @@ function isServiceItemNumber(itemNumber: string | null | undefined): boolean {
 }
 
 /**
+ * Map d365_item_number (uppercase) → lot id from persisted order_lines.
+ * Merged into OData lot map so fulfillment uses the same lots captured at order creation.
+ */
+export function buildLotIdMapFromOrderLines(lines: SavedOrderLine[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const l of lines) {
+    const lot = String(l.dynamics_inventory_lot_id ?? "").trim();
+    if (!lot) continue;
+    const key = String(l.d365_item_number ?? "").trim().toUpperCase();
+    if (!key) continue;
+    if (!out[key]) out[key] = lot;
+  }
+  return out;
+}
+
+/** Prefer lot from the saved row for this Shopify fulfillment line_item.id */
+export function getLotFromSavedOrderLineByShopifyLineItemId(
+  lines: SavedOrderLine[],
+  shopifyLineItemId: string
+): string {
+  if (!shopifyLineItemId) return "";
+  const id = String(shopifyLineItemId);
+  const row = lines.find(
+    (l) =>
+      l.shopify_line_item_id === id &&
+      String(l.dynamics_inventory_lot_id ?? "").trim() !== ""
+  );
+  return row ? String(row.dynamics_inventory_lot_id).trim() : "";
+}
+
+export function filterUnfulfilledServiceLines(lines: SavedOrderLine[]): SavedOrderLine[] {
+  return lines.filter(
+    (l) =>
+      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) &&
+      !l.is_fulfilled_to_dynamics
+  );
+}
+
+/**
  * Fetch only the service lines (shipping + tax) that have NOT yet been
  * fulfilled to Dynamics. Returns [] if all service lines are already fulfilled
  * or if no service lines exist.
@@ -196,11 +235,7 @@ export async function fetchUnfulfilledServiceLines(
   shopifyOrderName?: string | null
 ): Promise<SavedOrderLine[]> {
   const all = await fetchOrderLines(shopifyOrderId, shopifyOrderName);
-  return all.filter(
-    (l) =>
-      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) &&
-      !l.is_fulfilled_to_dynamics
-  );
+  return filterUnfulfilledServiceLines(all);
 }
 
 /**

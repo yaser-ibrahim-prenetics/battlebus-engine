@@ -37,7 +37,10 @@ import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
 import {
-  fetchUnfulfilledServiceLines,
+  fetchOrderLines,
+  buildLotIdMapFromOrderLines,
+  getLotFromSavedOrderLineByShopifyLineItemId,
+  filterUnfulfilledServiceLines,
   markServiceLinesFulfilled,
 } from "@/lib/services/supabase-order-lines";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
@@ -210,13 +213,22 @@ export const processShopifyFulfillment = inngest.createFunction(
         shopifyOrderName || order?.name
       );
 
-      // Load saved service lines (shipping + tax) for this order.
-      // They will be appended to the FIRST successful D365 fulfillment call (spock-store parity).
-      const unfulfilledServiceLines = await fetchUnfulfilledServiceLines(
+      // All persisted D365 lines (product + service) from Supabase — Shopify webhooks
+      // never include synthetic shipping/tax lines; we merge those here for Dynamics.
+      const savedOrderLines = await fetchOrderLines(
         String(shopifyOrderId),
         shopifyOrderName || order?.name
       );
+      const orderLinesLotMap = buildLotIdMapFromOrderLines(savedOrderLines);
+      const unfulfilledServiceLines = filterUnfulfilledServiceLines(savedOrderLines);
       let serviceLinesFulfilled = false;
+
+      if (savedOrderLines.length > 0) {
+        console.log(
+          `[D365][OrderLines] Loaded ${savedOrderLines.length} saved line(s) from Supabase for ${shopifyOrderName}; ` +
+            `${unfulfilledServiceLines.length} unfulfilled service line(s)`
+        );
+      }
 
       for (const fulfillment of fulfillments) {
         let fulfillmentSkuCandidates: string[] = [];
@@ -244,10 +256,11 @@ export const processShopifyFulfillment = inngest.createFunction(
             continue;
           }
 
-          // OData lines first; Hub snapshot from order create fills gaps (SKU lag / partial reads).
+          // OData first; Hub orders.state snapshot + order_lines table fill gaps (incl. service lots).
           let lotIdMap = dynamics.mergeLotIdMaps(
             await dynamics.getLotIdMap(d365Order.SalesOrderNumber!, dataAreaId),
-            supabaseLotMap
+            supabaseLotMap,
+            orderLinesLotMap
           );
 
           const buildFulfillmentLines = () =>
@@ -277,9 +290,17 @@ export const processShopifyFulfillment = inngest.createFunction(
               shippingWarehouseId: "",
               shippingWarehouseLocationId: "",
               lotId: (() => {
+                const lineItemId = Number((item as any)?.id);
+                const lineItemIdStr =
+                  Number.isFinite(lineItemId) && lineItemId > 0
+                    ? String(Math.trunc(lineItemId))
+                    : "";
+                const fromSaved = lineItemIdStr
+                  ? getLotFromSavedOrderLineByShopifyLineItemId(savedOrderLines, lineItemIdStr)
+                  : "";
+                if (fromSaved) return fromSaved;
                 const rawFulfillmentSku = String(item.sku || "").trim();
                 const normalizedFulfillmentSku = normalizeSkuForLotLookup(rawFulfillmentSku);
-                const lineItemId = Number((item as any)?.id);
                 const normalizedOrderLineSku =
                   Number.isFinite(lineItemId) && lineItemId > 0
                     ? normalizeSkuForLotLookup(orderLineSkuById[String(Math.trunc(lineItemId))] || "")
@@ -315,7 +336,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               d365Order.SalesOrderNumber!,
               dataAreaId
             );
-            lotIdMap = dynamics.mergeLotIdMaps(refreshedOdataLotMap, lotIdMap);
+            lotIdMap = dynamics.mergeLotIdMaps(refreshedOdataLotMap, supabaseLotMap, orderLinesLotMap);
             fulfillmentLines = buildFulfillmentLines();
             missingLotIdSkus = fulfillmentLines
               .filter((line) => !String(line.lotId || "").trim())
@@ -335,23 +356,47 @@ export const processShopifyFulfillment = inngest.createFunction(
             }
           }
 
-          // Append service lines (shipping + tax) to the FIRST successful fulfillment.
-          // Mirrors spock-store: service lines are sent once and then marked fulfilled.
+          // Append service lines (shipping + tax) from Supabase — not present on Shopify fulfillments.
+          // First successful product fulfillment includes them once; then mark fulfilled (spock-store parity).
           const serviceLinesToAppend =
             !serviceLinesFulfilled && unfulfilledServiceLines.length > 0
               ? unfulfilledServiceLines
               : [];
+
+          let serviceLotMap = lotIdMap;
+          const serviceNeedsOdataLot = serviceLinesToAppend.some((sl) => {
+            const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
+            const key = String(sl.d365_item_number ?? "").trim().toUpperCase();
+            return !rowLot && !String(serviceLotMap[key] ?? "").trim();
+          });
+          if (serviceNeedsOdataLot && serviceLinesToAppend.length > 0) {
+            const refreshedForService = await dynamics.getLotIdMap(
+              d365Order.SalesOrderNumber!,
+              dataAreaId
+            );
+            serviceLotMap = dynamics.mergeLotIdMaps(
+              refreshedForService,
+              supabaseLotMap,
+              orderLinesLotMap
+            );
+          }
+
           const fulfilmentLinesWithService = [
             ...fulfillmentLines,
-            ...serviceLinesToAppend.map((sl) => ({
-              itemNumber: sl.d365_item_number,
-              quantity: sl.quantity,
-              lotId: sl.dynamics_inventory_lot_id ?? "",
-              trackingNumber: "",
-              shippingSiteId: "Prenetics",
-              shippingWarehouseId: "",
-              shippingWarehouseLocationId: "",
-            })),
+            ...serviceLinesToAppend.map((sl) => {
+              const itemUpper = String(sl.d365_item_number ?? "").trim().toUpperCase();
+              const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
+              const lotId = rowLot || String(serviceLotMap[itemUpper] ?? "").trim() || "";
+              return {
+                itemNumber: sl.d365_item_number,
+                quantity: Number(sl.quantity) || 1,
+                lotId,
+                trackingNumber: "",
+                shippingSiteId: "Prenetics",
+                shippingWarehouseId: "",
+                shippingWarehouseLocationId: "",
+              };
+            }),
           ];
 
           if (serviceLinesToAppend.length > 0) {

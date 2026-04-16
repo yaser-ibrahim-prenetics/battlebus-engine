@@ -1,17 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   SHOPIFY_SHIPPING_LINE_ITEM_ID,
   SHOPIFY_TAX_LINE_ITEM_ID,
+  buildLotIdMapFromOrderLines,
+  getLotFromSavedOrderLineByShopifyLineItemId,
+  filterUnfulfilledServiceLines,
   type SavedOrderLine,
 } from "../supabase-order-lines";
-
-// ============================================================================
-// fetchUnfulfilledServiceLines (pure logic extracted for unit test)
-// ============================================================================
-
-function applyUnfulfilledServiceFilter(lines: SavedOrderLine[]): SavedOrderLine[] {
-  return lines.filter((l) => l.is_service_line && !l.is_fulfilled_to_dynamics);
-}
 
 describe("supabase-order-lines (unit)", () => {
   const baseProductLine: SavedOrderLine = {
@@ -61,7 +56,7 @@ describe("supabase-order-lines (unit)", () => {
 
   it("returns service lines that are not yet fulfilled", () => {
     const lines = [baseProductLine, shippingLine, taxLine];
-    const result = applyUnfulfilledServiceFilter(lines);
+    const result = filterUnfulfilledServiceLines(lines);
     expect(result).toHaveLength(2);
     expect(result.map((l) => l.shopify_line_item_id)).toContain(SHOPIFY_SHIPPING_LINE_ITEM_ID);
     expect(result.map((l) => l.shopify_line_item_id)).toContain(SHOPIFY_TAX_LINE_ITEM_ID);
@@ -73,11 +68,11 @@ describe("supabase-order-lines (unit)", () => {
       { ...shippingLine, is_fulfilled_to_dynamics: true },
       { ...taxLine, is_fulfilled_to_dynamics: true },
     ];
-    expect(applyUnfulfilledServiceFilter(lines)).toHaveLength(0);
+    expect(filterUnfulfilledServiceLines(lines)).toHaveLength(0);
   });
 
   it("returns empty when there are no service lines at all", () => {
-    expect(applyUnfulfilledServiceFilter([baseProductLine])).toHaveLength(0);
+    expect(filterUnfulfilledServiceLines([baseProductLine])).toHaveLength(0);
   });
 
   it("only returns unfulfilled service lines (not already-fulfilled ones)", () => {
@@ -85,7 +80,7 @@ describe("supabase-order-lines (unit)", () => {
       { ...shippingLine, is_fulfilled_to_dynamics: true },
       taxLine,
     ];
-    const result = applyUnfulfilledServiceFilter(lines);
+    const result = filterUnfulfilledServiceLines(lines);
     expect(result).toHaveLength(1);
     expect(result[0].shopify_line_item_id).toBe(SHOPIFY_TAX_LINE_ITEM_ID);
   });
@@ -96,5 +91,29 @@ describe("supabase-order-lines (unit)", () => {
 
   it("SHOPIFY_TAX_LINE_ITEM_ID is 'tax'", () => {
     expect(SHOPIFY_TAX_LINE_ITEM_ID).toBe("tax");
+  });
+
+  it("buildLotIdMapFromOrderLines maps d365 item to lot", () => {
+    const lines: SavedOrderLine[] = [
+      { ...baseProductLine, dynamics_inventory_lot_id: "LOT-A" },
+      { ...shippingLine, dynamics_inventory_lot_id: "LOT-S" },
+    ];
+    const m = buildLotIdMapFromOrderLines(lines);
+    expect(m["IM8-FG-000048"]).toBe("LOT-A");
+    expect(m["IM8-SER-000002"]).toBe("LOT-S");
+  });
+
+  it("getLotFromSavedOrderLineByShopifyLineItemId returns lot for line item id", () => {
+    const lines: SavedOrderLine[] = [{ ...baseProductLine, dynamics_inventory_lot_id: "LOT-Z" }];
+    expect(getLotFromSavedOrderLineByShopifyLineItemId(lines, "14001")).toBe("LOT-Z");
+    expect(getLotFromSavedOrderLineByShopifyLineItemId(lines, "999")).toBe("");
+  });
+
+  it("detects service line by IM8-SER- SKU even when is_service_line is false", () => {
+    const serOnly: SavedOrderLine = {
+      ...shippingLine,
+      is_service_line: false,
+    };
+    expect(filterUnfulfilledServiceLines([serOnly])).toHaveLength(1);
   });
 });
