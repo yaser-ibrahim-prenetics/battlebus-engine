@@ -43,6 +43,13 @@ export interface SavedOrderLine extends OrderLineRecord {
   updated_at: string;
 }
 
+/** Result of `saveOrderLines` — use in Inngest step output / flow logs. */
+export type SaveOrderLinesResult =
+  | { ok: true; upsertedRowCount: number }
+  | { ok: false; reason: "no_supabase_client" }
+  | { ok: false; reason: "empty_input" }
+  | { ok: false; reason: "supabase_error"; message: string; attemptedRowCount: number };
+
 // ============================================================================
 // Client
 // ============================================================================
@@ -73,10 +80,14 @@ function getClient(): SupabaseClient | null {
  * Persist all D365 sales order lines (product + service) for a Shopify order.
  * Upserts on (shopify_order_id, shopify_line_item_id) so re-runs are idempotent.
  */
-export async function saveOrderLines(lines: OrderLineRecord[]): Promise<void> {
+export async function saveOrderLines(lines: OrderLineRecord[]): Promise<SaveOrderLinesResult> {
   const supabase = getClient();
-  if (!supabase) return;
-  if (lines.length === 0) return;
+  if (!supabase) {
+    return { ok: false, reason: "no_supabase_client" };
+  }
+  if (lines.length === 0) {
+    return { ok: false, reason: "empty_input" };
+  }
 
   const { error } = await supabase
     .from("order_lines" as any)
@@ -101,11 +112,17 @@ export async function saveOrderLines(lines: OrderLineRecord[]): Promise<void> {
     console.warn(
       `[OrderLines] Failed to save ${lines.length} lines for order ${lines[0]?.shopify_order_name ?? lines[0]?.shopify_order_id}: ${error.message}`
     );
-  } else {
-    console.log(
-      `[OrderLines] Saved ${lines.length} lines for ${lines[0]?.shopify_order_name ?? lines[0]?.shopify_order_id} (salesOrder=${lines[0]?.d365_sales_order_number})`
-    );
+    return {
+      ok: false,
+      reason: "supabase_error",
+      message: error.message,
+      attemptedRowCount: lines.length,
+    };
   }
+  console.log(
+    `[OrderLines] Saved ${lines.length} lines for ${lines[0]?.shopify_order_name ?? lines[0]?.shopify_order_id} (salesOrder=${lines[0]?.d365_sales_order_number})`
+  );
+  return { ok: true, upsertedRowCount: lines.length };
 }
 
 /**

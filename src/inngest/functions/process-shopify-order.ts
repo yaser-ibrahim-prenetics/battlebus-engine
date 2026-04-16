@@ -31,7 +31,24 @@ import {
   saveOrderLines,
   updateOrderLineLotId,
   type OrderLineRecord,
+  type SaveOrderLinesResult,
 } from "@/lib/services/supabase-order-lines";
+
+/** Shown on `sync-order` step output + supabase.order-lines flow log */
+type OrderLinesSupabaseSyncLog = {
+  attempted: boolean;
+  skipReason?: "d365_order_already_existed" | "dynamics_sync_disabled";
+  note?: string;
+  d365LineCount?: number;
+  recordsPrepared?: number;
+  skippedD365ServiceLines?: number;
+  save?: SaveOrderLinesResult;
+  preview?: Array<{
+    shopify_line_item_id: string;
+    d365_item_number: string;
+    hasLotId: boolean;
+  }>;
+};
 import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
@@ -750,6 +767,12 @@ export const processShopifyOrder = inngest.createFunction(
               salesOrderNumber: existing.SalesOrderNumber,
               lineItems: [] as any[],
               d365InventoryLotsBySku: {} as Record<string, string>,
+              orderLinesSupabase: {
+                attempted: false,
+                skipReason: "d365_order_already_existed" as const,
+                note:
+                  "Reused existing D365 order — this run did not upsert Hub order_lines (lines may be missing until a full sync or backfill).",
+              } satisfies OrderLinesSupabaseSyncLog,
             };
           }
         }
@@ -791,9 +814,15 @@ export const processShopifyOrder = inngest.createFunction(
         );
 
         let d365InventoryLotsBySku: Record<string, string> = {};
+        let orderLinesSupabase: OrderLinesSupabaseSyncLog;
 
         if (skipD365) {
-          // no-op
+          orderLinesSupabase = {
+            attempted: false,
+            skipReason: "dynamics_sync_disabled",
+            d365LineCount: lineItems.length,
+            note: "ENABLE_DYNAMICS_SYNC off — order_lines upsert skipped",
+          };
         } else {
           const invalidLines = lineItems
             .map((line, index) => ({ line, index }))
@@ -915,7 +944,42 @@ export const processShopifyOrder = inngest.createFunction(
                 d365InventoryLotsBySku[r.d365ItemNumber.toUpperCase()] ?? null,
               is_service_line: r.isServiceLine,
             }));
-          await saveOrderLines(lineRecords);
+          const saveResult = await saveOrderLines(lineRecords);
+          orderLinesSupabase = {
+            attempted: true,
+            d365LineCount: lineItems.length,
+            recordsPrepared: lineRecords.length,
+            skippedD365ServiceLines: skippedItemNumbers.size,
+            save: saveResult,
+            preview: lineRecords.slice(0, 12).map((r) => ({
+              shopify_line_item_id: r.shopify_line_item_id,
+              d365_item_number: r.d365_item_number,
+              hasLotId: !!r.dynamics_inventory_lot_id,
+            })),
+          };
+
+          const flowStatus: "completed" | "failed" | "skipped" = saveResult.ok
+            ? "completed"
+            : saveResult.reason === "supabase_error"
+              ? "failed"
+              : "skipped";
+          const flowMessage = saveResult.ok
+            ? `Upserted ${saveResult.upsertedRowCount} row(s) to public.order_lines`
+            : saveResult.reason === "no_supabase_client"
+              ? "Skipped: Supabase not configured (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Battle Bus)"
+              : saveResult.reason === "empty_input"
+                ? "Skipped: toOrderLineRecords returned 0 rows (nothing to persist)"
+                : `Supabase upsert failed: ${saveResult.message}`;
+
+          await publishStatus("supabase.order-lines", flowStatus, flowMessage, {
+            saveResult,
+            recordsPrepared: lineRecords.length,
+            d365LinesCreated: lineItems.length,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyOrderName,
+            salesOrderNumber: salesOrderNo,
+            preview: orderLinesSupabase.preview,
+          });
         }
 
         await publishStatus(
@@ -1157,6 +1221,7 @@ export const processShopifyOrder = inngest.createFunction(
               salesOrderNumber: salesOrderNo,
               lineItems,
               d365InventoryLotsBySku,
+              orderLinesSupabase,
               gpsResult: { type: "real" as const, result, metafieldStored: !!gpsOrderNo },
             };
           } catch (error) {
@@ -1167,6 +1232,7 @@ export const processShopifyOrder = inngest.createFunction(
                 salesOrderNumber: salesOrderNo,
                 lineItems,
                 d365InventoryLotsBySku,
+                orderLinesSupabase,
                 gpsResult: { type: "out_of_stock" as const, error: error.message },
               };
             }
@@ -1198,6 +1264,7 @@ export const processShopifyOrder = inngest.createFunction(
               salesOrderNumber: salesOrderNo,
               lineItems,
               d365InventoryLotsBySku,
+              orderLinesSupabase,
               gpsResult: { type: "failed" as const, error: errorMessage },
             };
           }
@@ -1217,6 +1284,7 @@ export const processShopifyOrder = inngest.createFunction(
           salesOrderNumber: salesOrderNo,
           lineItems,
           d365InventoryLotsBySku,
+          orderLinesSupabase,
           gpsResult: {
             type: "skipped" as const,
             reason: !shouldSendToRealGps

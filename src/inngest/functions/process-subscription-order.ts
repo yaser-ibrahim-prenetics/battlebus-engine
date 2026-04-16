@@ -29,6 +29,7 @@ import {
 import {
   saveOrderLines,
   type OrderLineRecord,
+  type SaveOrderLinesResult,
 } from "@/lib/services/supabase-order-lines";
 import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
@@ -471,7 +472,16 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     try {
       await step.run("create-d365-order-lines", async () => {
-        if (!config.features.enableDynamicsSync) return { status: "skipped" };
+        if (!config.features.enableDynamicsSync) {
+          return {
+            status: "skipped" as const,
+            orderLinesSupabase: {
+              attempted: false as const,
+              skipReason: "dynamics_sync_disabled" as const,
+              note: "ENABLE_DYNAMICS_SYNC off — no order_lines write",
+            },
+          };
+        }
 
         const lineItems = toD365SalesOrderLines(
           order,
@@ -545,12 +555,31 @@ export const processSubscriptionOrder = inngest.createFunction(
             is_service_line: r.isServiceLine,
           }));
 
-        await saveOrderLines(lineRecords);
+        const saveResult: SaveOrderLinesResult = await saveOrderLines(lineRecords);
+
+        const orderLinesSupabase = {
+          attempted: true as const,
+          d365LineCount: lineItems.length,
+          recordsPrepared: lineRecords.length,
+          skippedD365ServiceLines: skippedItemNumbers.size,
+          save: saveResult,
+          preview: lineRecords.slice(0, 12).map((r) => ({
+            shopify_line_item_id: r.shopify_line_item_id,
+            d365_item_number: r.d365_item_number,
+            hasLotId: !!r.dynamics_inventory_lot_id,
+          })),
+        };
 
         console.log(
-          `[Subscription] ✅ Created ${lineItems.length} D365 lines for ${shopifyOrderName}; saved ${lineRecords.length} to order_lines`
+          `[Subscription] ✅ Created ${lineItems.length} D365 lines for ${shopifyOrderName}; order_lines upsert:`,
+          JSON.stringify(saveResult)
         );
-        return { status: "created", lineCount: lineItems.length };
+
+        return {
+          status: "created" as const,
+          lineCount: lineItems.length,
+          orderLinesSupabase,
+        };
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
