@@ -601,6 +601,31 @@ export async function getWarehouseNameForLocation(
 }
 
 /**
+ * Single-call lookup returning both dataAreaId and warehouseName.
+ * Avoids loading + scanning the mappings array twice when callers need both.
+ */
+export async function getLocationRouting(
+  shopifyLocationId: string | number,
+  countryCode: string,
+  store = "im8"
+): Promise<{ dataAreaId: string | null; warehouseName: string | null }> {
+  const mappings = await getLocationMappings();
+  const locationId = String(shopifyLocationId);
+  const code = (countryCode || "").toUpperCase();
+
+  const mapping = mappings.find(
+    (m) => m.shopifyLocationId === locationId && m.store === store && m.active
+  );
+
+  if (!mapping) return { dataAreaId: null, warehouseName: null };
+
+  const entry = mapping.countryDataAreaMapping.find((e) => e.country.toUpperCase() === code);
+  const dataAreaId = entry?.dataAreaId || mapping.dynamicsDataAreaId || null;
+
+  return { dataAreaId, warehouseName: mapping.warehouseName ?? null };
+}
+
+/**
  * Find the first active Battle Hub location whose warehouse_name matches.
  * Used as a last-resort when Shopify only assigns a virtual location but we
  * know the expected warehouse from the static country-routing table.

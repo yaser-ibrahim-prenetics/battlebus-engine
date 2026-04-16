@@ -54,7 +54,7 @@ import {
 import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -215,7 +215,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     const _runId = (event as any).id;
     const inngestIdempotencyKey = `shopify-subscription-renewed-${shopifyOrderId}`;
 
-    await logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
+    logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
 
     console.log(`[Subscription] ========================================`);
     console.log(
@@ -715,7 +715,24 @@ export const processSubscriptionOrder = inngest.createFunction(
     );
     console.log(`[Subscription] ========================================`);
 
-    await logFlowEvent({ flow: "subscription_renewal", step: "done", status: finalStatus === "completed" ? "completed" : finalStatus, runId: _runId, shopifyOrderId, shopifyOrderName, d365OrderNumber, durationMs: Date.now() - _flowStart, payload: { gpsOrderId: gpsResult.gpsOrderId, warehouse: warehouseName } });
+    const totalProcessingMs = Date.now() - _flowStart;
+    logFlowEvent({
+      flow: "subscription_renewal",
+      step: "processing_summary",
+      status: finalStatus === "completed" ? "completed" : finalStatus,
+      runId: _runId,
+      shopifyOrderId,
+      shopifyOrderName,
+      d365OrderNumber,
+      durationMs: totalProcessingMs,
+      payload: {
+        totalProcessingMs,
+        gpsOrderId: gpsResult.gpsOrderId,
+        warehouse: warehouseName,
+      },
+    });
+    await flushFlowLogs();
+
     return {
       status: finalStatus,
       shopifyOrderId,

@@ -35,7 +35,7 @@ export const processProductSync = inngest.createFunction(
     const { productId, productTitle, shopifyStore, productJson } = event.data;
     const product = productJson as ShopifyProductPayload;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "product_sync",
       step: "start",
       status: "started",
@@ -87,7 +87,7 @@ export const processProductSync = inngest.createFunction(
         });
       });
 
-      await logFlowEvent({
+      logFlowEvent({
         flow: "product_sync",
         step: "done",
         status: "completed",
@@ -251,7 +251,7 @@ export const processProductSync = inngest.createFunction(
     console.log(`[ProductSync] ✅ Completed: ${JSON.stringify(result)}`);
     console.log(`[ProductSync] ========================================`);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "product_sync",
       step: "done",
       status: "completed",

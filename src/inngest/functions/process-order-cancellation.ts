@@ -45,7 +45,7 @@ export const processOrderCancellation = inngest.createFunction(
     const isGpsWarehouse = (name?: string | null): name is "GPS Warehouse" | "GPS UK Warehouse" =>
       name === "GPS Warehouse" || name === "GPS UK Warehouse";
 
-    await logFlowEvent({ flow: "cancellation", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { cancelReason } });
+    logFlowEvent({ flow: "cancellation", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { cancelReason } });
 
     if (config.features.dryRunMode) {
       return {
@@ -299,7 +299,7 @@ export const processOrderCancellation = inngest.createFunction(
       shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
     });
 
-    await logFlowEvent({ flow: "cancellation", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { gpsCancellationStatus: gpsCancellation.status } });
+    logFlowEvent({ flow: "cancellation", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { gpsCancellationStatus: gpsCancellation.status } });
     return result;
   }
 );

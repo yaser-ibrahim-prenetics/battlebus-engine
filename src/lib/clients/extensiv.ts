@@ -230,7 +230,7 @@ export async function createOrder(
   const data = await response.json();
   console.log(`[Extensiv] Order created: ${data.ReadOnly?.OrderId}`);
 
-  await logFlowEvent({ flow: "extensiv", client: "extensiv", step: "createOrder", status: "completed", durationMs: Date.now() - _start, payload: { referenceNum: request.referenceNum, orderId: data.ReadOnly?.OrderId } });
+  logFlowEvent({ flow: "extensiv", client: "extensiv", step: "createOrder", status: "completed", durationMs: Date.now() - _start, payload: { referenceNum: request.referenceNum, orderId: data.ReadOnly?.OrderId } });
   return { response: data, request: body };
 }
 

@@ -91,7 +91,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
+    logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
 
     // Identify fulfillment source for routing
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
@@ -613,7 +613,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
     }
 
-    await logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
+    logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
     return {
       status: "success",
       shopifyOrderId,

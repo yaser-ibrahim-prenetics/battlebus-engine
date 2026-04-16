@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
       webhookId,
       apiVersion,
     });
-    await logFlowEvent({
+    logFlowEvent({
       level: "info",
       flow: "shopify_webhook",
       step: "received",
@@ -330,7 +330,7 @@ export async function POST(request: NextRequest) {
             console.log(
               `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
             );
-            await logFlowEvent({
+            logFlowEvent({
               level: "info",
               flow: "shopify_webhook",
               step: "dispatch_inngest",
@@ -348,7 +348,7 @@ export async function POST(request: NextRequest) {
             });
           } catch (error) {
             console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
-            await logFlowEvent({
+            logFlowEvent({
               level: "error",
               flow: "shopify_webhook",
               step: "dispatch_inngest",
@@ -693,7 +693,7 @@ export async function POST(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime;
-    await logFlowEvent({
+    logFlowEvent({
       level: "info",
       flow: "shopify_webhook",
       step: "completed",
@@ -720,7 +720,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     const duration = Date.now() - startTime;
-    await logFlowEvent({
+    logFlowEvent({
       level: "error",
       flow: "shopify_webhook",
       step: "failed",

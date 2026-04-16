@@ -29,7 +29,7 @@ export const processActionCancel = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({ flow: "hub_cancel", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { reason, source } });
+    logFlowEvent({ flow: "hub_cancel", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { reason, source } });
 
     // Log the action
     await step.run("log-cancel-action", async () => {
@@ -53,7 +53,7 @@ export const processActionCancel = inngest.createFunction(
       }
     });
 
-    await logFlowEvent({ flow: "hub_cancel", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
+    logFlowEvent({ flow: "hub_cancel", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "cancel",
@@ -87,7 +87,7 @@ export const processActionRefund = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({ flow: "hub_refund", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { refundId, amount, restock } });
+    logFlowEvent({ flow: "hub_refund", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { refundId, amount, restock } });
 
     // Log the action
     await step.run("log-refund-action", async () => {
@@ -96,7 +96,7 @@ export const processActionRefund = inngest.createFunction(
       return { logged: true };
     });
 
-    await logFlowEvent({ flow: "hub_refund", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
+    logFlowEvent({ flow: "hub_refund", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "refund",
@@ -140,7 +140,7 @@ export const processActionFulfill = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({ flow: "hub_fulfill", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentId, fulfillmentType, trackingNumber } });
+    logFlowEvent({ flow: "hub_fulfill", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentId, fulfillmentType, trackingNumber } });
 
     // Log the action
     await step.run("log-fulfill-action", async () => {
@@ -152,7 +152,7 @@ export const processActionFulfill = inngest.createFunction(
       return { logged: true };
     });
 
-    await logFlowEvent({ flow: "hub_fulfill", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
+    logFlowEvent({ flow: "hub_fulfill", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart });
     return {
       status: "success",
       action: "fulfill",

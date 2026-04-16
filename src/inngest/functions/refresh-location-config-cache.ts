@@ -15,7 +15,7 @@ export const refreshLocationConfigCache = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "location_config_cache",
       step: "start",
       status: "started",
@@ -29,7 +29,7 @@ export const refreshLocationConfigCache = inngest.createFunction(
       return refreshLocationMappings("hourly_cron");
     });
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "location_config_cache",
       step: "done",
       status: "completed",

@@ -58,7 +58,7 @@ export const processRefund = inngest.createFunction(
       fromDrain: Boolean((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain),
     });
 
-    await logFlowEvent({ flow: "refund", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), payload: { refundId: String(refundId) } });
+    logFlowEvent({ flow: "refund", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), payload: { refundId: String(refundId) } });
 
     if (config.features.dryRunMode) {
       return {
@@ -381,7 +381,7 @@ export const processRefund = inngest.createFunction(
       refundType,
     });
 
-    await logFlowEvent({ flow: "refund", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName: shopifyOrder.name, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber } });
+    logFlowEvent({ flow: "refund", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName: shopifyOrder.name, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber } });
     return result;
   }
 );

@@ -74,7 +74,7 @@ import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -255,8 +255,11 @@ export const processShopifyOrder = inngest.createFunction(
     const inngestIdempotencyKey = event.id;
     const inngestRunId = runId;
 
-    // Track step start times for duration calculation
+    const _orderProcessingStart = Date.now();
+
+    // Track step start times and completed durations for timing summary
     const stepStartTimes = new Map<string, number>();
+    const stepDurations: Array<{ step: string; durationMs: number }> = [];
 
     // Helper to publish status updates via Inngest Realtime
     const publishStatus = async (
@@ -276,11 +279,12 @@ export const processShopifyOrder = inngest.createFunction(
         if (startTime) {
           durationMs = now - startTime;
           stepStartTimes.delete(stepName);
+          stepDurations.push({ step: stepName, durationMs });
         }
       }
 
       try {
-        await logFlowEvent({
+        logFlowEvent({
           level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
           flow: "order_paid",
           step: stepName,
@@ -315,7 +319,7 @@ export const processShopifyOrder = inngest.createFunction(
       resultData?: { d365OrderNumber?: string; gpsOrderNo?: string; warehouse?: string; error?: string }
     ) => {
       try {
-        await logFlowEvent({
+        logFlowEvent({
           level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
           flow: "order_paid",
           step: "result",
@@ -1552,6 +1556,32 @@ export const processShopifyOrder = inngest.createFunction(
           `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue due to inventory issue`
         );
       }
+
+      // Emit processing time summary
+      const totalProcessingMs = Date.now() - _orderProcessingStart;
+      const sortedSteps = [...stepDurations].sort((a, b) => b.durationMs - a.durationMs);
+      logFlowEvent({
+        level: "info",
+        flow: "order_paid",
+        step: "processing_summary",
+        runId: inngestRunId,
+        shopifyOrderId,
+        shopifyOrderName,
+        d365OrderNumber: salesOrderNo,
+        status: "completed",
+        durationMs: totalProcessingMs,
+        payload: {
+          totalProcessingMs,
+          stepCount: sortedSteps.length,
+          slowestSteps: sortedSteps.slice(0, 5).map((s) => ({
+            step: s.step,
+            durationMs: s.durationMs,
+            pct: Math.round((s.durationMs / totalProcessingMs) * 100),
+          })),
+          allSteps: sortedSteps,
+        },
+      });
+      await flushFlowLogs();
 
       return result;
     } catch (error) {

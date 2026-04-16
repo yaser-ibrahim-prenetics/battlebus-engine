@@ -57,7 +57,7 @@ export const processInventoryFullSync = inngest.createFunction(
       await publish(channel, payload);
     };
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_full_sync",
       step: "start",
       status: "started",
@@ -81,7 +81,7 @@ export const processInventoryFullSync = inngest.createFunction(
       } catch (e) {
         console.warn("[InventoryFullSync] publish skipped status failed:", e);
       }
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_full_sync",
         step: "done",
         status: "completed",
@@ -409,7 +409,7 @@ export const processInventoryFullSync = inngest.createFunction(
     console.log(`[InventoryFullSync] Drift detected: ${summary.totalDriftDetected}`);
     console.log(`[InventoryFullSync] ========================================`);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_full_sync",
       step: "done",
       status: "completed",

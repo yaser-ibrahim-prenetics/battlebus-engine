@@ -64,7 +64,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "start",
       status: "started",
@@ -79,7 +79,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
     // Check if inventory sync is enabled
     if (!config.features.enableGpsSync) {
       console.log("[InventoryReconciliation] GPS sync disabled, skipping");
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_reconciliation",
         step: "done",
         status: "completed",
@@ -98,7 +98,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
     // Check if GPS credentials are configured
     if (!config.gps.apiKey || !config.gpsUk.apiKey) {
       console.log("[InventoryReconciliation] GPS credentials not configured, skipping");
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_reconciliation",
         step: "done",
         status: "completed",
@@ -210,7 +210,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
 
     console.log("[InventoryReconciliation] Completed:", summary);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "done",
       status: "completed",
@@ -256,7 +256,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
     const { skus, warehouse, autoSync = false } = event.data;
     const effectiveAutoSync = Boolean(autoSync && config.features.enableInventorySync);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "start",
       status: "started",
@@ -287,7 +287,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
       return inventorySync.calculateDiscrepancies(skusToCheck, warehouse);
     });
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "done",
       status: "completed",
@@ -327,7 +327,7 @@ export const syncSkuInventory = inngest.createFunction(
     const _runId = (event as any).id;
     const { sku, source, destination, warehouse } = event.data;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "start",
       status: "started",
@@ -339,7 +339,7 @@ export const syncSkuInventory = inngest.createFunction(
 
     if (!config.features.enableInventorySync) {
       console.log(`[InventorySync] Skipped ${sku} — ENABLE_INVENTORY_SYNC is false`);
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_reconciliation",
         step: "done",
         status: "completed",
@@ -389,7 +389,7 @@ export const syncSkuInventory = inngest.createFunction(
         return inventorySync.syncD365ToShopify(sku);
       });
 
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_reconciliation",
         step: "done",
         status: "completed",
@@ -407,7 +407,7 @@ export const syncSkuInventory = inngest.createFunction(
       };
     }
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_reconciliation",
       step: "done",
       status: "completed",

@@ -42,7 +42,7 @@ export const syncGpsFulfillments = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "gps_sync",
       step: "start",
       status: "started",
@@ -53,7 +53,7 @@ export const syncGpsFulfillments = inngest.createFunction(
     });
 
     if (!config.features.enableGpsSync) {
-      await logFlowEvent({
+      logFlowEvent({
         flow: "gps_sync",
         step: "done",
         status: "completed",
@@ -113,7 +113,7 @@ export const syncGpsFulfillments = inngest.createFunction(
 
     // If no fulfilled orders, return with all statuses for visibility
     if (fulfilledOrders.length === 0) {
-      await logFlowEvent({
+      logFlowEvent({
         flow: "gps_sync",
         step: "done",
         status: "completed",
@@ -180,7 +180,7 @@ export const syncGpsFulfillments = inngest.createFunction(
       );
     }
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "gps_sync",
       step: "done",
       status: "completed",

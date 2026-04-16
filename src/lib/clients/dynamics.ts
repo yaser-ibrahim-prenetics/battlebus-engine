@@ -205,7 +205,7 @@ async function pacedFetch(
 
   try {
     const response = await fetch(input, init);
-    await logFlowEvent({
+    logFlowEvent({
       level: response.ok ? "info" : "error",
       flow: "external_api_call",
       step: "d365_http",
@@ -230,7 +230,7 @@ async function pacedFetch(
 
     return response;
   } catch (err) {
-    await logFlowEvent({
+    logFlowEvent({
       level: "error",
       flow: "external_api_call",
       step: "d365_http",

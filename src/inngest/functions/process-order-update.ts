@@ -35,7 +35,7 @@ export const processOrderUpdate = inngest.createFunction(
     const order = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
 
-    await logFlowEvent({ flow: "order_update", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { changedFields } });
+    logFlowEvent({ flow: "order_update", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { changedFields } });
 
     if (config.features.dryRunMode) {
       return {
@@ -103,7 +103,7 @@ export const processOrderUpdate = inngest.createFunction(
       inngestRunId,
     });
 
-    await logFlowEvent({ flow: "order_update", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { updateActions } });
+    logFlowEvent({ flow: "order_update", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { updateActions } });
     return result;
   }
 );

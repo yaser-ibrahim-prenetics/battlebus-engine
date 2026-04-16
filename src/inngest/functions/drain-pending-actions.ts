@@ -36,7 +36,7 @@ export const drainPendingActions = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "pending_actions_drain",
       step: "start",
       status: "started",
@@ -118,7 +118,7 @@ export const drainPendingActions = inngest.createFunction(
     });
 
     if (drainResult.cleared.length === 0) {
-      await logFlowEvent({
+      logFlowEvent({
         flow: "pending_actions_drain",
         step: "done",
         status: "completed",
@@ -136,7 +136,7 @@ export const drainPendingActions = inngest.createFunction(
       await clearPendingActionsBatch(drainResult.cleared);
     });
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "pending_actions_drain",
       step: "done",
       status: "completed",

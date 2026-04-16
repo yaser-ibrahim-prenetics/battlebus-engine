@@ -223,7 +223,7 @@ export async function queryOmsInventory(options: {
 
   console.warn("[GPS-Inventory] No inventory endpoints responded successfully");
   console.warn("[GPS-Inventory] This may mean inventory API is not available on this account");
-  await logFlowEvent({ flow: "gps_inventory", client: "gps_inventory", step: "queryOmsInventory", status: "failed", level: "warn", durationMs: Date.now() - _start, payload: { region, sku } });
+  logFlowEvent({ flow: "gps_inventory", client: "gps_inventory", step: "queryOmsInventory", status: "failed", level: "warn", durationMs: Date.now() - _start, payload: { region, sku } });
   return [];
 }
 

@@ -39,7 +39,7 @@ export const processInventorySync = inngest.createFunction(
     const { inventoryItemId, locationId, shopifyStore, inventoryJson } = event.data;
     const inventory = inventoryJson as ShopifyInventoryLevelPayload;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_webhook",
       step: "start",
       status: "started",
@@ -51,7 +51,7 @@ export const processInventorySync = inngest.createFunction(
 
     if (!config.features.enableInventorySync) {
       console.log(`[InventorySync] Skipped — ENABLE_INVENTORY_SYNC is false`);
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_webhook",
         step: "done",
         status: "completed",
@@ -126,7 +126,7 @@ export const processInventorySync = inngest.createFunction(
     console.log(`[InventorySync] ✅ Completed: ${JSON.stringify(result)}`);
     console.log(`[InventorySync] ========================================`);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_webhook",
       step: "done",
       status: "completed",

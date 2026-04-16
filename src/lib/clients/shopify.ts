@@ -78,9 +78,14 @@ export async function getVariantSkusByVariantIds(
   const url = buildUrl(`/graphql.json`);
   const result: Record<string, string> = {};
   const chunkSize = 100;
+  const MAX_CONCURRENT = 3;
 
+  const chunks: number[][] = [];
   for (let i = 0; i < normalizedIds.length; i += chunkSize) {
-    const chunk = normalizedIds.slice(i, i + chunkSize);
+    chunks.push(normalizedIds.slice(i, i + chunkSize));
+  }
+
+  async function fetchChunk(chunk: number[]): Promise<void> {
     const gqlIds = chunk.map((id) => `gid://shopify/ProductVariant/${id}`);
     const response = await fetch(url, {
       method: "POST",
@@ -130,6 +135,11 @@ export async function getVariantSkusByVariantIds(
       const fallbackId = gid.split("/").pop() || "";
       if (fallbackId) result[fallbackId] = sku;
     }
+  }
+
+  // Bounded concurrency: run up to MAX_CONCURRENT chunks at once
+  for (let i = 0; i < chunks.length; i += MAX_CONCURRENT) {
+    await Promise.all(chunks.slice(i, i + MAX_CONCURRENT).map(fetchChunk));
   }
 
   return result;
@@ -299,7 +309,7 @@ export async function getOrder(
       httpStatus: response.status,
       bodyPreview: error.slice(0, 300),
     });
-    await logFlowEvent({
+    logFlowEvent({
       level: "error",
       flow: "external_api_call",
       step: "shopify_get_order",
@@ -315,7 +325,7 @@ export async function getOrder(
   }
 
   const data = await response.json();
-  await logFlowEvent({
+  logFlowEvent({
     level: "info",
     flow: "external_api_call",
     step: "shopify_get_order",

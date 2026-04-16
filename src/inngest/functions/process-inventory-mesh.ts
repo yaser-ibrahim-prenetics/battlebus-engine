@@ -102,7 +102,7 @@ export const processInventoryMesh = inngest.createFunction(
     const _runId = (event as any).id;
     const { source, destination, payload } = event.data;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_mesh",
       step: "start",
       status: "started",
@@ -116,7 +116,7 @@ export const processInventoryMesh = inngest.createFunction(
       console.log(
         `[InventoryMesh] Skipped ${source} → ${destination} — ENABLE_INVENTORY_SYNC is false`
       );
-      await logFlowEvent({
+      logFlowEvent({
         flow: "inventory_mesh",
         step: "done",
         status: "completed",
@@ -224,7 +224,7 @@ export const processInventoryMesh = inngest.createFunction(
       });
     }
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "inventory_mesh",
       step: "done",
       status: "completed",

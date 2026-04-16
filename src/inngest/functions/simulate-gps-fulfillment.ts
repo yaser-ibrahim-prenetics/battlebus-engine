@@ -25,7 +25,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
     const _runId = (event as any).id;
     const { minutesAgo = 5, orderNames = [] } = event.data;
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "gps_simulate",
       step: "start",
       status: "started",
@@ -36,7 +36,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
     });
 
     if (!config.features.enableGpsFulfillmentSimulation) {
-      await logFlowEvent({
+      logFlowEvent({
         flow: "gps_simulate",
         step: "done",
         status: "completed",
@@ -83,7 +83,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
     });
 
     if (recentOrders.length === 0) {
-      await logFlowEvent({
+      logFlowEvent({
         flow: "gps_simulate",
         step: "done",
         status: "completed",
@@ -170,7 +170,7 @@ export const simulateGpsFulfillment = inngest.createFunction(
       return { count: fulfillments.length };
     });
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "gps_simulate",
       step: "done",
       status: "completed",

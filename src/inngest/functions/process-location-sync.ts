@@ -50,7 +50,7 @@ export const processLocationSync = inngest.createFunction(
     const isCreate = event.name === "shopify/location.created";
     const isDelete = event.name === "shopify/location.deleted";
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "location_sync",
       step: "start",
       status: "started",
@@ -88,7 +88,7 @@ export const processLocationSync = inngest.createFunction(
         }
       });
 
-      await logFlowEvent({
+      logFlowEvent({
         flow: "location_sync",
         step: "done",
         status: "completed",
@@ -176,7 +176,7 @@ export const processLocationSync = inngest.createFunction(
     console.log(`[LocationSync] ✅ ${JSON.stringify(result)}`);
     console.log(`[LocationSync] ========================================`);
 
-    await logFlowEvent({
+    logFlowEvent({
       flow: "location_sync",
       step: "done",
       status: "completed",

@@ -335,7 +335,7 @@ async function postOms<TResponse>(
       );
 
       if (!response.ok) {
-        await logFlowEvent({
+        logFlowEvent({
           level: "error",
           flow: "external_api_call",
           step: "gps_http",
@@ -362,7 +362,7 @@ async function postOms<TResponse>(
 
       const json = (await response.json()) as any;
       const code = normalizeOmsCode(json?.code);
-      await logFlowEvent({
+      logFlowEvent({
         level: code === 200 ? "info" : "error",
         flow: "external_api_call",
         step: "gps_http",
@@ -390,7 +390,7 @@ async function postOms<TResponse>(
 
       return json as TResponse;
     } catch (error) {
-      await logFlowEvent({
+      logFlowEvent({
         level: "error",
         flow: "external_api_call",
         step: "gps_http",

@@ -69,7 +69,7 @@ export const processBackorder = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    await logFlowEvent({ flow: "backorder", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, payload: { errorType, warehouse, retryCount } });
+    logFlowEvent({ flow: "backorder", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, payload: { errorType, warehouse, retryCount } });
 
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
@@ -468,7 +468,7 @@ export const processBackorder = inngest.createFunction(
       );
     });
 
-    await logFlowEvent({ flow: "backorder", step: "done", status: "failed", level: "error", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, durationMs: Date.now() - _flowStart, errorType, errorMessage, payload: { retryCount: maxRetries } });
+    logFlowEvent({ flow: "backorder", step: "done", status: "failed", level: "error", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, durationMs: Date.now() - _flowStart, errorType, errorMessage, payload: { retryCount: maxRetries } });
     return {
       status: "exhausted",
       shopifyOrderId,
