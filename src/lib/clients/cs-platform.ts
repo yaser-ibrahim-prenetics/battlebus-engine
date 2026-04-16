@@ -66,7 +66,16 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     logFlowEvent({ flow: "cs_platform", client: "cs_platform", step: event.event, status: "completed", durationMs: Date.now() - _start, shopifyOrderName: event.data?.shopifyOrderName });
   } catch (error) {
     console.error(`[CS Platform] Error sending event ${event.event}:`, error);
-    logFlowEvent({ flow: "cs_platform", client: "cs_platform", step: event.event, status: "failed", level: "error", durationMs: Date.now() - _start, errorMessage: error instanceof Error ? error.message : String(error), shopifyOrderName: event.data?.shopifyOrderName }).catch(() => {});
+    logFlowEvent({
+      flow: "cs_platform",
+      client: "cs_platform",
+      step: event.event,
+      status: "failed",
+      level: "error",
+      durationMs: Date.now() - _start,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      shopifyOrderName: event.data?.shopifyOrderName,
+    });
   }
 }
 
