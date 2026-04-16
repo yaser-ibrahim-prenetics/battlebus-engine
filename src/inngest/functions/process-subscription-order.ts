@@ -21,10 +21,15 @@ import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
   toD365SalesOrderLines,
+  toOrderLineRecords,
   toGpsOutboundOrder,
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
+import {
+  saveOrderLines,
+  type OrderLineRecord,
+} from "@/lib/services/supabase-order-lines";
 import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
@@ -113,6 +118,16 @@ function isNonRetryableOrderError(message: string): boolean {
     m.includes("unsupported virtual warehouse") ||
     m.includes("not fully configured in battle hub")
   );
+}
+
+function isServiceSkuItemNumber(itemNumber?: string | null): boolean {
+  const sku = String(itemNumber || "").toUpperCase();
+  return sku.startsWith("IM8-SER-") || sku.startsWith("PRE-SER-");
+}
+
+function isD365ItemNotFoundError(message: string): boolean {
+  const m = String(message || "").toLowerCase();
+  return m.includes("item number") && m.includes("does not exist");
 }
 
 // ============================================================================
@@ -458,22 +473,84 @@ export const processSubscriptionOrder = inngest.createFunction(
       await step.run("create-d365-order-lines", async () => {
         if (!config.features.enableDynamicsSync) return { status: "skipped" };
 
-        const lines = toD365SalesOrderLines(order, d365OrderNumber, warehouseName, true, dataAreaId);
+        const lineItems = toD365SalesOrderLines(
+          order,
+          d365OrderNumber,
+          warehouseName,
+          true,
+          dataAreaId
+        );
 
-        await Promise.all(
-          lines.map((line) =>
-            retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
-              label: `D365 sub line ${line.itemNumber}`,
-              shouldRetry: (err) => {
+        const lineResults = await Promise.all(
+          lineItems.map((line) =>
+            (async () => {
+              try {
+                const created = await retryWithBackoff(
+                  () => dynamics.createSalesOrderLine(line),
+                  {
+                    label: `D365 sub line ${line.itemNumber}`,
+                    shouldRetry: (err) => {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      return !isNonRetryableOrderError(msg);
+                    },
+                  }
+                );
+                const lot = created?.InventoryLotId ? String(created.InventoryLotId).trim() : "";
+                return { skipped: false as const, itemNumber: line.itemNumber, inventoryLotId: lot };
+              } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                return !isNonRetryableOrderError(msg);
-              },
-            })
+                if (isServiceSkuItemNumber(line.itemNumber) && isD365ItemNotFoundError(msg)) {
+                  console.warn(
+                    `[D365][Subscription] Skipping missing service SKU line ${line.itemNumber} for ${d365OrderNumber}: ${msg}`
+                  );
+                  return { skipped: true as const, itemNumber: line.itemNumber, error: msg };
+                }
+                throw err;
+              }
+            })()
           )
         );
 
-        console.log(`[Subscription] ✅ Created ${lines.length} D365 lines for ${shopifyOrderName}`);
-        return { status: "created", lineCount: lines.length };
+        const d365InventoryLotsBySku: Record<string, string> = {};
+        for (const r of lineResults) {
+          if (r.skipped) continue;
+          const sku = String(r.itemNumber || "").trim().toUpperCase();
+          const lot = "inventoryLotId" in r ? String(r.inventoryLotId || "").trim() : "";
+          if (sku && lot) d365InventoryLotsBySku[sku] = lot;
+        }
+
+        const skippedItemNumbers = new Set(
+          lineResults.filter((r) => r.skipped).map((r) => r.itemNumber.toUpperCase())
+        );
+
+        const lineRecords: OrderLineRecord[] = toOrderLineRecords(
+          order,
+          d365OrderNumber,
+          warehouseName,
+          dataAreaId
+        )
+          .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
+          .map((r) => ({
+            shopify_order_id: String(shopifyOrderId),
+            shopify_order_name: shopifyOrderName || order.name,
+            shopify_line_item_id: r.shopifyLineItemId,
+            shopify_sku: r.shopifySku,
+            d365_item_number: r.d365ItemNumber,
+            d365_sales_order_number: d365OrderNumber,
+            data_area_id: dataAreaId,
+            quantity: r.quantity,
+            price: r.price,
+            dynamics_inventory_lot_id:
+              d365InventoryLotsBySku[r.d365ItemNumber.toUpperCase()] ?? null,
+            is_service_line: r.isServiceLine,
+          }));
+
+        await saveOrderLines(lineRecords);
+
+        console.log(
+          `[Subscription] ✅ Created ${lineItems.length} D365 lines for ${shopifyOrderName}; saved ${lineRecords.length} to order_lines`
+        );
+        return { status: "created", lineCount: lineItems.length };
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
