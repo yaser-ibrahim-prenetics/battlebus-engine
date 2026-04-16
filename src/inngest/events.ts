@@ -498,6 +498,17 @@ export interface ShopifyTransaction {
   gateway: string;
   status: string;
   amount: string;
+  /** Presentment / payment currency for the transaction (e.g. "USD", "HKD"). */
+  currency?: string;
+  /**
+   * Gateway receipt payload. For Stripe-backed refunds, `balance_transaction.exchange_rate`
+   * carries the authoritative FX rate actually applied to the refund.
+   */
+  receipt?: {
+    balance_transaction?: {
+      exchange_rate?: number | string;
+    } | null;
+  } | null;
 }
 
 export interface ShopifyRefundPayload {

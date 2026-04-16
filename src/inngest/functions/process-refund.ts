@@ -17,7 +17,11 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import {
+  hasCompletedRefundFlowLog,
+  logFlowEvent,
+} from "@/lib/services/supabase-flow-logs";
+import { saveRefundOrderLine } from "@/lib/services/supabase-order-lines";
 
 export const processRefund = inngest.createFunction(
   {
@@ -65,6 +69,40 @@ export const processRefund = inngest.createFunction(
         status: "dry_run",
         refundId,
         shopifyOrderId,
+      };
+    }
+
+    // 0. Cross-run dedupe guard.
+    //
+    // Inngest's `idempotency: "event.data.refundId"` covers same-event retries, but
+    // a Hub-triggered refund race followed by Shopify's webhook can still produce two
+    // distinct events sharing the same `refundId`. Mirror spock-store's per-line
+    // `shopifyLineItemId` check by looking at `flow_logs` for a prior completed
+    // emit for this refund.
+    const alreadyProcessed = await step.run("refund-dedupe-check", async () => {
+      return hasCompletedRefundFlowLog(String(refundId));
+    });
+    if (alreadyProcessed) {
+      console.log(
+        `[Refund ${refundId}] Skipped — prior completed refund flow log exists for this refundId`
+      );
+      logRefundTraceLifecycle({
+        ...refundTrace,
+        phase: "process_refund_already_processed",
+      });
+      logFlowEvent({
+        flow: "refund",
+        step: "already_processed",
+        status: "skipped",
+        runId,
+        shopifyOrderId: String(shopifyOrderId),
+        payload: { refundId: String(refundId) },
+      });
+      return {
+        status: "already_processed",
+        refundId,
+        shopifyOrderId,
+        reason: "Prior completed refund flow log exists for this refundId",
       };
     }
 
@@ -196,7 +234,13 @@ export const processRefund = inngest.createFunction(
       return computeRefundAmountShopifyPresentment(refund);
     });
 
-    // 4b. Convert refund amount to USD if order is in a different currency
+    // 4b. Convert refund amount to USD if order is in a different currency.
+    //
+    // Priority (matches spock-store's convertToUsd):
+    //   1. The refund transaction's own `receipt.balance_transaction.exchange_rate`
+    //      (authoritative Stripe/Shopify FX rate actually applied to this refund).
+    //   2. Pair-based derivation from two differing-currency transactions on the order.
+    //   3. Hand-maintained static fallback table.
     const { refundAmountUsd, exchangeRateInfo } = await step.run(
       "convert-refund-currency",
       async () => {
@@ -209,14 +253,19 @@ export const processRefund = inngest.createFunction(
           };
         }
 
-        // Try to extract exchange rate from Shopify transactions
-        const transactions = shopifyOrder.transactions || refund.transactions || [];
-        let exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(
-          transactions,
+        let exchangeRate = exchangeHelper.extractExchangeRateFromRefundReceipt(
+          refund,
           "USD"
         );
 
-        // Fall back to static rates if transaction-based extraction fails
+        if (!exchangeRate) {
+          const transactions = shopifyOrder.transactions || refund.transactions || [];
+          exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(
+            transactions,
+            "USD"
+          );
+        }
+
         if (!exchangeRate) {
           exchangeRate = exchangeHelper.getFallbackRate(orderCurrency, "USD");
         }
@@ -275,6 +324,27 @@ export const processRefund = inngest.createFunction(
       return { ...result, status: "created" };
     });
 
+    // Emit the dedupe anchor immediately after the negative line is created so that
+    // any duplicate `refundId` event landing later can short-circuit in step 0,
+    // even if the current run fails before the `done` log is written.
+    if (refundLine.status === "created") {
+      logFlowEvent({
+        flow: "refund",
+        step: "refund_line_created",
+        status: "completed",
+        runId,
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName: shopifyOrder.name,
+        d365OrderNumber: d365Order?.SalesOrderNumber,
+        payload: {
+          refundId: String(refundId),
+          refundSku: warehouseInfo.refundSku,
+          refundAmountUsd,
+          inventoryLotId: refundLine.InventoryLotId,
+        },
+      });
+    }
+
     // 6. Fulfill the Negative Line (Post it)
     const fulfillment = await step.run("fulfill-refund-line", async () => {
       if (!config.features.enableDynamicsSync || !d365Order || refundLine.status === "skipped") {
@@ -304,10 +374,27 @@ export const processRefund = inngest.createFunction(
       return { status: "success" };
     });
 
-    // 7. Post Return Order Invoice (generates D365 credit note)
+    // 7. Post Return Order Invoice (opt-in).
+    //
+    // In the standard THK tenant a `type: "return"` fulfilment already generates
+    // the D365 credit note, matching spock-store's flow (which never calls this
+    // endpoint). Calling `postReturnOrderInvoice` in those tenants is redundant
+    // and can double-post. Only invoke when explicitly enabled via
+    // `features.enableReturnInvoicePosting` (env: `ENABLE_RETURN_INVOICE_POSTING=true`).
     const invoiceResult = await step.run("post-return-invoice", async () => {
       if (!config.features.enableDynamicsSync || !d365Order || fulfillment.status === "skipped") {
         return { status: "skipped" };
+      }
+
+      if (!config.features.enableReturnInvoicePosting) {
+        console.log(
+          `[Refund ${refundId}] Skipping postReturnOrderInvoice — credit note expected via ` +
+            `return fulfilment (enable ENABLE_RETURN_INVOICE_POSTING=true to force the explicit call)`
+        );
+        return {
+          status: "skipped",
+          reason: "return_invoice_disabled",
+        };
       }
 
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
@@ -351,6 +438,33 @@ export const processRefund = inngest.createFunction(
       invoiceResult.status === "success" && "creditNoteNumber" in invoiceResult
         ? invoiceResult.creditNoteNumber
         : undefined;
+
+    // 7b. Persist the D365 refund line to Supabase `order_lines` so the Hub's
+    // order-detail view can render it alongside the product / service lines
+    // (and surface credit note + FX rate + source currency). Best-effort: failures
+    // here do not roll back the D365-side refund posting, which has already
+    // succeeded at this point.
+    if (refundLine.status === "created" && d365Order) {
+      await step.run("save-refund-order-line", async () => {
+        return saveRefundOrderLine({
+          shopify_order_id: String(shopifyOrderId),
+          shopify_order_name: shopifyOrder.name ?? null,
+          refund_id: String(refundId),
+          refund_sku: warehouseInfo.refundSku,
+          d365_sales_order_number: d365Order?.SalesOrderNumber ?? null,
+          data_area_id:
+            (d365Order?.dataAreaId || warehouseInfo.dataAreaId || config.dynamics.dataAreaId) ?? null,
+          refund_amount_usd: refundAmountUsd,
+          dynamics_inventory_lot_id: refundLine.InventoryLotId ?? null,
+          is_fulfilled_to_dynamics: fulfillment.status === "success",
+          credit_note_number: creditNoteNumber ?? null,
+          exchange_rate: exchangeRateInfo?.rate ?? null,
+          exchange_rate_source: exchangeRateInfo?.source ?? null,
+          source_currency:
+            exchangeRateInfo?.from ?? (shopifyOrder.currency || "USD").toUpperCase(),
+        });
+      });
+    }
 
     const result = {
       status: "success",

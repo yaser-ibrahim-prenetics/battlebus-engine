@@ -233,3 +233,54 @@ export async function flushAll(): Promise<void> {
   }
   if (_flushPromise) await _flushPromise;
 }
+
+// ============================================================================
+// Read helpers
+// ============================================================================
+
+/**
+ * Return true if the `flow_logs` table already contains a successful refund
+ * line emit for this `refundId`. Used as a cross-run idempotency guard so the
+ * same Shopify refund can never create a second negative D365 line, even if
+ * the same `refundId` arrives via two different events (e.g. Hub action +
+ * Shopify webhook race).
+ *
+ * Matches rows where:
+ *   - flow = "refund"
+ *   - step IN ("refund_line_created", "done")
+ *   - status = "completed"
+ *   - payload->>refundId = <refundId>
+ *
+ * Returns `false` when Supabase is not configured (best-effort guard).
+ */
+export async function hasCompletedRefundFlowLog(refundId: string): Promise<boolean> {
+  if (!ENABLED) return false;
+  if (!refundId) return false;
+
+  // Make sure any buffered rows from the current runtime are visible to the query.
+  await flushAll();
+
+  const client = getClient();
+  if (!client) return false;
+
+  try {
+    const { data, error } = await client
+      .from(TABLE)
+      .select("id, step, status, payload")
+      .eq("flow", "refund")
+      .in("step", ["refund_line_created", "done"])
+      .eq("status", "completed")
+      .filter("payload->>refundId", "eq", String(refundId))
+      .limit(1);
+
+    if (error) {
+      console.warn(`[FlowLogs] Refund dedupe lookup failed: ${error.message}`);
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[FlowLogs] Refund dedupe lookup error: ${msg}`);
+    return false;
+  }
+}

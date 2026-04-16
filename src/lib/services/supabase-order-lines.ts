@@ -16,6 +16,14 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 export const SHOPIFY_SHIPPING_LINE_ITEM_ID = "shipping";
 export const SHOPIFY_TAX_LINE_ITEM_ID = "tax";
 
+/** Synthetic prefix for refund lines: `refund:<refundId>`. */
+export const REFUND_LINE_ITEM_ID_PREFIX = "refund:";
+
+/** Build the synthetic `shopify_line_item_id` used for a refund row. */
+export function buildRefundLineItemId(refundId: string | number): string {
+  return `${REFUND_LINE_ITEM_ID_PREFIX}${refundId}`;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -149,6 +157,132 @@ export async function updateOrderLineLotId(
       `[OrderLines] Failed to update lot ID for ${shopifyOrderId}/${shopifyLineItemId}: ${error.message}`
     );
   }
+}
+
+// ============================================================================
+// Refund lines
+// ============================================================================
+
+export interface RefundOrderLineRecord {
+  shopify_order_id: string;
+  shopify_order_name?: string | null;
+  /** Shopify refund.id (Numeric-ish string). Used to build the synthetic line item id. */
+  refund_id: string;
+  /** D365 refund service SKU (e.g. IM8-SER-000005). */
+  refund_sku: string;
+  d365_sales_order_number?: string | null;
+  data_area_id?: string | null;
+  /** Refund amount in the D365 posting currency (USD). Persisted as a positive price; quantity is -1. */
+  refund_amount_usd: number;
+  dynamics_inventory_lot_id?: string | null;
+  /** True once the `type: "return"` fulfilment has been posted to D365. */
+  is_fulfilled_to_dynamics?: boolean;
+  credit_note_number?: string | null;
+  exchange_rate?: number | null;
+  exchange_rate_source?: string | null;
+  /** Original Shopify presentment currency (pre-USD conversion). */
+  source_currency?: string | null;
+}
+
+export type SaveRefundOrderLineResult =
+  | { ok: true; degraded?: boolean }
+  | { ok: false; reason: "no_supabase_client" }
+  | { ok: false; reason: "supabase_error"; message: string };
+
+/**
+ * Persist a single D365 refund line to `order_lines` so the Hub can render it
+ * next to the product / service lines. Upserts on
+ * `(shopify_order_id, shopify_line_item_id)` with a synthetic
+ * `shopify_line_item_id = "refund:<refundId>"` for idempotency across retries
+ * (same refund event) and races (Hub-triggered refund + Shopify webhook for
+ * the same refundId).
+ *
+ * Best-effort: if the hub has not yet run migration 019 the extended columns
+ * won't exist and Supabase will 400. In that case we retry with only the base
+ * (pre-019) columns so refunds still show up in the UI, just without the
+ * extra metadata.
+ */
+export async function saveRefundOrderLine(
+  record: RefundOrderLineRecord
+): Promise<SaveRefundOrderLineResult> {
+  const supabase = getClient();
+  if (!supabase) return { ok: false, reason: "no_supabase_client" };
+
+  const refundId = String(record.refund_id || "").trim();
+  if (!refundId) {
+    return {
+      ok: false,
+      reason: "supabase_error",
+      message: "saveRefundOrderLine: missing refund_id",
+    };
+  }
+
+  const lineItemId = buildRefundLineItemId(refundId);
+  const fulfilled = Boolean(record.is_fulfilled_to_dynamics);
+
+  const baseRow = {
+    shopify_order_id: record.shopify_order_id,
+    shopify_order_name: record.shopify_order_name ?? null,
+    shopify_line_item_id: lineItemId,
+    shopify_sku: record.refund_sku,
+    d365_item_number: record.refund_sku,
+    d365_sales_order_number: record.d365_sales_order_number ?? null,
+    data_area_id: record.data_area_id ?? null,
+    quantity: -1,
+    price: record.refund_amount_usd,
+    dynamics_inventory_lot_id: record.dynamics_inventory_lot_id ?? null,
+    is_service_line: true,
+    is_fulfilled_to_dynamics: fulfilled,
+    fulfilled_at: fulfilled ? new Date().toISOString() : null,
+  } as const;
+
+  const extendedRow = {
+    ...baseRow,
+    refund_id: refundId,
+    credit_note_number: record.credit_note_number ?? null,
+    exchange_rate: record.exchange_rate ?? null,
+    exchange_rate_source: record.exchange_rate_source ?? null,
+    source_currency: record.source_currency ?? null,
+  } as const;
+
+  const doUpsert = async (row: Record<string, unknown>) =>
+    supabase.from("order_lines" as any).upsert(row, {
+      onConflict: "shopify_order_id,shopify_line_item_id",
+      ignoreDuplicates: false,
+    });
+
+  let { error } = await doUpsert(extendedRow);
+
+  if (error && /column .* does not exist/i.test(error.message)) {
+    console.warn(
+      `[OrderLines] Refund line extended columns missing (hub migration 019 not applied?). ` +
+        `Retrying with base columns only for refund ${refundId}: ${error.message}`
+    );
+    const retry = await doUpsert(baseRow);
+    if (retry.error) {
+      console.warn(
+        `[OrderLines] Failed to save refund line ${refundId} (base-only retry): ${retry.error.message}`
+      );
+      return { ok: false, reason: "supabase_error", message: retry.error.message };
+    }
+    console.log(
+      `[OrderLines] Saved refund line ${refundId} (base columns only — run hub migration 019 to persist FX + credit note)`
+    );
+    return { ok: true, degraded: true };
+  }
+
+  if (error) {
+    console.warn(
+      `[OrderLines] Failed to save refund line ${refundId}: ${error.message}`
+    );
+    return { ok: false, reason: "supabase_error", message: error.message };
+  }
+
+  console.log(
+    `[OrderLines] Saved refund line ${refundId} (${record.refund_sku} x -1 @ ${record.refund_amount_usd} USD, ` +
+      `lot=${record.dynamics_inventory_lot_id ?? "n/a"}, creditNote=${record.credit_note_number ?? "n/a"})`
+  );
+  return { ok: true };
 }
 
 // ============================================================================

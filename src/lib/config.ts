@@ -210,6 +210,13 @@ export const config = {
      */
     enableInventorySync: process.env.ENABLE_INVENTORY_SYNC !== "false",
     enabledGpsOutboundMock: false,
+    /**
+     * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
+     * fulfilment. Default `false` — in the standard THK tenant the return fulfilment already
+     * generates the credit note, so calling `postReturnOrderInvoice` is redundant and can
+     * double-post. Enable only for tenants that require the explicit action.
+     */
+    enableReturnInvoicePosting: process.env.ENABLE_RETURN_INVOICE_POSTING === "true",
   },
 
   // Retry Configuration

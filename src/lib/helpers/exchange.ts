@@ -8,7 +8,51 @@ export interface ExchangeRate {
   from: string;
   to: string;
   rate: number;
-  source: 'shopify_transaction' | 'fallback';
+  source: 'shopify_receipt' | 'shopify_transaction' | 'fallback';
+}
+
+interface RefundReceiptTransaction {
+  amount?: string;
+  currency?: string;
+  receipt?: {
+    balance_transaction?: {
+      exchange_rate?: number | string;
+    } | null;
+  } | null;
+}
+
+interface RefundReceiptInput {
+  transactions?: RefundReceiptTransaction[];
+}
+
+/**
+ * Prefer the FX rate Stripe/Shopify actually applied to the refund itself
+ * (`transactions[i].receipt.balance_transaction.exchange_rate`). This mirrors
+ * spock-store's `convertToUsd` path and is more accurate than any pair-based
+ * derivation off the order's historical transactions.
+ *
+ * Returns `null` if no refund transaction carries a usable non-identity rate.
+ */
+export function extractExchangeRateFromRefundReceipt(
+  refund: RefundReceiptInput | null | undefined,
+  shopCurrency: string = 'USD'
+): ExchangeRate | null {
+  const target = shopCurrency.toUpperCase();
+  const txs = refund?.transactions ?? [];
+  for (const tx of txs) {
+    const rawRate = tx?.receipt?.balance_transaction?.exchange_rate;
+    const rate = typeof rawRate === 'string' ? parseFloat(rawRate) : rawRate;
+    const from = (tx?.currency || '').toUpperCase();
+    if (!rate || !Number.isFinite(rate) || rate <= 0) continue;
+    if (!from || from === target) continue;
+    return {
+      from,
+      to: target,
+      rate,
+      source: 'shopify_receipt',
+    };
+  }
+  return null;
 }
 
 // Fallback exchange rates (updated periodically)
