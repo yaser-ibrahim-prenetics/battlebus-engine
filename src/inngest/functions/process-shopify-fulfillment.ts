@@ -534,6 +534,17 @@ export const processShopifyFulfillment = inngest.createFunction(
         r.status === "error" && isFulfillmentInventoryIssueError(String(r.error || ""))
     );
     if (hasBackorderQueued) {
+      const d365Site = (() => {
+        try {
+          return getWarehouseConfigForDataAreaId(
+            d365Order.dataAreaId || config.dynamics.dataAreaId
+          );
+        } catch {
+          return null;
+        }
+      })();
+      const d365DataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+
       await csPlatform.sendOrderUpdate(
         {
           id: shopifyOrderId,
@@ -541,15 +552,8 @@ export const processShopifyFulfillment = inngest.createFunction(
           shopifyOrderId,
           shopifyOrderName,
           d365OrderNumber: d365Order.SalesOrderNumber,
-          warehouse: (() => {
-            try {
-              return getWarehouseConfigForDataAreaId(
-                d365Order.dataAreaId || config.dynamics.dataAreaId
-              ).name;
-            } catch {
-              return undefined;
-            }
-          })(),
+          // Do not set `warehouse` here: it must stay the Shopify routing / ship-from
+          // label (e.g. STORD). D365 inventory site belongs in failureContext only.
           status: "backorder",
           processingStatus: "backorder",
           d365SyncStatus: "synced",
@@ -564,6 +568,8 @@ export const processShopifyFulfillment = inngest.createFunction(
               system: "d365",
               sourceEventName: "shopify/order.fulfilled",
               retryMode: "fulfillment_replay",
+              d365WarehouseName: d365Site?.name,
+              d365DataAreaId,
             },
           },
         },
