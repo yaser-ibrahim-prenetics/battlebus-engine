@@ -49,6 +49,10 @@ export type ShopifyOrderPaidEvent = {
     shopifyStore: string;
     orderJson: ShopifyOrderPayload;
     receivedAt: string;
+    /** Remaining stages to dispatch after this one succeeds (sequenced reruns). */
+    runSequence?: RunSequenceStage[];
+    /** Marker so downstream knows this came from a sequenced retry. */
+    fromSequencedRetry?: boolean;
   };
 };
 
@@ -74,6 +78,12 @@ export type ShopifyOrderFulfilledEvent = {
     orderJson: ShopifyOrderPayload;
     fulfillments: ShopifyFulfillment[];
     receivedAt: string;
+    /** Remaining stages to dispatch after this one succeeds (sequenced reruns). */
+    runSequence?: RunSequenceStage[];
+    /** Marker so downstream knows this came from a sequenced retry. */
+    fromSequencedRetry?: boolean;
+    /** Set when replaying a fulfillment from a backorder retry. */
+    fromBackorderRetry?: boolean;
   };
 };
 
@@ -293,7 +303,41 @@ export type BackorderRetryEvent = {
     failureStage?: "order_creation" | "fulfillment";
     failureSystem?: "d365" | "gps";
     retryMode?: "gps_outbound" | "fulfillment_replay";
+    /**
+     * Optional ordered list of pipeline stages to run when an order needs
+     * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).
+     * The first stage is dispatched immediately; subsequent stages are forwarded
+     * via event.data.runSequence and dispatched at the end of each successful
+     * upstream run.
+     */
+    runSequence?: RunSequenceStage[];
   };
+};
+
+/**
+ * A single pipeline stage in a sequenced rerun. Stages are persisted to
+ * `orders.state.runSequence` for UI tracking and propagated through events
+ * so each handler can dispatch the next stage on success.
+ */
+export type RunSequenceStage = {
+  /** Stable id used by the Hub UI to dedupe and track stage progress. */
+  id: string;
+  /** Logical pipeline stage. */
+  stage: "order_creation" | "fulfillment_replay" | "gps_outbound";
+  /** Inngest event to dispatch for this stage. */
+  eventName:
+    | "shopify/order.paid"
+    | "shopify/order.fulfilled"
+    | "backorder/retry";
+  /** Lifecycle status surfaced in the Hub UI. */
+  status?: "pending" | "in_progress" | "completed" | "failed" | "skipped";
+  /** ISO timestamps populated as the stage moves through its lifecycle. */
+  dispatchedAt?: string;
+  completedAt?: string;
+  /** Inngest run id that handled this stage (when known). */
+  runId?: string;
+  /** Last error message if the stage failed. */
+  error?: string;
 };
 
 // ============================================================================

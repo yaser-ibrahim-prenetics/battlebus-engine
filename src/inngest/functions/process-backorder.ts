@@ -26,8 +26,9 @@ import { setGpsOrderMetafield } from "@/lib/clients/shopify";
 import { toGpsOutboundOrder, shouldSendToGps } from "@/lib/transformers/order";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
-import type { ShopifyOrderPayload } from "../events";
+import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { advanceRunSequence } from "@/lib/services/run-sequence";
 
 export const processBackorder = inngest.createFunction(
   {
@@ -84,6 +85,72 @@ export const processBackorder = inngest.createFunction(
       `[Backorder] Failed SKUs: ${failedSkus.length > 0 ? failedSkus.join(", ") : "(all lines)"}`
     );
     console.log(`[Backorder] Retry ${retryCount}/${maxRetries}`);
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Sequenced rerun: if the manual retry came with a `runSequence`, dispatch
+    // the first stage's pipeline event and persist the timeline. Each upstream
+    // handler will hand off to the next stage on success via advanceRunSequence.
+    // ────────────────────────────────────────────────────────────────────────
+    const incomingSequence: RunSequenceStage[] = Array.isArray(event.data.runSequence)
+      ? (event.data.runSequence as RunSequenceStage[])
+      : [];
+    if (incomingSequence.length > 0 && event.name === "backorder/retry") {
+      const result = await step.run("dispatch-sequenced-rerun", async () => {
+        const { getOrder } = await import("@/lib/clients/shopify");
+        const freshOrder = (await getOrder(shopifyOrderId)) as unknown as ShopifyOrderPayload;
+        const fulfillments = Array.isArray((freshOrder as any)?.fulfillments)
+          ? ((freshOrder as any).fulfillments as any[])
+          : [];
+
+        return advanceRunSequence({
+          shopifyOrderId,
+          shopifyOrderName,
+          remaining: incomingSequence,
+          orderJson: freshOrder,
+          fulfillments,
+          shopifyStore: event.data.shopifyStore,
+          inngestRunId: _runId,
+        });
+      });
+
+      await csPlatform.sendOrderUpdate(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber,
+          warehouse,
+          status: "processing",
+          processingStatus: "processing",
+          retryAt: null,
+        },
+        {}
+      );
+
+      logFlowEvent({
+        flow: "backorder",
+        step: "sequenced-rerun-dispatched",
+        status: "completed",
+        runId: _runId,
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName,
+        durationMs: Date.now() - _flowStart,
+        payload: {
+          firstStage: result.dispatched?.stage,
+          totalStages: incomingSequence.length,
+        },
+      });
+
+      return {
+        status: "sequenced_dispatched",
+        shopifyOrderId,
+        shopifyOrderName,
+        firstStage: result.dispatched?.stage,
+        totalStages: incomingSequence.length,
+        processedAt: new Date().toISOString(),
+      };
+    }
 
     // Notify Battle Hub when first parked in backorder queue.
     if (event.name === "backorder/created") {

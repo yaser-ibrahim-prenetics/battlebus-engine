@@ -344,6 +344,56 @@ export const processShopifyOrder = inngest.createFunction(
       }
     };
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Sequenced rerun hand-off: when this run was dispatched as part of a
+    // multi-stage rerun (state.runSequence), `event.data.runSequence` carries
+    // the remaining stages to execute after this one. We dispatch the next
+    // stage on success and persist progress to orders.state.runSequence.
+    // ────────────────────────────────────────────────────────────────────────
+    const incomingRunSequence: import("../events").RunSequenceStage[] = Array.isArray(
+      event.data.runSequence
+    )
+      ? (event.data.runSequence as import("../events").RunSequenceStage[])
+      : [];
+    const handOffSequencedRunIfAny = async (resultPayload: Record<string, unknown>) => {
+      if (incomingRunSequence.length === 0) return;
+      try {
+        const { advanceRunSequence } = await import("@/lib/services/run-sequence");
+        await advanceRunSequence({
+          shopifyOrderId,
+          shopifyOrderName,
+          completedStage: {
+            id: `order_creation-${inngestRunId}`,
+            stage: "order_creation",
+            eventName: "shopify/order.paid",
+            status: "completed",
+            runId: inngestRunId,
+          },
+          remaining: incomingRunSequence,
+          orderJson: order,
+          fulfillments: Array.isArray((order as any)?.fulfillments)
+            ? ((order as any).fulfillments as any[])
+            : [],
+          shopifyStore,
+          inngestRunId,
+          inngestIdempotencyKey,
+        });
+        logFlowEvent({
+          flow: "order_paid",
+          step: "sequenced-handoff",
+          status: "completed",
+          runId: inngestRunId,
+          shopifyOrderId,
+          shopifyOrderName,
+          payload: { ...resultPayload, nextStage: incomingRunSequence[0]?.stage },
+        });
+      } catch (err) {
+        console.warn(
+          `[RunSequence] Failed to advance after order_creation for ${shopifyOrderName}: ${err}`
+        );
+      }
+    };
+
     // Publish initial status
     await publishStatus("started", "running", "Order processing started");
 
@@ -1432,6 +1482,11 @@ export const processShopifyOrder = inngest.createFunction(
           ),
         ]).catch(() => {});
 
+        await handOffSequencedRunIfAny({
+          status: "already_exists",
+          d365OrderNumber: reusedSalesOrderNumber,
+        });
+
         return {
           status: "already_exists",
           d365OrderNumber: reusedSalesOrderNumber,
@@ -1683,6 +1738,11 @@ export const processShopifyOrder = inngest.createFunction(
         },
       });
       await flushFlowLogs();
+
+      await handOffSequencedRunIfAny({
+        status: "completed",
+        d365OrderNumber: salesOrderNumber,
+      });
 
       return result;
     } catch (error) {

@@ -666,6 +666,43 @@ export const processShopifyFulfillment = inngest.createFunction(
     }
 
     logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Sequenced rerun hand-off: dispatch the next stage in
+    // `event.data.runSequence` (set up by process-backorder when a manual
+    // rerun chains order_creation → fulfillment_replay).
+    // ────────────────────────────────────────────────────────────────────────
+    if (!hasBackorderQueued && Array.isArray((event.data as any).runSequence)) {
+      const incomingSequence = (event.data as any).runSequence as Array<
+        import("../events").RunSequenceStage
+      >;
+      if (incomingSequence.length > 0) {
+        try {
+          const { advanceRunSequence } = await import("@/lib/services/run-sequence");
+          await advanceRunSequence({
+            shopifyOrderId,
+            shopifyOrderName,
+            completedStage: {
+              id: `fulfillment_replay-${_runId}`,
+              stage: "fulfillment_replay",
+              eventName: "shopify/order.fulfilled",
+              status: "completed",
+              runId: _runId,
+            },
+            remaining: incomingSequence,
+            orderJson: order,
+            fulfillments,
+            shopifyStore: (event.data as any).shopifyStore,
+            inngestRunId: _runId,
+          });
+        } catch (err) {
+          console.warn(
+            `[RunSequence] Failed to advance after fulfillment_replay for ${shopifyOrderName}: ${err}`
+          );
+        }
+      }
+    }
+
     return {
       status: "success",
       shopifyOrderId,
