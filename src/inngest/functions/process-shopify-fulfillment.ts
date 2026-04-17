@@ -473,6 +473,10 @@ export const processShopifyFulfillment = inngest.createFunction(
                 orderJson: order,
                 createdAt: new Date().toISOString(),
                 source: "shopify/order.fulfilled",
+                sourceEventName: "shopify/order.fulfilled",
+                failureStage: "fulfillment",
+                failureSystem: "d365",
+                retryMode: "fulfillment_replay",
               },
             });
             console.warn(
@@ -523,6 +527,48 @@ export const processShopifyFulfillment = inngest.createFunction(
           gpsFulfillmentStatus: fulfillmentSource === "gps" ? "synced" : undefined,
         });
       }
+    }
+
+    const hasBackorderQueued = fulfillmentResults.some(
+      (r: { status: string; error?: string }) =>
+        r.status === "error" && isFulfillmentInventoryIssueError(String(r.error || ""))
+    );
+    if (hasBackorderQueued) {
+      await csPlatform.sendOrderUpdate(
+        {
+          id: shopifyOrderId,
+          name: shopifyOrderName,
+          shopifyOrderId,
+          shopifyOrderName,
+          d365OrderNumber: d365Order.SalesOrderNumber,
+          warehouse: (() => {
+            try {
+              return getWarehouseConfigForDataAreaId(
+                d365Order.dataAreaId || config.dynamics.dataAreaId
+              ).name;
+            } catch {
+              return null;
+            }
+          })(),
+          status: "backorder",
+          processingStatus: "backorder",
+          d365SyncStatus: "synced",
+          gpsSyncStatus: "failed",
+          error: "Fulfillment failed due to inventory insufficiency in D365",
+          lastError: "Fulfillment failed due to inventory insufficiency in D365",
+          errorType: "inventory_insufficient",
+          lastErrorType: "inventory_insufficient",
+          state: {
+            failureContext: {
+              stage: "fulfillment",
+              system: "d365",
+              sourceEventName: "shopify/order.fulfilled",
+              retryMode: "fulfillment_replay",
+            },
+          },
+        },
+        {}
+      );
     }
 
     // ========================================================================

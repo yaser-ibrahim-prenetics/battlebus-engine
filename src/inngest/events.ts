@@ -255,6 +255,18 @@ export type BackorderCreatedEvent = {
     retryCount: number;
     maxRetries: number;
     createdAt: string;
+    /** Original flow that raised the backorder (e.g. shopify/order.paid, shopify/order.fulfilled). */
+    sourceEventName?: string;
+    /** High-level stage where failure happened (order_creation, fulfillment). */
+    failureStage?: "order_creation" | "fulfillment";
+    /** Primary system that failed for this backorder. */
+    failureSystem?: "d365" | "gps";
+    /**
+     * Retry strategy consumed by process-backorder:
+     * - gps_outbound: retry GPS outbound order creation
+     * - fulfillment_replay: replay shopify/order.fulfilled pipeline
+     */
+    retryMode?: "gps_outbound" | "fulfillment_replay";
   };
 };
 
@@ -277,6 +289,10 @@ export type BackorderRetryEvent = {
     warehouse: string;
     retryCount: number;
     triggeredBy: "auto" | "manual";
+    sourceEventName?: string;
+    failureStage?: "order_creation" | "fulfillment";
+    failureSystem?: "d365" | "gps";
+    retryMode?: "gps_outbound" | "fulfillment_replay";
   };
 };
 

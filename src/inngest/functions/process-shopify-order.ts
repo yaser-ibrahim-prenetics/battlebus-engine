@@ -1520,6 +1520,10 @@ export const processShopifyOrder = inngest.createFunction(
               retryCount: 0,
               maxRetries: 0,
               createdAt: new Date().toISOString(),
+              sourceEventName: "shopify/order.paid",
+              failureStage: "order_creation",
+              failureSystem: "gps",
+              retryMode: "gps_outbound",
             },
           });
         });
@@ -1540,6 +1544,14 @@ export const processShopifyOrder = inngest.createFunction(
             lastError: oosError,
             errorType,
             lastErrorType: errorType,
+            state: {
+              failureContext: {
+                stage: "order_creation",
+                system: "gps",
+                sourceEventName: "shopify/order.paid",
+                retryMode: "gps_outbound",
+              },
+            },
           },
           { inngestIdempotencyKey, inngestRunId }
         );
@@ -1708,6 +1720,10 @@ export const processShopifyOrder = inngest.createFunction(
             .filter(Boolean) || [];
 
         await step.run("emit-backorder-event-on-catch", async () => {
+          const failureSystem: "d365" | "gps" =
+            normalizedError.includes("d365") || normalizedError.includes("dynamics")
+              ? "d365"
+              : "gps";
           await inngest.send({
             name: "backorder/created",
             data: {
@@ -1722,6 +1738,10 @@ export const processShopifyOrder = inngest.createFunction(
               // Out-of-stock/master-data issues should be parked, not loop-retried.
               maxRetries: 0,
               createdAt: new Date().toISOString(),
+              sourceEventName: "shopify/order.paid",
+              failureStage: "order_creation",
+              failureSystem,
+              retryMode: "gps_outbound",
             },
           });
         });
@@ -1740,6 +1760,17 @@ export const processShopifyOrder = inngest.createFunction(
             lastError: errorMsg,
             errorType: inventoryErrorType,
             lastErrorType: inventoryErrorType,
+            state: {
+              failureContext: {
+                stage: "order_creation",
+                system:
+                  normalizedError.includes("d365") || normalizedError.includes("dynamics")
+                    ? "d365"
+                    : "gps",
+                sourceEventName: "shopify/order.paid",
+                retryMode: "gps_outbound",
+              },
+            },
           },
           { inngestIdempotencyKey, inngestRunId }
         );

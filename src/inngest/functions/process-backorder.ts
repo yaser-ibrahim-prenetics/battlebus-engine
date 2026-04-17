@@ -65,6 +65,12 @@ export const processBackorder = inngest.createFunction(
       event.data.triggeredBy === "manual" ||
       event.data.triggeredBy === "manual_bulk";
     const manualRetryOnly = !autoRetryEnabled;
+    const retryMode: "gps_outbound" | "fulfillment_replay" =
+      event.data.retryMode === "fulfillment_replay" ||
+      event.data.failureStage === "fulfillment" ||
+      event.data.sourceEventName === "shopify/order.fulfilled"
+        ? "fulfillment_replay"
+        : "gps_outbound";
 
     const _flowStart = Date.now();
     const _runId = (event as any).id;
@@ -93,6 +99,14 @@ export const processBackorder = inngest.createFunction(
             status: "backorder",
             error: errorMessage,
             errorType,
+            state: {
+              failureContext: {
+                stage: event.data.failureStage || "order_creation",
+                system: event.data.failureSystem || "gps",
+                sourceEventName: event.data.sourceEventName || event.name,
+                retryMode,
+              },
+            },
           },
           {}
         );
@@ -130,6 +144,34 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
+          if (retryMode === "fulfillment_replay") {
+            const fulfillments = Array.isArray((order as any)?.fulfillments)
+              ? ((order as any).fulfillments as any[])
+              : [];
+            if (fulfillments.length === 0) {
+              return {
+                success: false,
+                error: "No Shopify fulfillments found to replay",
+                isInventoryError: false,
+              };
+            }
+
+            await inngest.send({
+              name: "shopify/order.fulfilled",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                fulfillments,
+                receivedAt: new Date().toISOString(),
+                fromBackorderRetry: true,
+              },
+            });
+
+            return { success: true, replayDispatched: true };
+          }
+
           const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
           const result = await gps.createOutboundOrder(
             gpsPayload,
@@ -152,7 +194,7 @@ export const processBackorder = inngest.createFunction(
           return {
             success: false,
             error: msg,
-            isInventoryError: gps.isGpsInventoryError(msg),
+            isInventoryError: retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
           };
         }
       });
@@ -161,7 +203,9 @@ export const processBackorder = inngest.createFunction(
         await step.run("notify-backorder-resolved-manual", async () => {
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
-            `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
+            retryMode === "fulfillment_replay"
+              ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
+              : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
           );
           await csPlatform.sendOrderUpdate(
             {
@@ -172,10 +216,14 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: "synced",
+              gpsSyncStatus: retryMode === "fulfillment_replay" ? undefined : "synced",
               status: "processing",
-              error: undefined,
-              errorType: undefined,
+              processingStatus: "processing",
+              error: null,
+              lastError: null,
+              errorType: null,
+              lastErrorType: null,
+              retryAt: null,
             },
             {}
           );
@@ -198,6 +246,7 @@ export const processBackorder = inngest.createFunction(
           shopifyOrderId,
           shopifyOrderName,
           gpsOrderNo: retryResult.gpsOrderNo,
+          replayDispatched: !!(retryResult as any).replayDispatched,
           retryCount: manualAttempt,
           processedAt: new Date().toISOString(),
         };
@@ -215,6 +264,7 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               status: "backorder",
+              processingStatus: "backorder",
               error: retryResult.error,
               errorType,
             },
@@ -301,6 +351,41 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
+          if (retryMode === "fulfillment_replay") {
+            const fulfillments = Array.isArray((order as any)?.fulfillments)
+              ? ((order as any).fulfillments as any[])
+              : [];
+            if (fulfillments.length === 0) {
+              return {
+                success: false,
+                error: "No Shopify fulfillments found to replay",
+                isInventoryError: false,
+                retryCount,
+                triggeredBy,
+              };
+            }
+
+            await inngest.send({
+              name: "shopify/order.fulfilled",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                fulfillments,
+                receivedAt: new Date().toISOString(),
+                fromBackorderRetry: true,
+              },
+            });
+
+            return {
+              success: true,
+              retryCount,
+              triggeredBy,
+              replayDispatched: true,
+            };
+          }
+
           // Rebuild GPS payload
           const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
           const result = await gps.createOutboundOrder(
@@ -332,7 +417,7 @@ export const processBackorder = inngest.createFunction(
           return {
             success: false,
             error: msg,
-            isInventoryError: gps.isGpsInventoryError(msg),
+            isInventoryError: retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
             retryCount,
             triggeredBy,
           };
@@ -346,7 +431,9 @@ export const processBackorder = inngest.createFunction(
         await step.run("notify-backorder-resolved", async () => {
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
-            `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
+            retryMode === "fulfillment_replay"
+              ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
+              : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
           );
 
           await csPlatform.sendOrderUpdate(
@@ -358,10 +445,14 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: "synced",
+              gpsSyncStatus: retryMode === "fulfillment_replay" ? undefined : "synced",
               status: "processing",
-              error: undefined,
-              errorType: undefined,
+              processingStatus: "processing",
+              error: null,
+              lastError: null,
+              errorType: null,
+              lastErrorType: null,
+              retryAt: null,
             },
             {}
           );
@@ -385,6 +476,7 @@ export const processBackorder = inngest.createFunction(
           shopifyOrderId,
           shopifyOrderName,
           gpsOrderNo: retryResult.gpsOrderNo,
+          replayDispatched: !!(retryResult as any).replayDispatched,
           retryCount,
           processedAt: new Date().toISOString(),
         };
