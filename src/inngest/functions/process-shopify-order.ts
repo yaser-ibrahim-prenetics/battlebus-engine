@@ -1300,15 +1300,99 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Handle existing order early return
       if (syncResult.type === "already_exists") {
+        const reusedSalesOrderNumber = syncResult.salesOrderNumber;
         await publishStatus(
           "create-d365-order",
           "completed",
-          `Existing D365 order reused: ${syncResult.salesOrderNumber}`,
-          { d365OrderNumber: syncResult.salesOrderNumber, reused: true }
+          `Existing D365 order reused: ${reusedSalesOrderNumber}`,
+          { d365OrderNumber: reusedSalesOrderNumber, reused: true }
         );
 
+        type ExistingOrderGpsRetryResult =
+          | { type: "real"; gpsOrderNo?: string }
+          | { type: "skipped"; reason: string }
+          | { type: "failed"; error: string };
+
+        const gpsRetryResult = await step.run("retry-gps-for-existing-d365-order", async () => {
+          const shouldSendToRealGps =
+            shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
+          if (!shouldSendToRealGps) {
+            return {
+              type: "skipped" as const,
+              reason: `GPS sync not required - ${warehouseName} uses Shopify app`,
+            } satisfies ExistingOrderGpsRetryResult;
+          }
+
+          try {
+            const gpsOrderPayload = toGpsOutboundOrder(order, reusedSalesOrderNumber, warehouseName);
+            const result = await gps.createOutboundOrder(
+              gpsOrderPayload,
+              warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
+            );
+            const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
+
+            if (gpsOrderNo) {
+              await setGpsOrderMetafield(shopifyOrderId, {
+                gpsOrderId: gpsOrderNo,
+                warehouse: warehouseName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                createdAt: new Date().toISOString(),
+              });
+            }
+
+            return {
+              type: "real" as const,
+              gpsOrderNo,
+            } satisfies ExistingOrderGpsRetryResult;
+          } catch (error) {
+            if (error instanceof OutOfStockError) {
+              return {
+                type: "failed" as const,
+                error: error.message,
+              } satisfies ExistingOrderGpsRetryResult;
+            }
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+              type: "failed" as const,
+              error: errorMessage,
+            } satisfies ExistingOrderGpsRetryResult;
+          }
+        });
+
+        if (gpsRetryResult.type === "real") {
+          await publishStatus(
+            "gps.send-order",
+            "completed",
+            `GPS order created: ${gpsRetryResult.gpsOrderNo || "OK"}`,
+            { gpsOrderNo: gpsRetryResult.gpsOrderNo, warehouse: warehouseName }
+          );
+        } else if (gpsRetryResult.type === "skipped") {
+          await publishStatus("gps.send-order", "skipped", gpsRetryResult.reason, {
+            warehouse: warehouseName,
+          });
+        } else {
+          await publishStatus(
+            "gps.send-order",
+            "failed",
+            `GPS retry failed for reused D365 order: ${gpsRetryResult.error}`,
+            {
+              warehouse: warehouseName,
+              error: gpsRetryResult.error,
+              d365OrderNumber: reusedSalesOrderNumber,
+            }
+          );
+        }
+
+        const gpsSyncStatus =
+          gpsRetryResult.type === "real"
+            ? "synced"
+            : gpsRetryResult.type === "skipped"
+              ? "skipped"
+              : "failed";
+
         await publishResult("success", {
-          d365OrderNumber: syncResult.salesOrderNumber,
+          d365OrderNumber: reusedSalesOrderNumber,
+          gpsOrderNo: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
           warehouse: warehouseName,
         });
 
@@ -1319,8 +1403,10 @@ export const processShopifyOrder = inngest.createFunction(
               name: shopifyOrderName,
               shopifyOrderId,
               shopifyOrderName,
-              d365OrderNumber: syncResult.salesOrderNumber,
+              d365OrderNumber: reusedSalesOrderNumber,
               warehouse: warehouseName,
+              gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
+              gpsSkipped: gpsRetryResult.type === "skipped",
               orderJson: order,
             },
             { inngestIdempotencyKey, inngestRunId }
@@ -1331,14 +1417,15 @@ export const processShopifyOrder = inngest.createFunction(
               name: shopifyOrderName,
               shopifyOrderId,
               shopifyOrderName,
-              d365OrderNumber: syncResult.salesOrderNumber,
+              d365OrderNumber: reusedSalesOrderNumber,
               warehouse: warehouseName,
+              gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
               status: "completed",
               processingStatus: "completed",
               d365SyncStatus: "synced",
-              gpsSyncStatus: "pending",
-              lastError: null,
-              lastErrorType: null,
+              gpsSyncStatus,
+              lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
+              lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
               retryAt: null,
             },
             { inngestIdempotencyKey, inngestRunId }
@@ -1347,7 +1434,9 @@ export const processShopifyOrder = inngest.createFunction(
 
         return {
           status: "already_exists",
-          d365OrderNumber: syncResult.salesOrderNumber,
+          d365OrderNumber: reusedSalesOrderNumber,
+          gpsSyncStatus,
+          gpsOrderNo: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
           shopifyOrderId,
         };
       }
