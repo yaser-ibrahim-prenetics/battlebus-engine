@@ -29,7 +29,8 @@
     "test:d365-fulfillment-order": "npx tsx scripts/test-d365-fulfillment-order.ts",
     "test:slack-errors": "npx tsx scripts/test-slack-error-notifications.ts",
     "test:product-hub": "npx tsx scripts/test-product-to-hub.ts",
-    "vercel:push-env": "bash scripts/vercel-push-env-from-file.sh"
+    "vercel:push-env": "bash scripts/vercel-push-env-from-file.sh",
+    "prepare": "husky"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
@@ -50,6 +51,7 @@
     "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.1.4",
+    "husky": "^9.1.7",
     "prettier": "^3.2.5",
     "tailwindcss": "^4",
     "typescript": "^5",

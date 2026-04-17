@@ -547,7 +547,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                 d365Order.dataAreaId || config.dynamics.dataAreaId
               ).name;
             } catch {
-              return null;
+              return undefined;
             }
           })(),
           status: "backorder",
