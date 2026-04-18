@@ -194,7 +194,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     },
     triggers: [{ event: "shopify/subscription.renewed" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const {
       shopifyOrderId: rawShopifyOrderId,
       shopifyOrderName,
@@ -211,10 +211,10 @@ export const processSubscriptionOrder = inngest.createFunction(
     );
     let order = event.data.orderJson as ShopifyOrderPayload;
 
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "");
     const inngestIdempotencyKey = `shopify-subscription-renewed-${shopifyOrderId}`;
 
-    logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
+    logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId || undefined, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
 
     // Durable start time for processing_summary (must live inside step.run for Inngest replays).
     const flowStartedAt = await step.run("subscription-flow-started-at", async () => Date.now());
@@ -703,7 +703,7 @@ export const processSubscriptionOrder = inngest.createFunction(
           subscriptionContractId,
         }, {
           inngestIdempotencyKey,
-          inngestRunId: _runId,
+          inngestRunId: _runId || undefined,
         });
       } catch (err) {
         console.warn(`[Subscription] CS Platform notify failed:`, err);
@@ -723,7 +723,7 @@ export const processSubscriptionOrder = inngest.createFunction(
         flow: "subscription_renewal",
         step: "processing_summary",
         status: finalStatus === "completed" ? "completed" : finalStatus,
-        runId: _runId,
+        runId: _runId || undefined,
         shopifyOrderId,
         shopifyOrderName,
         d365OrderNumber,

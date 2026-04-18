@@ -29,6 +29,12 @@ export type FlowLogEvent = {
   flow: string;
   step?: string;
   client?: string;
+  /**
+   * Inngest **function run** id (ULID, `app.inngest.com/.../runs/{runId}`).
+   * Must come from the function handler’s `runId` argument — not `event.id`
+   * (the latter is the *event* record id, often an idempotency key like
+   * `shopify-order-fulfilled-…`).
+   */
   runId?: string;
   requestId?: string;
   shopifyOrderId?: string;

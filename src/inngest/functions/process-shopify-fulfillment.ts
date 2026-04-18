@@ -85,13 +85,14 @@ export const processShopifyFulfillment = inngest.createFunction(
     },
     triggers: [{ event: "shopify/order.fulfilled" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
     const order = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    // Inngest function run id (ULID) for /runs/{id} — NOT event.id (that is the *event* id, e.g. idempotency key).
+    const _runId = String(runId ?? "");
 
-    logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
+    logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
 
     // Identify fulfillment source for routing
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
@@ -665,7 +666,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
     }
 
-    logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
+    logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
 
     // ────────────────────────────────────────────────────────────────────────
     // Sequenced rerun hand-off: dispatch the next stage in
@@ -683,17 +684,17 @@ export const processShopifyFulfillment = inngest.createFunction(
             shopifyOrderId,
             shopifyOrderName,
             completedStage: {
-              id: `fulfillment_replay-${_runId}`,
+              id: `fulfillment_replay-${_runId || "unknown"}`,
               stage: "fulfillment_replay",
               eventName: "shopify/order.fulfilled",
               status: "completed",
-              runId: _runId,
+              runId: _runId || undefined,
             },
             remaining: incomingSequence,
             orderJson: order,
             fulfillments,
             shopifyStore: (event.data as any).shopifyStore,
-            inngestRunId: _runId,
+            inngestRunId: _runId || undefined,
           });
         } catch (err) {
           console.warn(
