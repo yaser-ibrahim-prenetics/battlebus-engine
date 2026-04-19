@@ -49,10 +49,10 @@ const processGpsIndividualConfig = Object.freeze({
 
 export const processGpsIndividual = inngest.createFunction(
   { ...processGpsIndividualConfig, triggers: [{ event: "gps/individual.fulfilment" }] },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { fulfilmentPayload, warehouse } = event.data;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "gps_fulfillment", step: "start", status: "started", runId: _runId, payload: { warehouse, gpsOrderNo: event.data.gpsOrderNo } });
 

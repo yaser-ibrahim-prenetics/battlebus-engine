@@ -24,10 +24,10 @@ export const processActionCancel = inngest.createFunction(
     concurrency: [{ ...CONCURRENCY_CONFIGS.CANCELLATION, key: "event.data.shopifyOrderId" }],
     triggers: [{ event: "action/order.cancel" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { shopifyOrderId, shopifyOrderName, reason, source } = event.data;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "hub_cancel", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { reason, source } });
 
@@ -81,11 +81,11 @@ export const processActionRefund = inngest.createFunction(
     concurrency: [{ ...CONCURRENCY_CONFIGS.REFUND, key: "event.data.shopifyOrderId" }],
     triggers: [{ event: "action/order.refund" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { shopifyOrderId, shopifyOrderName, refundId, amount, reason, restock, source } =
       event.data;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "hub_refund", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { refundId, amount, restock } });
 
@@ -126,7 +126,7 @@ export const processActionFulfill = inngest.createFunction(
     concurrency: [{ ...CONCURRENCY_CONFIGS.FULFILLMENT, key: "event.data.shopifyOrderId" }],
     triggers: [{ event: "action/order.fulfill" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const {
       shopifyOrderId,
       shopifyOrderName,
@@ -138,7 +138,7 @@ export const processActionFulfill = inngest.createFunction(
       source,
     } = event.data;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "hub_fulfill", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentId, fulfillmentType, trackingNumber } });
 

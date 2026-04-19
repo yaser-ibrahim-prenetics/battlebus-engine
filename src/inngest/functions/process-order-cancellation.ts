@@ -37,11 +37,12 @@ export const processOrderCancellation = inngest.createFunction(
     },
     triggers: [{ event: "shopify/order.cancelled" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { shopifyOrderId, shopifyOrderName, cancelReason, orderJson } = event.data;
     const shopifyOrderPayload = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    // Inngest function run id (ULID); event.id is the inbound event idempotency key.
+    const _runId = String(runId ?? "") || undefined;
     const isGpsWarehouse = (name?: string | null): name is "GPS Warehouse" | "GPS UK Warehouse" =>
       name === "GPS Warehouse" || name === "GPS UK Warehouse";
 

@@ -23,6 +23,7 @@ import {
   isGpsFulfillment,
   isStordFulfillment,
   getDataAreaIdFromLocation,
+  getWarehouseNameFromLocation,
   filterDummySkus,
 } from "@/lib/utils/validation";
 import { getWarehouseConfigForDataAreaId } from "@/lib/helpers/warehouse";
@@ -450,14 +451,22 @@ export const processShopifyFulfillment = inngest.createFunction(
           if (!backorderQueued && isFulfillmentInventoryIssueError(errorMsg)) {
             backorderQueued = true;
             const failedSkus = fulfillmentSkuCandidates;
-            const warehouseName = (() => {
+            // D365 inventory site (e.g. "GPS Warehouse" for U001) — used only
+            // as failure context, NOT as the order's ship-from warehouse.
+            const d365WarehouseName = (() => {
               try {
-                const cfg = getWarehouseConfigForDataAreaId(dataAreaId);
-                return cfg.name;
+                return getWarehouseConfigForDataAreaId(dataAreaId).name;
               } catch {
                 return `DataArea-${dataAreaId}`;
               }
             })();
+            // Real ship-from warehouse derived from the failing fulfillment's
+            // Shopify location — STORD ATL Location, GPS Warehouse, etc.
+            // We pass this as the backorder `warehouse` so Hub does NOT
+            // overwrite a STORD order's location with "GPS Warehouse".
+            const shipFromWarehouseName =
+              getWarehouseNameFromLocation(fulfillment.location_id || "") ||
+              undefined;
 
             await inngest.send({
               name: "backorder/created",
@@ -465,7 +474,8 @@ export const processShopifyFulfillment = inngest.createFunction(
                 shopifyOrderId,
                 shopifyOrderName,
                 d365OrderNumber: d365Order.SalesOrderNumber,
-                warehouse: warehouseName,
+                // Prefer real ship-from; fall back to D365 site only if unknown.
+                warehouse: shipFromWarehouseName || d365WarehouseName,
                 errorMessage: errorMsg,
                 errorType: "inventory_insufficient",
                 failedSkus,
@@ -478,6 +488,8 @@ export const processShopifyFulfillment = inngest.createFunction(
                 failureStage: "fulfillment",
                 failureSystem: "d365",
                 retryMode: "fulfillment_replay",
+                d365WarehouseName,
+                shipFromWarehouseName,
               },
             });
             console.warn(
@@ -545,6 +557,20 @@ export const processShopifyFulfillment = inngest.createFunction(
         }
       })();
       const d365DataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
+      // Pick the first failing fulfillment to extract ship-from routing.
+      const firstFailedFulfillment = fulfillments.find((f: ShopifyFulfillment) =>
+        isFulfillmentInventoryIssueError(
+          String(
+            (fulfillmentResults.find(
+              (r: { fulfillmentId: number; status: string }) =>
+                r.fulfillmentId === f.id && r.status === "error"
+            ) as { error?: string } | undefined)?.error || ""
+          )
+        )
+      );
+      const failedShipFromWarehouse = firstFailedFulfillment
+        ? getWarehouseNameFromLocation(firstFailedFulfillment.location_id || "") || undefined
+        : undefined;
 
       await csPlatform.sendOrderUpdate(
         {
@@ -553,12 +579,18 @@ export const processShopifyFulfillment = inngest.createFunction(
           shopifyOrderId,
           shopifyOrderName,
           d365OrderNumber: d365Order.SalesOrderNumber,
-          // Do not set `warehouse` here: it must stay the Shopify routing / ship-from
-          // label (e.g. STORD). D365 inventory site belongs in failureContext only.
+          // Do not set `warehouse` here: it must stay the Shopify routing /
+          // ship-from label (e.g. STORD ATL Location). D365 inventory site
+          // belongs in failureContext only — Hub also guards against the
+          // overwrite using failureContext.stage.
           status: "backorder",
           processingStatus: "backorder",
           d365SyncStatus: "synced",
-          gpsSyncStatus: "failed",
+          // Mark the actual failing system; do NOT touch gpsSyncStatus — GPS
+          // outbound was already complete (or skipped) at order-creation time
+          // and overwriting it here would falsely paint the warehouse card as
+          // out-of-stock for STORD orders.
+          d365FulfillmentStatus: "failed",
           error: "Fulfillment failed due to inventory insufficiency in D365",
           lastError: "Fulfillment failed due to inventory insufficiency in D365",
           errorType: "inventory_insufficient",
@@ -571,10 +603,11 @@ export const processShopifyFulfillment = inngest.createFunction(
               retryMode: "fulfillment_replay",
               d365WarehouseName: d365Site?.name,
               d365DataAreaId,
+              shipFromWarehouseName: failedShipFromWarehouse,
             },
           },
         },
-        {}
+        { inngestRunId: _runId || undefined }
       );
     }
 

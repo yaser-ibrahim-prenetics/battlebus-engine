@@ -29,7 +29,7 @@ export const processExtensivFulfillment = inngest.createFunction(
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
     triggers: [{ event: "extensiv/order.confirm" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const {
       wmsEventId,
       extensivOrderId,
@@ -42,7 +42,7 @@ export const processExtensivFulfillment = inngest.createFunction(
 
     const orderConfirm = eventJson as ExtensivOrderConfirmPayload;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "extensiv_fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderName, payload: { extensivOrderId, trackingNumber } });
 
@@ -231,10 +231,10 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
     concurrency: CONCURRENCY_CONFIGS.STANDARD,
     triggers: [{ event: "extensiv/receiver.confirm" }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { wmsEventId, receiverId, referenceNum, eventJson } = event.data;
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = String(runId ?? "") || undefined;
 
     logFlowEvent({ flow: "extensiv_receiver", step: "start", status: "started", runId: _runId, payload: { receiverId, referenceNum } });
 
