@@ -576,7 +576,7 @@ async function processFulfilledOrdersBatch(
         continue;
       }
 
-      // Create Shopify fulfillment with tracking info
+      // Create Shopify fulfillment with tracking info (unless safety switch is on)
       const trackingUrl = getTrackingUrl(logisticsCarrier, logisticsTrackNo);
 
       const lineItems = openFulfillment.line_items.map((item) => ({
@@ -584,15 +584,23 @@ async function processFulfilledOrdersBatch(
         quantity: item.fulfillable_quantity,
       }));
 
-      const fulfillment = await shopify.createFulfillment(
-        openFulfillment.id,
-        {
-          number: logisticsTrackNo,
-          company: mapGpsCarrierToShopify(logisticsCarrier),
-          url: trackingUrl,
-        },
-        lineItems
-      );
+      let syntheticFulfillmentId = Number(Date.now());
+      if (!config.features.disableShopifyFulfillmentWriteback) {
+        const fulfillment = await shopify.createFulfillment(
+          openFulfillment.id,
+          {
+            number: logisticsTrackNo,
+            company: mapGpsCarrierToShopify(logisticsCarrier),
+            url: trackingUrl,
+          },
+          lineItems
+        );
+        syntheticFulfillmentId = Number(fulfillment.id || syntheticFulfillmentId);
+      } else {
+        console.warn(
+          `[GPS Sync][Safety] Shopify fulfillment writeback is disabled. Skipping createFulfillment for ${platformOrderNo} (${shopifyOrderId}) and dispatching D365 sync-only event.`
+        );
+      }
 
       // Get the full Shopify order to build fulfillment event
       const shopifyOrder = await shopify.getOrder(parseInt(shopifyOrderId));
@@ -634,7 +642,8 @@ async function processFulfilledOrdersBatch(
           fromGpsSync: true,
           fulfillments: [
             {
-              id: fulfillment.id,
+              // Use synthetic ID when Shopify writeback is intentionally disabled.
+              id: syntheticFulfillmentId,
               order_id: parseInt(shopifyOrderId),
               status: "success",
               created_at: outboundTime || new Date().toISOString(),

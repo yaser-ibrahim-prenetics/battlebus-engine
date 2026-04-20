@@ -200,6 +200,15 @@ export const config = {
     skipTestOrders: process.env.SKIP_TEST_ORDERS !== "false",
     // GPS fulfillment simulation: when enabled, scheduler will process simulated fulfillments
     enableGpsFulfillmentSimulation: process.env.ENABLE_GPS_FULFILLMENT_SIMULATION === "true",
+    /**
+     * Safety switch for production-store testing.
+     *
+     * When true, GPS fulfillment paths must NOT create Shopify fulfillments.
+     * We still allow downstream D365 sync/event processing using synthetic
+     * fulfillment payloads, but no writeback call is sent to Shopify.
+     */
+    disableShopifyFulfillmentWriteback:
+      process.env.DISABLE_SHOPIFY_FULFILLMENT_WRITEBACK === "true",
     enabledShopifyRiskCheck: false,
     enabledShopifyRiskMock: false,
     enabledShopifyOrderMock: false,

@@ -141,11 +141,17 @@ export const processGpsIndividual = inngest.createFunction(
       return openFulfillment;
     });
 
-    // Step 4: Create Shopify fulfillment
+    // Step 4: Create Shopify fulfillment (unless safety switch is on)
     const shopifyFulfillment = await step.run("create-shopify-fulfillment", async () => {
       if (!fulfillmentOrder) {
         console.log(`[GPS Individual] Skip Shopify fulfillment since no open fulfillment order`);
         return { skipped: true, reason: "No open fulfillment order" };
+      }
+      if (config.features.disableShopifyFulfillmentWriteback) {
+        console.warn(
+          `[GPS Individual][Safety] Shopify fulfillment writeback disabled — skip createFulfillment for ${fulfilmentData.shopifyOrderName}`
+        );
+        return { skipped: true, reason: "Shopify writeback disabled by safety flag" };
       }
 
       console.log(
@@ -298,7 +304,8 @@ export const processGpsIndividual = inngest.createFunction(
         carrier: fulfilmentData.carrier || "",
         fulfillmentSource: "gps",
         d365FulfillmentStatus: dynamicRecord.skipped ? "pending" : "synced",
-        gpsFulfillmentStatus: "synced",
+        gpsFulfillmentStatus:
+          dynamicRecord.skipped || shopifyFulfillment.skipped ? "processing" : "synced",
       });
     });
 
