@@ -585,7 +585,7 @@ async function processFulfilledOrdersBatch(
       }));
 
       let syntheticFulfillmentId = Number(Date.now());
-      if (!config.features.disableShopifyFulfillmentWriteback) {
+      if (config.features.enableShopifyFulfillmentWriteback) {
         const fulfillment = await shopify.createFulfillment(
           openFulfillment.id,
           {
@@ -598,7 +598,7 @@ async function processFulfilledOrdersBatch(
         syntheticFulfillmentId = Number(fulfillment.id || syntheticFulfillmentId);
       } else {
         console.warn(
-          `[GPS Sync][Safety] Shopify fulfillment writeback is disabled. Skipping createFulfillment for ${platformOrderNo} (${shopifyOrderId}) and dispatching D365 sync-only event.`
+          `[GPS Sync][Safety] Shopify fulfillment writeback is OFF (ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK!=true). Skipping createFulfillment for ${platformOrderNo} (${shopifyOrderId}) and dispatching D365 sync-only event.`
         );
       }
 

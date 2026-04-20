@@ -147,11 +147,15 @@ export const processGpsIndividual = inngest.createFunction(
         console.log(`[GPS Individual] Skip Shopify fulfillment since no open fulfillment order`);
         return { skipped: true, reason: "No open fulfillment order" };
       }
-      if (config.features.disableShopifyFulfillmentWriteback) {
+      if (!config.features.enableShopifyFulfillmentWriteback) {
         console.warn(
-          `[GPS Individual][Safety] Shopify fulfillment writeback disabled — skip createFulfillment for ${fulfilmentData.shopifyOrderName}`
+          `[GPS Individual][Safety] Shopify fulfillment writeback is OFF (ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK!=true) — skip createFulfillment for ${fulfilmentData.shopifyOrderName}`
         );
-        return { skipped: true, reason: "Shopify writeback disabled by safety flag" };
+        return {
+          skipped: true,
+          reason:
+            "Shopify writeback is OFF (set ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=true to enable)",
+        };
       }
 
       console.log(
