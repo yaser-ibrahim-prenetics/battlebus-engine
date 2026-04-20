@@ -513,16 +513,18 @@ export const processShopifyFulfillment = inngest.createFunction(
       );
     }
 
-    // Determine fulfillment source for downstream tracking
+    // Determine fulfillment source for downstream tracking.
+    // IMPORTANT:
+    // - Source should describe *which pipeline triggered this run* (method-1
+    //   Shopify webhook vs method-2 GPS scheduler), not which warehouse handled
+    //   one of potentially multiple fulfillment legs.
+    // - Mixed/partial fulfillments can include STORD-location successes while
+    //   still being Shopify-manual initiated; inferring `stord` here pollutes
+    //   Hub journey classification.
     const isFromGpsSyncPath = isFromGpsSync;
-    const hasStordFulfillments = fulfillmentResults.some(
-      (r: { status: string; source?: string }) => r.status === "success" && r.source === "STORD"
-    );
     const fulfillmentSource: "gps" | "stord" | "shopify" = isFromGpsSyncPath
       ? "gps"
-      : hasStordFulfillments
-        ? "stord"
-        : "shopify";
+      : "shopify";
 
     // Send fulfillment events to CS platform with Shopify status and source
     for (const fulfillmentResult of fulfillmentResults) {
