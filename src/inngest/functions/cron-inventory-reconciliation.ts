@@ -76,6 +76,31 @@ export const cronInventoryReconciliation = inngest.createFunction(
 
     console.log("[InventoryReconciliation] Starting scheduled reconciliation");
 
+    // Dedicated cron switch so we can freeze scheduled product inventory sync
+    // without disabling manual reconciliation tooling.
+    if (!config.features.enableProductInventorySyncCron) {
+      console.log("[InventoryReconciliation] Product inventory sync cron disabled, skipping");
+      logFlowEvent({
+        flow: "inventory_reconciliation",
+        step: "done",
+        status: "completed",
+        runId: _runId,
+        durationMs: Date.now() - _flowStart,
+        shopifyOrderId: event.data?.shopifyOrderId,
+        shopifyOrderName: event.data?.shopifyOrderName,
+        payload: {
+          trigger: "cron",
+          skipped: true,
+          reason: "product_inventory_sync_cron_disabled",
+        },
+      });
+      return {
+        status: "skipped",
+        reason:
+          "Product inventory sync cron disabled (set ENABLE_PRODUCT_INVENTORY_SYNC_CRON=true to enable)",
+      };
+    }
+
     // Check if inventory sync is enabled
     if (!config.features.enableGpsSync) {
       console.log("[InventoryReconciliation] GPS sync disabled, skipping");
