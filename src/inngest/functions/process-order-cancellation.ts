@@ -46,7 +46,15 @@ export const processOrderCancellation = inngest.createFunction(
     const isGpsWarehouse = (name?: string | null): name is "GPS Warehouse" | "GPS UK Warehouse" =>
       name === "GPS Warehouse" || name === "GPS UK Warehouse";
 
-    logFlowEvent({ flow: "cancellation", step: "start", status: "started", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { cancelReason } });
+    logFlowEvent({
+      flow: "cancellation",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      payload: { cancelReason },
+    });
 
     if (config.features.dryRunMode) {
       return {
@@ -80,7 +88,10 @@ export const processOrderCancellation = inngest.createFunction(
         // Legacy fallback: some historical orders stored raw GPS IDs in metafields
         // like gpsorderid / gpsukorderid instead of battle_bus.gps_order JSON.
         const legacyMetafields = await shopify.getOrderMetafields(shopifyOrderId).catch((error) => {
-          console.warn('[Cancellation] Fetch failed, continuing:', error instanceof Error ? error.message : error);
+          console.warn(
+            "[Cancellation] Fetch failed, continuing:",
+            error instanceof Error ? error.message : error
+          );
           return [];
         });
         const readLegacyValue = (candidates: string[]): string | null => {
@@ -151,8 +162,7 @@ export const processOrderCancellation = inngest.createFunction(
                 orderNumber: candidate.orderNumber,
                 warehouse: candidate.warehouse,
                 success: false,
-                message:
-                  legacyError instanceof Error ? legacyError.message : String(legacyError),
+                message: legacyError instanceof Error ? legacyError.message : String(legacyError),
                 source: candidate.source,
               });
             }
@@ -202,9 +212,7 @@ export const processOrderCancellation = inngest.createFunction(
                 warehouse,
                 success: false,
                 message:
-                  fallbackError instanceof Error
-                    ? fallbackError.message
-                    : String(fallbackError),
+                  fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
               });
             }
           }
@@ -300,7 +308,16 @@ export const processOrderCancellation = inngest.createFunction(
       shopifyCancelledAt: shopifyOrderPayload?.cancelled_at || undefined,
     });
 
-    logFlowEvent({ flow: "cancellation", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { gpsCancellationStatus: gpsCancellation.status } });
+    logFlowEvent({
+      flow: "cancellation",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      durationMs: Date.now() - _flowStart,
+      payload: { gpsCancellationStatus: gpsCancellation.status },
+    });
     return result;
   }
 );

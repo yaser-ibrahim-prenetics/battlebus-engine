@@ -1,16 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createInngestHarness } from "../helpers/inngest-harness";
 import { loadFixture } from "../fixtures";
-import {
-  mockDynamics,
-  resetMockD365,
-} from "../mocks/dynamics";
+import { mockDynamics, resetMockD365 } from "../mocks/dynamics";
 import { mockCsPlatform, resetMockCsPlatform } from "../mocks/cs-platform";
-import {
-  determineWarehouse,
-  getRefundSku,
-  getReturnConfig,
-} from "@/lib/helpers/warehouse";
+import { determineWarehouse, getRefundSku, getReturnConfig } from "@/lib/helpers/warehouse";
 
 describe("Order Refund Flow (Integration)", () => {
   let harness: ReturnType<typeof createInngestHarness>;

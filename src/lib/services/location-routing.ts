@@ -247,7 +247,9 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
 
     const mappings = (data || []).map(rowToMapping);
     if (mappings.length === 0) {
-      console.warn("[LocationRouting] Supabase returned 0 active locations — trying Hub API fallback");
+      console.warn(
+        "[LocationRouting] Supabase returned 0 active locations — trying Hub API fallback"
+      );
       return fetchFromHubApi("supabase_empty");
     }
     console.log(`[LocationRouting] ✅ Fetched ${mappings.length} location mappings from Supabase`);
@@ -378,7 +380,9 @@ export async function getLocationRoutingDebugContext(
       shopifyLocationId: m.shopifyLocationId,
       warehouseName: m.warehouseName,
       dynamicsDataAreaId: m.dynamicsDataAreaId,
-      countryOverrides: m.countryDataAreaMapping.map((entry) => `${entry.country}:${entry.dataAreaId}`),
+      countryOverrides: m.countryDataAreaMapping.map(
+        (entry) => `${entry.country}:${entry.dataAreaId}`
+      ),
       active: m.active,
     })),
   });
@@ -642,8 +646,12 @@ export async function findLocationByWarehouseName(
       m.store === store &&
       m.warehouseName !== null &&
       m.dynamicsDataAreaId !== null &&
-      !String(m.warehouseName || "").toLowerCase().includes("virtual") &&
-      String(m.warehouseName || "").trim().toLowerCase() === name
+      !String(m.warehouseName || "")
+        .toLowerCase()
+        .includes("virtual") &&
+      String(m.warehouseName || "")
+        .trim()
+        .toLowerCase() === name
   );
   return match || null;
 }
@@ -663,13 +671,9 @@ export function orderShippableLinesAllUseStordFulfillment(order: {
   line_items?: OrderLineForStordCheck[];
 }): boolean {
   const lines = order.line_items || [];
-  const shippable = lines.filter(
-    (li) => li?.requires_shipping !== false && li?.gift_card !== true
-  );
+  const shippable = lines.filter((li) => li?.requires_shipping !== false && li?.gift_card !== true);
   if (shippable.length === 0) return false;
-  return shippable.every(
-    (li) => String(li?.fulfillment_service || "").toLowerCase() === "stord"
-  );
+  return shippable.every((li) => String(li?.fulfillment_service || "").toLowerCase() === "stord");
 }
 
 /**

@@ -17,11 +17,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { validateE2eEnv } from "./setup";
 import { d365E2e, gpsE2e } from "./clients";
-import {
-  getWarehouseConfig,
-  isGpsWarehouse,
-  determineWarehouse,
-} from "@/lib/helpers/warehouse";
+import { getWarehouseConfig, isGpsWarehouse, determineWarehouse } from "@/lib/helpers/warehouse";
 import { isServiceSku } from "@/lib/transformers/sku";
 import {
   toD365SalesOrderHeaderV3,
@@ -133,7 +129,9 @@ describe("E2E: Cancellation Flow", () => {
           console.warn(`[E2E Cancel] GPS cancel failed: ${err.message}`);
           // GPS may reject if already in processing — verify via status
           const status = await gpsE2e.getOrderStatus([gpsOrderNo], "GPS UK Warehouse");
-          console.log(`[E2E Cancel] GPS order status after cancel attempt: ${JSON.stringify(status)}`);
+          console.log(
+            `[E2E Cancel] GPS order status after cancel attempt: ${JSON.stringify(status)}`
+          );
         }
       }
 
@@ -143,9 +141,7 @@ describe("E2E: Cancellation Flow", () => {
         console.log(`[E2E Cancel] D365 order deleted: ${salesOrderNumber}`);
       } catch (err: any) {
         // If order was already confirmed, deletion may fail
-        console.warn(
-          `[E2E Cancel] D365 deletion failed (order confirmed): ${err.message}`
-        );
+        console.warn(`[E2E Cancel] D365 deletion failed (order confirmed): ${err.message}`);
       }
     }, 120_000);
   });

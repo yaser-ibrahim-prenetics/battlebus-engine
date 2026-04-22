@@ -8,7 +8,7 @@ export interface ExchangeRate {
   from: string;
   to: string;
   rate: number;
-  source: 'shopify_receipt' | 'shopify_transaction' | 'fallback';
+  source: "shopify_receipt" | "shopify_transaction" | "fallback";
 }
 
 interface RefundReceiptTransaction {
@@ -35,21 +35,21 @@ interface RefundReceiptInput {
  */
 export function extractExchangeRateFromRefundReceipt(
   refund: RefundReceiptInput | null | undefined,
-  shopCurrency: string = 'USD'
+  shopCurrency: string = "USD"
 ): ExchangeRate | null {
   const target = shopCurrency.toUpperCase();
   const txs = refund?.transactions ?? [];
   for (const tx of txs) {
     const rawRate = tx?.receipt?.balance_transaction?.exchange_rate;
-    const rate = typeof rawRate === 'string' ? parseFloat(rawRate) : rawRate;
-    const from = (tx?.currency || '').toUpperCase();
+    const rate = typeof rawRate === "string" ? parseFloat(rawRate) : rawRate;
+    const from = (tx?.currency || "").toUpperCase();
     if (!rate || !Number.isFinite(rate) || rate <= 0) continue;
     if (!from || from === target) continue;
     return {
       from,
       to: target,
       rate,
-      source: 'shopify_receipt',
+      source: "shopify_receipt",
     };
   }
   return null;
@@ -58,13 +58,13 @@ export function extractExchangeRateFromRefundReceipt(
 // Fallback exchange rates (updated periodically)
 // Key format: {FROM}_{TO}
 const FALLBACK_RATES: Record<string, number> = {
-  'HKD_USD': 0.128,
-  'GBP_USD': 1.27,
-  'EUR_USD': 1.09,
-  'JPY_USD': 0.0067,
-  'KRW_USD': 0.00075,
-  'CAD_USD': 0.74,
-  'AUD_USD': 0.66,
+  HKD_USD: 0.128,
+  GBP_USD: 1.27,
+  EUR_USD: 1.09,
+  JPY_USD: 0.0067,
+  KRW_USD: 0.00075,
+  CAD_USD: 0.74,
+  AUD_USD: 0.66,
 };
 
 /**
@@ -79,7 +79,7 @@ const FALLBACK_RATES: Record<string, number> = {
  */
 export function extractExchangeRateFromTransactions(
   transactions: Array<{ amount: string; currency?: string }>,
-  shopCurrency: string = 'USD'
+  shopCurrency: string = "USD"
 ): ExchangeRate | null {
   if (!transactions || transactions.length < 2) return null;
 
@@ -101,7 +101,7 @@ export function extractExchangeRateFromTransactions(
     from: presentmentTx.currency!,
     to: shopCurrency,
     rate,
-    source: 'shopify_transaction',
+    source: "shopify_transaction",
   };
 }
 
@@ -111,7 +111,7 @@ export function extractExchangeRateFromTransactions(
  */
 export function getFallbackRate(
   fromCurrency: string,
-  toCurrency: string = 'USD'
+  toCurrency: string = "USD"
 ): ExchangeRate | null {
   const key = `${fromCurrency.toUpperCase()}_${toCurrency.toUpperCase()}`;
   const rate = FALLBACK_RATES[key];
@@ -122,7 +122,7 @@ export function getFallbackRate(
     from: fromCurrency.toUpperCase(),
     to: toCurrency.toUpperCase(),
     rate,
-    source: 'fallback',
+    source: "fallback",
   };
 }
 
@@ -135,7 +135,7 @@ export function convertToShopCurrency(
   fromCurrency: string,
   exchangeRate?: ExchangeRate | null
 ): number {
-  if (fromCurrency === 'USD') return amount;
+  if (fromCurrency === "USD") return amount;
   if (!exchangeRate) return amount; // fallback: assume 1:1
   return Math.round(amount * exchangeRate.rate * 100) / 100; // round to 2 decimal places
 }

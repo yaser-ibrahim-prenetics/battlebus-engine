@@ -38,9 +38,8 @@ describe("fetchD365HintByShopifyOrderId (no credentials)", () => {
     delete process.env.VITE_SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    const { fetchD365HintByShopifyOrderId: fetchHint } = await import(
-      "@/lib/services/supabase-order-lookup"
-    );
+    const { fetchD365HintByShopifyOrderId: fetchHint } =
+      await import("@/lib/services/supabase-order-lookup");
     const result = await fetchHint("123");
     expect(result).toBeNull();
 

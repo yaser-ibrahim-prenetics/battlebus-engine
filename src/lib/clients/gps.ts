@@ -12,19 +12,37 @@ import { gpsSimulationStore } from "../stores/gps-simulation";
 import { logFlowEvent } from "../services/supabase-flow-logs";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
-const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 50 : _omsMinIntervalParsed);
+const OMS_MIN_INTERVAL_MS = Math.max(
+  0,
+  Number.isNaN(_omsMinIntervalParsed) ? 50 : _omsMinIntervalParsed
+);
 const _omsMaxRetriesParsed = parseInt(process.env.OMS_CLIENT_MAX_RETRIES || "3", 10);
 const OMS_MAX_RETRIES = Math.max(1, Number.isNaN(_omsMaxRetriesParsed) ? 3 : _omsMaxRetriesParsed);
 const _omsRetryBaseParsed = parseInt(process.env.OMS_CLIENT_RETRY_BASE_MS || "300", 10);
-const OMS_RETRY_BASE_MS = Math.max(100, Number.isNaN(_omsRetryBaseParsed) ? 300 : _omsRetryBaseParsed);
+const OMS_RETRY_BASE_MS = Math.max(
+  100,
+  Number.isNaN(_omsRetryBaseParsed) ? 300 : _omsRetryBaseParsed
+);
 const _omsMaxOutboundParsed = parseInt(process.env.OMS_MAX_OUTBOUND_CREATE_BATCH || "100", 10);
-const OMS_MAX_OUTBOUND_CREATE_BATCH = Math.max(1, Number.isNaN(_omsMaxOutboundParsed) ? 100 : _omsMaxOutboundParsed);
+const OMS_MAX_OUTBOUND_CREATE_BATCH = Math.max(
+  1,
+  Number.isNaN(_omsMaxOutboundParsed) ? 100 : _omsMaxOutboundParsed
+);
 const _omsMaxProductParsed = parseInt(process.env.OMS_MAX_PRODUCT_BATCH_CREATE || "200", 10);
-const OMS_MAX_PRODUCT_BATCH_CREATE = Math.max(1, Number.isNaN(_omsMaxProductParsed) ? 200 : _omsMaxProductParsed);
+const OMS_MAX_PRODUCT_BATCH_CREATE = Math.max(
+  1,
+  Number.isNaN(_omsMaxProductParsed) ? 200 : _omsMaxProductParsed
+);
 const _omsMaxInventoryParsed = parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10);
-const OMS_MAX_INVENTORY_PAGE_SIZE = Math.max(1, Number.isNaN(_omsMaxInventoryParsed) ? 100 : _omsMaxInventoryParsed);
+const OMS_MAX_INVENTORY_PAGE_SIZE = Math.max(
+  1,
+  Number.isNaN(_omsMaxInventoryParsed) ? 100 : _omsMaxInventoryParsed
+);
 const _omsMaxDetailParsed = parseInt(process.env.OMS_MAX_OUTBOUND_DETAIL_IDS || "50", 10);
-const OMS_MAX_OUTBOUND_DETAIL_IDS = Math.max(1, Number.isNaN(_omsMaxDetailParsed) ? 50 : _omsMaxDetailParsed);
+const OMS_MAX_OUTBOUND_DETAIL_IDS = Math.max(
+  1,
+  Number.isNaN(_omsMaxDetailParsed) ? 50 : _omsMaxDetailParsed
+);
 
 const omsQueueByWarehouse = new Map<string, Promise<void>>();
 const omsLastRequestAtByWarehouse = new Map<string, number>();
@@ -59,7 +77,10 @@ async function withOmsPacing<T>(warehouseKey: string, fn: () => Promise<T>): Pro
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  omsQueueByWarehouse.set(warehouseKey, previous.then(() => gate));
+  omsQueueByWarehouse.set(
+    warehouseKey,
+    previous.then(() => gate)
+  );
 
   await previous;
   try {
@@ -350,10 +371,7 @@ async function postOms<TResponse>(
             maxAttempts: OMS_MAX_RETRIES,
           },
         });
-        if (
-          attempt < OMS_MAX_RETRIES &&
-          (response.status === 429 || response.status >= 500)
-        ) {
+        if (attempt < OMS_MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
           await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));
           continue;
         }
@@ -445,7 +463,9 @@ export async function createOutboundOrder(
     reqTime: epochInSeconds().toString(),
   };
 
-  console.log(`[GPS] Creating outbound order for ${data.length} item(s), warehouse=${warehouseName}`);
+  console.log(
+    `[GPS] Creating outbound order for ${data.length} item(s), warehouse=${warehouseName}`
+  );
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would create order for ${orderData.platformOrderNo}`);
@@ -610,8 +630,14 @@ export async function cancelOutboundOrder(
 
   const _pollAttemptsParsed = parseInt(process.env.OMS_CANCEL_STATUS_POLL_ATTEMPTS || "8", 10);
   const pollAttempts = Math.max(1, Number.isNaN(_pollAttemptsParsed) ? 8 : _pollAttemptsParsed);
-  const _pollIntervalParsed = parseInt(process.env.OMS_CANCEL_STATUS_POLL_INTERVAL_MS || "3000", 10);
-  const pollIntervalMs = Math.max(500, Number.isNaN(_pollIntervalParsed) ? 3000 : _pollIntervalParsed);
+  const _pollIntervalParsed = parseInt(
+    process.env.OMS_CANCEL_STATUS_POLL_INTERVAL_MS || "3000",
+    10
+  );
+  const pollIntervalMs = Math.max(
+    500,
+    Number.isNaN(_pollIntervalParsed) ? 3000 : _pollIntervalParsed
+  );
 
   const cancelRequest = { outboundOrderNoList: [orderNumber] };
   const cancelResponse = await postOms<GpsCancelOrderResponse>(

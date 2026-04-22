@@ -66,7 +66,7 @@ Request body used:
 
 THK responses:
 
-1) First call:
+1. First call:
 
 ```json
 {
@@ -76,7 +76,7 @@ THK responses:
 }
 ```
 
-2) Retry with remaining product line:
+2. Retry with remaining product line:
 
 ```json
 {
@@ -97,4 +97,3 @@ THK responses:
 
 This document captures the mismatch finding only.  
 It does not redefine business behavior; it records observed API/UI inconsistency for escalation to Dynamics/THK owners.
-

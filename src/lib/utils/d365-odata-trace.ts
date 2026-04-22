@@ -8,9 +8,7 @@ export type D365ODataTraceContext = {
   inngestRunId?: string;
 };
 
-export function logD365ODataTrace(
-  fields: D365ODataTraceContext & Record<string, unknown>
-): void {
+export function logD365ODataTrace(fields: D365ODataTraceContext & Record<string, unknown>): void {
   console.log(JSON.stringify({ msg: "D365ODataTrace", ...fields }));
 }
 

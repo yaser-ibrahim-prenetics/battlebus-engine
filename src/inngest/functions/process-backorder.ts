@@ -54,7 +54,8 @@ export const processBackorder = inngest.createFunction(
 
     const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
     // Respect explicit maxRetries=0 from producer (park only, no auto-retry).
-    const maxRetries = event.data.maxRetries ??
+    const maxRetries =
+      event.data.maxRetries ??
       (autoRetryEnabled ? BACKORDER_CONFIGS.autoRetryMaxAttempts : BACKORDER_CONFIGS.maxRetries);
     const retryIntervalHours = autoRetryEnabled
       ? BACKORDER_CONFIGS.autoRetryIntervalHours
@@ -65,6 +66,7 @@ export const processBackorder = inngest.createFunction(
       event.name === "backorder/retry" ||
       event.data.triggeredBy === "manual" ||
       event.data.triggeredBy === "manual_bulk";
+    const backorderQueueTag = event.data.backorderQueue;
     const manualRetryOnly = !autoRetryEnabled;
     const retryMode: "gps_outbound" | "fulfillment_replay" =
       event.data.retryMode === "fulfillment_replay" ||
@@ -76,7 +78,16 @@ export const processBackorder = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = String(runId ?? "");
 
-    logFlowEvent({ flow: "backorder", step: "start", status: "started", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, payload: { errorType, warehouse, retryCount } });
+    logFlowEvent({
+      flow: "backorder",
+      step: "start",
+      status: "started",
+      runId: _runId || undefined,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      d365OrderNumber,
+      payload: { errorType, warehouse, retryCount },
+    });
 
     console.log(`[Backorder] ========================================`);
     console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
@@ -124,6 +135,13 @@ export const processBackorder = inngest.createFunction(
           status: "processing",
           processingStatus: "processing",
           retryAt: null,
+          ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
+            ? {
+                state: {
+                  failureContext: { backorderQueue: backorderQueueTag },
+                },
+              }
+            : {}),
         },
         {}
       );
@@ -261,7 +279,8 @@ export const processBackorder = inngest.createFunction(
           return {
             success: false,
             error: msg,
-            isInventoryError: retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+            isInventoryError:
+              retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
           };
         }
       });
@@ -484,7 +503,8 @@ export const processBackorder = inngest.createFunction(
           return {
             success: false,
             error: msg,
-            isInventoryError: retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+            isInventoryError:
+              retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
             retryCount,
             triggeredBy,
           };
@@ -627,7 +647,20 @@ export const processBackorder = inngest.createFunction(
       );
     });
 
-    logFlowEvent({ flow: "backorder", step: "done", status: "failed", level: "error", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber, durationMs: Date.now() - _flowStart, errorType, errorMessage, payload: { retryCount: maxRetries } });
+    logFlowEvent({
+      flow: "backorder",
+      step: "done",
+      status: "failed",
+      level: "error",
+      runId: _runId || undefined,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      d365OrderNumber,
+      durationMs: Date.now() - _flowStart,
+      errorType,
+      errorMessage,
+      payload: { retryCount: maxRetries },
+    });
     return {
       status: "exhausted",
       shopifyOrderId,

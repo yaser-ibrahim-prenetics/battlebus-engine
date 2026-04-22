@@ -93,7 +93,15 @@ export const processShopifyFulfillment = inngest.createFunction(
     // Inngest function run id (ULID) for /runs/{id} — NOT event.id (that is the *event* id, e.g. idempotency key).
     const _runId = String(runId ?? "");
 
-    logFlowEvent({ flow: "fulfillment", step: "start", status: "started", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, payload: { fulfillmentCount: fulfillments?.length } });
+    logFlowEvent({
+      flow: "fulfillment",
+      step: "start",
+      status: "started",
+      runId: _runId || undefined,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      payload: { fulfillmentCount: fulfillments?.length },
+    });
 
     // Identify fulfillment source for routing
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
@@ -305,12 +313,18 @@ export const processShopifyFulfillment = inngest.createFunction(
                 const normalizedFulfillmentSku = normalizeSkuForLotLookup(rawFulfillmentSku);
                 const normalizedOrderLineSku =
                   Number.isFinite(lineItemId) && lineItemId > 0
-                    ? normalizeSkuForLotLookup(orderLineSkuById[String(Math.trunc(lineItemId))] || "")
+                    ? normalizeSkuForLotLookup(
+                        orderLineSkuById[String(Math.trunc(lineItemId))] || ""
+                      )
                     : "";
                 return (
                   lotIdMap[normalizedFulfillmentSku] ||
                   lotIdMap[normalizedOrderLineSku] ||
-                  lotIdMap[String(rawFulfillmentSku || "").trim().toUpperCase()] ||
+                  lotIdMap[
+                    String(rawFulfillmentSku || "")
+                      .trim()
+                      .toUpperCase()
+                  ] ||
                   ""
                 );
               })(),
@@ -338,7 +352,11 @@ export const processShopifyFulfillment = inngest.createFunction(
               d365Order.SalesOrderNumber!,
               dataAreaId
             );
-            lotIdMap = dynamics.mergeLotIdMaps(refreshedOdataLotMap, supabaseLotMap, orderLinesLotMap);
+            lotIdMap = dynamics.mergeLotIdMaps(
+              refreshedOdataLotMap,
+              supabaseLotMap,
+              orderLinesLotMap
+            );
             fulfillmentLines = buildFulfillmentLines();
             missingLotIdSkus = fulfillmentLines
               .filter((line) => !String(line.lotId || "").trim())
@@ -368,7 +386,9 @@ export const processShopifyFulfillment = inngest.createFunction(
           let serviceLotMap = lotIdMap;
           const serviceNeedsOdataLot = serviceLinesToAppend.some((sl) => {
             const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
-            const key = String(sl.d365_item_number ?? "").trim().toUpperCase();
+            const key = String(sl.d365_item_number ?? "")
+              .trim()
+              .toUpperCase();
             return !rowLot && !String(serviceLotMap[key] ?? "").trim();
           });
           if (serviceNeedsOdataLot && serviceLinesToAppend.length > 0) {
@@ -386,7 +406,9 @@ export const processShopifyFulfillment = inngest.createFunction(
           const fulfilmentLinesWithService = [
             ...fulfillmentLines,
             ...serviceLinesToAppend.map((sl) => {
-              const itemUpper = String(sl.d365_item_number ?? "").trim().toUpperCase();
+              const itemUpper = String(sl.d365_item_number ?? "")
+                .trim()
+                .toUpperCase();
               const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
               const lotId = rowLot || String(serviceLotMap[itemUpper] ?? "").trim() || "";
               return {
@@ -465,8 +487,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             // We pass this as the backorder `warehouse` so Hub does NOT
             // overwrite a STORD order's location with "GPS Warehouse".
             const shipFromWarehouseName =
-              getWarehouseNameFromLocation(fulfillment.location_id || "") ||
-              undefined;
+              getWarehouseNameFromLocation(fulfillment.location_id || "") || undefined;
 
             await inngest.send({
               name: "backorder/created",
@@ -522,9 +543,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     //   still being Shopify-manual initiated; inferring `stord` here pollutes
     //   Hub journey classification.
     const isFromGpsSyncPath = isFromGpsSync;
-    const fulfillmentSource: "gps" | "stord" | "shopify" = isFromGpsSyncPath
-      ? "gps"
-      : "shopify";
+    const fulfillmentSource: "gps" | "stord" | "shopify" = isFromGpsSyncPath ? "gps" : "shopify";
 
     // Send fulfillment events to CS platform with Shopify status and source
     for (const fulfillmentResult of fulfillmentResults) {
@@ -563,10 +582,12 @@ export const processShopifyFulfillment = inngest.createFunction(
       const firstFailedFulfillment = fulfillments.find((f: ShopifyFulfillment) =>
         isFulfillmentInventoryIssueError(
           String(
-            (fulfillmentResults.find(
-              (r: { fulfillmentId: number; status: string }) =>
-                r.fulfillmentId === f.id && r.status === "error"
-            ) as { error?: string } | undefined)?.error || ""
+            (
+              fulfillmentResults.find(
+                (r: { fulfillmentId: number; status: string }) =>
+                  r.fulfillmentId === f.id && r.status === "error"
+              ) as { error?: string } | undefined
+            )?.error || ""
           )
         )
       );
@@ -621,8 +642,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     const invoiceResult = await step.run("d365-post-prepayment", async () => {
       return {
         status: "skipped",
-        reason:
-          "Prepayment is created during order creation; fulfillment only posts packing slip",
+        reason: "Prepayment is created during order creation; fulfillment only posts packing slip",
       };
     });
 
@@ -689,19 +709,34 @@ export const processShopifyFulfillment = inngest.createFunction(
           console.error(`[PayPal] Tracking sync failed for ${shopifyOrderName}: ${errorMsg}`);
 
           // Non-blocking: log to Slack but don't throw
-          await slack.sendWarningMessage(
-            "system",
-            `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`
-          ).catch((error) => {
-            console.warn('[Fulfillment] Non-critical operation failed:', error instanceof Error ? error.message : error);
-          });
+          await slack
+            .sendWarningMessage(
+              "system",
+              `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`
+            )
+            .catch((error) => {
+              console.warn(
+                "[Fulfillment] Non-critical operation failed:",
+                error instanceof Error ? error.message : error
+              );
+            });
 
           return { status: "error", error: errorMsg };
         }
       });
     }
 
-    logFlowEvent({ flow: "fulfillment", step: "done", status: "completed", runId: _runId || undefined, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, d365OrderNumber: d365Order.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { fulfillmentCount: fulfillments.length, fulfillmentSource } });
+    logFlowEvent({
+      flow: "fulfillment",
+      step: "done",
+      status: "completed",
+      runId: _runId || undefined,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      d365OrderNumber: d365Order.SalesOrderNumber,
+      durationMs: Date.now() - _flowStart,
+      payload: { fulfillmentCount: fulfillments.length, fulfillmentSource },
+    });
 
     // ────────────────────────────────────────────────────────────────────────
     // Sequenced rerun hand-off: dispatch the next stage in

@@ -179,14 +179,18 @@ describe("E2E: Fulfillment Flow", () => {
       console.log(`[E2E GPS Fulfill] GPS order created: ${gpsOrderNo}`);
     } catch (err: any) {
       // GPS may reject due to inventory — that's OK for this test
-      console.warn(`[E2E GPS Fulfill] GPS order creation failed (expected for test): ${err.message}`);
+      console.warn(
+        `[E2E GPS Fulfill] GPS order creation failed (expected for test): ${err.message}`
+      );
     }
 
     // If GPS order was created, verify its status
     if (gpsOrderNo) {
       const statusResult = await gpsE2e.getOrderStatus([gpsOrderNo], "GPS UK Warehouse");
       expect(statusResult).toBeDefined();
-      console.log(`[E2E GPS Fulfill] GPS status: ${JSON.stringify(statusResult?.data?.[0]?.status)}`);
+      console.log(
+        `[E2E GPS Fulfill] GPS status: ${JSON.stringify(statusResult?.data?.[0]?.status)}`
+      );
 
       // Cancel the GPS order to avoid real warehouse processing
       try {

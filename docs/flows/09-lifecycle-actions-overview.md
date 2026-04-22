@@ -6,49 +6,49 @@ This document provides a unified view of all three order lifecycle actions and t
 
 ## Action Matrix
 
-| Action | GPS Order | Non-GPS Order |
-|---|---|---|
-| **Cancel** | Cancel in GPS OMS; uncancel Shopify if GPS cancel fails | No action |
-| **Refund** | D365: refund line + return fulfilment + return invoice (credit note) | Same D365 flow |
-| **Fulfill** | D365: packing slip + prepayment (GPS must already be shipped) | D365: packing slip + prepayment |
+| Action      | GPS Order                                                            | Non-GPS Order                   |
+| ----------- | -------------------------------------------------------------------- | ------------------------------- |
+| **Cancel**  | Cancel in GPS OMS; uncancel Shopify if GPS cancel fails              | No action                       |
+| **Refund**  | D365: refund line + return fulfilment + return invoice (credit note) | Same D365 flow                  |
+| **Fulfill** | D365: packing slip + prepayment (GPS must already be shipped)        | D365: packing slip + prepayment |
 
 ## D365 Actions Per Flow
 
-| Flow | D365 Calls |
-|---|---|
-| Cancel | None |
-| Refund | `createSalesOrderLine` (qty -1) → `createFulfilment` (type: "return") → `postReturnOrderInvoice` |
-| Fulfill | `createFulfilment` (type: "PackingSlip") → `createPrepayment` |
+| Flow    | D365 Calls                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------ |
+| Cancel  | None                                                                                             |
+| Refund  | `createSalesOrderLine` (qty -1) → `createFulfilment` (type: "return") → `postReturnOrderInvoice` |
+| Fulfill | `createFulfilment` (type: "PackingSlip") → `createPrepayment`                                    |
 
 ## Entry Points
 
 Each lifecycle action can be triggered from Shopify webhooks or Battle Hub actions:
 
-| Action | Shopify Webhook Event | Hub Action Route | Hub Canonical Event |
-|---|---|---|---|
-| Cancel | `shopify/order.cancelled` | `POST /api/actions/cancel` | Emits `shopify/order.cancelled` |
-| Refund | `shopify/refund.created` | `POST /api/actions/refund` | Relies on Shopify webhook |
+| Action  | Shopify Webhook Event     | Hub Action Route                | Hub Canonical Event                                     |
+| ------- | ------------------------- | ------------------------------- | ------------------------------------------------------- |
+| Cancel  | `shopify/order.cancelled` | `POST /api/actions/cancel`      | Emits `shopify/order.cancelled`                         |
+| Refund  | `shopify/refund.created`  | `POST /api/actions/refund`      | Relies on Shopify webhook                               |
 | Fulfill | `shopify/order.fulfilled` | `POST /api/actions/fulfillment` | Emits `shopify/order.fulfilled` (fromManualFulfillment) |
 
 ## Inngest Functions
 
-| Function | Event | Purpose |
-|---|---|---|
-| `process-order-cancellation` | `shopify/order.cancelled` | GPS cancel + Shopify uncancel safeguard |
-| `process-shopify-refund` | `shopify/refund.created` | D365 refund line + return fulfilment + invoice |
-| `process-shopify-fulfillment` | `shopify/order.fulfilled` | D365 packing slip + prepayment |
-| `process-action-cancel` | `action/order.cancel` | UI tracking + CS platform notification |
-| `process-action-refund` | `action/order.refund` | UI tracking only |
-| `process-action-fulfill` | `action/order.fulfill` | UI tracking only |
+| Function                      | Event                     | Purpose                                        |
+| ----------------------------- | ------------------------- | ---------------------------------------------- |
+| `process-order-cancellation`  | `shopify/order.cancelled` | GPS cancel + Shopify uncancel safeguard        |
+| `process-shopify-refund`      | `shopify/refund.created`  | D365 refund line + return fulfilment + invoice |
+| `process-shopify-fulfillment` | `shopify/order.fulfilled` | D365 packing slip + prepayment                 |
+| `process-action-cancel`       | `action/order.cancel`     | UI tracking + CS platform notification         |
+| `process-action-refund`       | `action/order.refund`     | UI tracking only                               |
+| `process-action-fulfill`      | `action/order.fulfill`    | UI tracking only                               |
 
 ## Pending Actions / Deferral
 
 All three flows support deferral when downstream systems are not ready:
 
-| Flow | Defers When | Replay Via |
-|---|---|---|
-| Cancel | GPS order not yet created | `drain-pending-actions` cron |
-| Refund | D365 order not yet created | `drain-pending-actions` cron |
+| Flow    | Defers When                | Replay Via                   |
+| ------- | -------------------------- | ---------------------------- |
+| Cancel  | GPS order not yet created  | `drain-pending-actions` cron |
+| Refund  | D365 order not yet created | `drain-pending-actions` cron |
 | Fulfill | D365 order not yet created | `drain-pending-actions` cron |
 
 ## GPS API Capabilities

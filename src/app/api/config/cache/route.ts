@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getLocationCacheStatus,
-  refreshLocationMappings,
-} from "@/lib/services/location-routing";
+import { getLocationCacheStatus, refreshLocationMappings } from "@/lib/services/location-routing";
 
 const CONFIG_ENV_PROXY_SECRET = process.env.CONFIG_ENV_PROXY_SECRET || "";
 

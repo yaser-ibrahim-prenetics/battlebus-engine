@@ -215,7 +215,18 @@ export async function syncTrackingBatch(
     `[PayPal] Batch tracking sync complete: ${result.tracker_identifiers?.length || 0} processed, ${result.errors?.length || 0} errors`
   );
 
-  logFlowEvent({ flow: "paypal", client: "paypal", step: "syncTrackingBatch", status: "completed", durationMs: Date.now() - _start, payload: { trackersSubmitted: trackers.length, trackersProcessed: result.tracker_identifiers?.length || 0, errors: result.errors?.length || 0 } });
+  logFlowEvent({
+    flow: "paypal",
+    client: "paypal",
+    step: "syncTrackingBatch",
+    status: "completed",
+    durationMs: Date.now() - _start,
+    payload: {
+      trackersSubmitted: trackers.length,
+      trackersProcessed: result.tracker_identifiers?.length || 0,
+      errors: result.errors?.length || 0,
+    },
+  });
   return result;
 }
 

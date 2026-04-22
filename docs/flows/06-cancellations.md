@@ -1,7 +1,7 @@
 # Flow 6: Cancellations
 
 > **Status:** Legacy simulation flow documentation (kept for historical reference)
->  
+>
 > For the current production cancellation workflow (GPS cancel API + Shopify uncancel safeguard),
 > use [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md).
 

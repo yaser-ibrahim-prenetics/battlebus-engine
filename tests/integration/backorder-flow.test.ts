@@ -1,16 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createInngestHarness } from "../helpers/inngest-harness";
 import { loadFixture } from "../fixtures";
-import {
-  mockGps,
-  resetMockGps,
-  setGpsOosSkus,
-} from "../mocks/gps";
-import {
-  mockShopify,
-  resetMockShopify,
-  seedShopifyOrder,
-} from "../mocks/shopify";
+import { mockGps, resetMockGps, setGpsOosSkus } from "../mocks/gps";
+import { mockShopify, resetMockShopify, seedShopifyOrder } from "../mocks/shopify";
 import { mockSlack, resetMockSlack } from "../mocks/slack";
 import { mockCsPlatform, resetMockCsPlatform } from "../mocks/cs-platform";
 import { toGpsOutboundOrder } from "@/lib/transformers/order";
@@ -96,11 +88,7 @@ describe("Backorder Flow (Integration)", () => {
       const retryResult = await harness.step.run("manual-retry-gps-order-1", async () => {
         try {
           const freshOrder = await mockShopify.getOrder(order.id);
-          const gpsPayload = toGpsOutboundOrder(
-            freshOrder,
-            "H007-SO-101358",
-            "GPS UK Warehouse"
-          );
+          const gpsPayload = toGpsOutboundOrder(freshOrder, "H007-SO-101358", "GPS UK Warehouse");
           await mockGps.createOutboundOrder(gpsPayload, "GPS UK Warehouse");
           return { success: true };
         } catch (error) {
@@ -142,9 +130,7 @@ describe("Backorder Flow (Integration)", () => {
       const order = loadFixture("gpsUkOrder");
       seedShopifyOrder(order);
 
-      mockGps.createOutboundOrder.mockRejectedValueOnce(
-        new Error("GPS API connection timeout")
-      );
+      mockGps.createOutboundOrder.mockRejectedValueOnce(new Error("GPS API connection timeout"));
 
       const retryResult = await harness.step.run("retry-gps-order-1", async () => {
         try {

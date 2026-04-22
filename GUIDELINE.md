@@ -44,13 +44,13 @@ The repository is organized around these responsibilities:
 
 **File naming conventions:**
 
-| Layer | Pattern | Example |
-|---|---|---|
-| Webhook route | `src/app/api/webhooks/<system>/route.ts` | `webhooks/shopify/route.ts` |
-| Inngest function | `src/inngest/functions/<verb>-<noun>.ts` | `process-shopify-order.ts` |
-| Client | `src/lib/clients/<system>.ts` | `dynamics.ts` |
-| Transformer | `src/lib/transformers/<domain>.ts` | `order.ts` |
-| Type definitions | `src/lib/types/<system>.ts` | `dynamics.ts` |
+| Layer            | Pattern                                  | Example                     |
+| ---------------- | ---------------------------------------- | --------------------------- |
+| Webhook route    | `src/app/api/webhooks/<system>/route.ts` | `webhooks/shopify/route.ts` |
+| Inngest function | `src/inngest/functions/<verb>-<noun>.ts` | `process-shopify-order.ts`  |
+| Client           | `src/lib/clients/<system>.ts`            | `dynamics.ts`               |
+| Transformer      | `src/lib/transformers/<domain>.ts`       | `order.ts`                  |
+| Type definitions | `src/lib/types/<system>.ts`              | `dynamics.ts`               |
 
 ---
 
@@ -183,9 +183,7 @@ export const processShopifyOrder = inngest.createFunction(
 
     await step.run("create-dynamics-order", async () => {
       // ✅ transient failures (network, 5xx) are retried automatically by Inngest
-      return dynamicsClient.createSalesOrder(
-        transformShopifyOrderToDynamics(event.data, skuMap)
-      );
+      return dynamicsClient.createSalesOrder(transformShopifyOrderToDynamics(event.data, skuMap));
     });
   }
 );
@@ -316,12 +314,12 @@ This system is integration-heavy. Logs are part of the product.
 
 **Established log prefixes — use these; do not invent new ones without justification:**
 
-| Prefix | Context |
-|---|---|
-| `[Webhook]` | Inbound webhook processing |
-| `[Unified]` | Unified order or sync flow |
-| `[InventorySync]` | Inventory synchronization |
-| `[Backorder]` | Backorder retry or resolution |
+| Prefix              | Context                         |
+| ------------------- | ------------------------------- |
+| `[Webhook]`         | Inbound webhook processing      |
+| `[Unified]`         | Unified order or sync flow      |
+| `[InventorySync]`   | Inventory synchronization       |
+| `[Backorder]`       | Backorder retry or resolution   |
 | `[LocationRouting]` | Warehouse and routing decisions |
 
 For a new integration flow, choose a stable single-word bracket prefix and use it consistently across every log line in that flow.
@@ -339,8 +337,12 @@ For a new integration flow, choose a stable single-word bracket prefix and use i
 ```typescript
 // ✅ prefix, request ID, stable identifier, structured key=value context
 console.log(`[Webhook] [${requestId}] order.created orderId=${payload.id} shop=${payload.shop}`);
-console.error(`[InventorySync] [${runId}] sync failed orderId=${orderId} status=500 upstream="${text}"`);
-console.log(`[LocationRouting] resolved warehouse=${warehouse} dataAreaId=${dataAreaId} orderId=${orderId}`);
+console.error(
+  `[InventorySync] [${runId}] sync failed orderId=${orderId} status=500 upstream="${text}"`
+);
+console.log(
+  `[LocationRouting] resolved warehouse=${warehouse} dataAreaId=${dataAreaId} orderId=${orderId}`
+);
 ```
 
 **Wrong — do not do this:**
@@ -369,15 +371,15 @@ Current code includes legacy env fallbacks in `src/lib/config.ts`. Treat that as
 
 Use this decision table before editing:
 
-| What you need | Where to change |
-|---|---|
-| Receive a third-party callback | Add or update a webhook route |
-| New async business workflow | Add or update an Inngest function |
-| Call an external API | Add or update a client |
-| Reshape data between systems | Add or update a transformer |
-| Warehouse, routing, or sync coordination | Add or update a service |
-| One-off local diagnosis or manual probe | Add or update a script in `scripts/` |
-| Architecture or runbook guidance | Update `docs/` |
+| What you need                            | Where to change                      |
+| ---------------------------------------- | ------------------------------------ |
+| Receive a third-party callback           | Add or update a webhook route        |
+| New async business workflow              | Add or update an Inngest function    |
+| Call an external API                     | Add or update a client               |
+| Reshape data between systems             | Add or update a transformer          |
+| Warehouse, routing, or sync coordination | Add or update a service              |
+| One-off local diagnosis or manual probe  | Add or update a script in `scripts/` |
+| Architecture or runbook guidance         | Update `docs/`                       |
 
 If a change spans several layers, keep responsibilities separated instead of creating a god file.
 
@@ -426,6 +428,7 @@ This repository relies on `docs/` as an operational knowledge base. Keep it accu
 ### Contract changes
 
 A contract change is any modification to:
+
 - A field name, type, or presence in `src/inngest/events.ts`.
 - A webhook route's accepted payload shape.
 - A client's public method signature or response type.
@@ -505,13 +508,13 @@ When in doubt, choose the safer behavior:
 
 Use the conventional commit format: `<type>: <description>` (lowercase, no trailing period).
 
-| Type | When to use |
-|---|---|
-| `feat` | New functionality |
-| `fix` | Bug fix |
+| Type       | When to use                              |
+| ---------- | ---------------------------------------- |
+| `feat`     | New functionality                        |
+| `fix`      | Bug fix                                  |
 | `refactor` | Code restructure with no behavior change |
-| `docs` | Documentation only |
-| `chore` | Tooling, config, or dependency changes |
+| `docs`     | Documentation only                       |
+| `chore`    | Tooling, config, or dependency changes   |
 
 Write descriptions in imperative form: `fix: dynamics error when sku unavailable`, not `fixed the Dynamics 365 error that happens when the SKU is not available`.
 

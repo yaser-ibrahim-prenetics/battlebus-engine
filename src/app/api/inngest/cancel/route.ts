@@ -7,10 +7,7 @@ const INNGEST_APP_ID = process.env.INNGEST_APP_ID || "";
 export async function POST(request: NextRequest) {
   try {
     if (!INNGEST_SIGNING_KEY) {
-      return NextResponse.json(
-        { error: "INNGEST_SIGNING_KEY not configured" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "INNGEST_SIGNING_KEY not configured" }, { status: 500 });
     }
 
     const body = await request.json();
@@ -20,10 +17,7 @@ export async function POST(request: NextRequest) {
     };
 
     if (!runIds || runIds.length === 0) {
-      return NextResponse.json(
-        { error: "runIds[] is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "runIds[] is required" }, { status: 400 });
     }
 
     let cancelled = 0;

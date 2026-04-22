@@ -54,9 +54,7 @@ export const drainPendingActions = inngest.createFunction(
         return { count: 0, emitted: [], cleared: [] };
       }
 
-      console.log(
-        `[PendingActions] Drain sweep: ${orders.length} order(s) have pending actions`
-      );
+      console.log(`[PendingActions] Drain sweep: ${orders.length} order(s) have pending actions`);
 
       const eventsToSend: Array<{ name: string; data: Record<string, unknown> }> = [];
       const clearedOrderIds: string[] = [];

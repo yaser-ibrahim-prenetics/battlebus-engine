@@ -97,24 +97,22 @@ export async function saveOrderLines(lines: OrderLineRecord[]): Promise<SaveOrde
     return { ok: false, reason: "empty_input" };
   }
 
-  const { error } = await supabase
-    .from("order_lines" as any)
-    .upsert(
-      lines.map((l) => ({
-        shopify_order_id: l.shopify_order_id,
-        shopify_order_name: l.shopify_order_name ?? null,
-        shopify_line_item_id: l.shopify_line_item_id,
-        shopify_sku: l.shopify_sku ?? null,
-        d365_item_number: l.d365_item_number,
-        d365_sales_order_number: l.d365_sales_order_number ?? null,
-        data_area_id: l.data_area_id ?? null,
-        quantity: l.quantity,
-        price: l.price ?? null,
-        dynamics_inventory_lot_id: l.dynamics_inventory_lot_id ?? null,
-        is_service_line: l.is_service_line,
-      })),
-      { onConflict: "shopify_order_id,shopify_line_item_id", ignoreDuplicates: false }
-    );
+  const { error } = await supabase.from("order_lines" as any).upsert(
+    lines.map((l) => ({
+      shopify_order_id: l.shopify_order_id,
+      shopify_order_name: l.shopify_order_name ?? null,
+      shopify_line_item_id: l.shopify_line_item_id,
+      shopify_sku: l.shopify_sku ?? null,
+      d365_item_number: l.d365_item_number,
+      d365_sales_order_number: l.d365_sales_order_number ?? null,
+      data_area_id: l.data_area_id ?? null,
+      quantity: l.quantity,
+      price: l.price ?? null,
+      dynamics_inventory_lot_id: l.dynamics_inventory_lot_id ?? null,
+      is_service_line: l.is_service_line,
+    })),
+    { onConflict: "shopify_order_id,shopify_line_item_id", ignoreDuplicates: false }
+  );
 
   if (error) {
     console.warn(
@@ -272,9 +270,7 @@ export async function saveRefundOrderLine(
   }
 
   if (error) {
-    console.warn(
-      `[OrderLines] Failed to save refund line ${refundId}: ${error.message}`
-    );
+    console.warn(`[OrderLines] Failed to save refund line ${refundId}: ${error.message}`);
     return { ok: false, reason: "supabase_error", message: error.message };
   }
 
@@ -343,7 +339,9 @@ export function buildLotIdMapFromOrderLines(lines: SavedOrderLine[]): Record<str
   for (const l of lines) {
     const lot = String(l.dynamics_inventory_lot_id ?? "").trim();
     if (!lot) continue;
-    const key = String(l.d365_item_number ?? "").trim().toUpperCase();
+    const key = String(l.d365_item_number ?? "")
+      .trim()
+      .toUpperCase();
     if (!key) continue;
     if (!out[key]) out[key] = lot;
   }
@@ -358,9 +356,7 @@ export function getLotFromSavedOrderLineByShopifyLineItemId(
   if (!shopifyLineItemId) return "";
   const id = String(shopifyLineItemId);
   const row = lines.find(
-    (l) =>
-      l.shopify_line_item_id === id &&
-      String(l.dynamics_inventory_lot_id ?? "").trim() !== ""
+    (l) => l.shopify_line_item_id === id && String(l.dynamics_inventory_lot_id ?? "").trim() !== ""
   );
   return row ? String(row.dynamics_inventory_lot_id).trim() : "";
 }
@@ -368,8 +364,7 @@ export function getLotFromSavedOrderLineByShopifyLineItemId(
 export function filterUnfulfilledServiceLines(lines: SavedOrderLine[]): SavedOrderLine[] {
   return lines.filter(
     (l) =>
-      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) &&
-      !l.is_fulfilled_to_dynamics
+      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) && !l.is_fulfilled_to_dynamics
   );
 }
 

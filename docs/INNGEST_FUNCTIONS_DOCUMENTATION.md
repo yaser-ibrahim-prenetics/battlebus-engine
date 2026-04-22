@@ -67,16 +67,16 @@
 
 ## Function Categories
 
-| Category                    | Coverage | Purpose                                                               |
-| --------------------------- | -------- | --------------------------------------------------------------------- |
-| **Order Processing**        | Multiple | Handle order creation, updates, cancellations, refunds, lifecycle     |
-| **Subscription Processing** | Multiple | Handle subscription renewal orders                                    |
-| **Inventory Management**    | Multiple | Sync inventory across Shopify, D365, GPS                              |
-| **Product Management**      | Multiple | Sync product data across systems                                      |
-| **Fulfillment**             | Multiple | Process fulfillments from warehouses                                  |
-| **Battle Hub Actions**      | Multiple | Handle manual actions from dashboard                                  |
-| **Location Management**     | Multiple | Sync location/warehouse mappings                                      |
-| **Cron Jobs**               | Multiple | Scheduled GPS fulfillment + inventory reconciliation                  |
+| Category                    | Coverage | Purpose                                                           |
+| --------------------------- | -------- | ----------------------------------------------------------------- |
+| **Order Processing**        | Multiple | Handle order creation, updates, cancellations, refunds, lifecycle |
+| **Subscription Processing** | Multiple | Handle subscription renewal orders                                |
+| **Inventory Management**    | Multiple | Sync inventory across Shopify, D365, GPS                          |
+| **Product Management**      | Multiple | Sync product data across systems                                  |
+| **Fulfillment**             | Multiple | Process fulfillments from warehouses                              |
+| **Battle Hub Actions**      | Multiple | Handle manual actions from dashboard                              |
+| **Location Management**     | Multiple | Sync location/warehouse mappings                                  |
+| **Cron Jobs**               | Multiple | Scheduled GPS fulfillment + inventory reconciliation              |
 
 **Total: 21 files (`src/inngest/functions/*.ts`), including `index.ts` registry**
 

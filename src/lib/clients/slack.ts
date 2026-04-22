@@ -164,8 +164,11 @@ async function flushBatch(channelKey: string): Promise<void> {
   batchBuffers.delete(channelKey);
 
   const total = messages.length;
-  const preview = messages.slice(0, 5).map((m) => `• ${m}`).join('\n');
-  const suffix = total > 5 ? `\n…and ${total - 5} more` : '';
+  const preview = messages
+    .slice(0, 5)
+    .map((m) => `• ${m}`)
+    .join("\n");
+  const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
   const summary = `📊 Batch Summary (${total} messages):\n${preview}${suffix}`;
 
   await sendInfoMessage(channel, summary);
@@ -206,9 +209,7 @@ export async function sendBatchableInfoMessage(
     clearTimeout(buffer.timer);
   }
   buffer.timer = setTimeout(() => {
-    flushBatch(key).catch((err) =>
-      console.error(`[Slack] Failed to flush batch for ${key}:`, err)
-    );
+    flushBatch(key).catch((err) => console.error(`[Slack] Failed to flush batch for ${key}:`, err));
   }, BATCH_WINDOW_MS);
 }
 
@@ -245,8 +246,11 @@ export async function sendBatchableOrderMessage(
     batchBuffers.delete(key);
 
     const total = messages.length;
-    const preview = messages.slice(0, 5).map((m) => `• ${m}`).join('\n');
-    const suffix = total > 5 ? `\n…and ${total - 5} more` : '';
+    const preview = messages
+      .slice(0, 5)
+      .map((m) => `• ${m}`)
+      .join("\n");
+    const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
     const summary = `📊 Order Batch Summary (${total} orders processed):\n${preview}${suffix}`;
 
     await sendOrderMessage(channel, summary);
@@ -272,8 +276,11 @@ export async function sendBatchableOrderMessage(
     batchBuffers.delete(key);
 
     const total = messages.length;
-    const preview = messages.slice(0, 5).map((m) => `• ${m}`).join('\n');
-    const suffix = total > 5 ? `\n…and ${total - 5} more` : '';
+    const preview = messages
+      .slice(0, 5)
+      .map((m) => `• ${m}`)
+      .join("\n");
+    const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
     const summary = `📊 Order Batch Summary (${total} orders processed):\n${preview}${suffix}`;
 
     await sendOrderMessage(channel, summary).catch((err) =>

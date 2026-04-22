@@ -48,9 +48,7 @@ export async function shopifyAdminGraphql<T = any>(
 
   const payload = await response.json();
   if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
-    const msg = payload.errors
-      .map((e: any) => e?.message || "Unknown GraphQL error")
-      .join("; ");
+    const msg = payload.errors.map((e: any) => e?.message || "Unknown GraphQL error").join("; ");
     throw new Error(`Shopify GraphQL request failed: ${msg}`);
   }
 
@@ -125,8 +123,7 @@ export async function getVariantSkusByVariantIds(
       if (!node) continue;
       const sku = typeof node.sku === "string" ? node.sku.trim() : "";
       if (!sku) continue;
-      const legacyId =
-        node.legacyResourceId != null ? String(node.legacyResourceId) : "";
+      const legacyId = node.legacyResourceId != null ? String(node.legacyResourceId) : "";
       if (legacyId) {
         result[legacyId] = sku;
         continue;
@@ -300,8 +297,7 @@ export async function getOrder(
         ? " Shopify returned 401: the Admin API access token is not accepted for this shop (revoked, wrong app, typo in Vercel, or using test token as prod). Regenerate the token in Shopify Admin → Settings → Apps → [your custom app] → API credentials, then update SHOPIFY_PROD_ACCESS_TOKEN / SHOPIFY_TEST_* to match that shop. If credentials are correct, ensure event.data.shopifyStore is set on Inngest replays."
         : "";
     const hint403 =
-      response.status === 403 &&
-      /read_orders|merchant approval|scope/i.test(error)
+      response.status === 403 && /read_orders|merchant approval|scope/i.test(error)
         ? " Add Admin API scope read_orders (and related order scopes you need) on the custom app: Settings → Apps and sales channels → Develop apps → [app] → Configuration → Admin API scopes → enable read_orders → Save → Install app / update install so the merchant approves new scopes → Reveal Admin API access token again if Shopify prompts, then update SHOPIFY_*_ACCESS_TOKEN in Vercel."
         : "";
     console.error(`[Shopify] getOrder failed ${orderId}:`, {
@@ -321,7 +317,9 @@ export async function getOrder(
       errorMessage: error.slice(0, 500),
       payload: { endpoint: "/orders/:id.json", shopifyRequest: requestDebug },
     });
-    throw new Error(`Failed to get Shopify order: ${response.status} - ${error}${hint401}${hint403}`);
+    throw new Error(
+      `Failed to get Shopify order: ${response.status} - ${error}${hint401}${hint403}`
+    );
   }
 
   const data = await response.json();
@@ -691,7 +689,8 @@ export function shopifyWebhookSecretSource(shopDomain: string | null | undefined
 export function verifyWebhookSignature(
   body: string,
   hmacHeader: string,
-  shopDomain?: string | null): boolean {
+  shopDomain?: string | null
+): boolean {
   const secret = resolveShopifyWebhookSecret(shopDomain);
   if (!secret) return false;
   const hash = crypto.createHmac("sha256", secret).update(body, "utf8").digest("base64");

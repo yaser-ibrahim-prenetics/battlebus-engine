@@ -44,7 +44,14 @@ export const processExtensivFulfillment = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = String(runId ?? "") || undefined;
 
-    logFlowEvent({ flow: "extensiv_fulfillment", step: "start", status: "started", runId: _runId, shopifyOrderName, payload: { extensivOrderId, trackingNumber } });
+    logFlowEvent({
+      flow: "extensiv_fulfillment",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      shopifyOrderName,
+      payload: { extensivOrderId, trackingNumber },
+    });
 
     console.log(
       `[Extensiv] Processing fulfillment for ${shopifyOrderName} (Extensiv ID: ${extensivOrderId})`
@@ -158,7 +165,12 @@ export const processExtensivFulfillment = inngest.createFunction(
             shippingSiteId: "",
             shippingWarehouseId: "",
             shippingWarehouseLocationId: "",
-            lotId: lotIdMap[String(item.sku || "").trim().toUpperCase()] || "",
+            lotId:
+              lotIdMap[
+                String(item.sku || "")
+                  .trim()
+                  .toUpperCase()
+              ] || "",
           }));
 
         let lines = buildLines();
@@ -206,7 +218,16 @@ export const processExtensivFulfillment = inngest.createFunction(
       `✅ Extensiv fulfillment processed: ${shopifyOrderName} | Tracking: ${trackingNumber} | Carrier: ${carrier}`
     );
 
-    logFlowEvent({ flow: "extensiv_fulfillment", step: "done", status: "completed", runId: _runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName, durationMs: Date.now() - _flowStart, payload: { extensivOrderId, trackingNumber, d365Status: d365Result.status } });
+    logFlowEvent({
+      flow: "extensiv_fulfillment",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName,
+      durationMs: Date.now() - _flowStart,
+      payload: { extensivOrderId, trackingNumber, d365Status: d365Result.status },
+    });
     return {
       status: "success",
       wmsEventId,
@@ -236,7 +257,13 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = String(runId ?? "") || undefined;
 
-    logFlowEvent({ flow: "extensiv_receiver", step: "start", status: "started", runId: _runId, payload: { receiverId, referenceNum } });
+    logFlowEvent({
+      flow: "extensiv_receiver",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      payload: { receiverId, referenceNum },
+    });
 
     console.log(
       `[Extensiv] Processing receiver confirm for ${referenceNum} (Receiver ID: ${receiverId})`
@@ -259,7 +286,14 @@ export const processExtensivReceiverConfirm = inngest.createFunction(
       `📦 Extensiv receiver confirmed: ${referenceNum} | Receiver ID: ${receiverId}`
     );
 
-    logFlowEvent({ flow: "extensiv_receiver", step: "done", status: "completed", runId: _runId, durationMs: Date.now() - _flowStart, payload: { receiverId, referenceNum } });
+    logFlowEvent({
+      flow: "extensiv_receiver",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      payload: { receiverId, referenceNum },
+    });
     return {
       status: "acknowledged",
       wmsEventId,

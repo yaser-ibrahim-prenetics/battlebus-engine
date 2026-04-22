@@ -25,9 +25,7 @@ export async function createTestShopifyOrder(overrides?: {
 
   const orderPayload = {
     order: {
-      line_items: overrides?.lineItems || [
-        { variant_id: 44001, quantity: 1 },
-      ],
+      line_items: overrides?.lineItems || [{ variant_id: 44001, quantity: 1 }],
       tags: overrides?.tags || "testing,e2e-test",
       financial_status: "paid",
       send_receipt: false,
@@ -35,17 +33,14 @@ export async function createTestShopifyOrder(overrides?: {
     },
   };
 
-  const response = await fetch(
-    `https://${shopDomain}/admin/api/2024-07/orders.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify(orderPayload),
-    }
-  );
+  const response = await fetch(`https://${shopDomain}/admin/api/2024-07/orders.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
+    },
+    body: JSON.stringify(orderPayload),
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to create test order: ${response.status} ${await response.text()}`);

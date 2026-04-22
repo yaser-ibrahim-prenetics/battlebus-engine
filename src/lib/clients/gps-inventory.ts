@@ -17,7 +17,10 @@ import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
-const OMS_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_omsMinIntervalParsed) ? 120 : _omsMinIntervalParsed);
+const OMS_MIN_INTERVAL_MS = Math.max(
+  0,
+  Number.isNaN(_omsMinIntervalParsed) ? 120 : _omsMinIntervalParsed
+);
 const _omsMaxPageParsed = parseInt(process.env.OMS_MAX_INVENTORY_PAGE_SIZE || "100", 10);
 const OMS_MAX_PAGE_SIZE = Math.max(1, Number.isNaN(_omsMaxPageParsed) ? 100 : _omsMaxPageParsed);
 const _omsMaxSkuParsed = parseInt(process.env.OMS_MAX_PRODUCT_SKU_LIST_SIZE || "50", 10);
@@ -223,7 +226,15 @@ export async function queryOmsInventory(options: {
 
   console.warn("[GPS-Inventory] No inventory endpoints responded successfully");
   console.warn("[GPS-Inventory] This may mean inventory API is not available on this account");
-  logFlowEvent({ flow: "gps_inventory", client: "gps_inventory", step: "queryOmsInventory", status: "failed", level: "warn", durationMs: Date.now() - _start, payload: { region, sku } });
+  logFlowEvent({
+    flow: "gps_inventory",
+    client: "gps_inventory",
+    step: "queryOmsInventory",
+    status: "failed",
+    level: "warn",
+    durationMs: Date.now() - _start,
+    payload: { region, sku },
+  });
   return [];
 }
 

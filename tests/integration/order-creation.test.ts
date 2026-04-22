@@ -8,10 +8,7 @@ import {
   calculatePrepaymentAmount,
   shouldSendToGps,
 } from "@/lib/transformers/order";
-import {
-  determineWarehouse,
-  getDataAreaId,
-} from "@/lib/helpers/warehouse";
+import { determineWarehouse, getDataAreaId } from "@/lib/helpers/warehouse";
 import { isServiceSku } from "@/lib/transformers/sku";
 
 describe("Order Creation Flow (Integration)", () => {

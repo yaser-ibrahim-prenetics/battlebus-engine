@@ -36,9 +36,8 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
       ref === "#IM8-100" ? { SalesOrderNumber: "U001-SO-1", dataAreaId: "U001" } : null
     );
 
-    const { resolveD365OrderHeaderForRefund } = await import(
-      "@/lib/services/d365-refund-order-resolution"
-    );
+    const { resolveD365OrderHeaderForRefund } =
+      await import("@/lib/services/d365-refund-order-resolution");
 
     const result = await resolveD365OrderHeaderForRefund({
       shopifyOrderId: "999",
@@ -62,9 +61,8 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
       return null;
     });
 
-    const { resolveD365OrderHeaderForRefund } = await import(
-      "@/lib/services/d365-refund-order-resolution"
-    );
+    const { resolveD365OrderHeaderForRefund } =
+      await import("@/lib/services/d365-refund-order-resolution");
 
     const result = await resolveD365OrderHeaderForRefund({
       shopifyOrderId: "6993154474216",
@@ -80,9 +78,8 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
   });
 
   it("returns null when both ref lookup and Supabase SO number lookup miss", async () => {
-    const { resolveD365OrderHeaderForRefund } = await import(
-      "@/lib/services/d365-refund-order-resolution"
-    );
+    const { resolveD365OrderHeaderForRefund } =
+      await import("@/lib/services/d365-refund-order-resolution");
 
     const result = await resolveD365OrderHeaderForRefund({
       shopifyOrderId: "1",

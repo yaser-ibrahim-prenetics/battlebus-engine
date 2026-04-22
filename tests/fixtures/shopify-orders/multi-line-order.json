@@ -118,9 +118,7 @@
       "tax_lines": [{ "title": "Sales Tax", "price": "1.20", "rate": 0.08 }]
     }
   ],
-  "discount_codes": [
-    { "code": "SAVE10", "amount": "10.00", "type": "fixed_amount" }
-  ],
+  "discount_codes": [{ "code": "SAVE10", "amount": "10.00", "type": "fixed_amount" }],
   "customer": {
     "id": 7050,
     "email": "multiline@example.com",

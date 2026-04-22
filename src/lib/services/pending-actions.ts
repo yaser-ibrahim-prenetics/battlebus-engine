@@ -38,8 +38,7 @@ async function callHubApi(
     "x-battle-bus-signature": payload ? generateSignature(payload) : "",
   };
 
-  const serviceSecret =
-    process.env.INTERNAL_SERVICE_SECRET || config.csPlatform.webhookSecret;
+  const serviceSecret = process.env.INTERNAL_SERVICE_SECRET || config.csPlatform.webhookSecret;
   if (serviceSecret) {
     headers["Authorization"] = `Bearer ${serviceSecret}`;
   }
@@ -47,10 +46,7 @@ async function callHubApi(
   const response = await fetch(url, { method, headers, body: payload });
   if (!response.ok) {
     const text = await response.text();
-    if (
-      response.status === 400 &&
-      text.includes("shopifyOrderId and operation are required")
-    ) {
+    if (response.status === 400 && text.includes("shopifyOrderId and operation are required")) {
       let hubHost = "unknown";
       try {
         hubHost = new URL(config.csPlatform.baseUrl).hostname;
@@ -74,9 +70,7 @@ export async function storePendingAction(
   shopifyOrderId: string,
   action: PendingAction
 ): Promise<void> {
-  console.log(
-    `[PendingActions] Storing ${action.action} for shopifyOrderId=${shopifyOrderId}`
-  );
+  console.log(`[PendingActions] Storing ${action.action} for shopifyOrderId=${shopifyOrderId}`);
   await callHubApi("PATCH", "/api/orders/pending-actions", {
     shopifyOrderId,
     operation: "append",
@@ -84,12 +78,10 @@ export async function storePendingAction(
   });
 }
 
-export async function getPendingActions(
-  shopifyOrderId: string
-): Promise<PendingAction[]> {
+export async function getPendingActions(shopifyOrderId: string): Promise<PendingAction[]> {
   const result = (await callHubApi(
     "GET",
-    `/api/orders/pending-actions?shopifyOrderId=${encodeURIComponent(shopifyOrderId)}`,
+    `/api/orders/pending-actions?shopifyOrderId=${encodeURIComponent(shopifyOrderId)}`
   )) as { actions: PendingAction[] };
   return result.actions || [];
 }
@@ -103,28 +95,22 @@ export interface PendingActionOrder {
 }
 
 export async function getAllPendingActionOrders(): Promise<PendingActionOrder[]> {
-  const result = (await callHubApi(
-    "GET",
-    "/api/orders/pending-actions",
-  )) as { orders: PendingActionOrder[]; count: number };
+  const result = (await callHubApi("GET", "/api/orders/pending-actions")) as {
+    orders: PendingActionOrder[];
+    count: number;
+  };
   return result.orders || [];
 }
 
-export async function clearPendingActions(
-  shopifyOrderId: string
-): Promise<void> {
-  console.log(
-    `[PendingActions] Clearing pending actions for shopifyOrderId=${shopifyOrderId}`
-  );
+export async function clearPendingActions(shopifyOrderId: string): Promise<void> {
+  console.log(`[PendingActions] Clearing pending actions for shopifyOrderId=${shopifyOrderId}`);
   await callHubApi("PATCH", "/api/orders/pending-actions", {
     shopifyOrderId,
     operation: "clear",
   });
 }
 
-export async function clearPendingActionsBatch(
-  shopifyOrderIds: string[]
-): Promise<void> {
+export async function clearPendingActionsBatch(shopifyOrderIds: string[]): Promise<void> {
   if (shopifyOrderIds.length === 0) return;
   console.log(
     `[PendingActions] Bulk-clearing pending actions for ${shopifyOrderIds.length} orders`

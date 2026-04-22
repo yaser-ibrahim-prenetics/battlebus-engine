@@ -130,13 +130,28 @@ describe("Order Transformers", () => {
     it("omits discount when zero", () => {
       const line = toD365SalesOrderLine(
         {
-          id: 1, variant_id: 1, title: "T", quantity: 1, sku: "IM8-FG-000031",
-          variant_title: null, vendor: null, fulfillment_service: "manual",
-          product_id: 1, requires_shipping: true, taxable: true, gift_card: false,
-          name: "T", price: "49.99", total_discount: "0.00",
-          fulfillment_status: null, properties: [], tax_lines: [],
+          id: 1,
+          variant_id: 1,
+          title: "T",
+          quantity: 1,
+          sku: "IM8-FG-000031",
+          variant_title: null,
+          vendor: null,
+          fulfillment_service: "manual",
+          product_id: 1,
+          requires_shipping: true,
+          taxable: true,
+          gift_card: false,
+          name: "T",
+          price: "49.99",
+          total_discount: "0.00",
+          fulfillment_status: null,
+          properties: [],
+          tax_lines: [],
         },
-        "U001-SO-12345", "U001", "USD"
+        "U001-SO-12345",
+        "U001",
+        "USD"
       );
 
       expect(line.discount).toBeUndefined();
@@ -193,9 +208,9 @@ describe("Order Transformers", () => {
       const order = loadFixture("gpsUsOrder");
       order.line_items[0].sku = "";
 
-      expect(() =>
-        toD365SalesOrderLines(order, "U001-SO-100", "GPS Warehouse")
-      ).toThrow("Missing SKU on shippable Shopify line item");
+      expect(() => toD365SalesOrderLines(order, "U001-SO-100", "GPS Warehouse")).toThrow(
+        "Missing SKU on shippable Shopify line item"
+      );
     });
 
     it("skips gift card lines", () => {
@@ -289,9 +304,9 @@ describe("Order Transformers", () => {
       order.shipping_address = null;
       order.billing_address = null;
 
-      expect(() =>
-        toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse")
-      ).toThrow("No shipping address");
+      expect(() => toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse")).toThrow(
+        "No shipping address"
+      );
     });
   });
 

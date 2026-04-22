@@ -7,12 +7,12 @@
 
 // IM8 international split threshold (from spock-store config)
 const SPLIT_THRESHOLD_INTERNATIONAL = parseFloat(
-  process.env.FULFILLMENT_SPLIT_THRESHOLD_INTERNATIONAL || '250'
+  process.env.FULFILLMENT_SPLIT_THRESHOLD_INTERNATIONAL || "250"
 );
 
 // Domestic (US) orders don't need splitting by default
 const SPLIT_THRESHOLD_DOMESTIC = parseFloat(
-  process.env.FULFILLMENT_SPLIT_THRESHOLD_DOMESTIC || '0'
+  process.env.FULFILLMENT_SPLIT_THRESHOLD_DOMESTIC || "0"
 );
 
 export interface SplitDecision {
@@ -35,7 +35,7 @@ export function shouldSplitFulfillmentOrder(
 
   // Threshold of 0 means splitting is disabled
   if (threshold <= 0) {
-    return { shouldSplit: false, reason: 'splitting_disabled', orderTotal, threshold };
+    return { shouldSplit: false, reason: "splitting_disabled", orderTotal, threshold };
   }
 
   if (orderTotal > threshold) {
@@ -47,12 +47,12 @@ export function shouldSplitFulfillmentOrder(
     };
   }
 
-  return { shouldSplit: false, reason: 'below_threshold', orderTotal, threshold };
+  return { shouldSplit: false, reason: "below_threshold", orderTotal, threshold };
 }
 
 /**
  * Check if a country is considered domestic (US)
  */
 export function isDomesticOrder(countryCode: string): boolean {
-  return countryCode === 'US';
+  return countryCode === "US";
 }

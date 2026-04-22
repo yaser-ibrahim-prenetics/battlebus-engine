@@ -75,7 +75,9 @@ function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number 
   // Priority 2: any open FO whose assigned location is not virtual (ignoring delivery method)
   const nonVirtual = activeOrders.filter(
     (fo: any) =>
-      !String(fo?.assigned_location?.name || "").toLowerCase().includes("virtual")
+      !String(fo?.assigned_location?.name || "")
+        .toLowerCase()
+        .includes("virtual")
   );
   if (nonVirtual[0]?.assigned_location_id) {
     return Number(nonVirtual[0].assigned_location_id);
@@ -214,7 +216,15 @@ export const processSubscriptionOrder = inngest.createFunction(
     const _runId = String(runId ?? "");
     const inngestIdempotencyKey = `shopify-subscription-renewed-${shopifyOrderId}`;
 
-    logFlowEvent({ flow: "subscription_renewal", step: "start", status: "started", runId: _runId || undefined, shopifyOrderId, shopifyOrderName, payload: { subscriptionContractId } });
+    logFlowEvent({
+      flow: "subscription_renewal",
+      step: "start",
+      status: "started",
+      runId: _runId || undefined,
+      shopifyOrderId,
+      shopifyOrderName,
+      payload: { subscriptionContractId },
+    });
 
     // Durable start time for processing_summary (must live inside step.run for Inngest replays).
     const flowStartedAt = await step.run("subscription-flow-started-at", async () => Date.now());
@@ -327,12 +337,12 @@ export const processSubscriptionOrder = inngest.createFunction(
           fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
           console.warn(
             `[Subscription Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
-            `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${country_code} + Battle Hub config.`
+              `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${country_code} + Battle Hub config.`
           );
         } else {
           throw new Error(
             `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${country_code} (expected warehouse: ${expectedWarehouseName}). ` +
-            `Configure the location in Battle Hub Locations settings.`
+              `Configure the location in Battle Hub Locations settings.`
           );
         }
       }
@@ -498,18 +508,19 @@ export const processSubscriptionOrder = inngest.createFunction(
           lineItems.map((line) =>
             (async () => {
               try {
-                const created = await retryWithBackoff(
-                  () => dynamics.createSalesOrderLine(line),
-                  {
-                    label: `D365 sub line ${line.itemNumber}`,
-                    shouldRetry: (err) => {
-                      const msg = err instanceof Error ? err.message : String(err);
-                      return !isNonRetryableOrderError(msg);
-                    },
-                  }
-                );
+                const created = await retryWithBackoff(() => dynamics.createSalesOrderLine(line), {
+                  label: `D365 sub line ${line.itemNumber}`,
+                  shouldRetry: (err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    return !isNonRetryableOrderError(msg);
+                  },
+                });
                 const lot = created?.InventoryLotId ? String(created.InventoryLotId).trim() : "";
-                return { skipped: false as const, itemNumber: line.itemNumber, inventoryLotId: lot };
+                return {
+                  skipped: false as const,
+                  itemNumber: line.itemNumber,
+                  inventoryLotId: lot,
+                };
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 if (isServiceSkuItemNumber(line.itemNumber) && isD365ItemNotFoundError(msg)) {
@@ -527,7 +538,9 @@ export const processSubscriptionOrder = inngest.createFunction(
         const d365InventoryLotsBySku: Record<string, string> = {};
         for (const r of lineResults) {
           if (r.skipped) continue;
-          const sku = String(r.itemNumber || "").trim().toUpperCase();
+          const sku = String(r.itemNumber || "")
+            .trim()
+            .toUpperCase();
           const lot = "inventoryLotId" in r ? String(r.inventoryLotId || "").trim() : "";
           if (sku && lot) d365InventoryLotsBySku[sku] = lot;
         }
@@ -587,9 +600,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (isNonRetryableOrderError(errorMsg)) {
-        throw new NonRetriableError(
-          `[D365_NON_RETRYABLE] ${shopifyOrderName}: ${errorMsg}`
-        );
+        throw new NonRetriableError(`[D365_NON_RETRYABLE] ${shopifyOrderName}: ${errorMsg}`);
       }
       throw error;
     }
@@ -694,17 +705,20 @@ export const processSubscriptionOrder = inngest.createFunction(
     await step.run("notify-cs-platform", async () => {
       try {
         const finalStatus = gpsResult.status === "backorder" ? "backorder" : "completed";
-        await csPlatform.sendOrderUpdate({
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber,
-          status: finalStatus,
-          warehouse: warehouseName,
-          subscriptionContractId,
-        }, {
-          inngestIdempotencyKey,
-          inngestRunId: _runId || undefined,
-        });
+        await csPlatform.sendOrderUpdate(
+          {
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber,
+            status: finalStatus,
+            warehouse: warehouseName,
+            subscriptionContractId,
+          },
+          {
+            inngestIdempotencyKey,
+            inngestRunId: _runId || undefined,
+          }
+        );
       } catch (err) {
         console.warn(`[Subscription] CS Platform notify failed:`, err);
       }

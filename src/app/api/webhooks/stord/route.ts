@@ -32,10 +32,7 @@ export async function POST(request: NextRequest) {
     const validation = validateWebhookSchema(stordWebhookSchema, payload);
     if (!validation.success) {
       console.error(`[Webhook] Invalid STORD payload: ${validation.error}`);
-      return NextResponse.json(
-        { error: `Invalid payload: ${validation.error}` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Invalid payload: ${validation.error}` }, { status: 400 });
     }
 
     const typedPayload = validation.data;
@@ -45,8 +42,7 @@ export async function POST(request: NextRequest) {
 
     // Send event to Inngest with event-level idempotency
     const stordOrderId = String(typedPayload.orderId || typedPayload.id || "");
-    const trackingNumber =
-      typedPayload.trackingNumber || typedPayload.tracking?.number || "";
+    const trackingNumber = typedPayload.trackingNumber || typedPayload.tracking?.number || "";
 
     await inngest.send({
       // Event-level idempotency: unique per order + tracking number
@@ -54,9 +50,7 @@ export async function POST(request: NextRequest) {
       name: "stord/fulfilment.received",
       data: {
         stordOrderId,
-        shopifyOrderId: String(
-          typedPayload.externalOrderId || typedPayload.shopifyOrderId || ""
-        ),
+        shopifyOrderId: String(typedPayload.externalOrderId || typedPayload.shopifyOrderId || ""),
         trackingNumber,
         carrierCode: typedPayload.carrier || typedPayload.tracking?.carrier || "",
         fulfilmentJson: typedPayload,

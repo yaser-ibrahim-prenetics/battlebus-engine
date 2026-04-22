@@ -47,7 +47,9 @@ export const mockGps = {
     if (state.oosSkus.size > 0) {
       const matchedSku = payload.productList?.find((p: any) => state.oosSkus.has(p.sku));
       if (matchedSku) {
-        throw new Error(`GPS inventory error for ${payload.platformOrderNo}: ${matchedSku.sku}库存不足`);
+        throw new Error(
+          `GPS inventory error for ${payload.platformOrderNo}: ${matchedSku.sku}库存不足`
+        );
       }
     }
     if (state.failOnCreate) {

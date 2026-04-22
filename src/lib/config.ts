@@ -67,9 +67,7 @@ export const config = {
     clientSecret: process.env.D365_CLIENT_SECRET || "",
     scope:
       process.env.D365_SCOPE ||
-      (process.env.D365_BASE_URL
-        ? `${process.env.D365_BASE_URL}/.default`
-        : ""),
+      (process.env.D365_BASE_URL ? `${process.env.D365_BASE_URL}/.default` : ""),
     resource: process.env.D365_RESOURCE || "",
     dataAreaId: process.env.D365_DATA_AREA_ID || "U001",
   },
@@ -148,10 +146,7 @@ export const config = {
 
   // CS Platform (Battle Hub) Configuration
   csPlatform: {
-    baseUrl:
-      process.env.CS_PLATFORM_URL ||
-      process.env.BATTLE_CS_URL ||
-      "",
+    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_CS_URL || "",
     webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "",
     enabled: process.env.CS_PLATFORM_ENABLED !== "false",
   },
@@ -208,8 +203,7 @@ export const config = {
      * internal events, but won't call Shopify createFulfillment unless this is
      * explicitly set to true.
      */
-    enableShopifyFulfillmentWriteback:
-      process.env.ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK === "true",
+    enableShopifyFulfillmentWriteback: process.env.ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK === "true",
     enabledShopifyRiskCheck: false,
     enabledShopifyRiskMock: false,
     enabledShopifyOrderMock: false,
@@ -223,8 +217,7 @@ export const config = {
      * Controls the scheduled product inventory reconciliation cron only.
      * Manual inventory reconciliation endpoints/events remain available.
      */
-    enableProductInventorySyncCron:
-      process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON !== "false",
+    enableProductInventorySyncCron: process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON !== "false",
     enabledGpsOutboundMock: false,
     /**
      * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
@@ -300,8 +293,12 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     if (!config.gps.apiKey) errors.push("GPS_API_KEY is required (US warehouse credentials)");
     if (!config.gps.apiSecret) errors.push("GPS_API_SECRET is required (US warehouse credentials)");
 
-    if (!config.gpsUk.apiKey) errors.push("GPS_UK_API_KEY is required (UK warehouse credentials — must differ from GPS_API_KEY)");
-    if (!config.gpsUk.apiSecret) errors.push("GPS_UK_API_SECRET is required (UK warehouse credentials)");
+    if (!config.gpsUk.apiKey)
+      errors.push(
+        "GPS_UK_API_KEY is required (UK warehouse credentials — must differ from GPS_API_KEY)"
+      );
+    if (!config.gpsUk.apiSecret)
+      errors.push("GPS_UK_API_SECRET is required (UK warehouse credentials)");
 
     if (config.gps.apiKey && config.gpsUk.apiKey && config.gps.apiKey === config.gpsUk.apiKey) {
       console.warn(
@@ -325,9 +322,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
       config.shopify.storeMode === "production"
         ? "SHOPIFY_PROD_ACCESS_TOKEN"
         : "SHOPIFY_TEST_ACCESS_TOKEN";
-    errors.push(
-      `${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`
-    );
+    errors.push(`${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`);
   }
 
   if (!config.shopify.im8.shopDomain) {
@@ -335,9 +330,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
       config.shopify.storeMode === "production"
         ? "SHOPIFY_PROD_SHOP_DOMAIN"
         : "SHOPIFY_TEST_SHOP_DOMAIN";
-    errors.push(
-      `${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`
-    );
+    errors.push(`${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`);
   }
 
   if (config.csPlatform.enabled) {

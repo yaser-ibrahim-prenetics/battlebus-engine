@@ -30,7 +30,13 @@ export const processGpsBatch = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
 
-    logFlowEvent({ flow: "gps_batch", step: "start", status: "started", runId: _runId, payload: { batchId, orderCount: gpsOrderIds?.length, warehouse } });
+    logFlowEvent({
+      flow: "gps_batch",
+      step: "start",
+      status: "started",
+      runId: _runId,
+      payload: { batchId, orderCount: gpsOrderIds?.length, warehouse },
+    });
 
     console.log(`[GPS Batch] Starting batch ${batchId} with ${gpsOrderIds.length} orders`);
 
@@ -156,7 +162,14 @@ export const processGpsBatch = inngest.createFunction(
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
     });
 
-    logFlowEvent({ flow: "gps_batch", step: "done", status: "completed", runId: _runId, durationMs: Date.now() - _flowStart, payload: { batchId, eventsTriggered: eventResults.length, validOrders: validOrders.length } });
+    logFlowEvent({
+      flow: "gps_batch",
+      step: "done",
+      status: "completed",
+      runId: _runId,
+      durationMs: Date.now() - _flowStart,
+      payload: { batchId, eventsTriggered: eventResults.length, validOrders: validOrders.length },
+    });
     return {
       batchId,
       status: "completed",

@@ -50,17 +50,11 @@ function projectId(project: string): string {
 function deployHookUrl(project: string): string {
   const p = normalizeProject(project);
   if (p === "hub") {
-    return (
-      process.env.VERCEL_HUB_DEPLOY_HOOK_URL ||
-      process.env.VERCEL_DEPLOY_HOOK_URL_HUB ||
-      ""
-    );
+    return process.env.VERCEL_HUB_DEPLOY_HOOK_URL || process.env.VERCEL_DEPLOY_HOOK_URL_HUB || "";
   }
   if (p === "inngest") {
     return (
-      process.env.VERCEL_INNGEST_DEPLOY_HOOK_URL ||
-      process.env.VERCEL_DEPLOY_HOOK_URL_INNGEST ||
-      ""
+      process.env.VERCEL_INNGEST_DEPLOY_HOOK_URL || process.env.VERCEL_DEPLOY_HOOK_URL_INNGEST || ""
     );
   }
   return "";

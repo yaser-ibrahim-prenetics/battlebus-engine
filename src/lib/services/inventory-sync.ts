@@ -108,7 +108,9 @@ async function getWarehouseMappings(): Promise<WarehouseMapping[]> {
   return _warehouseMappingsCache;
 }
 
-export async function getWarehouseMapping(identifier: string): Promise<WarehouseMapping | undefined> {
+export async function getWarehouseMapping(
+  identifier: string
+): Promise<WarehouseMapping | undefined> {
   const mappings = await getWarehouseMappings();
   return mappings.find(
     (m) =>

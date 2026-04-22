@@ -1,12 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loadFixture } from "../fixtures";
 import { createInngestHarness } from "../helpers/inngest-harness";
-import {
-  mockGps,
-  resetMockGps,
-  setGpsCancelFailure,
-  getMockGpsState,
-} from "../mocks/gps";
+import { mockGps, resetMockGps, setGpsCancelFailure, getMockGpsState } from "../mocks/gps";
 import {
   mockDynamics,
   resetMockD365,
@@ -84,7 +79,10 @@ describe("Order Cancellation Flow (Integration)", () => {
 
       // Step 3: D365 cancellation (delete since GPS succeeded)
       const d365Cancellation = await harness.step.run("process-d365-cancellation", async () => {
-        await mockDynamics.deleteSalesOrderHeaderV3(d365Order.dataAreaId, d365Order.SalesOrderNumber);
+        await mockDynamics.deleteSalesOrderHeaderV3(
+          d365Order.dataAreaId,
+          d365Order.SalesOrderNumber
+        );
         return { status: "success", action: "cancel_order" };
       });
 
@@ -213,7 +211,10 @@ describe("Order Cancellation Flow (Integration)", () => {
           gpsCancellation.status === "cancelled" || gpsCancellation.status === "skipped";
 
         if (isGpsCancelled) {
-          await mockDynamics.deleteSalesOrderHeaderV3(d365Order.dataAreaId, d365Order.SalesOrderNumber);
+          await mockDynamics.deleteSalesOrderHeaderV3(
+            d365Order.dataAreaId,
+            d365Order.SalesOrderNumber
+          );
           return { status: "success", action: "cancel_order" };
         }
         return { status: "manual_required" };
@@ -253,8 +254,8 @@ describe("Order Cancellation Flow (Integration)", () => {
       });
 
       const legacyMetafields = await mockShopify.getOrderMetafields(shopifyOrderId);
-      const legacyUkMf = legacyMetafields.find(
-        (mf: any) => String(mf.key).toLowerCase().includes("gpsukorderid")
+      const legacyUkMf = legacyMetafields.find((mf: any) =>
+        String(mf.key).toLowerCase().includes("gpsukorderid")
       );
 
       expect(legacyUkMf).toBeDefined();

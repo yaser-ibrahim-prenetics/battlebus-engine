@@ -98,7 +98,7 @@ If GPS metadata is not found and GPS sync is enabled, the cancellation is deferr
 
 ## Summary
 
-| Order Type | GPS Action | D365 Action | Shopify Action |
-|---|---|---|---|
-| GPS order | Cancel via OMS API | None | Uncancel if GPS cancel fails |
-| Non-GPS order | None | None | None |
+| Order Type    | GPS Action         | D365 Action | Shopify Action               |
+| ------------- | ------------------ | ----------- | ---------------------------- |
+| GPS order     | Cancel via OMS API | None        | Uncancel if GPS cancel fails |
+| Non-GPS order | None               | None        | None                         |

@@ -62,7 +62,9 @@ async function pingShop(
   }
 
   try {
-    const data = JSON.parse(text) as { shop?: { name?: string; myshopify_domain?: string; id?: number } };
+    const data = JSON.parse(text) as {
+      shop?: { name?: string; myshopify_domain?: string; id?: number };
+    };
     const sh = data.shop;
     console.log(`HTTP ${res.status} OK`);
     console.log(
@@ -133,7 +135,14 @@ function parseFlagArg(argv: string[], flag: string): string | undefined {
 }
 
 /** Versions to try when diagnosing order 403 (legacy REST uses same path; there is no pre-scope "legacy" orders API). */
-const DEFAULT_ORDER_API_VERSIONS = ["2024-04", "2024-07", "2024-10", "2025-01", "2025-04", "unstable"];
+const DEFAULT_ORDER_API_VERSIONS = [
+  "2024-04",
+  "2024-07",
+  "2024-10",
+  "2025-01",
+  "2025-04",
+  "unstable",
+];
 
 async function probeOrderAcrossVersions(
   orderId: string,
@@ -162,8 +171,7 @@ const testOnly = args.includes("--test-only");
 const orderId = parseOrderId(args);
 const apiVersionCli = parseFlagArg(args, "--api-version");
 
-const ver =
-  process.env.SHOPIFY_API_VERSION || process.env.SHOPIFY_PROD_API_VERSION || "2024-07";
+const ver = process.env.SHOPIFY_API_VERSION || process.env.SHOPIFY_PROD_API_VERSION || "2024-07";
 
 async function main() {
   if (args.includes("--probe-order-versions")) {

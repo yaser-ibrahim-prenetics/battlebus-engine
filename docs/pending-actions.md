@@ -34,10 +34,12 @@ orders/created    ──────>  process-shopify-order
 ## Event: `order/lifecycle.ready`
 
 Emitted by:
+
 - `process-shopify-order` — after successful D365 + GPS creation
 - `process-backorder` — after successful GPS retry (manual or auto)
 
 Data:
+
 ```typescript
 {
   shopifyOrderId: string;
@@ -56,22 +58,22 @@ Stored in `orders.pending_actions` (JSONB array):
 ```typescript
 {
   action: "fulfill" | "cancel" | "refund";
-  eventName: string;       // Original Inngest event name
-  eventData: object;       // Original event.data payload
-  createdAt: string;       // ISO timestamp when deferred
+  eventName: string; // Original Inngest event name
+  eventData: object; // Original event.data payload
+  createdAt: string; // ISO timestamp when deferred
 }
 ```
 
 ## Edge Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| Order creation fails permanently | Actions stay queued. Manual rerun of order creation drains on success. |
-| Multiple fulfillments/refunds stacked | Each is a separate array entry; drain emits all. |
-| Cancel + fulfill both pending | Cancel takes priority; drain skips fulfillment events. |
-| Action already processed | Idempotency keys on re-emitted events prevent double-processing. |
-| Drain fires but D365 still missing | Functions detect `fromDrain: true` and return `failed` instead of deferring again (no infinite loop). |
-| Backorder resolves | `process-backorder` emits `order/lifecycle.ready`, triggering drain. |
+| Scenario                              | Behavior                                                                                              |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Order creation fails permanently      | Actions stay queued. Manual rerun of order creation drains on success.                                |
+| Multiple fulfillments/refunds stacked | Each is a separate array entry; drain emits all.                                                      |
+| Cancel + fulfill both pending         | Cancel takes priority; drain skips fulfillment events.                                                |
+| Action already processed              | Idempotency keys on re-emitted events prevent double-processing.                                      |
+| Drain fires but D365 still missing    | Functions detect `fromDrain: true` and return `failed` instead of deferring again (no infinite loop). |
+| Backorder resolves                    | `process-backorder` emits `order/lifecycle.ready`, triggering drain.                                  |
 
 ## Battle Hub Visibility
 
@@ -99,16 +101,16 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_actions JSONB DEFAULT '[]'::
 
 ## Files
 
-| File | Role |
-|------|------|
-| `inngest/src/inngest/events.ts` | `OrderLifecycleReadyEvent` type definition |
-| `inngest/src/lib/services/pending-actions.ts` | `storePendingAction`, `getPendingActions`, `clearPendingActions` |
-| `inngest/src/inngest/functions/drain-pending-actions.ts` | Drains queued actions on `order/lifecycle.ready` |
-| `inngest/src/inngest/functions/process-shopify-fulfillment.ts` | Defers fulfillment when D365 missing |
-| `inngest/src/inngest/functions/process-order-cancellation.ts` | Defers cancellation when D365+GPS both missing |
-| `inngest/src/inngest/functions/process-refund.ts` | Defers refund when D365 missing |
-| `inngest/src/inngest/functions/process-shopify-order.ts` | Emits `order/lifecycle.ready` on success |
-| `inngest/src/inngest/functions/process-backorder.ts` | Emits `order/lifecycle.ready` on GPS success |
-| `hub/api/orders/pending-actions.ts` | Hub API for reading/writing pending actions |
-| `hub/supabase/migrations/002_add_pending_actions.sql` | Schema migration |
-| `hub/src/features/orders/components/order-detail-dialog.tsx` | UI indicator for queued pending actions |
+| File                                                           | Role                                                             |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `inngest/src/inngest/events.ts`                                | `OrderLifecycleReadyEvent` type definition                       |
+| `inngest/src/lib/services/pending-actions.ts`                  | `storePendingAction`, `getPendingActions`, `clearPendingActions` |
+| `inngest/src/inngest/functions/drain-pending-actions.ts`       | Drains queued actions on `order/lifecycle.ready`                 |
+| `inngest/src/inngest/functions/process-shopify-fulfillment.ts` | Defers fulfillment when D365 missing                             |
+| `inngest/src/inngest/functions/process-order-cancellation.ts`  | Defers cancellation when D365+GPS both missing                   |
+| `inngest/src/inngest/functions/process-refund.ts`              | Defers refund when D365 missing                                  |
+| `inngest/src/inngest/functions/process-shopify-order.ts`       | Emits `order/lifecycle.ready` on success                         |
+| `inngest/src/inngest/functions/process-backorder.ts`           | Emits `order/lifecycle.ready` on GPS success                     |
+| `hub/api/orders/pending-actions.ts`                            | Hub API for reading/writing pending actions                      |
+| `hub/supabase/migrations/002_add_pending_actions.sql`          | Schema migration                                                 |
+| `hub/src/features/orders/components/order-detail-dialog.tsx`   | UI indicator for queued pending actions                          |

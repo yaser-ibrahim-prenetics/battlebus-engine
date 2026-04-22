@@ -128,8 +128,7 @@ function getAllowedOrigins(): string[] {
 
 function buildCorsHeaders(origin: string | null): HeadersInit {
   const allowedOrigins = getAllowedOrigins();
-  const allowOrigin =
-    origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
 
   return {
     "Access-Control-Allow-Origin": allowOrigin,
@@ -303,10 +302,9 @@ async function fetchShopifyProducts(): Promise<TestProduct[]> {
 }
 
 async function fetchNextShopifyStyleOrderNumber(): Promise<number> {
-  const res = await fetch(
-    shopifyUrl("/orders.json?status=any&limit=50&fields=name"),
-    { headers: shopifyHeaders() }
-  );
+  const res = await fetch(shopifyUrl("/orders.json?status=any&limit=50&fields=name"), {
+    headers: shopifyHeaders(),
+  });
 
   if (!res.ok) {
     throw new Error(`Shopify recent orders error: ${res.status}`);

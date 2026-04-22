@@ -190,10 +190,7 @@ export const d365E2e = {
     return data.value?.[0] || null;
   },
 
-  async getSalesOrderLines(
-    salesOrderNumber: string,
-    dataAreaId?: string
-  ): Promise<any[]> {
+  async getSalesOrderLines(salesOrderNumber: string, dataAreaId?: string): Promise<any[]> {
     const area = dataAreaId || config.dynamics.dataAreaId;
     const url =
       `${config.dynamics.baseUrl}/data/SalesOrderLines?cross-company=true` +
@@ -206,13 +203,9 @@ export const d365E2e = {
     return data.value || [];
   },
 
-  async deleteSalesOrder(
-    salesOrderNumber: string,
-    dataAreaId?: string
-  ): Promise<boolean> {
+  async deleteSalesOrder(salesOrderNumber: string, dataAreaId?: string): Promise<boolean> {
     const area = dataAreaId || config.dynamics.dataAreaId;
-    const url =
-      `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2(dataAreaId='${area}',SalesOrderNumber='${salesOrderNumber}')`;
+    const url = `${config.dynamics.baseUrl}/data/SalesOrderHeadersV2(dataAreaId='${area}',SalesOrderNumber='${salesOrderNumber}')`;
 
     const headers = await d365Headers();
     const res = await fetch(url, { method: "DELETE", headers });
@@ -240,10 +233,7 @@ function getGpsCredentials(warehouse: "GPS Warehouse" | "GPS UK Warehouse") {
 function generateGpsAuthCode(apiKey: string, apiSecret: string): string {
   const timestamp = Math.floor(Date.now() / 1000);
   const crypto = require("crypto");
-  const sign = crypto
-    .createHmac("md5", apiSecret)
-    .update(`${apiKey}${timestamp}`)
-    .digest("hex");
+  const sign = crypto.createHmac("md5", apiSecret).update(`${apiKey}${timestamp}`).digest("hex");
   return `${apiKey},${sign},${timestamp}`;
 }
 

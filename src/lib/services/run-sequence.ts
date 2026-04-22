@@ -9,11 +9,7 @@
 
 import { inngest } from "@/inngest/client";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import type {
-  RunSequenceStage,
-  ShopifyOrderPayload,
-  ShopifyFulfillment,
-} from "@/inngest/events";
+import type { RunSequenceStage, ShopifyOrderPayload, ShopifyFulfillment } from "@/inngest/events";
 
 export type AdvanceRunSequenceParams = {
   /** Shopify order id used by the Hub `orders` table. */

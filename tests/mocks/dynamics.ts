@@ -29,7 +29,10 @@ export function getMockD365State() {
   return state;
 }
 
-export function setMockD365Failure(key: keyof Pick<MockD365State, "failOnCreate" | "failOnLine" | "failOnDelete">, val = true) {
+export function setMockD365Failure(
+  key: keyof Pick<MockD365State, "failOnCreate" | "failOnLine" | "failOnDelete">,
+  val = true
+) {
   state[key] = val;
 }
 

@@ -25,10 +25,7 @@ import {
   determineWarehouse,
 } from "@/lib/helpers/warehouse";
 import { isServiceSku } from "@/lib/transformers/sku";
-import {
-  toD365SalesOrderHeaderV3,
-  toD365SalesOrderLines,
-} from "@/lib/transformers/order";
+import { toD365SalesOrderHeaderV3, toD365SalesOrderLines } from "@/lib/transformers/order";
 import { loadFixture } from "../fixtures";
 
 const envCheck = validateE2eEnv();
@@ -175,7 +172,7 @@ describe("E2E: Refund Flow", () => {
       await dynamics.confirmSalesOrder(salesOrderNumber, "U001");
 
       // Create refund line
-      const refundAmount = 25.00;
+      const refundAmount = 25.0;
       const refundLineResult = await dynamics.createSalesOrderLine({
         salesOrderNumber,
         dataAreaId: "U001",

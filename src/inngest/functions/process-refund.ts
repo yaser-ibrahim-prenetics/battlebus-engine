@@ -17,10 +17,7 @@ import {
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
-import {
-  hasCompletedRefundFlowLog,
-  logFlowEvent,
-} from "@/lib/services/supabase-flow-logs";
+import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/supabase-flow-logs";
 import { saveRefundOrderLine } from "@/lib/services/supabase-order-lines";
 
 export const processRefund = inngest.createFunction(
@@ -62,7 +59,14 @@ export const processRefund = inngest.createFunction(
       fromDrain: Boolean((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain),
     });
 
-    logFlowEvent({ flow: "refund", step: "start", status: "started", runId, shopifyOrderId: String(shopifyOrderId), payload: { refundId: String(refundId) } });
+    logFlowEvent({
+      flow: "refund",
+      step: "start",
+      status: "started",
+      runId,
+      shopifyOrderId: String(shopifyOrderId),
+      payload: { refundId: String(refundId) },
+    });
 
     if (config.features.dryRunMode) {
       return {
@@ -205,11 +209,7 @@ export const processRefund = inngest.createFunction(
     // 3. Refund SKU + return sites: legal entity comes from the D365 header (dataAreaId).
     // Return warehouse / location must match that entity’s profile — not shipping country alone.
     const warehouseInfo = await step.run("determine-warehouse-info", async () => {
-      let dataAreaId = (
-        d365Order?.dataAreaId ||
-        config.dynamics.dataAreaId ||
-        ""
-      )
+      let dataAreaId = (d365Order?.dataAreaId || config.dynamics.dataAreaId || "")
         .toUpperCase()
         .trim();
       if (!dataAreaId) {
@@ -253,17 +253,11 @@ export const processRefund = inngest.createFunction(
           };
         }
 
-        let exchangeRate = exchangeHelper.extractExchangeRateFromRefundReceipt(
-          refund,
-          "USD"
-        );
+        let exchangeRate = exchangeHelper.extractExchangeRateFromRefundReceipt(refund, "USD");
 
         if (!exchangeRate) {
           const transactions = shopifyOrder.transactions || refund.transactions || [];
-          exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(
-            transactions,
-            "USD"
-          );
+          exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(transactions, "USD");
         }
 
         if (!exchangeRate) {
@@ -453,15 +447,15 @@ export const processRefund = inngest.createFunction(
           refund_sku: warehouseInfo.refundSku,
           d365_sales_order_number: d365Order?.SalesOrderNumber ?? null,
           data_area_id:
-            (d365Order?.dataAreaId || warehouseInfo.dataAreaId || config.dynamics.dataAreaId) ?? null,
+            (d365Order?.dataAreaId || warehouseInfo.dataAreaId || config.dynamics.dataAreaId) ??
+            null,
           refund_amount_usd: refundAmountUsd,
           dynamics_inventory_lot_id: refundLine.InventoryLotId ?? null,
           is_fulfilled_to_dynamics: fulfillment.status === "success",
           credit_note_number: creditNoteNumber ?? null,
           exchange_rate: exchangeRateInfo?.rate ?? null,
           exchange_rate_source: exchangeRateInfo?.source ?? null,
-          source_currency:
-            exchangeRateInfo?.from ?? (shopifyOrder.currency || "USD").toUpperCase(),
+          source_currency: exchangeRateInfo?.from ?? (shopifyOrder.currency || "USD").toUpperCase(),
         });
       });
     }
@@ -495,7 +489,17 @@ export const processRefund = inngest.createFunction(
       refundType,
     });
 
-    logFlowEvent({ flow: "refund", step: "done", status: "completed", runId, shopifyOrderId: String(shopifyOrderId), shopifyOrderName: shopifyOrder.name, d365OrderNumber: d365Order?.SalesOrderNumber, durationMs: Date.now() - _flowStart, payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber } });
+    logFlowEvent({
+      flow: "refund",
+      step: "done",
+      status: "completed",
+      runId,
+      shopifyOrderId: String(shopifyOrderId),
+      shopifyOrderName: shopifyOrder.name,
+      d365OrderNumber: d365Order?.SalesOrderNumber,
+      durationMs: Date.now() - _flowStart,
+      payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber },
+    });
     return result;
   }
 );

@@ -82,9 +82,7 @@
       "tax_lines": []
     }
   ],
-  "discount_codes": [
-    { "code": "SUBSCRIBE10", "amount": "6.00", "type": "percentage" }
-  ],
+  "discount_codes": [{ "code": "SUBSCRIBE10", "amount": "6.00", "type": "percentage" }],
   "customer": {
     "id": 7040,
     "email": "subscriber@example.com",

@@ -76,10 +76,7 @@ describe("supabase-order-lines (unit)", () => {
   });
 
   it("only returns unfulfilled service lines (not already-fulfilled ones)", () => {
-    const lines = [
-      { ...shippingLine, is_fulfilled_to_dynamics: true },
-      taxLine,
-    ];
+    const lines = [{ ...shippingLine, is_fulfilled_to_dynamics: true }, taxLine];
     const result = filterUnfulfilledServiceLines(lines);
     expect(result).toHaveLength(1);
     expect(result[0].shopify_line_item_id).toBe(SHOPIFY_TAX_LINE_ITEM_ID);

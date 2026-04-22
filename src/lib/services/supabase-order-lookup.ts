@@ -73,9 +73,7 @@ export async function fetchD365HintByShopifyOrderId(
     for (const column of ["shopify_order_name", "order_number", "id"] as const) {
       const { data, error } = await base().eq(column, v).limit(1).maybeSingle();
       if (error) {
-        console.warn(
-          `[SupabaseOrderLookup] ${column}=${v} query failed: ${error.message}`
-        );
+        console.warn(`[SupabaseOrderLookup] ${column}=${v} query failed: ${error.message}`);
         continue;
       }
       const hint = rowToHint(data ?? null);
@@ -111,8 +109,7 @@ export async function fetchD365InventoryLotsByShopifyOrder(
   const supabase = getClient();
   if (!supabase) return null;
 
-  const base = () =>
-    supabase.from("orders").select("state").not("state", "is", null);
+  const base = () => supabase.from("orders").select("state").not("state", "is", null);
 
   const extractLots = (row: Record<string, unknown> | null): Record<string, string> | null => {
     const state = row?.state as Record<string, unknown> | null | undefined;
@@ -131,9 +128,7 @@ export async function fetchD365InventoryLotsByShopifyOrder(
     for (const column of ["shopify_order_name", "order_number", "id"] as const) {
       const { data, error } = await base().eq(column, v).limit(1).maybeSingle();
       if (error) {
-        console.warn(
-          `[SupabaseOrderLookup] state fetch ${column}=${v} failed: ${error.message}`
-        );
+        console.warn(`[SupabaseOrderLookup] state fetch ${column}=${v} failed: ${error.message}`);
         continue;
       }
       const lots = extractLots(data ?? null);

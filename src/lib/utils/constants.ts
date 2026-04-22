@@ -11,8 +11,7 @@ function safeParseInt(value: string | undefined, defaultValue: number): number {
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
-const envInt = (key: string, fallback: number): number =>
-  safeParseInt(process.env[key], fallback);
+const envInt = (key: string, fallback: number): number => safeParseInt(process.env[key], fallback);
 
 // ============================================================================
 // THROTTLE CONFIGURATIONS
@@ -219,8 +218,9 @@ export const TAG_WAIT_DURATION = process.env.TAG_WAIT_DURATION || "5m";
 // ============================================================================
 // How long to wait for Skio to apply subscription tags before proceeding.
 // Reduced from 15m to 5m — if tags aren't applied, process anyway and alert.
-export const SUBSCRIPTION_TAG_WAIT_MINUTES = envInt('SUBSCRIPTION_TAG_WAIT_MINUTES', 5);
-export const SUBSCRIPTION_TAG_WAIT_WARN_ENABLED = process.env.SUBSCRIPTION_TAG_WAIT_WARN !== 'false';
+export const SUBSCRIPTION_TAG_WAIT_MINUTES = envInt("SUBSCRIPTION_TAG_WAIT_MINUTES", 5);
+export const SUBSCRIPTION_TAG_WAIT_WARN_ENABLED =
+  process.env.SUBSCRIPTION_TAG_WAIT_WARN !== "false";
 
 // ============================================================================
 // BACKORDER CONFIGURATIONS

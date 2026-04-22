@@ -93,10 +93,10 @@ For manual GPS fulfillment from Battle Hub:
 
 ## D365 API Calls
 
-| Step | D365 Endpoint | Purpose |
-|---|---|---|
-| Packing slip | `POST .../THK_APISyncService_Shopify/fulfilment` | Creates packing slip (type: "PackingSlip") |
-| Prepayment | `POST .../THK_APISyncService_Shopify/PostPrepayment` | Posts prepayment / invoice |
+| Step         | D365 Endpoint                                        | Purpose                                    |
+| ------------ | ---------------------------------------------------- | ------------------------------------------ |
+| Packing slip | `POST .../THK_APISyncService_Shopify/fulfilment`     | Creates packing slip (type: "PackingSlip") |
+| Prepayment   | `POST .../THK_APISyncService_Shopify/PostPrepayment` | Posts prepayment / invoice                 |
 
 ## Deferred Fulfillments
 
@@ -115,9 +115,9 @@ If the D365 order is not yet created when the fulfillment arrives:
 
 ## Summary
 
-| Source | GPS Check | D365 Packing Slip | D365 Prepayment | PayPal Sync |
-|---|---|---|---|---|
-| Stord webhook | N/A (non-GPS) | Yes | Yes | Yes |
-| GPS cron (fromGpsSync) | Already shipped | Yes | Yes | Yes |
-| Hub manual (fromManualFulfillment) | Must be status 3 | Yes | Yes | Yes |
-| Webhook echo (no flag) | Skipped | - | - | - |
+| Source                             | GPS Check        | D365 Packing Slip | D365 Prepayment | PayPal Sync |
+| ---------------------------------- | ---------------- | ----------------- | --------------- | ----------- |
+| Stord webhook                      | N/A (non-GPS)    | Yes               | Yes             | Yes         |
+| GPS cron (fromGpsSync)             | Already shipped  | Yes               | Yes             | Yes         |
+| Hub manual (fromManualFulfillment) | Must be status 3 | Yes               | Yes             | Yes         |
+| Webhook echo (no flag)             | Skipped          | -                 | -               | -           |

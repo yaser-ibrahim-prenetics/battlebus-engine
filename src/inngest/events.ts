@@ -298,11 +298,13 @@ export type BackorderRetryEvent = {
     d365OrderNumber: string;
     warehouse: string;
     retryCount: number;
-    triggeredBy: "auto" | "manual";
+    triggeredBy: "auto" | "manual" | "manual_bulk";
     sourceEventName?: string;
     failureStage?: "order_creation" | "fulfillment";
     failureSystem?: "d365" | "gps";
     retryMode?: "gps_outbound" | "fulfillment_replay";
+    /** Hub Backorders sub-queue — stored in order state via CS platform update. */
+    backorderQueue?: "sync" | "fulfilment";
     /**
      * Optional ordered list of pipeline stages to run when an order needs
      * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).
@@ -325,10 +327,7 @@ export type RunSequenceStage = {
   /** Logical pipeline stage. */
   stage: "order_creation" | "fulfillment_replay" | "gps_outbound";
   /** Inngest event to dispatch for this stage. */
-  eventName:
-    | "shopify/order.paid"
-    | "shopify/order.fulfilled"
-    | "backorder/retry";
+  eventName: "shopify/order.paid" | "shopify/order.fulfilled" | "backorder/retry";
   /** Lifecycle status surfaced in the Hub UI. */
   status?: "pending" | "in_progress" | "completed" | "failed" | "skipped";
   /** ISO timestamps populated as the stage moves through its lifecycle. */

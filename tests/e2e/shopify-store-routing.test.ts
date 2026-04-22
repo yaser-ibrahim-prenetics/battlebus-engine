@@ -39,9 +39,8 @@ describe("E2E: Shopify store routing (config + webhook HMAC + locations)", () =>
     process.env.SHOPIFY_PROD_LOCATION_GPS = "prod-gps-loc";
     process.env.SHOPIFY_TEST_LOCATION_GPS = "test-gps-loc";
 
-    const { verifyWebhookSignature, resolveShopifyWebhookSecret } = await import(
-      "@/lib/clients/shopify"
-    );
+    const { verifyWebhookSignature, resolveShopifyWebhookSecret } =
+      await import("@/lib/clients/shopify");
     const { config } = await import("@/lib/config");
 
     expect(config.shopify.storeMode).toBe("production");
@@ -72,9 +71,8 @@ describe("E2E: Shopify store routing (config + webhook HMAC + locations)", () =>
     process.env.SHOPIFY_PROD_LOCATION_GPS = "prod-gps-loc";
     process.env.SHOPIFY_TEST_LOCATION_GPS = "test-gps-loc";
 
-    const { verifyWebhookSignature, resolveShopifyWebhookSecret } = await import(
-      "@/lib/clients/shopify"
-    );
+    const { verifyWebhookSignature, resolveShopifyWebhookSecret } =
+      await import("@/lib/clients/shopify");
     const { config } = await import("@/lib/config");
 
     expect(config.shopify.storeMode).toBe("test");
@@ -103,9 +101,8 @@ describe("E2E: Shopify store routing (config + webhook HMAC + locations)", () =>
     process.env.SHOPIFY_PROD_ACCESS_TOKEN = "p";
     process.env.SHOPIFY_TEST_ACCESS_TOKEN = "t";
 
-    const { verifyWebhookSignature, resolveShopifyWebhookSecret } = await import(
-      "@/lib/clients/shopify"
-    );
+    const { verifyWebhookSignature, resolveShopifyWebhookSecret } =
+      await import("@/lib/clients/shopify");
     const { config } = await import("@/lib/config");
 
     expect(config.shopify.im8.shopDomain).toBe(FIXTURE_TEST_HOST);
@@ -168,7 +165,8 @@ describe("E2E: Shopify store routing (config + webhook HMAC + locations)", () =>
     process.env.SHOPIFY_TEST_LOCATION_STORD = "test-loc-stord";
     process.env.SHOPIFY_TEST_LOCATION_HK = "";
 
-    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } = await import("@/lib/mappings/production-location-ids");
+    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } =
+      await import("@/lib/mappings/production-location-ids");
     const gps = ACTIVE_SHOPIFY_LOCATION_MAPPINGS.find((m) => m.warehouseName === "GPS Warehouse");
     const uk = ACTIVE_SHOPIFY_LOCATION_MAPPINGS.find((m) => m.warehouseName === "GPS UK Warehouse");
     expect(gps?.shopifyLocationId).toBe("test-loc-gps");
@@ -190,7 +188,8 @@ describe("E2E: Shopify store routing (config + webhook HMAC + locations)", () =>
     process.env.SHOPIFY_PROD_LOCATION_STORD = "prod-loc-stord";
     process.env.SHOPIFY_PROD_LOCATION_HK = "prod-loc-hk";
 
-    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } = await import("@/lib/mappings/production-location-ids");
+    const { ACTIVE_SHOPIFY_LOCATION_MAPPINGS } =
+      await import("@/lib/mappings/production-location-ids");
     expect(ACTIVE_SHOPIFY_LOCATION_MAPPINGS).toHaveLength(4);
     const ids = new Set(ACTIVE_SHOPIFY_LOCATION_MAPPINGS.map((m) => m.shopifyLocationId));
     expect(ids.has("prod-loc-gps")).toBe(true);

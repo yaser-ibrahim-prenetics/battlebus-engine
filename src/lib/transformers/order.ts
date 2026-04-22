@@ -125,9 +125,7 @@ function buildOrderComment(order: ShopifyOrderPayload): string {
 
   // Add gift card discount codes applied to order
   if (order.discount_codes?.length > 0) {
-    const giftCardDiscounts = order.discount_codes.filter(
-      (d: any) => d.type === "gift_card"
-    );
+    const giftCardDiscounts = order.discount_codes.filter((d: any) => d.type === "gift_card");
     for (const gcd of giftCardDiscounts) {
       parts.push(`Gift Card Applied: ${gcd.code} - $${parseFloat(gcd.amount || "0").toFixed(2)}`);
     }
@@ -135,9 +133,7 @@ function buildOrderComment(order: ShopifyOrderPayload): string {
 
   // Add discount codes (non-gift-card)
   if (order.discount_codes?.length > 0) {
-    const nonGiftCardDiscounts = order.discount_codes.filter(
-      (d: any) => d.type !== "gift_card"
-    );
+    const nonGiftCardDiscounts = order.discount_codes.filter((d: any) => d.type !== "gift_card");
     if (nonGiftCardDiscounts.length > 0) {
       parts.push(`Discount Codes: ${nonGiftCardDiscounts.map((d) => d.code).join(", ")}`);
     }

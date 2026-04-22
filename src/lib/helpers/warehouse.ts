@@ -409,7 +409,10 @@ export function getGpsLogisticsChannel(warehouseName: string): string {
 // Service SKU Helpers
 // ============================================================================
 
-function resolveServiceSkuConfig(warehouseName: string, dataAreaIdOverride?: string): WarehouseConfig {
+function resolveServiceSkuConfig(
+  warehouseName: string,
+  dataAreaIdOverride?: string
+): WarehouseConfig {
   const normalizedDataAreaId = (dataAreaIdOverride || "").toUpperCase();
 
   // If a routed dataAreaId is provided, prefer a profile aligned to it.
@@ -542,7 +545,8 @@ function validateWarehouseConfig(): void {
     if (!w.item?.refund) errors.push(`${name}: missing item.refund`);
     if (!w.item?.shipping) errors.push(`${name}: missing item.shipping`);
     if (!w.fulfilment?.shippingSiteId) errors.push(`${name}: missing fulfilment.shippingSiteId`);
-    if (!w.fulfilment?.shippingWarehouseId) errors.push(`${name}: missing fulfilment.shippingWarehouseId`);
+    if (!w.fulfilment?.shippingWarehouseId)
+      errors.push(`${name}: missing fulfilment.shippingWarehouseId`);
   }
 
   for (const [country, warehouse] of Object.entries(warehouseConfig.countryRouting)) {
@@ -564,7 +568,9 @@ function validateWarehouseConfig(): void {
   }
 
   if (!warehouseNames.includes(warehouseConfig.defaultWarehouse)) {
-    errors.push(`defaultWarehouse references unknown warehouse: ${warehouseConfig.defaultWarehouse}`);
+    errors.push(
+      `defaultWarehouse references unknown warehouse: ${warehouseConfig.defaultWarehouse}`
+    );
   }
 
   if (errors.length > 0) {

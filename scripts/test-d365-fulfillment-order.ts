@@ -73,8 +73,7 @@ async function main() {
   const line2Item = process.env.D365_TEST_LINE2_ITEM || "IM8-FG-000011";
   const line2Lot = process.env.D365_TEST_LINE2_LOT || "H007-339178";
 
-  const endpoint =
-    `${baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`;
+  const endpoint = `${baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`;
   const requestBody = {
     _dataContract: {
       DataAreaId: dataAreaId,
@@ -153,4 +152,3 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });
-

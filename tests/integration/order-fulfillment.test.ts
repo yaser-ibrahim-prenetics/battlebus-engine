@@ -1,21 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createInngestHarness } from "../helpers/inngest-harness";
-import {
-  mockDynamics,
-  resetMockD365,
-} from "../mocks/dynamics";
-import {
-  mockShopify,
-  resetMockShopify,
-} from "../mocks/shopify";
+import { mockDynamics, resetMockD365 } from "../mocks/dynamics";
+import { mockShopify, resetMockShopify } from "../mocks/shopify";
 import { mockSlack, resetMockSlack } from "../mocks/slack";
 import { mockCsPlatform, resetMockCsPlatform } from "../mocks/cs-platform";
 import { mockPaypal } from "../mocks/paypal";
-import {
-  isDummyFulfillment,
-  isGpsFulfillment,
-  filterDummySkus,
-} from "@/lib/utils/validation";
+import { isDummyFulfillment, isGpsFulfillment, filterDummySkus } from "@/lib/utils/validation";
 import type { ShopifyFulfillment, ShopifyFulfillmentLineItem } from "@/inngest/events";
 
 describe("Order Fulfillment Flow (Integration)", () => {

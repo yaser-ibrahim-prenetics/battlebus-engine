@@ -4,16 +4,16 @@ Battle Bus uses **environment variables** for GPS credentials. Spock Store store
 
 ## Quick copy: Battle Bus ↔ Spock Store
 
-| Battle Bus env var | Spock Store `api.json` path | Notes |
-|--------------------|-----------------------------|-------|
-| `GPS_BASE_URL` | `gps.baseUrl` | Typically `https://api.xlwms.com` |
-| `GPS_API_KEY` | `gps.warehouse["GPS Warehouse"].authentication.appKey` | **US** outbound / JFK |
-| `GPS_API_SECRET` | `gps.warehouse["GPS Warehouse"].authentication.appSecret` | **US** |
-| `GPS_WAREHOUSE_CODE` | `gps.warehouse["GPS Warehouse"].code` | Optional; default `JFK01W` |
-| `GPS_UK_API_KEY` | `gps.warehouse["GPS UK Warehouse"].authentication.appKey` | **UK** |
-| `GPS_UK_API_SECRET` | `gps.warehouse["GPS UK Warehouse"].authentication.appSecret` | **UK** |
-| `GPS_UK_BASE_URL` | *(optional)* | Defaults to `GPS_BASE_URL` |
-| `GPS_UK_WAREHOUSE_CODE` | `gps.warehouse["GPS UK Warehouse"].code` | Optional; default in code is `LHR` — **must match your live secret / GPS portal** |
+| Battle Bus env var      | Spock Store `api.json` path                                  | Notes                                                                             |
+| ----------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `GPS_BASE_URL`          | `gps.baseUrl`                                                | Typically `https://api.xlwms.com`                                                 |
+| `GPS_API_KEY`           | `gps.warehouse["GPS Warehouse"].authentication.appKey`       | **US** outbound / JFK                                                             |
+| `GPS_API_SECRET`        | `gps.warehouse["GPS Warehouse"].authentication.appSecret`    | **US**                                                                            |
+| `GPS_WAREHOUSE_CODE`    | `gps.warehouse["GPS Warehouse"].code`                        | Optional; default `JFK01W`                                                        |
+| `GPS_UK_API_KEY`        | `gps.warehouse["GPS UK Warehouse"].authentication.appKey`    | **UK**                                                                            |
+| `GPS_UK_API_SECRET`     | `gps.warehouse["GPS UK Warehouse"].authentication.appSecret` | **UK**                                                                            |
+| `GPS_UK_BASE_URL`       | _(optional)_                                                 | Defaults to `GPS_BASE_URL`                                                        |
+| `GPS_UK_WAREHOUSE_CODE` | `gps.warehouse["GPS UK Warehouse"].code`                     | Optional; default in code is `LHR` — **must match your live secret / GPS portal** |
 
 ### Same key for US and UK?
 

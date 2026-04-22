@@ -108,9 +108,7 @@ async function resolveD365OrderHeaderCore(
   const shopifyOrderName =
     typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() || null : null;
   const orderTags =
-    typeof input.orderTags === "string" && input.orderTags.trim()
-      ? input.orderTags.trim()
-      : null;
+    typeof input.orderTags === "string" && input.orderTags.trim() ? input.orderTags.trim() : null;
 
   const odataBySalesOrderNumberDataAreasTried: string[] = [];
   const odataByThkRefAttempts: Array<{ dataAreaId: string; ref: string }> = [];
@@ -152,8 +150,7 @@ async function resolveD365OrderHeaderCore(
   ].filter(Boolean);
   const uniqueAreas = [...new Set(dataAreaIds.map((a) => String(a).toUpperCase()))];
 
-  const rawName =
-    typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() : "";
+  const rawName = typeof input.shopifyOrderName === "string" ? input.shopifyOrderName.trim() : "";
   const stripped = rawName.replace(/^#/, "").trim();
   const idStr = shopifyOrderId.trim();
   const refs = [
@@ -202,9 +199,7 @@ async function resolveD365OrderHeaderCore(
     let warehouseArea: string | null = null;
     if (hint.warehouse) {
       try {
-        warehouseArea = warehouseHelper
-          .getWarehouseConfig(hint.warehouse)
-          .dataAreaId.toUpperCase();
+        warehouseArea = warehouseHelper.getWarehouseConfig(hint.warehouse).dataAreaId.toUpperCase();
         warehouseHintDataAreaId = warehouseArea;
       } catch {
         console.warn(
@@ -213,11 +208,7 @@ async function resolveD365OrderHeaderCore(
         );
       }
     }
-    const byNumberAreas = [
-      warehouseArea,
-      pref || null,
-      ...uniqueAreas,
-    ].filter(Boolean) as string[];
+    const byNumberAreas = [warehouseArea, pref || null, ...uniqueAreas].filter(Boolean) as string[];
     const salesOrderAreas = [...new Set(byNumberAreas)];
     preferredAreasForLoose = salesOrderAreas;
 

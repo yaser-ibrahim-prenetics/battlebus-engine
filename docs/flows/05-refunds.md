@@ -103,11 +103,11 @@ Sends refund event with amount, type (full/partial), and financial status.
 
 ## D365 API Calls
 
-| Step | D365 Endpoint | Purpose |
-|---|---|---|
-| Create refund line | `POST /data/SalesOrderLines` | Negative qty line with refund SKU |
-| Post return fulfilment | `POST .../THK_APISyncService_Shopify/fulfilment` | Posts the return (type: "return") — generates credit note |
-| Post return invoice (opt-in) | `POST .../THK_SalesOrderService/postReturnOrderInvoice` | Only called when `ENABLE_RETURN_INVOICE_POSTING=true` |
+| Step                         | D365 Endpoint                                           | Purpose                                                   |
+| ---------------------------- | ------------------------------------------------------- | --------------------------------------------------------- |
+| Create refund line           | `POST /data/SalesOrderLines`                            | Negative qty line with refund SKU                         |
+| Post return fulfilment       | `POST .../THK_APISyncService_Shopify/fulfilment`        | Posts the return (type: "return") — generates credit note |
+| Post return invoice (opt-in) | `POST .../THK_SalesOrderService/postReturnOrderInvoice` | Only called when `ENABLE_RETURN_INVOICE_POSTING=true`     |
 
 ## Deferred Refunds
 

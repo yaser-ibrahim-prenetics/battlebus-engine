@@ -181,7 +181,10 @@ export const DYNAMICS_THK_API_SUCCESS_STATUS = 1;
 // Client-side pacing layer (in addition to Inngest throttle/rateLimit)
 // This protects D365 from short bursts when multiple functions run concurrently.
 const _d365MinIntervalParsed = parseInt(process.env.D365_CLIENT_MIN_INTERVAL_MS || "30", 10);
-const D365_MIN_INTERVAL_MS = Math.max(0, Number.isNaN(_d365MinIntervalParsed) ? 30 : _d365MinIntervalParsed);
+const D365_MIN_INTERVAL_MS = Math.max(
+  0,
+  Number.isNaN(_d365MinIntervalParsed) ? 30 : _d365MinIntervalParsed
+);
 let d365LastRequestAt = 0;
 
 async function pacedFetch(
@@ -1050,8 +1053,7 @@ export async function createPrepayment(
     // already exists for the same sales order. Treat this as already processed.
     if (
       response.status === 500 &&
-      (error.includes("DuplicateKeyException") ||
-        error.toLowerCase().includes("duplicate key"))
+      (error.includes("DuplicateKeyException") || error.toLowerCase().includes("duplicate key"))
     ) {
       console.warn(
         `[D365] Prepayment already exists for ${salesOrderNumber} (DuplicateKeyException); treating as success`
@@ -1523,7 +1525,10 @@ function odataQuotedLiteral(value: string): string {
 async function getSalesOrderHeaderRowsWithV2Fallback(
   token: string,
   filter: string
-): Promise<{ rows: D365SalesOrderHeader[]; entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" }> {
+): Promise<{
+  rows: D365SalesOrderHeader[];
+  entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2";
+}> {
   const v3Url =
     `${config.dynamics.baseUrl}/data/SalesOrderHeadersV3?${D365_ODATA_CROSS_COMPANY_QUERY}` +
     `&$filter=${encodeURIComponent(filter)}`;

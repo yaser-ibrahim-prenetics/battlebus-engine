@@ -89,9 +89,7 @@ function buildActiveShopifyLocationMappings(): LocationMapping[] {
     },
   ];
 
-  return entries
-    .filter((e) => Boolean(e.shopifyLocationId))
-    .map((e) => ({ ...e, active: true }));
+  return entries.filter((e) => Boolean(e.shopifyLocationId)).map((e) => ({ ...e, active: true }));
 }
 
 /**

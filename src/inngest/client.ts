@@ -1,5 +1,6 @@
 import { Inngest } from "inngest";
 import { validateConfig } from "@/lib/config";
+import { InngestApiRateLimitTerminalMiddleware } from "./middleware/inngest-api-rate-limit-terminal";
 
 // Create the Inngest client with checkpointing for Vercel (maxDuration=300s)
 export const inngest = new Inngest({
@@ -8,6 +9,7 @@ export const inngest = new Inngest({
   checkpointing: {
     maxRuntime: "240s",
   },
+  middleware: [InngestApiRateLimitTerminalMiddleware],
 });
 
 const { valid, errors } = validateConfig();

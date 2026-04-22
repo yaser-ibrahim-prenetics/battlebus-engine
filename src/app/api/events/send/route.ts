@@ -12,7 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 
-const EVENT_SEND_SECRET = process.env.EVENT_SEND_SECRET || process.env.CS_PLATFORM_WEBHOOK_SECRET || "";
+const EVENT_SEND_SECRET =
+  process.env.EVENT_SEND_SECRET || process.env.CS_PLATFORM_WEBHOOK_SECRET || "";
 
 export async function POST(request: NextRequest) {
   try {

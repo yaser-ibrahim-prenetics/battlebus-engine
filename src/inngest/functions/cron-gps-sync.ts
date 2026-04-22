@@ -272,9 +272,12 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   // Try Supabase first — much faster than N+1 Shopify metafield calls
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  const supabase = supabaseUrl && supabaseKey
-    ? createClient(supabaseUrl, supabaseKey, { auth: { autoRefreshToken: false, persistSession: false } })
-    : null;
+  const supabase =
+    supabaseUrl && supabaseKey
+      ? createClient(supabaseUrl, supabaseKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+      : null;
 
   const daysBack = config.gps.fulfillmentPollDaysBack;
   const pollCutoff = new Date();
@@ -296,7 +299,9 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
       .limit(500);
 
     if (error) {
-      console.warn(`[GPS Sync] Supabase query failed, falling back to Shopify metafields: ${error.message}`);
+      console.warn(
+        `[GPS Sync] Supabase query failed, falling back to Shopify metafields: ${error.message}`
+      );
     } else if (rows && rows.length > 0) {
       for (const row of rows) {
         if (row.gps_order_no && row.warehouse) {
@@ -308,7 +313,9 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           });
         }
       }
-      console.log(`[GPS Sync] Found ${gpsOrderData.length} GPS orders from Supabase (no Shopify calls needed)`);
+      console.log(
+        `[GPS Sync] Found ${gpsOrderData.length} GPS orders from Supabase (no Shopify calls needed)`
+      );
     }
   }
 
