@@ -24,7 +24,7 @@ This file defines the working standard for any AI agent modifying this repositor
 
 ## 1. Mission and System Shape
 
-Battle Bus is a Next.js + TypeScript event-driven integration service. It receives inbound webhooks, converts them into Inngest events, and processes durable workflows that synchronize Shopify, Dynamics 365, GPS, Extensiv, Stord, Slack, and Battle Hub.
+Battle Bus is a Next.js + TypeScript event-driven integration service. It receives inbound webhooks, converts them into Inngest events, and processes durable workflows that synchronize Shopify, Dynamics 365, GPS, Stord, Slack, and Battle Hub.
 
 The repository is organized around these responsibilities:
 
@@ -485,7 +485,7 @@ Verify each item mechanically, not by inspection:
 ## 11. Project-Specific Risks to Watch
 
 - **Duplicate webhook delivery and reruns** — always verify idempotency keys are set at both the Inngest event `id` level and the function `idempotency` config.
-- **Partial failures across systems** — Shopify, D365, GPS, Extensiv, and Stord have different error semantics; handle each explicitly.
+- **Partial failures across systems** — Shopify, D365, GPS, and Stord have different error semantics; handle each explicitly.
 - **Inventory and fulfillment flows** — must remain idempotent; double-writes cause real operational damage.
 - **Country-specific routing and `dataAreaId` selection** — wrong data area silently processes orders in the wrong region.
 - **Cached configuration or token state** — may go stale; validate before trusting cached values in critical paths.

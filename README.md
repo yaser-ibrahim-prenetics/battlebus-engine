@@ -69,7 +69,7 @@ Battle Bus:  1,000 orders = 2 minutes (concurrent)
 │  │                                                                       │  │
 │  │                      EXTERNAL SYSTEMS                                 │  │
 │  │                                                                       │  │
-│  │   🛒 Shopify    📦 D365    🏭 GPS    📦 Stord    📦 Extensiv         │  │
+│  │   🛒 Shopify    📦 D365    🏭 GPS    📦 Stord                         │  │
 │  │                                                                       │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │

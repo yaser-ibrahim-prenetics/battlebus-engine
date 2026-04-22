@@ -197,7 +197,7 @@ export async function sendOrderFulfilled(orderData: {
   fulfillmentId?: string;
   shopifyFulfillmentStatus?: string;
   shopifyFinancialStatus?: string;
-  fulfillmentSource?: "shopify" | "gps" | "stord" | "extensiv";
+  fulfillmentSource?: "shopify" | "gps" | "stord";
   d365FulfillmentStatus?: string;
   gpsFulfillmentStatus?: string;
 }): Promise<void> {

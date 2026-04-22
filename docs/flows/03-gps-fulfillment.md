@@ -5,7 +5,7 @@
 
 ## Overview
 
-This flow tests the GPS fulfillment journey which is **pull-based** (unlike Extensiv which is push-based). spock-store periodically polls GPS for order status updates, and when GPS marks an order as shipped (status 3), spock-store notifies both Shopify and Dynamics.
+This flow tests the GPS fulfillment journey, which is **pull-based**: spock-store periodically polls GPS for order status updates, and when GPS marks an order as shipped (status 3), spock-store notifies both Shopify and Dynamics.
 
 ```
                                     ┌───────────┐

@@ -23,7 +23,7 @@ export interface WarehouseConfig {
   dataAreaId: DataAreaId;
   warehouseId: string;
   siteId: string;
-  warehouseType: "GPS" | "STORD" | "EXTENSIV" | "D365";
+  warehouseType: "GPS" | "STORD" | "D365";
 }
 
 export interface IResponse<T> {

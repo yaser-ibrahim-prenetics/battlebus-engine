@@ -9,7 +9,6 @@ This document provides comprehensive end-to-end testing procedures for all integ
 - **Battle Hub** (Customer Service Portal)
 - **Dynamics 365** (ERP)
 - **GPS Warehouse** (3PL)
-- **Extensiv** (3PL/WMS)
 
 ---
 
@@ -34,7 +33,6 @@ This document provides comprehensive end-to-end testing procedures for all integ
 - **Shopify Admin**: Access to test store (im8-store.myshopify.com)
 - **Dynamics 365**: API access with valid credentials
 - **GPS Warehouse**: API credentials for test warehouse
-- **Extensiv**: Webhook endpoint access (if applicable)
 - **Battle Hub**: Admin access to customer service portal
 - **Inngest Dashboard**: Access to function runs and logs
 
@@ -246,36 +244,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 3: Extensiv Fulfillment Flow
-
-**Flow**: Extensiv → Battle Bus → Shopify → Dynamics 365
-
-#### Test Steps
-
-1. **Send Extensiv Webhook**
-
-   ```bash
-   curl -X POST "http://localhost:7000/api/webhooks/extensiv" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "eventType": "outbound.shipped",
-       "orderId": "<extensiv-order-id>",
-       "shopifyOrderName": "IM8-TEST-001",
-       "trackingNumber": "EXT123456789",
-       "carrier": "UPS"
-     }'
-   ```
-
-2. **Verify Processing**
-   - Check Inngest for `extensiv/order.confirm` event
-   - Verify function `process-extensiv-fulfillment` runs
-
-3. **Verify Shopify & Dynamics**
-   - Same as GPS fulfillment verification
-
----
-
-### Test 4: Order Cancellation Flow
+### Test 3: Order Cancellation Flow
 
 **Flow**: Battle Hub → Battle Bus → Shopify → Dynamics 365
 
@@ -319,7 +288,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 5: Order Refund Flow
+### Test 4: Order Refund Flow
 
 **Flow**: Battle Hub → Battle Bus → Shopify → Dynamics 365
 
@@ -370,7 +339,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 6: Order Fulfillment via Battle Hub
+### Test 5: Order Fulfillment via Battle Hub
 
 **Flow**: Battle Hub → Battle Bus → Shopify → Dynamics 365
 
@@ -423,7 +392,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ## Inventory Flows
 
-### Test 7: Inventory Sync from Shopify
+### Test 6: Inventory Sync from Shopify
 
 **Flow**: Shopify → Battle Bus → Dynamics 365 + GPS
 
@@ -465,7 +434,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 8: Inventory Sync Mesh API
+### Test 7: Inventory Sync Mesh API
 
 **Flow**: Any Source → Battle Bus → Any Destination
 
@@ -521,7 +490,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ## Product Flows
 
-### Test 9: Product Creation
+### Test 8: Product Creation
 
 **Flow**: Shopify → Battle Bus → Dynamics 365 + GPS
 
@@ -563,7 +532,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 10: Product Update
+### Test 9: Product Update
 
 **Flow**: Shopify → Battle Bus → Dynamics 365 + GPS
 
@@ -579,7 +548,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ---
 
-### Test 11: Product Deletion
+### Test 10: Product Deletion
 
 **Flow**: Shopify → Battle Bus → Dynamics 365 + GPS
 
@@ -612,7 +581,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ## Battle Hub Actions
 
-### Test 12: Bulk Operations
+### Test 11: Bulk Operations
 
 #### Test Steps
 
@@ -644,7 +613,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 ## Webhook Testing
 
-### Test 13: Shopify Webhook Verification
+### Test 12: Shopify Webhook Verification
 
 #### Test Steps
 
@@ -847,7 +816,6 @@ curl -X POST http://localhost:7000/api/webhooks/shopify \
 
 - [ ] Order creation (Shopify → D365 → GPS)
 - [ ] GPS fulfillment (GPS → Shopify → D365)
-- [ ] Extensiv fulfillment (Extensiv → Shopify → D365)
 - [ ] Order cancellation (Battle Hub → Shopify → D365)
 - [ ] Order refund (Battle Hub → Shopify → D365)
 - [ ] Manual fulfillment (Battle Hub → Shopify → D365)
@@ -879,7 +847,6 @@ curl -X POST http://localhost:7000/api/webhooks/shopify \
 
 - [ ] Shopify webhook verification
 - [ ] GPS webhook processing
-- [ ] Extensiv webhook processing
 - [ ] Webhook error handling
 
 ---

@@ -9,10 +9,6 @@ export { processShopifyFulfillment } from "./process-shopify-fulfillment";
 export { processOrderCancellation } from "./process-order-cancellation";
 export { processOrderUpdate } from "./process-order-update";
 export { syncGpsFulfillments } from "./cron-gps-sync";
-export {
-  processExtensivFulfillment,
-  processExtensivReceiverConfirm,
-} from "./process-extensiv-fulfillment";
 export { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
 export {
   processActionCancel,
@@ -41,10 +37,6 @@ import { processShopifyFulfillment } from "./process-shopify-fulfillment";
 import { processOrderCancellation } from "./process-order-cancellation";
 import { processOrderUpdate } from "./process-order-update";
 import { syncGpsFulfillments } from "./cron-gps-sync";
-import {
-  processExtensivFulfillment,
-  processExtensivReceiverConfirm,
-} from "./process-extensiv-fulfillment";
 import { simulateGpsFulfillment } from "./simulate-gps-fulfillment";
 import { processGpsBatch } from "./process-gps-batch";
 import { processGpsIndividual } from "./process-gps-individual";
@@ -75,8 +67,6 @@ export const functions = [
   processOrderCancellation,
   processOrderUpdate,
   syncGpsFulfillments,
-  processExtensivFulfillment,
-  processExtensivReceiverConfirm,
   simulateGpsFulfillment,
   processGpsBatch,
   processGpsIndividual,

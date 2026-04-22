@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 
-type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord" | "extensiv";
+type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
 interface InventorySyncPayload {
   // Product/Variant identification
@@ -217,7 +217,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       name: "Inventory Sync Mesh API",
       description: "Central mesh/router for inventory synchronization between platforms",
-      supportedPlatforms: ["shopify", "dynamics", "gps", "warehouse", "stord", "extensiv"],
+      supportedPlatforms: ["shopify", "dynamics", "gps", "warehouse", "stord"],
       usage: {
         method: "POST",
         url: "/api/inventory/sync",

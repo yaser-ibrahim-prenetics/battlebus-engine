@@ -19,7 +19,6 @@ export enum SlackChannelEnum {
   PRIVE = "prive",
   LOOP = "loop",
   DYNAMICS = "dynamics",
-  EXTENSIV = "extensiv",
   CIRCLE_DNA = "circledna",
   CIRCLE_DNA_ORDER = "circlednaorder",
   GPS = "gps",

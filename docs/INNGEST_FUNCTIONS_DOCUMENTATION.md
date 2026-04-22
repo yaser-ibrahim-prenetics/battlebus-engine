@@ -603,29 +603,7 @@ _Note: This function is listed twice in the index. The mesh function handles bot
 
 ---
 
-### 12. `process-extensiv-fulfillment`
-
-**Function ID**: `process-extensiv-fulfillment`  
-**Trigger Event**: `extensiv/fulfillment.received`
-
-**Purpose**: Process fulfillments from Extensiv warehouse
-
-**Status**: _Implementation details not fully reviewed in current codebase_
-
----
-
-### 13. `process-extensiv-receiver-confirm`
-
-**Function ID**: `process-extensiv-receiver-confirm`  
-**Trigger Event**: `extensiv/receiver.confirm`
-
-**Purpose**: Handle receiver confirmation from Extensiv
-
-**Status**: _Implementation details not fully reviewed in current codebase_
-
----
-
-### 14. `simulate-gps-fulfillment`
+### 12. `simulate-gps-fulfillment`
 
 **Function ID**: `simulate-gps-fulfillment`  
 **Trigger Event**: `gps/fulfillment.simulate`

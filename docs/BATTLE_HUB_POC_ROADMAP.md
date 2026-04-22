@@ -36,7 +36,7 @@ This document outlines the complete feature set required to transform Battle Hub
 
 #### Purpose
 
-Proactive inventory monitoring across all systems (Shopify, D365, GPS, Stord, Extensiv) with automated alerts before stockouts cause order failures.
+Proactive inventory monitoring across all systems (Shopify, D365, GPS, Stord) with automated alerts before stockouts cause order failures.
 
 #### UI Components
 
@@ -70,7 +70,6 @@ interface InventoryItem {
     dynamics: number;
     gps: number | null;
     stord: number | null;
-    extensiv: number | null;
   };
   thresholds: {
     critical: number; // default: 10
@@ -199,7 +198,7 @@ type OrderStage =
   | "webhook_received"
   | "inngest_triggered"
   | "d365_created"
-  | "warehouse_sent" // GPS, Stord, or Extensiv
+  | "warehouse_sent" // GPS or Stord
   | "warehouse_fulfilled"
   | "d365_fulfilled"
   | "shopify_fulfilled"
@@ -455,7 +454,7 @@ interface OOSQueueItem {
   orderId: string;
   shopifyOrderName: string;
   sku: string;
-  warehouse: "GPS_US" | "GPS_UK" | "GPS_CN" | "STORD" | "EXTENSIV";
+  warehouse: "GPS_US" | "GPS_UK" | "GPS_CN" | "STORD";
   retryCount: number;
   maxRetries: number;
   lastRetryAt: Date | null;
@@ -809,11 +808,11 @@ Real-time visibility into all integration health and throughput.
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  INTEGRATIONS:                                                             │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │
-│  │ Shopify │ │  D365   │ │   GPS   │ │  Stord  │ │Extensiv │ │ Inngest │   │
-│  │   ✅    │ │   ✅    │ │   ✅    │ │   ✅    │ │   ✅    │ │   ✅    │   │
-│  │  12ms   │ │  89ms   │ │  234ms  │ │  156ms  │ │  178ms  │ │   8ms   │   │
-│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘   │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐            │
+│  │ Shopify │ │  D365   │ │   GPS   │ │  Stord  │ │ Inngest │            │
+│  │   ✅    │ │   ✅    │ │   ✅    │ │   ✅    │ │   ✅    │            │
+│  │  12ms   │ │  89ms   │ │  234ms  │ │  156ms  │ │   8ms   │            │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘            │
 │                                                                             │
 │  THROUGHPUT (Last Hour):                                                   │
 │  ├─ Orders Processed: 1,247                                               │
@@ -1010,7 +1009,6 @@ CREATE TABLE inventory_snapshots (
   dynamics_qty INTEGER,
   gps_qty INTEGER,
   stord_qty INTEGER,
-  extensiv_qty INTEGER,
   snapshot_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

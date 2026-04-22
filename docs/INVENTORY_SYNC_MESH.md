@@ -7,7 +7,7 @@ The Inventory Sync Mesh is a centralized routing system that synchronizes invent
 - **Shopify** (e-commerce)
 - **Dynamics 365** (ERP)
 - **GPS Warehouse** (3PL)
-- **Other Warehouse Systems** (Stord, Extensiv, etc.)
+- **Other Warehouse Systems** (e.g. Stord)
 
 The mesh acts as the "brain" that:
 
@@ -49,9 +49,9 @@ The mesh acts as the "brain" that:
 **Query Parameters**:
 
 - `from` (optional): Source platform. If not provided, inferred from request body or defaults to `shopify`
-  - Valid values: `shopify`, `dynamics`, `gps`, `warehouse`, `stord`, `extensiv`
+  - Valid values: `shopify`, `dynamics`, `gps`, `warehouse`, `stord`
 - `to` (optional): Comma-separated destination platforms. If not provided, syncs to all platforms except source
-  - Valid values: `shopify`, `dynamics`, `gps`, `warehouse`, `stord`, `extensiv`
+  - Valid values: `shopify`, `dynamics`, `gps`, `warehouse`, `stord`
   - Example: `?from=shopify&to=dynamics,gps`
 
 **Request Headers**:
@@ -241,7 +241,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync" \
 {
   "name": "Inventory Sync Mesh API",
   "description": "Central mesh/router for inventory synchronization between platforms",
-  "supportedPlatforms": ["shopify", "dynamics", "gps", "warehouse", "stord", "extensiv"],
+  "supportedPlatforms": ["shopify", "dynamics", "gps", "warehouse", "stord"],
   "usage": {
     "method": "POST",
     "url": "/api/inventory/sync",

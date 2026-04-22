@@ -113,24 +113,6 @@ export const config = {
     organizationId: process.env.STORD_ORGANIZATION_ID || "",
   },
 
-  // Extensiv (3PL Central) Warehouse Configuration
-  extensiv: {
-    baseUrl: process.env.EXTENSIV_BASE_URL || "",
-    enabled: process.env.EXTENSIV_ENABLED !== "false",
-    disableWebhookVerification: process.env.DISABLE_EXTENSIV_WEBHOOK_VERIFICATION === "true",
-    warehouse: {
-      charlotte: {
-        name: "Charlotte Warehouse",
-        grantType: "client_credentials",
-        clientId: process.env.EXTENSIV_CHARLOTTE_CLIENT_ID || "",
-        clientSecret: process.env.EXTENSIV_CHARLOTTE_CLIENT_SECRET || "",
-        userLoginId: process.env.EXTENSIV_CHARLOTTE_USER_LOGIN_ID || "",
-        customerIdentifier: safeParseInt(process.env.EXTENSIV_CHARLOTTE_CUSTOMER_ID, 0),
-        facilityIdentifier: safeParseInt(process.env.EXTENSIV_CHARLOTTE_FACILITY_ID, 0),
-      },
-    },
-  },
-
   // Shopify Configuration (IM8 Store)
   // Active credentials are selected by SHOPIFY_STORE_MODE (production | test).
   shopify: {
@@ -175,7 +157,6 @@ export const config = {
       prive: process.env.SLACK_PRIVE_CHANNEL,
       loop: process.env.SLACK_LOOP_CHANNEL,
       dynamics: process.env.SLACK_DYNAMICS_CHANNEL,
-      extensiv: process.env.SLACK_EXTENSIV_CHANNEL,
       circledna: process.env.SLACK_CIRCLEDNA_CHANNEL,
       circlednaorder: process.env.SLACK_CIRCLE_DNA_ORDER_CHANNEL,
       gps: process.env.SLACK_GPS_CHANNEL,
@@ -189,7 +170,6 @@ export const config = {
     enableDynamicsSync: process.env.ENABLE_DYNAMICS_SYNC !== "false", // Default: true (set ENABLE_DYNAMICS_SYNC=false to disable)
     enableGpsSync: process.env.ENABLE_GPS_SYNC === "true", // Default: false - must explicitly set "true" to enable
     enableStordSync: process.env.ENABLE_STORD_SYNC !== "false",
-    enableExtensivSync: process.env.ENABLE_EXTENSIV_SYNC !== "false",
     dryRunMode: process.env.DRY_RUN_MODE === "true",
     skipHighRiskOrders: process.env.SKIP_HIGH_RISK_ORDERS !== "false",
     skipTestOrders: process.env.SKIP_TEST_ORDERS !== "false",
@@ -305,15 +285,6 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
         "[Config] WARNING: GPS_API_KEY and GPS_UK_API_KEY are identical. " +
           "Each GPS warehouse usually has its own appKey — verify this is intentional."
       );
-    }
-  }
-
-  if (config.features.enableExtensivSync && config.extensiv.enabled) {
-    if (!config.extensiv.warehouse.charlotte.clientId) {
-      errors.push("EXTENSIV_CHARLOTTE_CLIENT_ID is required when Extensiv is enabled");
-    }
-    if (!config.extensiv.warehouse.charlotte.clientSecret) {
-      errors.push("EXTENSIV_CHARLOTTE_CLIENT_SECRET is required when Extensiv is enabled");
     }
   }
 

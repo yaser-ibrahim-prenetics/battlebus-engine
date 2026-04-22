@@ -6,7 +6,7 @@
  *
  * Optional env vars:
  *   SLACK_TEST_SEND=true            # actually send message (default: false)
- *   SLACK_TEST_CHANNEL=shopify      # one of: order,general,europa,system,shopify,shopifylow,prive,loop,dynamics,extensiv,circledna,circlednaorder,gps,gpslow,stord
+ *   SLACK_TEST_CHANNEL=shopify      # one of: order,general,europa,system,shopify,shopifylow,prive,loop,dynamics,circledna,circlednaorder,gps,gpslow,stord
  *   SLACK_TEST_MESSAGE="Custom msg" # custom message body
  */
 
@@ -23,7 +23,6 @@ type ChannelKey =
   | "prive"
   | "loop"
   | "dynamics"
-  | "extensiv"
   | "circledna"
   | "circlednaorder"
   | "gps"
@@ -40,7 +39,6 @@ const channelEnvMap: Record<ChannelKey, string> = {
   prive: "SLACK_PRIVE_CHANNEL",
   loop: "SLACK_LOOP_CHANNEL",
   dynamics: "SLACK_DYNAMICS_CHANNEL",
-  extensiv: "SLACK_EXTENSIV_CHANNEL",
   circledna: "SLACK_CIRCLEDNA_CHANNEL",
   circlednaorder: "SLACK_CIRCLE_DNA_ORDER_CHANNEL",
   gps: "SLACK_GPS_CHANNEL",

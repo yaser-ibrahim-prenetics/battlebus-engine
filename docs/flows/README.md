@@ -7,21 +7,20 @@ This directory contains comprehensive test documentation for all integration flo
 - **Shopify** - E-commerce platform
 - **Inngest** - Flow orchestration & state management
 - **Dynamics 365** - ERP system
-- **Extensiv** - 3PL/WMS
 - **GPS** - 3PL warehouse
+- **STORD** - 3PL warehouse
 
 ## 📋 Flow Overview
 
 | #   | Flow                                                             | Direction                               | Document                                                                             |
 | --- | ---------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | 1   | [Order Creation & Payment](#flow-1-order-creation--payment)      | Shopify → Inngest → Dynamics + WMS      | [01-order-creation-payment.md](./01-order-creation-payment.md)                       |
-| 2   | [Extensiv Fulfillment](#flow-2-extensiv-fulfillment)             | Extensiv → Inngest → Shopify + Dynamics | [02-extensiv-fulfillment.md](./02-extensiv-fulfillment.md)                           |
-| 3   | [GPS Fulfillment](#flow-3-gps-fulfillment)                       | Inngest ↔ GPS → Shopify + Dynamics      | [03-gps-fulfillment.md](./03-gps-fulfillment.md)                                     |
-| 4   | [Dynamics Fulfillment](#flow-4-dynamics-fulfillment)             | Dynamics → Inngest → Shopify            | [04-dynamics-fulfillment-notification.md](./04-dynamics-fulfillment-notification.md) |
-| 5   | [Refunds](#flow-5-refunds)                                       | Shopify → Inngest → Dynamics            | [05-refunds.md](./05-refunds.md)                                                     |
-| 6   | [Cancellations](#flow-6-cancellations)                           | Shopify → Inngest (GPS exclusion)       | [06-cancellations.md](./06-cancellations.md)                                         |
-| 7   | [Shopify Direct Fulfillment](#flow-7-shopify-direct-fulfillment) | Shopify → Inngest → Dynamics            | [07-shopify-direct-fulfillment.md](./07-shopify-direct-fulfillment.md)               |
-| 8   | [Cancellation Orchestration](#flow-8-cancellation-orchestration) | Shopify/Hub → Inngest → GPS + Shopify   | [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md)                     |
+| 2   | [GPS Fulfillment](#flow-2-gps-fulfillment)                       | Inngest ↔ GPS → Shopify + Dynamics      | [03-gps-fulfillment.md](./03-gps-fulfillment.md)                                     |
+| 3   | [Dynamics Fulfillment](#flow-3-dynamics-fulfillment)             | Dynamics → Inngest → Shopify            | [04-dynamics-fulfillment-notification.md](./04-dynamics-fulfillment-notification.md) |
+| 4   | [Refunds](#flow-4-refunds)                                       | Shopify → Inngest → Dynamics            | [05-refunds.md](./05-refunds.md)                                                     |
+| 5   | [Cancellations](#flow-5-cancellations)                           | Shopify → Inngest (GPS exclusion)       | [06-cancellations.md](./06-cancellations.md)                                         |
+| 6   | [Shopify Direct Fulfillment](#flow-6-shopify-direct-fulfillment) | Shopify → Inngest → Dynamics            | [07-shopify-direct-fulfillment.md](./07-shopify-direct-fulfillment.md)               |
+| 7   | [Cancellation Orchestration](#flow-7-cancellation-orchestration) | Shopify/Hub → Inngest → GPS + Shopify   | [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md)                     |
 
 > **Note:** Individual flow docs reference "spock-store" which is now handled by **Inngest flows**.
 
@@ -49,13 +48,13 @@ This directory contains comprehensive test documentation for all integration flo
                                    │   (flows)   │
                                    └──────┬──────┘
                                           │
-              ┌───────────────────────────┼───────────────────────────┐
-              │                           │                           │
-              ▼                           ▼                           ▼
-       ┌───────────┐              ┌─────────────┐              ┌───────────┐
-       │ Dynamics  │              │   GPS 3PL   │              │  Extensiv │
-       │    365    │              │  (polling)  │              │   (push)  │
-       └───────────┘              └─────────────┘              └───────────┘
+                        ┌─────────────────┴─────────────────┐
+                        │                                   │
+                        ▼                                   ▼
+                 ┌───────────┐                      ┌─────────────┐
+                 │ Dynamics  │                      │   GPS 3PL   │
+                 │    365    │                      │  (polling)  │
+                 └───────────┘                      └─────────────┘
 ```
 
 ---
@@ -118,7 +117,7 @@ npm run flow:order -- --template usGpsOrder --fulfill --refund
 **Path:**
 
 ```
-Shopify → Inngest → Dynamics (SalesOrder) → GPS/Extensiv (Outbound Order)
+Shopify → Inngest → Dynamics (SalesOrder) → GPS (Outbound Order)
 ```
 
 **Key Validations:**
@@ -131,27 +130,7 @@ Shopify → Inngest → Dynamics (SalesOrder) → GPS/Extensiv (Outbound Order)
 
 ---
 
-### Flow 2: Extensiv Fulfillment
-
-**Trigger:** Extensiv ships order and sends webhook
-
-**Path:**
-
-```
-Extensiv → Inngest → Shopify (fulfillment) → Dynamics (fulfilment)
-```
-
-**Key Validations:**
-
-- Shopify fulfillment created with tracking
-- Dynamics fulfillment notification sent
-- Internal `Fulfilment` entity created
-
-[📄 Full Documentation](./02-extensiv-fulfillment.md)
-
----
-
-### Flow 3: GPS Fulfillment
+### Flow 2: GPS Fulfillment
 
 **Trigger:** Scheduled Inngest task polls GPS for status updates
 
@@ -172,7 +151,7 @@ Inngest (poll) → GPS (status 3) → Inngest → Shopify + Dynamics
 
 ---
 
-### Flow 4: Dynamics Fulfillment
+### Flow 3: Dynamics Fulfillment
 
 **Trigger:** Dynamics pushes fulfillment/return notification
 
@@ -192,7 +171,7 @@ Dynamics → Inngest → Shopify (fulfillment)
 
 ---
 
-### Flow 5: Refunds
+### Flow 4: Refunds
 
 **Trigger:** Customer/admin processes refund in Shopify
 
@@ -213,7 +192,7 @@ Shopify → Inngest → Dynamics (credit note)
 
 ---
 
-### Flow 6: Cancellations
+### Flow 5: Cancellations
 
 **Trigger:** Order cancelled in Shopify
 
@@ -234,7 +213,7 @@ Shopify → Inngest → Dummy Fulfillment (GPS exclusion)
 
 ---
 
-### Flow 7: Shopify Direct Fulfillment
+### Flow 6: Shopify Direct Fulfillment
 
 **Trigger:** Manual fulfillment or external WMS (Stord) updates Shopify
 
@@ -254,7 +233,7 @@ Shopify → Inngest → Dynamics (fulfilment)
 
 ---
 
-### Flow 8: Cancellation Orchestration
+### Flow 7: Cancellation Orchestration
 
 **Trigger:** Cancellation from Shopify webhook or Battle Hub cancel action
 
@@ -390,14 +369,7 @@ Use this checklist when running comprehensive tests:
 - [ ] Verify Dynamics SO created
 - [ ] Verify GPS order created
 
-### Flow 2: Extensiv Fulfillment
-
-- [ ] Setup order with Extensiv
-- [ ] Send Extensiv webhook
-- [ ] Verify Shopify fulfillment
-- [ ] Verify Dynamics notification
-
-### Flow 3: GPS Fulfillment
+### Flow 2: GPS Fulfillment
 
 - [ ] Create order with GPS ID
 - [ ] Simulate GPS status 3
@@ -405,27 +377,27 @@ Use this checklist when running comprehensive tests:
 - [ ] Verify Dynamics notification
 - [ ] Verify not re-polled
 
-### Flow 4: Dynamics Notification
+### Flow 3: Dynamics Notification
 
 - [ ] Send shipment notification
 - [ ] Verify Shopify fulfillment
 - [ ] Test return notification
 
-### Flow 5: Refunds
+### Flow 4: Refunds
 
 - [ ] Full refund unfulfilled
 - [ ] Full refund fulfilled
 - [ ] Partial refund
 - [ ] Verify status updates
 
-### Flow 6: Cancellations
+### Flow 5: Cancellations
 
 - [ ] Cancel before fulfillment
 - [ ] Verify dummy fulfillment ID
 - [ ] Verify GPS polling exclusion
 - [ ] Test idempotency
 
-### Flow 7: Shopify Direct
+### Flow 6: Shopify Direct
 
 - [ ] Manual fulfillment
 - [ ] Partial fulfillment

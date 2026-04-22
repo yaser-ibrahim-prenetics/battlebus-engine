@@ -91,30 +91,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 
 ---
 
-## ✅ **Flow 4: Extensiv Fulfillment → Shopify + D365**
-
-**Function:** `process-extensiv-fulfillment.ts`  
-**Trigger:** `extensiv/fulfillment.received` (webhook)  
-**Status:** ✅ **FULLY IMPLEMENTED** (needs verification)
-
-### Steps:
-
-1. **Verify Webhook Signature**
-2. **Get Shopify Order**
-3. **Create Shopify Fulfillment**
-4. **Get D365 Order**
-   - `dynamics.getSalesOrderByShopifyId(shopifyOrderId)`
-5. **Create D365 Packing Slip**
-   - `dynamics.createFulfilment({ type: "PackingSlip", ... })`
-
-**D365 API Calls:**
-
-- `GET /data/SalesOrderHeadersV3?$filter=...` (get order)
-- `POST /api/services/.../fulfilment` (create packing slip)
-
----
-
-## ✅ **Flow 5: Order Cancellation → D365 Return Order**
+## ✅ **Flow 4: Order Cancellation → D365 Return Order**
 
 **Function:** `process-order-cancellation.ts`  
 **Trigger:** `shopify/order.cancelled`  
@@ -150,7 +127,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 
 ---
 
-## ⚠️ **Flow 6: Order Update → D365 (Partial)**
+## ⚠️ **Flow 5: Order Update → D365 (Partial)**
 
 **Function:** `process-order-update.ts`  
 **Trigger:** `shopify/order.updated` (debounced)  
@@ -171,7 +148,7 @@ This document lists all D365 operations implemented in `battle-bus-inngest` and 
 
 ---
 
-## ✅ **Flow 7: Refund → D365 Return Order**
+## ✅ **Flow 6: Refund → D365 Return Order**
 
 **Function:** `process-refund.ts`  
 **Trigger:** `shopify/refund.created`  
@@ -254,15 +231,7 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 - Wait for cron to run (or trigger manually in Inngest Dev UI)
 - Check logs for GPS sync results
 
-### **Flow 4: Extensiv Fulfillment**
-
-```bash
-# Send Extensiv webhook
-curl -X POST <NGROK_URL>/api/webhooks/extensiv \
-  -d '{ "event": "OrderConfirm", ... }'
-```
-
-### **Flow 5: Cancellation**
+### **Flow 4: Cancellation**
 
 ```bash
 # Send cancellation webhook
@@ -275,7 +244,7 @@ curl -X POST <NGROK_URL>/api/webhooks/shopify \
 # - "Created return sales order: <ReturnNumber>"
 ```
 
-### **Flow 7: Refund**
+### **Flow 5: Refund**
 
 ```bash
 # Send refund webhook

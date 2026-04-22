@@ -1,11 +1,11 @@
 # Flow 1: Order Creation & Payment
 
 > **Journey Name:** IM8 Shopify order ingestion and downstream order creation  
-> **Direction:** Shopify → battle-bus → Dynamics + WMS (Extensiv / GPS)
+> **Direction:** Shopify → battle-bus → Dynamics + WMS (GPS / STORD)
 
 ## Overview
 
-This flow tests the complete order creation journey from when a customer places an order in Shopify through to sales order creation in Dynamics 365 and outbound order creation in the warehouse management system (GPS or Extensiv).
+This flow tests the complete order creation journey from when a customer places an order in Shopify through to sales order creation in Dynamics 365 and outbound order creation in the warehouse management system (e.g. GPS).
 
 ```
 ┌─────────────┐   orders/paid    ┌─────────────┐   POST SalesOrderHeadersV3     ┌───────────────┐
@@ -148,7 +148,7 @@ curl -X POST http://localhost:3100/webhooks/shopify/orders/paid \
 4. Call `createSalesOrder()` to create:
    - Dynamics SalesOrderHeader
    - Dynamics SalesOrderLines
-   - GPS/Extensiv outbound order
+   - GPS outbound order
 
 #### Step 4: Verify State
 
