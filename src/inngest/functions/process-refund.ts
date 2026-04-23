@@ -14,7 +14,6 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
 } from "@/lib/utils/constants";
-import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/supabase-flow-logs";
@@ -161,22 +160,16 @@ export const processRefund = inngest.createFunction(
           message: "D365 order not found after drain — refund permanently skipped",
         };
       }
-      const queuedRefund = await step.run("queue-refund-pending-action", async () => {
-        await storePendingAction(shopifyOrderId, {
-          action: "refund",
-          eventName: "shopify/refund.created",
-          eventData: event.data,
-          createdAt: new Date().toISOString(),
-        });
+      const ignoredRefund = await step.run("ignore-refund-no-processed-order", async () => {
         const payload = {
-          ok: true,
-          step: "queue-refund-pending-action",
+          ok: false,
+          step: "ignore-refund-no-processed-order",
           refundId: String(refundId),
           shopifyOrderId: String(shopifyOrderId),
         } as const;
         console.log(
           JSON.stringify({
-            msg: "[PendingActions] refund_deferred_pending_action_stored",
+            msg: "[Refund] ignored_no_processed_order",
             ...refundTrace,
             ...payload,
           })
@@ -185,20 +178,20 @@ export const processRefund = inngest.createFunction(
       });
       logRefundTraceLifecycle({
         ...refundTrace,
-        phase: "process_refund_deferred",
-        queuedRefundStepOutput: queuedRefund,
+        phase: "process_refund_ignored_no_processed_order",
+        queuedRefundStepOutput: ignoredRefund,
       });
       console.log(
-        `[PendingActions] Deferred refund ${refundId} for shopifyOrderId=${shopifyOrderId} — ` +
-          `D365 header not resolved (Vercel: search logs for RefundTraceLifecycle, D365ODataTrace, [D365Resolve], [SupabaseOrderLookup])`
+        `[Refund ${refundId}] Ignored for shopifyOrderId=${shopifyOrderId} — ` +
+          `D365 header not resolved (order likely cancelled before processing)`
       );
       return {
-        status: "deferred",
+        status: "ignored",
         refundId,
         shopifyOrderId,
-        queuedRefund,
+        queuedRefund: undefined,
         reason:
-          "Could not resolve D365 sales order (Supabase d365_order_number + OData). Refund POST to D365 was not run. Check Vercel logs; ensure Hub row + SUPABASE_* on Bus; pending action queued if Hub matched the order id.",
+          "Could not resolve D365 sales order. Refund ignored because order was not processed yet.",
       };
     }
 

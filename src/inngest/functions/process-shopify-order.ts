@@ -58,7 +58,7 @@ import {
   findLocationByWarehouseName,
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
-import { determineWarehouse } from "@/lib/helpers/warehouse";
+import { determineWarehouse, isGpsUkWarehouse } from "@/lib/helpers/warehouse";
 import { shouldSplitFulfillmentOrder, isDomesticOrder } from "@/lib/helpers/split";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
@@ -469,6 +469,26 @@ export const processShopifyOrder = inngest.createFunction(
       });
       await publishStatus("wait-for-tags", "completed", "Order refetched with latest tags");
       order = refreshedOrder as ShopifyOrderPayload;
+    }
+
+    // If cancellation happened during the tag-wait window, stop before any
+    // order creation side effects. cancelOn should terminate most runs, but
+    // this guards against race conditions where cancel arrives near wake-up.
+    if (order?.cancelled_at) {
+      await publishStatus(
+        "preflight-cancel-check",
+        "skipped",
+        `Order was cancelled at ${order.cancelled_at} before processing`
+      );
+      await publishResult("skipped", {
+        error: "Order cancelled before processing started",
+      });
+      return {
+        status: "cancelled_before_processing",
+        shopifyOrderId,
+        shopifyOrderName,
+        cancelledAt: order.cancelled_at,
+      };
     }
 
     await publishStatus(
@@ -1708,6 +1728,10 @@ export const processShopifyOrder = inngest.createFunction(
               d365OrderNumber: salesOrderNo,
               warehouse: warehouseName,
               gpsOrderId,
+              gpsUkOrderId:
+                isGpsUkWarehouse(warehouseName) && gpsOrderId
+                  ? gpsOrderId
+                  : undefined,
               gpsSkipped,
               orderJson: order,
               ...(Object.keys(d365InventoryLotsBySku).length > 0
@@ -1725,6 +1749,10 @@ export const processShopifyOrder = inngest.createFunction(
               d365OrderNumber: salesOrderNo,
               warehouse: warehouseName,
               gpsOrderId,
+              gpsUkOrderId:
+                isGpsUkWarehouse(warehouseName) && gpsOrderId
+                  ? gpsOrderId
+                  : undefined,
               status: "completed",
               processingStatus: "completed",
               d365SyncStatus: "synced",
