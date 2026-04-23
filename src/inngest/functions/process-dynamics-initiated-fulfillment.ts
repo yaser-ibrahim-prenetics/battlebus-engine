@@ -17,7 +17,10 @@ import { mapShopifySkuToDynamics } from "@/lib/transformers/sku";
 import { getTrackingUrl, mapGpsCarrierToShopify } from "@/lib/helpers/tracking";
 import { CONCURRENCY_CONFIGS, THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
-import type { DynamicsFulfilmentNotificationPayload } from "@/lib/types/dynamics-fulfilment";
+import type {
+  DynamicsFulfilmentLine,
+  DynamicsFulfilmentNotificationPayload,
+} from "@/lib/types/dynamics-fulfilment";
 import type { ILineItem } from "@/lib/types/shopify";
 
 function resolveShopifyOrderId(shopifyRef: string): { kind: "id"; id: number } | { kind: "name"; name: string } {
@@ -89,7 +92,7 @@ export const processDynamicsInitiatedFulfillment = inngest.createFunction(
       return { status: "skipped", reason: "unsupported_type" };
     }
 
-    if (lines.some((l) => l.quantity < 0)) {
+    if (lines.some((l: DynamicsFulfilmentLine) => l.quantity < 0)) {
       return { status: "skipped", reason: "negative_quantity" };
     }
 
@@ -171,7 +174,7 @@ export const processDynamicsInitiatedFulfillment = inngest.createFunction(
         return { status: "no_matching_lines" as const, shopifyOrderId, shopifyOrderName };
       }
 
-      const firstPhysical = lines.find((l) => l.quantity > 0);
+      const firstPhysical = lines.find((l: DynamicsFulfilmentLine) => l.quantity > 0);
       const trackingNumber = (firstPhysical?.trackingNumber || "").trim() || "Pending";
       const company = trackingCompanyForDynamicsLine(
         firstPhysical?.ModeOfDelivery as string | undefined
