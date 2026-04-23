@@ -638,8 +638,11 @@ async function processFulfilledOrdersBatch(
           ? parseInt(config.shopify.im8.locations.gpsUk || "0")
           : parseInt(config.shopify.im8.locations.gps || "0");
 
-      // Trigger process-shopify-fulfillment function to sync to D365
+      // Trigger process-shopify-fulfillment function to sync to D365.
+      // Event-level idempotency: one Inngest run per GPS outbound shipment. Without this,
+      // every cron tick re-dispatches the same fulfilled rows and spams duplicate runs.
       await inngest.send({
+        id: `gps-cron-fulfill-d365-${String(outboundOrderNo)}`,
         name: "shopify/order.fulfilled",
         data: {
           shopifyOrderId: shopifyOrderId,

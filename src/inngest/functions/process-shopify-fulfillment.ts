@@ -33,6 +33,7 @@ import {
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   BACKORDER_CONFIGS,
+  retryWithBackoff,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
@@ -44,7 +45,7 @@ import {
   filterUnfulfilledServiceLines,
   markServiceLinesFulfilled,
 } from "@/lib/services/supabase-order-lines";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -62,6 +63,17 @@ function isFulfillmentInventoryIssueError(message: string): boolean {
     m.includes("库存不足") ||
     m.includes("unmaintained new product")
   );
+}
+
+/** Retries inside `createFulfilment` — never for terminal inventory / business-rule failures. */
+function isTransientFulfillmentApiError(err: unknown): boolean {
+  const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (isFulfillmentInventoryIssueError(m)) return false;
+  if (m.includes("rate limit") || m.includes("429")) return true;
+  if (m.includes("503") || m.includes("502") || m.includes("504")) return true;
+  if (m.includes("timeout") || m.includes("etimedout") || m.includes("econnreset")) return true;
+  if (m.includes("network") || m.includes("socket hang up")) return true;
+  return false;
 }
 
 export const processShopifyFulfillment = inngest.createFunction(
@@ -112,6 +124,29 @@ export const processShopifyFulfillment = inngest.createFunction(
     }));
 
     const isFromGpsSync = (event.data as any).fromGpsSync === true;
+
+    const isDynamicsInitiatedShopifyMirror = fulfillments.some((f: ShopifyFulfillment) => {
+      const note = String((f as unknown as { note?: string }).note || "");
+      return note.includes("FulfillmentType: dynamics_initiated");
+    });
+    if (isDynamicsInitiatedShopifyMirror) {
+      logFlowEvent({
+        flow: "fulfillment",
+        step: "skip_d365",
+        status: "completed",
+        runId: _runId || undefined,
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName,
+        payload: { reason: "dynamics_initiated_fulfillment" },
+        durationMs: Date.now() - _flowStart,
+      });
+      return {
+        status: "skipped",
+        shopifyOrderId,
+        shopifyOrderName,
+        reason: "Shopify fulfillment mirrors D365 shipment; packing slip not sent again",
+      };
+    }
 
     if (config.features.dryRunMode) {
       return await step.run("dry-run", async () => ({
@@ -429,16 +464,24 @@ export const processShopifyFulfillment = inngest.createFunction(
             );
           }
 
-          // Create D365 packing slip
-          await dynamics.createFulfilment({
-            dataAreaId,
-            salesOrderNumber: d365Order.SalesOrderNumber!,
-            type: "shipment",
-            confirmedShippedDate: fulfillment.created_at
-              ? new Date(fulfillment.created_at).toISOString().split("T")[0]
-              : new Date().toISOString().split("T")[0],
-            lines: fulfilmentLinesWithService,
-          });
+          // Create D365 packing slip (retry only transient API failures, not inventory/OData business errors)
+          await retryWithBackoff(
+            () =>
+              dynamics.createFulfilment({
+                dataAreaId,
+                salesOrderNumber: d365Order.SalesOrderNumber!,
+                type: "shipment",
+                confirmedShippedDate: fulfillment.created_at
+                  ? new Date(fulfillment.created_at).toISOString().split("T")[0]
+                  : new Date().toISOString().split("T")[0],
+                lines: fulfilmentLinesWithService,
+              }),
+            {
+              label: `d365-create-fulfilment-${shopifyOrderName}-${fulfillment.id}`,
+              maxAttempts: 4,
+              shouldRetry: (err) => isTransientFulfillmentApiError(err),
+            }
+          );
 
           // Mark service lines fulfilled so they are not sent again on subsequent fulfillments
           if (serviceLinesToAppend.length > 0) {
@@ -464,13 +507,31 @@ export const processShopifyFulfillment = inngest.createFunction(
             `D365 Fulfillment failed for ${shopifyOrderName}: ${errorMsg}`
           );
 
+          const invTerminal = isFulfillmentInventoryIssueError(errorMsg);
+          await logFlowEventSync({
+            flow: "fulfillment",
+            step: "d365-create-fulfilment",
+            level: "error",
+            status: "failed",
+            runId: _runId || undefined,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber || undefined,
+            errorMessage: errorMsg,
+            errorType: invTerminal ? "inventory_terminal" : "d365_fulfillment_error",
+            payload: {
+              fulfillmentId: fulfillment.id,
+              terminalInventory: invTerminal,
+            },
+          });
+
           results.push({
             fulfillmentId: fulfillment.id,
             status: "error",
             error: errorMsg,
           });
 
-          if (!backorderQueued && isFulfillmentInventoryIssueError(errorMsg)) {
+          if (!backorderQueued && invTerminal) {
             backorderQueued = true;
             const failedSkus = fulfillmentSkuCandidates;
             // D365 inventory site (e.g. "GPS Warehouse" for U001) — used only
@@ -726,15 +787,33 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
     }
 
+    const anyFulfillmentError = fulfillmentResults.some(
+      (r: { status: string }) => r.status === "error"
+    );
     logFlowEvent({
       flow: "fulfillment",
       step: "done",
-      status: "completed",
+      status: hasBackorderQueued || anyFulfillmentError ? "failed" : "completed",
+      level: hasBackorderQueued || anyFulfillmentError ? "error" : "info",
       runId: _runId || undefined,
       shopifyOrderId: String(shopifyOrderId),
       shopifyOrderName,
       d365OrderNumber: d365Order.SalesOrderNumber,
       durationMs: Date.now() - _flowStart,
+      errorMessage:
+        hasBackorderQueued || anyFulfillmentError
+          ? (() => {
+              const errRow = fulfillmentResults.find(
+                (r: { status: string; error?: string }) => r.status === "error"
+              ) as { error?: string } | undefined;
+              return (
+                errRow?.error ||
+                (hasBackorderQueued
+                  ? "Fulfillment failed: inventory insufficient (terminal)"
+                  : "One or more fulfillments failed")
+              );
+            })()
+          : undefined,
       payload: { fulfillmentCount: fulfillments.length, fulfillmentSource },
     });
 
