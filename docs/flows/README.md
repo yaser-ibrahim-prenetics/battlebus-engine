@@ -21,8 +21,9 @@ This directory contains comprehensive test documentation for all integration flo
 | 5   | [Cancellations](#flow-5-cancellations)                           | Shopify → Inngest (GPS exclusion)       | [06-cancellations.md](./06-cancellations.md)                                         |
 | 6   | [Shopify Direct Fulfillment](#flow-6-shopify-direct-fulfillment) | Shopify → Inngest → Dynamics            | [07-shopify-direct-fulfillment.md](./07-shopify-direct-fulfillment.md)               |
 | 7   | [Cancellation Orchestration](#flow-7-cancellation-orchestration) | Shopify/Hub → Inngest → GPS + Shopify   | [08-cancel-gps-and-uncancel.md](./08-cancel-gps-and-uncancel.md)                     |
+| 8   | [Dynamics-initiated Shopify fulfillment](#flow-8-dynamics-initiated-shopify-fulfillment) | Dynamics → Battle Bus → Inngest → Shopify | [10-dynamics-initiated-shopify-fulfillment.md](./10-dynamics-initiated-shopify-fulfillment.md) |
 
-> **Note:** Individual flow docs reference "spock-store" which is now handled by **Inngest flows**.
+> **Note:** Individual flow docs reference "spock-store" which is now handled by **Inngest flows**. The operational implementation for **Dynamics → Shopify** is [10-dynamics-initiated-shopify-fulfillment.md](./10-dynamics-initiated-shopify-fulfillment.md) (earlier [04-dynamics-fulfillment-notification.md](./04-dynamics-fulfillment-notification.md) is simulator- and spock-oriented).
 
 ---
 
@@ -251,6 +252,27 @@ Shopify/Hub → Inngest → GPS cancel (OMS) → Shopify uncancel safeguard (if 
 - Canonical cancellation processing works from both Shopify and Hub entry points
 
 [📄 Full Documentation](./08-cancel-gps-and-uncancel.md)
+
+---
+
+### Flow 8: Dynamics-Initiated Shopify Fulfillment
+
+**Trigger:** Dynamics 365 (or a relay) posts a shipment notification when the warehouse/ERP is the system of record.
+
+**Path:**
+
+```
+Dynamics → Battle Bus (POST /api/webhooks/dynamics/fulfillment) → Inngest (dynamics/fulfillment.notify) → Shopify (fulfillments)
+```
+
+**Key behaviors:**
+
+- Auth via bearer secret, `?apiKey=`, or HMAC; optional `customerAccount` allow list.
+- Resolves the Shopify order from D365 `THK_ShopifyReference`.
+- Respects `ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK` before calling Shopify.
+- `process-shopify-fulfillment` skips D365 packing slip when the fulfillment is tagged as dynamics-initiated (avoids double D365 posting on `orders/fulfilled` echo).
+
+[📄 Full Documentation](./10-dynamics-initiated-shopify-fulfillment.md)
 
 ---
 
