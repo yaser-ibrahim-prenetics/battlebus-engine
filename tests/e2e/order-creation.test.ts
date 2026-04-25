@@ -118,12 +118,12 @@ describe("E2E: Order Creation Flow", () => {
   });
 
   describe("Transformer: D365 lines with service SKUs", () => {
-    it("GPS US order includes IM8-SER-000002 (shipping) and IM8-SER-000004 (tax)", () => {
+    it("GPS US order includes IM8-SER-000002 (shipping) and IM8-SER-000001 (tax)", () => {
       const order = fixtures.gpsUsOrder;
       const lines = toD365SalesOrderLines(order, "U001-SO-TEST", "GPS Warehouse");
 
       const shippingLine = lines.find((l) => l.itemNumber === "IM8-SER-000002");
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
       const productLines = lines.filter((l) => !isServiceSku(l.itemNumber));
 
       expect(productLines.length).toBeGreaterThan(0);
@@ -141,12 +141,12 @@ describe("E2E: Order Creation Flow", () => {
       }
     });
 
-    it("GPS UK order includes IM8-SER-000002 (shipping) and IM8-SER-000004 (tax)", () => {
+    it("GPS UK order includes IM8-SER-000002 (shipping) and IM8-SER-000001 (tax)", () => {
       const order = fixtures.gpsUkOrder;
       const lines = toD365SalesOrderLines(order, "H007-SO-TEST", "GPS UK Warehouse");
 
       const shippingLine = lines.find((l) => l.itemNumber === "IM8-SER-000002");
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
 
       const shippingCost = calculateShippingCost(order);
       if (shippingCost > 0) {
@@ -182,15 +182,15 @@ describe("E2E: Order Creation Flow", () => {
       expect(shouldSendToGps(order, "STORD ATL Location")).toBe(false);
     });
 
-    it("HK Warehouse uses standard SKUs: IM8-SER-000002 (shipping), IM8-SER-000004 (tax)", () => {
+    it("HK Warehouse uses standard SKUs: IM8-SER-000002 (shipping), IM8-SER-000001 (tax)", () => {
       const order = fixtures.hkOrder;
       const lines = toD365SalesOrderLines(order, "H007-SO-TEST", "HK Warehouse");
 
       const shippingLine = lines.find((l) => l.itemNumber === "IM8-SER-000002");
       expect(shippingLine === undefined || shippingLine.itemNumber === "IM8-SER-000002").toBe(true);
 
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
-      expect(taxLine === undefined || taxLine.itemNumber === "IM8-SER-000004").toBe(true);
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
+      expect(taxLine === undefined || taxLine.itemNumber === "IM8-SER-000001").toBe(true);
     });
 
     it("service SKUs are stripped from GPS product list", () => {
@@ -246,20 +246,20 @@ describe("E2E: Order Creation Flow", () => {
     const skuTable = [
       {
         warehouse: "GPS Warehouse",
-        tax: "IM8-SER-000004",
-        refund: "IM8-SER-000005",
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
         shipping: "IM8-SER-000002",
       },
       {
         warehouse: "GPS UK Warehouse",
-        tax: "IM8-SER-000004",
-        refund: "IM8-SER-000005",
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
         shipping: "IM8-SER-000002",
       },
       {
         warehouse: "HK Warehouse",
-        tax: "IM8-SER-000004",
-        refund: "IM8-SER-000005",
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
         shipping: "IM8-SER-000002",
       },
       {

@@ -422,6 +422,8 @@ export interface ShopifyOrderPayload {
   total_price: string;
   subtotal_price: string;
   total_tax: string;
+  /** When present, prefer summing these for service tax line (matches spock-store calculateTax) */
+  tax_lines?: ShopifyTaxLine[];
   currency: string;
   financial_status: string;
   fulfillment_status: string | null;
@@ -481,6 +483,8 @@ export interface ShopifyShippingLine {
   id: number;
   title: string;
   price: string;
+  /** Post-discount line total (Shopify); used for LineDiscountAmount on D365 service line, spock parity */
+  discounted_price?: string;
   code: string;
   source: string;
   carrier_identifier: string | null;

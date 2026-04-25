@@ -273,14 +273,17 @@ export function toD365SalesOrderLines(
   // Add service lines (shipping/tax) using warehouse-config service SKUs.
   // Mirrors spock-store behavior: tax line is derived from order-level tax (+ duties).
   if (includeShippingAndTax) {
-    const shippingCost = calculateShippingCost(order);
-    if (shippingCost > 0) {
+    const { listTotal: shippingList, discountTotal: shippingDiscount } = calculateShippingListAndDiscount(
+      order
+    );
+    if (shippingList > 0) {
       lines.push({
         salesOrderNumber,
         dataAreaId,
         itemNumber: getShippingSku(warehouseName, dataAreaId),
         quantity: 1,
-        price: shippingCost,
+        price: shippingList,
+        ...(shippingDiscount > 0 ? { discount: shippingDiscount } : {}),
         currency,
       });
     }
@@ -405,7 +408,7 @@ export function toOrderLineRecords(
       d365ItemNumber: taxSku,
       quantity: 1,
       price: taxAndDuty,
-      isServiceLine: isServiceSku(taxSku), // true: IM8-SER-000004
+      isServiceLine: isServiceSku(taxSku), // e.g. IM8-SER-000001 (IM8) / 000004 (STORD ATL)
     });
   }
 
@@ -479,22 +482,42 @@ export function toGpsOutboundOrder(
 // ============================================================================
 
 /**
- * Calculate total shipping cost from order
+ * Shipping list price and discount, matching spock-store `calculateShippingCost` on `shipping_lines`.
+ * D365 `SalesPrice` uses list `price`; `LineDiscountAmount` uses `price - discounted_price` per line.
  */
-export function calculateShippingCost(order: ShopifyOrderPayload): number {
-  if (!order.shipping_lines?.length) return 0;
-
-  return order.shipping_lines.reduce((total, line) => {
-    const price = parseFloat(line.price) || 0;
-    // Shipping line discounts are handled separately in Shopify
-    return total + price;
+export function calculateShippingListAndDiscount(
+  order: ShopifyOrderPayload
+): { listTotal: number; discountTotal: number } {
+  if (!order.shipping_lines?.length) return { listTotal: 0, discountTotal: 0 };
+  const listTotal = order.shipping_lines.reduce(
+    (t, line) => t + (parseFloat(line.price) || 0),
+    0
+  );
+  const afterDiscount = order.shipping_lines.reduce((t, line) => {
+    const d =
+      line.discounted_price != null && line.discounted_price !== ""
+        ? parseFloat(line.discounted_price) || 0
+        : parseFloat(line.price) || 0;
+    return t + d;
   }, 0);
+  return { listTotal, discountTotal: listTotal - afterDiscount };
 }
 
 /**
- * Calculate total tax amount from order
+ * Calculate total shipping (list) cost from order.
+ */
+export function calculateShippingCost(order: ShopifyOrderPayload): number {
+  return calculateShippingListAndDiscount(order).listTotal;
+}
+
+/**
+ * Total tax for service line: sum of `order.tax_lines` when present, else `total_tax` (spock: calculateTax on tax_lines).
  */
 export function calculateTaxAmount(order: ShopifyOrderPayload): number {
+  const lines = order.tax_lines;
+  if (Array.isArray(lines) && lines.length > 0) {
+    return lines.reduce((t, l) => t + (parseFloat(l.price) || 0), 0);
+  }
   return parseFloat(order.total_tax) || 0;
 }
 

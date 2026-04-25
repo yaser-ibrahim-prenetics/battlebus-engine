@@ -82,8 +82,8 @@ describe("Backorder Flow (Integration)", () => {
       const order = loadFixture("gpsUkOrder");
       seedShopifyOrder(order);
 
-      // Set OOS for specific SKU
-      setGpsOosSkus(["IM8-FG-000048"]); // refill-mapped from IM8-FG-000031
+      // OOS a SKU that actually appears in GPS payload (merge-mapped; not refill chain 000048)
+      setGpsOosSkus(["IM8-FG-000031"]);
 
       const retryResult = await harness.step.run("manual-retry-gps-order-1", async () => {
         try {

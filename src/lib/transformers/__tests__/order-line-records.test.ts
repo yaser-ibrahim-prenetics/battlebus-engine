@@ -35,7 +35,7 @@ describe("toOrderLineRecords", () => {
 
     const tax = records.find((r) => r.shopifyLineItemId === "tax");
     expect(tax).toBeDefined();
-    expect(tax!.d365ItemNumber).toBe("IM8-SER-000004");
+    expect(tax!.d365ItemNumber).toBe("IM8-SER-000001");
     expect(tax!.price).toBe(10);
     expect(tax!.isServiceLine).toBe(true);
   });

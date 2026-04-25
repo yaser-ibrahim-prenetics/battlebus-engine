@@ -84,7 +84,7 @@ describe("Order Creation Flow (Integration)", () => {
       const lines = toD365SalesOrderLines(order, salesOrderNo, warehouseName, true, dataAreaId);
       expect(lines.every((l) => l.dataAreaId === "H007")).toBe(true);
 
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
       expect(taxLine).toBeDefined();
 
       const gpsOrder = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
@@ -201,7 +201,7 @@ describe("Order Creation Flow (Integration)", () => {
       order.total_tax = "34.83";
 
       const lines = toD365SalesOrderLines(order, "H007-SO-100", "GPS UK Warehouse");
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBeCloseTo(43.33, 1);
     });

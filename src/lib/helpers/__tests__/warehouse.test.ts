@@ -266,24 +266,24 @@ describe("Warehouse Routing Helpers", () => {
     });
 
     it("getTaxSku returns correct SKU per warehouse", () => {
-      expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000004");
-      expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000004");
-      expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000004");
+      expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000001");
+      expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000001");
+      expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000004");
     });
 
     it("getRefundSku returns correct SKU per warehouse", () => {
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
-      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000005");
-      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000005");
+      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
+      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
+      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
     });
 
     it("resolves SKU profile by routed dataAreaId when provided", () => {
       // Unknown/placeholder warehouse names can appear from location settings;
       // service SKU routing must still follow the final dataAreaId.
-      expect(getTaxSku("Some Custom Location", "H007")).toBe("IM8-SER-000004");
-      expect(getRefundSku("Some Custom Location", "H007")).toBe("IM8-SER-000005");
+      expect(getTaxSku("Some Custom Location", "H007")).toBe("IM8-SER-000001");
+      expect(getRefundSku("Some Custom Location", "H007")).toBe("IM8-SER-000003");
       expect(getShippingSku("Some Custom Location", "H007")).toBe("IM8-SER-000002");
     });
   });

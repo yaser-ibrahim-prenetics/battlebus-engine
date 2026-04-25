@@ -46,7 +46,7 @@ describe("supabase-order-lines (unit)", () => {
     id: "tid1",
     shopify_line_item_id: SHOPIFY_TAX_LINE_ITEM_ID,
     shopify_sku: null,
-    d365_item_number: "IM8-SER-000004",
+    d365_item_number: "IM8-SER-000001",
     quantity: 1,
     price: 10.0,
     dynamics_inventory_lot_id: "LOT-TAX",

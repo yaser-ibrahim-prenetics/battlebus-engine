@@ -59,7 +59,7 @@ Looks up the D365 sales order by `THK_ShopifyReference` (order name). If not fou
 
 ### Step 3: Determine Warehouse Info
 
-Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment) from the warehouse configuration. The refund SKU is `IM8-SER-000005` across every warehouse profile today.
+Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment) from the warehouse configuration, aligned with spock-store `dynamics.services.dataArea.*.item.refund` in `api.json`. For IM8 GPS/UK/HK and STORD EU, refund is `IM8-SER-000003`. STORD ATL uses `IM8-SER-000005`. CircleDNA warehouses use `PRE-SER-000023`.
 
 ### Step 4: Calculate Refund Amount
 

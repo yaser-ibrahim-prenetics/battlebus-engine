@@ -8,8 +8,8 @@
  *   4. Posts a return fulfillment to "post" the refund in D365
  *   5. Verifies all lines exist in D365
  *
- * Verifies per-warehouse refund SKU correctness:
- *   - GPS Warehouse / GPS UK / HK: IM8-SER-000005
+ * Verifies per-warehouse refund SKU correctness (spock-store api.json item.refund):
+ *   - GPS Warehouse / GPS UK / HK: IM8-SER-000003
  *   - STORD ATL Location: IM8-SER-000005
  *
  * Skipped unless E2E env vars are set.
@@ -50,14 +50,14 @@ describe("E2E: Refund Flow", () => {
     }
   });
 
-  describe("GPS UK refund with IM8-SER-000005", () => {
+  describe("GPS UK refund with IM8-SER-000003", () => {
     it("creates a negative refund line and posts return fulfillment", async () => {
       const order = loadFixture("gpsUkOrder");
       const warehouseName = "GPS UK Warehouse";
       const refundSku = getRefundSku(warehouseName);
       const returnCfg = getReturnConfig(warehouseName);
 
-      expect(refundSku).toBe("IM8-SER-000005");
+      expect(refundSku).toBe("IM8-SER-000003");
       expect(returnCfg.shippingWarehouseId).toBe("OPS-WH02-Q");
       expect(returnCfg.shippingWarehouseLocationId).toBe("Return");
 
@@ -135,13 +135,13 @@ describe("E2E: Refund Flow", () => {
     }, 120_000);
   });
 
-  describe("GPS US refund with IM8-SER-000005", () => {
+  describe("GPS US refund with IM8-SER-000003", () => {
     it("creates refund with correct US warehouse return config", async () => {
       const warehouseName = "GPS Warehouse";
       const refundSku = getRefundSku(warehouseName);
       const returnCfg = getReturnConfig(warehouseName);
 
-      expect(refundSku).toBe("IM8-SER-000005");
+      expect(refundSku).toBe("IM8-SER-000003");
       expect(returnCfg.shippingWarehouseId).toBe("USOPS-WH04-Q");
       expect(returnCfg.shippingWarehouseLocationId).toBe("Return");
 
@@ -218,9 +218,9 @@ describe("E2E: Refund Flow", () => {
 
   describe("Refund SKU correctness across all warehouses", () => {
     const cases = [
-      { warehouse: "GPS Warehouse", expectedSku: "IM8-SER-000005" },
-      { warehouse: "GPS UK Warehouse", expectedSku: "IM8-SER-000005" },
-      { warehouse: "HK Warehouse", expectedSku: "IM8-SER-000005" },
+      { warehouse: "GPS Warehouse", expectedSku: "IM8-SER-000003" },
+      { warehouse: "GPS UK Warehouse", expectedSku: "IM8-SER-000003" },
+      { warehouse: "HK Warehouse", expectedSku: "IM8-SER-000003" },
       { warehouse: "STORD ATL Location", expectedSku: "IM8-SER-000005" },
     ];
 

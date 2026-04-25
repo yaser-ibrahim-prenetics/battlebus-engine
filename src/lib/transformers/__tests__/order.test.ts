@@ -175,7 +175,7 @@ describe("Order Transformers", () => {
       expect(shippingLine).toBeDefined();
       expect(shippingLine!.price).toBe(9.99);
 
-      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000001");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(10);
 
@@ -187,7 +187,7 @@ describe("Order Transformers", () => {
       const order = loadFixture("gpsUkOrder");
       const lines = toD365SalesOrderLines(order, "H007-SO-100", "GPS UK Warehouse");
 
-      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000004");
+      const taxLine = lines.find((l) => l.itemNumber === "IM8-SER-000001");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(34.83);
 
