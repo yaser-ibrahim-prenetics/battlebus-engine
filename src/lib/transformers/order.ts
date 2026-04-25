@@ -21,7 +21,7 @@ import type {
 } from "../types/dynamics";
 import { toSalesOrderHeadersV3Address, toGpsOrderAddress, formatAddressName } from "./address";
 import {
-  mapShopifySkuToDynamics,
+  mapShopifySkuToDynamicsForOrderLine,
   createShopifyToDynamicsLineTransformer,
   mergeGpsDuplicateSkuLines,
   filterServiceSkus,
@@ -102,6 +102,7 @@ export function toD365SalesOrderHeaderV3(
     billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
     comment: buildOrderComment(order),
     currency: order.currency,
+    shippingWarehouseId: warehouseConfig.fulfilment.shippingWarehouseId,
     // Skip fulfilment notification for GPS UK to avoid double notification
     skipFulfillmentNotification: isGpsUkWarehouse(warehouse) ? "Yes" : undefined,
   };
@@ -163,7 +164,7 @@ export function toD365SalesOrderLine(
   discountCodes?: string[],
   countryCode?: string
 ): D365SalesOrderLineRequest {
-  const itemNumber = mapShopifySkuToDynamics(lineItem.sku);
+  const itemNumber = typeof lineItem.sku === "string" ? lineItem.sku.trim() : "";
   const price = parseFloat(lineItem.price);
   const totalDiscount = parseFloat(lineItem.total_discount) || 0;
   const discountPerUnit = lineItem.quantity > 0 ? totalDiscount / lineItem.quantity : 0;
@@ -195,6 +196,10 @@ export function toD365SalesOrderLines(
   const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
     ? (dataAreaIdOverride || "").toUpperCase()
     : getWarehouseConfig(warehouseName).dataAreaId;
+  const whConfig = (dataAreaIdOverride || "").toUpperCase()
+    ? getWarehouseConfigForDataAreaId((dataAreaIdOverride || "").toUpperCase())
+    : getWarehouseConfig(warehouseName);
+  const lineShippingWarehouseId = whConfig.fulfilment.shippingWarehouseId;
   const currency = order.currency || "USD";
   const discountCodes = order.discount_codes?.map((d) => d.code);
   const skuTransformer = createShopifyToDynamicsLineTransformer();
@@ -237,10 +242,10 @@ export function toD365SalesOrderLines(
     }
 
     // Match GPS: dummy/test SKUs (IM8-FG-G*) are not released products in D365 — skip lines.
-    const mappedSku = mapShopifySkuToDynamics(rawSku);
-    if (isDummySku(mappedSku)) {
+    const mergeMappedSku = mapShopifySkuToDynamicsForOrderLine(rawSku);
+    if (isDummySku(mergeMappedSku)) {
       console.warn(
-        `[Transformers] Skipping dummy/test SKU for D365 ${order.name}: ${mappedSku} (no released item in D365)`
+        `[Transformers] Skipping dummy/test SKU for D365 ${order.name}: ${mergeMappedSku} (no released item in D365)`
       );
       continue;
     }
@@ -254,7 +259,11 @@ export function toD365SalesOrderLines(
       countryCode
     );
     const transformedLine = skuTransformer(line);
-    lines.push(transformedLine);
+    const withWarehouse: D365SalesOrderLineRequest =
+      lineShippingWarehouseId && !isServiceSku(transformedLine.itemNumber)
+        ? { ...transformedLine, shippingWarehouseId: lineShippingWarehouseId }
+        : transformedLine;
+    lines.push(withWarehouse);
   }
 
   const explodedLines = explodeBundleLines(lines);
@@ -344,8 +353,8 @@ export function toOrderLineRecords(
       // Shippable line with no SKU — same guard as toD365SalesOrderLines
       continue;
     }
-    const mappedSku = mapShopifySkuToDynamics(rawSku);
-    if (isDummySku(mappedSku)) continue;
+    const mergeMappedSku = mapShopifySkuToDynamicsForOrderLine(rawSku);
+    if (isDummySku(mergeMappedSku)) continue;
 
     const d365Line = toD365SalesOrderLine(
       { ...item, sku: rawSku },
@@ -591,6 +600,7 @@ export { toSalesOrderHeadersV3Address, toGpsOrderAddress, formatAddressName } fr
 
 export {
   mapShopifySkuToDynamics,
+  mapShopifySkuToDynamicsForOrderLine,
   mergeGpsDuplicateSkuLines as mergeGPSDuplicateSKUOrderLines,
 } from "./sku";
 

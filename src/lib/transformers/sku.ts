@@ -41,6 +41,20 @@ export function getShopifyToDynamicsMapping(): Record<string, string> {
 }
 
 /**
+ * Single-hop **merge** mapping for sales order / GPS / D365 line flows.
+ * Matches spock-store `mapToSku(TO_DYNAMICS_SKU.merge)` in
+ * `createShopifyToDynamicsOrderLineTransformer`: one read from the merge
+ * table only — no `refill` (that table is for subscription/Loop paths in spock,
+ * not applied on Dynamics order lines there).
+ */
+export function mapShopifySkuToDynamicsForOrderLine(shopifySku: string): string {
+  const merge = getShopifyToDynamicsMapping();
+  const key = (shopifySku || "").trim();
+  const mapped = merge[key];
+  return mapped && mapped !== key ? mapped : key;
+}
+
+/**
  * Get the reverse merge mapping (D365 SKU -> Shopify SKU)
  */
 export function getDynamicsToShopifyMapping(): Record<string, string> {
@@ -67,8 +81,11 @@ export function getRewardMapping(): Record<string, string> {
 }
 
 /**
- * Map a Shopify SKU to D365 SKU
- * Applies refill mapping first, then merge mapping if exists, otherwise returns original
+ * Map a Shopify SKU through **refill** then **merge** (loop) until stable.
+ * Use for code paths that need the full storefront→physical-style resolution.
+ * For **SalesOrderLines** and GPS product lines, use
+ * `mapShopifySkuToDynamicsForOrderLine` instead to match spock-store Dynamics
+ * behavior (merge table only, one hop).
  */
 export function mapShopifySkuToDynamics(shopifySku: string): string {
   const refillMapping = getRefillMapping();
@@ -119,12 +136,12 @@ export function mapDynamicsSkuToShopify(dynamicsSku: string, originalShopifySku?
 }
 
 /**
- * Create a line transformer that applies SKU mapping
- * Ported from spock-store createShopifyToDynamicsOrderLineTransformer
+ * Create a line transformer that applies merge-only mapping (spock-store parity).
+ * Ported from spock-store createShopifyToDynamicsOrderLineTransformer (mapToSku(merge))
  */
 export function createShopifyToDynamicsLineTransformer() {
   return <L extends OrderLine>(line: L): L => {
-    const mapped = mapShopifySkuToDynamics(line.itemNumber);
+    const mapped = mapShopifySkuToDynamicsForOrderLine(line.itemNumber);
     if (mapped !== line.itemNumber) {
       console.log(`[SKU] Mapped ${line.itemNumber} -> ${mapped}`);
       return {

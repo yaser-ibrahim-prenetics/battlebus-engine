@@ -13,7 +13,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as shopify from "@/lib/clients/shopify";
-import { mapShopifySkuToDynamics } from "@/lib/transformers/sku";
+import { mapShopifySkuToDynamicsForOrderLine } from "@/lib/transformers/sku";
 import { getTrackingUrl, mapGpsCarrierToShopify } from "@/lib/helpers/tracking";
 import { CONCURRENCY_CONFIGS, THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
@@ -159,7 +159,7 @@ export const processDynamicsInitiatedFulfillment = inngest.createFunction(
       for (const li of openFo.line_items) {
         const orderLine = shopifyOrder.line_items.find((o: ILineItem) => o.id === li.line_item_id);
         if (!orderLine?.sku) continue;
-        const dKey = mapShopifySkuToDynamics(String(orderLine.sku))
+        const dKey = mapShopifySkuToDynamicsForOrderLine(String(orderLine.sku))
           .trim()
           .toUpperCase();
         const rem = remaining.get(dKey);

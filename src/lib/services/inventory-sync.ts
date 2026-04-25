@@ -17,7 +17,7 @@ import { config } from "../config";
 import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
 import * as shopify from "../clients/shopify";
-import { mapShopifySkuToDynamics, mapDynamicsSkuToShopify } from "../transformers/sku";
+import { mapShopifySkuToDynamicsForOrderLine, mapDynamicsSkuToShopify } from "../transformers/sku";
 import { getLocationIdForWarehouse } from "./location-routing";
 
 // ============================================================================
@@ -210,8 +210,8 @@ export async function queryD365Inventory(
 ): Promise<Map<string, InventoryLevel>> {
   console.log(`[InventorySync] Querying D365 inventory for ${skus.length} SKUs`);
 
-  // Map Shopify SKUs to D365 ItemNumbers
-  const d365Skus = skus.map((sku) => mapShopifySkuToDynamics(sku));
+  // Map Shopify SKUs to D365 ItemNumbers (same merge rule as D365 order lines)
+  const d365Skus = skus.map((sku) => mapShopifySkuToDynamicsForOrderLine(sku));
 
   // Build OData filter for multiple SKUs
   const skuFilter = d365Skus.map((sku) => `ItemNumber eq '${sku}'`).join(" or ");
@@ -248,7 +248,7 @@ export async function queryD365Inventory(
   for (const item of items) {
     const d365Sku = item.ItemNumber;
     // Map back to original SKU for consistency
-    const originalSku = skus.find((s) => mapShopifySkuToDynamics(s) === d365Sku) || d365Sku;
+    const originalSku = skus.find((s) => mapShopifySkuToDynamicsForOrderLine(s) === d365Sku) || d365Sku;
 
     result.set(originalSku, {
       sku: originalSku,
@@ -437,7 +437,7 @@ export async function syncGpsToD365(sku: string, warehouseName: string): Promise
     }
 
     // Map to D365 SKU
-    const d365Sku = mapShopifySkuToDynamics(sku);
+    const d365Sku = mapShopifySkuToDynamicsForOrderLine(sku);
 
     // Get current D365 level for comparison
     const d365InventoryMap = await queryD365Inventory([sku], mapping.d365DataAreaId);

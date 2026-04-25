@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   mapShopifySkuToDynamics,
+  mapShopifySkuToDynamicsForOrderLine,
   mapDynamicsSkuToShopify,
   getShopifyToDynamicsMapping,
   getDynamicsToShopifyMapping,
@@ -23,7 +24,7 @@ describe("SKU Transformers", () => {
     resetBundleCache();
   });
 
-  describe("mapShopifySkuToDynamics", () => {
+  describe("mapShopifySkuToDynamics (refill+merge loop)", () => {
     it("applies refill mapping when it exists", () => {
       // IM8-FG-000010 -> IM8-FG-000035 (refill mapping)
       expect(mapShopifySkuToDynamics("IM8-FG-000010")).toBe("IM8-FG-000035");
@@ -45,8 +46,9 @@ describe("SKU Transformers", () => {
       expect(mapShopifySkuToDynamics("IM8-FG-000031")).toBe("IM8-FG-000048");
     });
 
-    it("handles merge mappings correctly", () => {
-      expect(mapShopifySkuToDynamics("IM8-FG-000076")).toBe("IM8-FG-000010");
+    it("chains merge then refill (merge target may be a refill key)", () => {
+      // 076 --merge--> 010 --refill--> 035
+      expect(mapShopifySkuToDynamics("IM8-FG-000076")).toBe("IM8-FG-000035");
       expect(mapShopifySkuToDynamics("IM8-FG-000171")).toBe("IM8-FG-000064");
       expect(mapShopifySkuToDynamics("PRE-FG-000127")).toBe("PRE-FG-000021");
     });
@@ -54,6 +56,24 @@ describe("SKU Transformers", () => {
     it("resolves chained SKU swaps to final Dynamics SKU", () => {
       expect(mapShopifySkuToDynamics("IM8-FG-000078")).toBe("IM8-FG-000007");
       expect(mapShopifySkuToDynamics("IM8-FG-000082")).toBe("IM8-FG-000040");
+    });
+  });
+
+  describe("mapShopifySkuToDynamicsForOrderLine (spock-store: merge only, one hop)", () => {
+    it("applies a single merge lookup, no refill", () => {
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-000076")).toBe("IM8-FG-000010");
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-000078")).toBe("IM8-FG-000011");
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-000084")).toBe("IM8-FG-000031");
+    });
+
+    it("does not apply refill table (e.g. 000010 is not remapped to 000035 here)", () => {
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-000010")).toBe("IM8-FG-000010");
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-000031")).toBe("IM8-FG-000031");
+    });
+
+    it("applies same merge fixes as getShopifyToDynamicsMapping", () => {
+      expect(mapShopifySkuToDynamicsForOrderLine("IM8-FG-00096")).toBe("IM8-FG-000096");
+      expect(mapShopifySkuToDynamicsForOrderLine("PRE-FG-000127")).toBe("PRE-FG-000021");
     });
   });
 
@@ -106,12 +126,12 @@ describe("SKU Transformers", () => {
       expect(result.quantity).toBe(1);
     });
 
-    it("passes through unmapped SKUs unchanged", () => {
+    it("does not apply refill; merge-only (matches spock-store line transformer)", () => {
       const transformer = createShopifyToDynamicsLineTransformer();
       const line = { itemNumber: "IM8-FG-000031", quantity: 2 };
       const result = transformer(line);
 
-      expect(result.itemNumber).toBe("IM8-FG-000048"); // refill mapped
+      expect(result.itemNumber).toBe("IM8-FG-000031");
     });
 
     it("preserves extra properties on lines", () => {

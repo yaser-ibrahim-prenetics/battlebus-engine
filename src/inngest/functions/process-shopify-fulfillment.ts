@@ -12,7 +12,7 @@ import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import * as paypal from "@/lib/clients/paypal";
 import * as shopifyClient from "@/lib/clients/shopify";
-import { mapShopifySkuToDynamics } from "@/lib/transformers/sku";
+import { mapShopifySkuToDynamicsForOrderLine } from "@/lib/transformers/sku";
 import type {
   ShopifyOrderPayload,
   ShopifyFulfillment,
@@ -50,7 +50,7 @@ import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-log
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
   if (!sku) return "";
-  return mapShopifySkuToDynamics(sku).trim().toUpperCase();
+  return mapShopifySkuToDynamicsForOrderLine(sku).trim().toUpperCase();
 }
 
 function isFulfillmentInventoryIssueError(message: string): boolean {

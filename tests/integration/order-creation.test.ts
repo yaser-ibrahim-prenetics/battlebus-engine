@@ -177,12 +177,12 @@ describe("Order Creation Flow (Integration)", () => {
   });
 
   describe("Subscription order", () => {
-    it("processes subscription order with refill SKU mapping", () => {
+    it("keeps storefront subscription variant SKU on D365 lines (merge only; no refill swap, spock-store parity)", () => {
       const order = loadFixture("subscriptionOrder");
       const lines = toD365SalesOrderLines(order, "U001-SO-400", "GPS Warehouse");
       const productLines = lines.filter((l) => !isServiceSku(l.itemNumber));
-      const mappedLine = productLines.find((l) => l.itemNumber === "IM8-FG-000035");
-      expect(mappedLine).toBeDefined();
+      const productLine = productLines.find((l) => l.itemNumber === "IM8-FG-000010");
+      expect(productLine).toBeDefined();
     });
 
     it("identifies subscription source correctly", () => {

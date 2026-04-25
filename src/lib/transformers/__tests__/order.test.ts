@@ -27,6 +27,7 @@ describe("Order Transformers", () => {
       expect(header.customerOrderReference).toBe("IM8-17715");
       expect(header.email).toBe("test-us@example.com");
       expect(header.currency).toBe("USD");
+      expect(header.shippingWarehouseId).toBe("USOPS-WH04");
       expect(header.shippingAddress).toBeDefined();
       expect(header.shippingAddress?.addressCountryCode).toBe("USA");
       expect(header.skipFulfillmentNotification).toBeUndefined();
@@ -177,6 +178,9 @@ describe("Order Transformers", () => {
       const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(10);
+
+      expect(productLines.every((l) => l.shippingWarehouseId === "USOPS-WH04")).toBe(true);
+      expect(serviceLines.every((l) => l.shippingWarehouseId === undefined)).toBe(true);
     });
 
     it("uses GPS UK service SKUs for UK orders", () => {
