@@ -13,6 +13,20 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { runId, eventId, functionId, eventName, eventData, orderName } = body;
+    const resolveFunctionId = (input: unknown): string | null => {
+      const raw = typeof input === "string" ? input.trim() : "";
+      if (!raw) return null;
+      const aliasMap: Record<string, string> = {
+        fulfillment: "process-shopify-fulfillment",
+        order_paid: "process-shopify-order",
+        order_creation: "process-shopify-order",
+        gps_outbound: "process-shopify-order",
+        fulfillment_replay: "process-shopify-fulfillment",
+        backorder: "process-backorder",
+      };
+      return aliasMap[raw] || raw;
+    };
+    const normalizedFunctionId = resolveFunctionId(functionId);
 
     // If orderName is provided, fetch the order from Shopify and trigger reprocess
     if (orderName) {
@@ -149,7 +163,7 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ...(functionId && { function_id: functionId }),
+          ...(normalizedFunctionId && { function_id: normalizedFunctionId }),
         }),
       });
 
