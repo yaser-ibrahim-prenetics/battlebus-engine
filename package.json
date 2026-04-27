@@ -36,7 +36,7 @@
     "@faker-js/faker": "^10.3.0",
     "@slack/webhook": "^7.0.6",
     "@supabase/supabase-js": "^2.95.3",
-    "inngest": "4.1.0",
+    "inngest": "^4.2.4",
     "next": "16.1.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
