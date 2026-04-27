@@ -638,7 +638,9 @@ export const processShopifyFulfillment = inngest.createFunction(
       ) as { error?: string } | undefined;
       const firstErrorMessage = String(firstErrorResult?.error || "Fulfillment persistence failed");
       const firstErrorIsInventory = isFulfillmentInventoryIssueError(firstErrorMessage);
-      const queueErrorType = firstErrorIsInventory ? "inventory_insufficient" : "gps_error";
+      const queueErrorType = firstErrorIsInventory
+        ? "inventory_insufficient"
+        : "d365_fulfillment_error";
       const d365Site = (() => {
         try {
           return getWarehouseConfigForDataAreaId(

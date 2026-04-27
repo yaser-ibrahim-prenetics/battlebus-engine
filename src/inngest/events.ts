@@ -235,7 +235,12 @@ export type BackorderCreatedEvent = {
     d365OrderNumber: string;
     warehouse: string;
     errorMessage: string;
-    errorType: "out_of_stock" | "unmaintained_product" | "gps_error" | "inventory_insufficient";
+    errorType:
+      | "out_of_stock"
+      | "unmaintained_product"
+      | "gps_error"
+      | "inventory_insufficient"
+      | "d365_fulfillment_error";
     failedSkus: string[];
     retryCount: number;
     maxRetries: number;

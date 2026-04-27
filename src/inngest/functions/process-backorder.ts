@@ -68,6 +68,13 @@ export const processBackorder = inngest.createFunction(
       event.data.triggeredBy === "manual_bulk";
     const backorderQueueTag = event.data.backorderQueue;
     const manualRetryOnly = !autoRetryEnabled;
+    const defaultFailureSystem: "d365" | "gps" =
+      event.data.failureStage === "fulfillment" ||
+      event.data.sourceEventName === "shopify/order.fulfilled" ||
+      (typeof event.data.sourceEventName === "string" &&
+        event.data.sourceEventName.includes("fulfilled"))
+        ? "d365"
+        : "gps";
     const explicitRetryMode = event.data.retryMode;
     const derivedRetryMode: "gps_outbound" | "fulfillment_replay" =
       event.data.failureStage === "fulfillment" ||
@@ -191,7 +198,7 @@ export const processBackorder = inngest.createFunction(
             state: {
               failureContext: {
                 stage: event.data.failureStage || "order_creation",
-                system: event.data.failureSystem || "gps",
+                system: event.data.failureSystem || defaultFailureSystem,
                 sourceEventName: event.data.sourceEventName || event.name,
                 retryMode: effectiveRetryMode,
                 ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
