@@ -1638,6 +1638,7 @@ export const processShopifyOrder = inngest.createFunction(
               failureStage: "order_creation",
               failureSystem: "gps",
               retryMode: "gps_outbound",
+              backorderQueue: "sync",
             },
           });
         });
@@ -1664,6 +1665,7 @@ export const processShopifyOrder = inngest.createFunction(
                 system: "gps",
                 sourceEventName: "shopify/order.paid",
                 retryMode: "gps_outbound",
+                backorderQueue: "sync",
               },
             },
           },
@@ -1862,6 +1864,7 @@ export const processShopifyOrder = inngest.createFunction(
               failureStage: "order_creation",
               failureSystem,
               retryMode: "gps_outbound",
+              backorderQueue: "sync",
             },
           });
         });
@@ -1889,6 +1892,7 @@ export const processShopifyOrder = inngest.createFunction(
                     : "gps",
                 sourceEventName: "shopify/order.paid",
                 retryMode: "gps_outbound",
+                backorderQueue: "sync",
               },
             },
           },
@@ -1956,9 +1960,42 @@ export const processShopifyOrder = inngest.createFunction(
         const nonRetryableErrorType = isD365NumberSequenceExceededError(errorMsg)
           ? "d365_number_sequence_exceeded"
           : "non_retryable_data_error";
+        const failedSkus =
+          order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
+        const syncFailureSystem = normalizedError.includes("gps") || normalizedError.includes("xlwms")
+          ? "gps"
+          : normalizedError.includes("supabase") ||
+              normalizedError.includes("postgres") ||
+              normalizedError.includes("database")
+            ? "supabase"
+            : "d365";
+
         await publishResult("failed", {
           error: errorMsg,
           d365OrderNumber: salesOrderNumber,
+        });
+
+        await step.run("emit-sync-backorder-event-non-retryable", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNumber,
+              warehouse: warehouseName || "GPS Warehouse",
+              errorMessage: errorMsg,
+              errorType: "gps_error",
+              failedSkus,
+              retryCount: 0,
+              maxRetries: 0,
+              createdAt: new Date().toISOString(),
+              sourceEventName: "shopify/order.paid",
+              failureStage: "order_creation",
+              failureSystem: syncFailureSystem,
+              retryMode: "gps_outbound",
+              backorderQueue: "sync",
+            },
+          });
         });
 
         await csPlatform.sendOrderUpdate(
@@ -1967,13 +2004,22 @@ export const processShopifyOrder = inngest.createFunction(
             name: shopifyOrderName,
             shopifyOrderId,
             shopifyOrderName,
-            status: "failed",
-            processingStatus: "failed",
+            status: "backorder",
+            processingStatus: "backorder",
             gpsSyncStatus: "failed",
             error: errorMsg,
             lastError: errorMsg,
             errorType: nonRetryableErrorType,
             lastErrorType: nonRetryableErrorType,
+            state: {
+              failureContext: {
+                stage: "order_creation",
+                system: syncFailureSystem,
+                sourceEventName: "shopify/order.paid",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+              },
+            },
           },
           { inngestIdempotencyKey, inngestRunId }
         );
@@ -1984,7 +2030,7 @@ export const processShopifyOrder = inngest.createFunction(
         );
 
         return {
-          status: "failed",
+          status: "backorder",
           shopifyOrderId,
           shopifyOrderName,
           d365OrderNumber: salesOrderNumber,
@@ -1996,6 +2042,38 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Publish failure result
       await publishResult("failed", { error: errorMsg });
+      const failedSkus =
+        order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
+      const syncFailureSystem = normalizedError.includes("gps") || normalizedError.includes("xlwms")
+        ? "gps"
+        : normalizedError.includes("supabase") ||
+            normalizedError.includes("postgres") ||
+            normalizedError.includes("database")
+          ? "supabase"
+          : "d365";
+
+      await step.run("emit-sync-backorder-event-catch-all", async () => {
+        await inngest.send({
+          name: "backorder/created",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber: salesOrderNumber,
+            warehouse: warehouseName || "GPS Warehouse",
+            errorMessage: errorMsg,
+            errorType: "gps_error",
+            failedSkus,
+            retryCount: 0,
+            maxRetries: 0,
+            createdAt: new Date().toISOString(),
+            sourceEventName: "shopify/order.paid",
+            failureStage: "order_creation",
+            failureSystem: syncFailureSystem,
+            retryMode: "gps_outbound",
+            backorderQueue: "sync",
+          },
+        });
+      });
 
       // Persist terminal failure back to Battle Hub via webhook so Orders/Testing
       // can report final run errors even when a run fails before a normal status update.
@@ -2005,13 +2083,22 @@ export const processShopifyOrder = inngest.createFunction(
           name: shopifyOrderName,
           shopifyOrderId,
           shopifyOrderName,
-          status: "failed",
-          processingStatus: "failed",
+          status: "backorder",
+          processingStatus: "backorder",
           gpsSyncStatus: "failed",
           error: errorMsg,
           lastError: errorMsg,
           errorType,
           lastErrorType: errorType,
+          state: {
+            failureContext: {
+              stage: "order_creation",
+              system: syncFailureSystem,
+              sourceEventName: "shopify/order.paid",
+              retryMode: "gps_outbound",
+              backorderQueue: "sync",
+            },
+          },
         },
         { inngestIdempotencyKey, inngestRunId }
       );
@@ -2019,9 +2106,11 @@ export const processShopifyOrder = inngest.createFunction(
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(
         channel,
-        `Process Order Failed: ${shopifyOrderName} - ${errorMsg}`
+        `Process Order parked in sync backorder queue: ${shopifyOrderName} - ${errorMsg}`
       );
-      throw error;
+      throw new NonRetriableError(
+        `[BACKORDER_TERMINAL] ${shopifyOrderName} parked in sync queue due to order sync failure`
+      );
     }
   }
 );

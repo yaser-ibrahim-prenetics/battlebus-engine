@@ -570,6 +570,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                 failureStage: "fulfillment",
                 failureSystem: "d365",
                 retryMode: "fulfillment_replay",
+                backorderQueue: "fulfilment",
                 d365WarehouseName,
                 shipFromWarehouseName,
               },
@@ -624,11 +625,20 @@ export const processShopifyFulfillment = inngest.createFunction(
       }
     }
 
+    const anyFulfillmentError = fulfillmentResults.some(
+      (r: { status: string }) => r.status === "error"
+    );
     const hasBackorderQueued = fulfillmentResults.some(
       (r: { status: string; error?: string }) =>
         r.status === "error" && isFulfillmentInventoryIssueError(String(r.error || ""))
     );
-    if (hasBackorderQueued) {
+    if (anyFulfillmentError) {
+      const firstErrorResult = fulfillmentResults.find(
+        (r: { status: string }) => r.status === "error"
+      ) as { error?: string } | undefined;
+      const firstErrorMessage = String(firstErrorResult?.error || "Fulfillment persistence failed");
+      const firstErrorIsInventory = isFulfillmentInventoryIssueError(firstErrorMessage);
+      const queueErrorType = firstErrorIsInventory ? "inventory_insufficient" : "gps_error";
       const d365Site = (() => {
         try {
           return getWarehouseConfigForDataAreaId(
@@ -656,6 +666,33 @@ export const processShopifyFulfillment = inngest.createFunction(
         ? getWarehouseNameFromLocation(firstFailedFulfillment.location_id || "") || undefined
         : undefined;
 
+      if (!hasBackorderQueued) {
+        await inngest.send({
+          name: "backorder/created",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber,
+            warehouse: failedShipFromWarehouse || d365Site?.name || "Unknown",
+            errorMessage: firstErrorMessage,
+            errorType: queueErrorType,
+            failedSkus: [],
+            retryCount: 0,
+            maxRetries: 0,
+            orderJson: order,
+            createdAt: new Date().toISOString(),
+            source: "shopify/order.fulfilled",
+            sourceEventName: "shopify/order.fulfilled",
+            failureStage: "fulfillment",
+            failureSystem: "d365",
+            retryMode: "fulfillment_replay",
+            backorderQueue: "fulfilment",
+            d365WarehouseName: d365Site?.name,
+            shipFromWarehouseName: failedShipFromWarehouse,
+          },
+        });
+      }
+
       await csPlatform.sendOrderUpdate(
         {
           id: shopifyOrderId,
@@ -675,16 +712,17 @@ export const processShopifyFulfillment = inngest.createFunction(
           // and overwriting it here would falsely paint the warehouse card as
           // out-of-stock for STORD orders.
           d365FulfillmentStatus: "failed",
-          error: "Fulfillment failed due to inventory insufficiency in D365",
-          lastError: "Fulfillment failed due to inventory insufficiency in D365",
-          errorType: "inventory_insufficient",
-          lastErrorType: "inventory_insufficient",
+          error: firstErrorMessage,
+          lastError: firstErrorMessage,
+          errorType: queueErrorType,
+          lastErrorType: queueErrorType,
           state: {
             failureContext: {
               stage: "fulfillment",
               system: "d365",
               sourceEventName: "shopify/order.fulfilled",
               retryMode: "fulfillment_replay",
+              backorderQueue: "fulfilment",
               d365WarehouseName: d365Site?.name,
               d365DataAreaId,
               shipFromWarehouseName: failedShipFromWarehouse,
@@ -787,9 +825,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
     }
 
-    const anyFulfillmentError = fulfillmentResults.some(
-      (r: { status: string }) => r.status === "error"
-    );
     logFlowEvent({
       flow: "fulfillment",
       step: "done",

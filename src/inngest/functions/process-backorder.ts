@@ -190,6 +190,9 @@ export const processBackorder = inngest.createFunction(
                 system: event.data.failureSystem || "gps",
                 sourceEventName: event.data.sourceEventName || event.name,
                 retryMode,
+                ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
+                  ? { backorderQueue: backorderQueueTag }
+                  : {}),
               },
             },
           },

@@ -252,6 +252,8 @@ export type BackorderCreatedEvent = {
      * - fulfillment_replay: replay shopify/order.fulfilled pipeline
      */
     retryMode?: "gps_outbound" | "fulfillment_replay";
+    /** Hub Backorders sub-queue tag used for route segmentation and replay policy. */
+    backorderQueue?: "sync" | "fulfilment";
   };
 };
 
