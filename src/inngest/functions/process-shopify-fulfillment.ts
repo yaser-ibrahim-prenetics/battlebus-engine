@@ -649,19 +649,14 @@ export const processShopifyFulfillment = inngest.createFunction(
         }
       })();
       const d365DataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
-      // Pick the first failing fulfillment to extract ship-from routing.
-      const firstFailedFulfillment = fulfillments.find((f: ShopifyFulfillment) =>
-        isFulfillmentInventoryIssueError(
-          String(
-            (
-              fulfillmentResults.find(
-                (r: { fulfillmentId: number; status: string }) =>
-                  r.fulfillmentId === f.id && r.status === "error"
-              ) as { error?: string } | undefined
-            )?.error || ""
-          )
-        )
-      );
+      // First error row (D365 API, Stord, GPS, or inventory) — match by
+      // fulfillment id so ship-from is correct for non-inventory failures too.
+      const firstErr = fulfillmentResults.find(
+        (r: { status: string }) => r.status === "error"
+      ) as { fulfillmentId?: number; error?: string } | undefined;
+      const firstFailedFulfillment = firstErr?.fulfillmentId
+        ? fulfillments.find((f: ShopifyFulfillment) => f.id === firstErr.fulfillmentId)
+        : undefined;
       const failedShipFromWarehouse = firstFailedFulfillment
         ? getWarehouseNameFromLocation(firstFailedFulfillment.location_id || "") || undefined
         : undefined;

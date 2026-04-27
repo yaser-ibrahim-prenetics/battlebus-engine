@@ -15,7 +15,7 @@ import { config, GPS_STATUS } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
 import * as slack from "@/lib/clients/slack";
-import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
+import { BACKORDER_CONFIGS, THROTTLE_CONFIGS } from "@/lib/utils/constants";
 import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
@@ -88,25 +88,29 @@ export const syncGpsFulfillments = inngest.createFunction(
             `[GPS Exception] ${exc.shopifyOrderName} (GPS: ${exc.gpsOrderId})\n` +
               `Reason: ${exc.exceptionDesc}\n` +
               `Warehouse: ${exc.warehouse}\n` +
-              `${isInventory ? "→ Routing to backorder queue" : "→ Needs manual review"}`
+              "→ Routed to fulfilment backorder queue (Hub)"
           );
-          if (isInventory) {
-            await inngest.send({
-              name: "backorder/created",
-              data: {
-                shopifyOrderId: exc.shopifyOrderId,
-                shopifyOrderName: exc.shopifyOrderName,
-                d365OrderNumber: "",
-                warehouse: exc.warehouse,
-                errorMessage: exc.exceptionDesc,
-                errorType,
-                failedSkus: [],
-                retryCount: 0,
-                maxRetries: 0,
-                createdAt: new Date().toISOString(),
-              },
-            });
-          }
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId: exc.shopifyOrderId,
+              shopifyOrderName: exc.shopifyOrderName,
+              d365OrderNumber: "",
+              warehouse: exc.warehouse,
+              errorMessage: exc.exceptionDesc,
+              errorType,
+              failedSkus: [],
+              retryCount: 0,
+              maxRetries: isInventory ? BACKORDER_CONFIGS.maxRetries : 0,
+              createdAt: new Date().toISOString(),
+              source: "gps/sync",
+              sourceEventName: "gps/cron.exception",
+              failureStage: "fulfillment",
+              failureSystem: "gps",
+              retryMode: "gps_outbound",
+              backorderQueue: "fulfilment",
+            },
+          });
         }
       });
     }

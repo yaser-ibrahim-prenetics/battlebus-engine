@@ -68,12 +68,16 @@ export const processBackorder = inngest.createFunction(
       event.data.triggeredBy === "manual_bulk";
     const backorderQueueTag = event.data.backorderQueue;
     const manualRetryOnly = !autoRetryEnabled;
-    const retryMode: "gps_outbound" | "fulfillment_replay" =
-      event.data.retryMode === "fulfillment_replay" ||
+    const explicitRetryMode = event.data.retryMode;
+    const derivedRetryMode: "gps_outbound" | "fulfillment_replay" =
       event.data.failureStage === "fulfillment" ||
       event.data.sourceEventName === "shopify/order.fulfilled"
         ? "fulfillment_replay"
         : "gps_outbound";
+    const effectiveRetryMode: "gps_outbound" | "fulfillment_replay" =
+      explicitRetryMode === "fulfillment_replay" || explicitRetryMode === "gps_outbound"
+        ? explicitRetryMode
+        : derivedRetryMode;
 
     const _flowStart = Date.now();
     const _runId = String(runId ?? "");
@@ -189,7 +193,7 @@ export const processBackorder = inngest.createFunction(
                 stage: event.data.failureStage || "order_creation",
                 system: event.data.failureSystem || "gps",
                 sourceEventName: event.data.sourceEventName || event.name,
-                retryMode,
+                retryMode: effectiveRetryMode,
                 ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
                   ? { backorderQueue: backorderQueueTag }
                   : {}),
@@ -232,7 +236,7 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
-          if (retryMode === "fulfillment_replay") {
+          if (effectiveRetryMode === "fulfillment_replay") {
             const fulfillments = Array.isArray((order as any)?.fulfillments)
               ? ((order as any).fulfillments as any[])
               : [];
@@ -283,7 +287,7 @@ export const processBackorder = inngest.createFunction(
             success: false,
             error: msg,
             isInventoryError:
-              retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
           };
         }
       });
@@ -292,7 +296,7 @@ export const processBackorder = inngest.createFunction(
         await step.run("notify-backorder-resolved-manual", async () => {
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
-            retryMode === "fulfillment_replay"
+            effectiveRetryMode === "fulfillment_replay"
               ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
               : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
           );
@@ -305,7 +309,7 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: retryMode === "fulfillment_replay" ? undefined : "synced",
+              gpsSyncStatus: effectiveRetryMode === "fulfillment_replay" ? undefined : "synced",
               status: "processing",
               processingStatus: "processing",
               error: undefined,
@@ -440,7 +444,7 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
-          if (retryMode === "fulfillment_replay") {
+          if (effectiveRetryMode === "fulfillment_replay") {
             const fulfillments = Array.isArray((order as any)?.fulfillments)
               ? ((order as any).fulfillments as any[])
               : [];
@@ -507,7 +511,7 @@ export const processBackorder = inngest.createFunction(
             success: false,
             error: msg,
             isInventoryError:
-              retryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
             retryCount,
             triggeredBy,
           };
@@ -521,7 +525,7 @@ export const processBackorder = inngest.createFunction(
         await step.run("notify-backorder-resolved", async () => {
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
-            retryMode === "fulfillment_replay"
+            effectiveRetryMode === "fulfillment_replay"
               ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
               : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
           );
@@ -535,7 +539,7 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: retryMode === "fulfillment_replay" ? undefined : "synced",
+              gpsSyncStatus: effectiveRetryMode === "fulfillment_replay" ? undefined : "synced",
               status: "processing",
               processingStatus: "processing",
               error: undefined,
