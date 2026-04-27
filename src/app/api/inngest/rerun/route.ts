@@ -21,6 +21,38 @@ async function ingApiFetch(path: string, signingKey: string): Promise<Response> 
   });
 }
 
+const RUN_ID_ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+
+/**
+ * After a new event is sent, the function run is created shortly after. Poll
+ * `GET /v1/events/{eventId}/runs` so the Hub can persist the new `run_id` on the order.
+ */
+async function waitForNewRunIdForEvent(
+  eventId: string,
+  signingKey: string,
+  maxAttempts = 32,
+  delayMs = 250
+): Promise<string | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await ingApiFetch(`/v1/events/${encodeURIComponent(eventId)}/runs`, signingKey);
+    if (res.ok) {
+      const j: unknown = await res.json();
+      const listRaw =
+        j && typeof j === "object" && j !== null && "data" in (j as object)
+          ? (j as { data: unknown }).data
+          : j;
+      const runs = Array.isArray(listRaw) ? listRaw : [];
+      const first = runs[0] as Record<string, unknown> | undefined;
+      const rid = first?.run_id ?? first?.id;
+      if (typeof rid === "string" && RUN_ID_ULID.test(rid.trim())) {
+        return rid.trim();
+      }
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
 /** `GET /v1/runs` may be `{ data: run }` or a run object at the root. */
 function parseRunFromApiJson(json: unknown): Record<string, unknown> {
   if (!json || typeof json !== "object") return {};
@@ -289,11 +321,18 @@ export async function POST(request: NextRequest) {
         data: prepared,
       });
 
+      const newEventId = result.ids?.[0];
+      const newRunId =
+        typeof newEventId === "string" && newEventId.length > 0
+          ? await waitForNewRunIdForEvent(newEventId, INNGEST_SIGNING_KEY)
+          : null;
+
       return NextResponse.json({
         success: true,
         message: `Replayed ${name} (new Inngest event id: ${result.ids?.[0] ?? "unknown"})`,
         data: {
           newEventId: result.ids?.[0],
+          newRunId,
           sendIdempotencyKey: newSendId,
           sourceRunId: String(runId),
         },
