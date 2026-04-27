@@ -9,24 +9,107 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { searchOrdersByName } from "@/lib/clients/shopify";
 
+const INNGEST_API_URL = process.env.INNGEST_API_URL || "https://api.inngest.com";
+
+/** Inngest Cloud does not expose `POST /v1/runs/{id}/rerun`; replay is done by re-sending the source event. */
+async function ingApiFetch(path: string, signingKey: string): Promise<Response> {
+  return fetch(`${INNGEST_API_URL}${path}`, {
+    headers: {
+      Authorization: `Bearer ${signingKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+/** `GET /v1/runs` may be `{ data: run }` or a run object at the root. */
+function parseRunFromApiJson(json: unknown): Record<string, unknown> {
+  if (!json || typeof json !== "object") return {};
+  const o = json as Record<string, unknown>;
+  const hasRunFields =
+    o.event_id != null || o.run_id != null || (typeof o.id === "string" && o.id.length >= 20);
+  if (!hasRunFields && o.data && typeof o.data === "object" && !Array.isArray(o.data)) {
+    return o.data as Record<string, unknown>;
+  }
+  return o;
+}
+
+/**
+ * `GET /v1/events` returns `{ name, data: payload, ... }` — do not treat `data` as an API envelope
+ * (that would drop `name` and leave only the payload object).
+ */
+function parseEventFromApiJson(
+  json: unknown
+): { name: string; data: Record<string, unknown> } {
+  if (!json || typeof json !== "object") return { name: "", data: {} };
+  const o = json as Record<string, unknown>;
+  if (typeof o.name === "string" && o.name.length > 0) {
+    const d = o.data;
+    return {
+      name: o.name,
+      data: d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>) : {},
+    };
+  }
+  if (o.data && typeof o.data === "object" && !Array.isArray(o.data)) {
+    const inner = o.data as Record<string, unknown>;
+    if (typeof inner.name === "string" && inner.name.length > 0) {
+      const d = inner.data;
+      return {
+        name: inner.name,
+        data: d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>) : {},
+      };
+    }
+  }
+  return { name: "", data: {} };
+}
+
+function extractInternalEventIdFromRun(run: Record<string, unknown>): string | null {
+  const fromEvent = run.event as Record<string, unknown> | undefined;
+  const fromTrigger = run.trigger as Record<string, unknown> | undefined;
+  const raw =
+    run.event_id ??
+    fromEvent?.internal_id ??
+    fromEvent?.id ??
+    fromEvent?.event_id ??
+    fromTrigger?.event_id;
+  const s = typeof raw === "string" ? raw.trim() : "";
+  return s.length > 0 ? s : null;
+}
+
+/**
+ * Functions that key idempotency on `event.data.shopifyOrderId` only need a mutated id for replay.
+ * @see process-shopify-order, process-order-cancellation, process-subscription-order
+ */
+function applyReplayDataMutations(
+  eventName: string,
+  data: Record<string, unknown>,
+  sourceRunId: string
+): Record<string, unknown> {
+  const ts = Date.now();
+  const out: Record<string, unknown> = { ...data };
+  out.isRerun = true;
+  out.battleHubReplayOfRunId = sourceRunId;
+
+  const shopifyIdOnlyRerunNames = new Set([
+    "shopify/order.paid",
+    "shopify/order.created",
+    "shopify/order.cancelled",
+    "shopify/subscription.renewed",
+  ]);
+
+  if (shopifyIdOnlyRerunNames.has(eventName) && out.shopifyOrderId != null) {
+    const raw = String(out.shopifyOrderId);
+    const base = raw.split("-rerun-")[0] || raw;
+    out.shopifyOrderId = `${base}-rerun-${ts}`;
+    if (out.originalShopifyOrderId == null) out.originalShopifyOrderId = base;
+  }
+
+  return out;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { runId, eventId, functionId, eventName, eventData, orderName } = body;
-    const resolveFunctionId = (input: unknown): string | null => {
-      const raw = typeof input === "string" ? input.trim() : "";
-      if (!raw) return null;
-      const aliasMap: Record<string, string> = {
-        fulfillment: "process-shopify-fulfillment",
-        order_paid: "process-shopify-order",
-        order_creation: "process-shopify-order",
-        gps_outbound: "process-shopify-order",
-        fulfillment_replay: "process-shopify-fulfillment",
-        backorder: "process-backorder",
-      };
-      return aliasMap[raw] || raw;
-    };
-    const normalizedFunctionId = resolveFunctionId(functionId);
+    const { runId, eventId, eventName, eventData, orderName } = body;
 
     // If orderName is provided, fetch the order from Shopify and trigger reprocess
     if (orderName) {
@@ -147,8 +230,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // If runId is provided, we need to use the Inngest API directly
-    // This requires the signing key for authentication
+    // If runId is provided: Inngest Cloud has no public `POST /v1/runs/{id}/rerun`.
+    // Load the run → load its source event via REST → re-send with `inngest.send()`.
     if (runId) {
       const INNGEST_SIGNING_KEY = process.env.INNGEST_SIGNING_KEY;
 
@@ -156,27 +239,65 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "INNGEST_SIGNING_KEY not configured" }, { status: 500 });
       }
 
-      const response = await fetch(`https://api.inngest.com/v1/runs/${runId}/rerun`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${INNGEST_SIGNING_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...(normalizedFunctionId && { function_id: normalizedFunctionId }),
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
+      const runRes = await ingApiFetch(`/v1/runs/${encodeURIComponent(String(runId))}`, INNGEST_SIGNING_KEY);
+      if (!runRes.ok) {
+        const errText = await runRes.text();
         return NextResponse.json(
-          { error: `Inngest API error: ${error}` },
-          { status: response.status }
+          { error: `Failed to load Inngest run: ${errText || runRes.statusText}` },
+          { status: runRes.status }
         );
       }
 
-      const data = await response.json();
-      return NextResponse.json({ success: true, data });
+      const runJson: unknown = await runRes.json();
+      const run = parseRunFromApiJson(runJson);
+      const internalEventId = extractInternalEventIdFromRun(run);
+
+      if (!internalEventId) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not resolve an internal event id for this run; replay is only supported for runs linked to a stored Inngest event.",
+          },
+          { status: 422 }
+        );
+      }
+
+      const eventRes = await ingApiFetch(
+        `/v1/events/${encodeURIComponent(internalEventId)}`,
+        INNGEST_SIGNING_KEY
+      );
+      if (!eventRes.ok) {
+        const errText = await eventRes.text();
+        return NextResponse.json(
+          { error: `Failed to load Inngest event ${internalEventId}: ${errText || eventRes.statusText}` },
+          { status: eventRes.status }
+        );
+      }
+
+      const eventJson: unknown = await eventRes.json();
+      const { name, data: dataObj } = parseEventFromApiJson(eventJson);
+      if (!name) {
+        return NextResponse.json({ error: "Inngest event is missing a name" }, { status: 422 });
+      }
+
+      const newSendId = `hub-rerun-${String(runId)}-${Date.now()}`;
+      const prepared = applyReplayDataMutations(name, dataObj, String(runId));
+
+      const result = await inngest.send({
+        id: newSendId,
+        name,
+        data: prepared,
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: `Replayed ${name} (new Inngest event id: ${result.ids?.[0] ?? "unknown"})`,
+        data: {
+          newEventId: result.ids?.[0],
+          sendIdempotencyKey: newSendId,
+          sourceRunId: String(runId),
+        },
+      });
     }
 
     return NextResponse.json(
