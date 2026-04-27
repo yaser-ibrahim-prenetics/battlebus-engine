@@ -91,6 +91,9 @@ export const syncGpsFulfillments = inngest.createFunction(
               "→ Routed to fulfilment backorder queue (Hub)"
           );
           await inngest.send({
+            // Keep one active exception backorder event per GPS order to avoid
+            // re-queuing the same order every cron tick.
+            id: `gps-exception-backorder-${String(exc.gpsOrderId)}`,
             name: "backorder/created",
             data: {
               shopifyOrderId: exc.shopifyOrderId,

@@ -697,6 +697,11 @@ export const processShopifyFulfillment = inngest.createFunction(
           shopifyOrderId,
           shopifyOrderName,
           d365OrderNumber: d365Order.SalesOrderNumber,
+          // Keep Shopify lifecycle state up to date even when D365 fulfillment
+          // fails, so GPS cron does not keep polling this order as "unfulfilled"
+          // and re-open duplicate backorders with GPS errors.
+          shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
+          shopifyFinancialStatus: order.financial_status,
           // Do not set `warehouse` here: it must stay the Shopify routing /
           // ship-from label (e.g. STORD ATL Location). D365 inventory site
           // belongs in failureContext only — Hub also guards against the
