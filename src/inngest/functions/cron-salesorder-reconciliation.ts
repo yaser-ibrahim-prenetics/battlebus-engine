@@ -15,9 +15,9 @@
 //       a) Fulfilled in Shopify, not fulfilled in DB (or row missing).
 //       b) Fulfilled in DB, not fulfilled in Shopify.
 //
-// Shopify order windowing uses Admin GraphQL `orders(query: ...)`.
-// Date-only tokens in `query` (e.g. created_at:>=2026-04-30 created_at:<2026-05-01) are
-// evaluated in the store's timezone (same as Shopify admin), not in UTC instants.
+// Shopify order windowing uses Admin GraphQL `orders(query: ...)` plus a strict check on each
+// `createdAt`: keep only orders in `[store midnight dateFrom, store midnight dayAfterTo)` so the
+// search bar cannot pull in the next/previous civil day (e.g. Apr 30 orders when reconciling Apr 29).
 //
 // We never filter the DB by `created_at` for matching — Supabase `created_at` is row insert time.
 // Manual trigger: `event = "reconciliation/run"` with
@@ -121,6 +121,27 @@ function storeMidnightUtcIso(ymd: string): string {
   return toDate(`${ymd}T00:00:00`, { timeZone: config.reconciliation.storeTimeZone }).toISOString();
 }
 
+/**
+ * True if Shopify's order {@link createdAtIso} falls in the half-open window
+ * `[start of fromYmd, start of beforeYmd)` in {@link config.reconciliation.storeTimeZone}.
+ * `beforeYmd` must be the exclusive end date (e.g. 2026-04-30 when the last included day is 2026-04-29).
+ *
+ * The GraphQL `orders(query: "created_at:…")` filter can return orders outside this civil window;
+ * we always enforce the intended range using the API's `createdAt` field.
+ */
+function orderCreatedAtInStoreHalfOpenWindow(
+  createdAtIso: string,
+  fromYmd: string,
+  beforeYmd: string
+): boolean {
+  const t = Date.parse(createdAtIso);
+  if (Number.isNaN(t)) return false;
+  const startMs = Date.parse(storeMidnightUtcIso(fromYmd));
+  const endMs = Date.parse(storeMidnightUtcIso(beforeYmd));
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return false;
+  return t >= startMs && t < endMs;
+}
+
 /** Last closed calendar day in store TZ (for the cron at 00:00 UTC). */
 function getPreviousStoreDayRange(now: Date): {
   fromIso: string;
@@ -160,8 +181,9 @@ function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
 
 /**
  * Pull orders from Shopify for civil dates [{@link createdAtFromYmd}, {@link createdAtBeforeYmd})
- * in the **store timezone** (date-only `created_at` filters in the GraphQL `query` string).
- * `extraQuery` adds AND clauses (e.g. `financial_status:paid`).
+ * in the **store timezone**.
+ * The `query` string pre-filters in Shopify; each order is then kept only if {@link orderCreatedAtInStoreHalfOpenWindow}
+ * passes (GraphQL `createdAt` vs store midnights), because search can return neighbors outside the intended day.
  */
 async function fetchShopifyWindowOrders(params: {
   createdAtFromYmd: string;
@@ -174,6 +196,7 @@ async function fetchShopifyWindowOrders(params: {
   let hasNextPage = true;
   let cursor: string | null = null;
   let pageIndex = 0;
+  let skippedOutsideCreatedAtWindow = 0;
 
   const query = `
     query ReconciliationWindowOrders($query: String!, $after: String) {
@@ -260,11 +283,16 @@ async function fetchShopifyWindowOrders(params: {
       const name = String(edge?.node?.name || "").trim();
       if (!name) continue;
       if (edge?.node?.cancelledAt) continue;
+      const createdAt = String(edge?.node?.createdAt || "").trim();
+      if (!orderCreatedAtInStoreHalfOpenWindow(createdAt, createdAtFromYmd, createdAtBeforeYmd)) {
+        skippedOutsideCreatedAtWindow += 1;
+        continue;
+      }
       const amount = edge?.node?.totalPriceSet?.shopMoney?.amount;
       items.push({
         id: String(edge?.node?.id || ""),
         name,
-        createdAt: String(edge?.node?.createdAt || ""),
+        createdAt,
         financialStatus: String(edge?.node?.displayFinancialStatus || "").toUpperCase(),
         fulfillmentStatus: String(edge?.node?.displayFulfillmentStatus || "").toUpperCase(),
         totalPrice: amount != null && amount !== "" ? String(amount) : null,
@@ -291,6 +319,7 @@ async function fetchShopifyWindowOrders(params: {
     reconTrace(trace.runId, trace.type, "shopify_window_done", {
       pages: pageIndex,
       rowsRaw: items.length,
+      graphQLEdgesSkippedWrongCreatedAt: skippedOutsideCreatedAtWindow,
       uniqueOrderCount: unique.length,
       sampleNamesStart: head,
       sampleNamesEnd: tail.length ? tail : undefined,
