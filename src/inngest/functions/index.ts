@@ -32,6 +32,7 @@ export {
 } from "./cron-inventory-reconciliation";
 export { refreshLocationConfigCache } from "./refresh-location-config-cache";
 export { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
+export { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -63,6 +64,7 @@ import {
 } from "./cron-inventory-reconciliation";
 import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
+import { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 
 const inventoryFunctions = config.features.enableInventoryRuns
   ? [
@@ -105,4 +107,6 @@ export const functions = [
   processSubscriptionOrder,
   // Dynamics-originated shipment → create Shopify fulfillments
   processDynamicsInitiatedFulfillment,
+  // Daily sales order reconciliation + Slack alerts
+  cronSalesorderReconciliation,
 ];
