@@ -282,14 +282,30 @@ export const cronSalesorderReconciliation = inngest.createFunction(
   {
     id: "cron-salesorder-reconciliation",
     name: "Daily SalesOrder Reconciliation",
-    triggers: [{ cron: "0 0 * * *" }],
+    triggers: [{ cron: "0 0 * * *" }, { event: "reconciliation/run" }],
     concurrency: { limit: 1 },
   },
-  async ({ runId }: { runId?: string }) => {
+  async ({ event, runId }: { event?: any; runId?: string }) => {
     const supabase = getSupabaseClient();
     const storeCode = toStoreCode();
-    const now = new Date();
-    const { fromIso, toIso, fromDate, toDate } = getPreviousUtcDayRange(now);
+    const eventType = String(event?.name || "");
+    const requestedType = String(event?.data?.type || "all") as
+      | "all"
+      | "salesorder"
+      | "gps_us"
+      | "gps_uk";
+    const manualFrom = String(event?.data?.dateFrom || "").trim();
+    const manualTo = String(event?.data?.dateTo || "").trim();
+    const hasManualRange = eventType === "reconciliation/run" && manualFrom && manualTo;
+    const computed = hasManualRange
+      ? {
+          fromIso: `${manualFrom}T00:00:00.000Z`,
+          toIso: `${manualTo}T23:59:59.999Z`,
+          fromDate: manualFrom,
+          toDate: manualTo,
+        }
+      : getPreviousUtcDayRange(new Date());
+    const { fromIso, toIso, fromDate, toDate } = computed;
     const safeRunId = String(runId || "");
 
     if (!supabase) {
@@ -314,38 +330,26 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       return { status: "failed", reason: "supabase_not_configured" };
     }
 
-    const results = await Promise.all([
-      runOneRecon({
+    const types: ReconType[] =
+      requestedType === "all"
+        ? ["salesorder", "gps_us", "gps_uk"]
+        : [requestedType];
+    const results: ReconResult[] = [];
+    for (const type of types) {
+      // Keep deterministic per-check order in run result payload and modal rendering.
+      // eslint-disable-next-line no-await-in-loop
+      const item = await runOneRecon({
         supabase,
-        type: "salesorder",
+        type,
         dateFromIso: fromIso,
         dateToIso: toIso,
         dateFrom: fromDate,
         dateTo: toDate,
         storeCode,
         runId: safeRunId,
-      }),
-      runOneRecon({
-        supabase,
-        type: "gps_us",
-        dateFromIso: fromIso,
-        dateToIso: toIso,
-        dateFrom: fromDate,
-        dateTo: toDate,
-        storeCode,
-        runId: safeRunId,
-      }),
-      runOneRecon({
-        supabase,
-        type: "gps_uk",
-        dateFromIso: fromIso,
-        dateToIso: toIso,
-        dateFrom: fromDate,
-        dateTo: toDate,
-        storeCode,
-        runId: safeRunId,
-      }),
-    ]);
+      });
+      results.push(item);
+    }
 
     await flushFlowLogs();
 

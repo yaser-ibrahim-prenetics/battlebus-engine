@@ -374,6 +374,17 @@ export type InventoryFullSyncRequestedEvent = {
   };
 };
 
+export type ReconciliationRunEvent = {
+  name: "reconciliation/run";
+  data: {
+    type?: "all" | "salesorder" | "gps_us" | "gps_uk";
+    dateFrom?: string;
+    dateTo?: string;
+    requestedAt?: string;
+    requestedBy?: string;
+  };
+};
+
 // ============================================================================
 // ORDER LIFECYCLE EVENTS
 // ============================================================================
@@ -409,6 +420,7 @@ export type BattleBusEvents =
   | ActionOrderFulfillEvent
   | InventorySyncEvent
   | InventoryFullSyncRequestedEvent
+  | ReconciliationRunEvent
   | SubscriptionRenewalEvent
   | BackorderCreatedEvent
   | BackorderResolvedEvent
