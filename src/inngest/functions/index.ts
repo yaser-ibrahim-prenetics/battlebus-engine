@@ -3,6 +3,8 @@
 // ============================================================================
 // Export all Inngest functions for registration
 
+import { config } from "@/lib/config";
+
 export { processShopifyOrder } from "./process-shopify-order";
 export { processRefund } from "./process-refund";
 export { processShopifyFulfillment } from "./process-shopify-fulfillment";
@@ -62,6 +64,23 @@ import {
 import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 
+const inventoryFunctions = config.features.enableInventoryRuns
+  ? [
+      // Product & Inventory Sync
+      processProductSync,
+      processInventorySync,
+      processInventoryMesh,
+      processInventoryFullSync,
+      // Location sync and cache refresh are inventory-adjacent flows.
+      processLocationSync,
+      refreshLocationConfigCache,
+      // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)
+      cronInventoryReconciliation,
+      triggerInventoryReconciliation,
+      syncSkuInventory,
+    ]
+  : [];
+
 export const functions = [
   processShopifyOrder,
   processRefund,
@@ -76,25 +95,14 @@ export const functions = [
   processActionCancel,
   processActionRefund,
   processActionFulfill,
-  // Product & Inventory Sync
-  processProductSync,
-  processInventorySync,
-  processInventoryMesh,
-  processInventoryFullSync,
-  // Location Sync
-  processLocationSync,
+  // Product/Inventory flows are intentionally gated for staged rollout.
+  ...inventoryFunctions,
   // Backorder Retry Queue
   processBackorder,
   // Stacked lifecycle action drain
   drainPendingActions,
   // Skio Subscription Renewal Orders
   processSubscriptionOrder,
-  // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)
-  cronInventoryReconciliation,
-  triggerInventoryReconciliation,
-  syncSkuInventory,
-  // Config cache refresh
-  refreshLocationConfigCache,
   // Dynamics-originated shipment → create Shopify fulfillments
   processDynamicsInitiatedFulfillment,
 ];

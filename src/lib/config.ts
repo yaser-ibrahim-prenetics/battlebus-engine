@@ -189,15 +189,21 @@ export const config = {
     enabledShopifyOrderMock: false,
     enabledShopifyCreateFulfillmentMock: false,
     /**
-     * Cross-system inventory pushes (Shopify ↔ D365 ↔ GPS mesh, webhooks, full sync).
-     * When false, inventory can still be read via list/unified APIs and Hub cache refresh (sync-gps).
+     * Master kill-switch for registering inventory-related Inngest functions.
+     * Default OFF so inventory jobs do not run unless explicitly enabled.
      */
-    enableInventorySync: process.env.ENABLE_INVENTORY_SYNC !== "false",
+    enableInventoryRuns: process.env.ENABLE_INVENTORY_RUNS === "true",
+    /**
+     * Cross-system inventory pushes (Shopify ↔ D365 ↔ GPS mesh, webhooks, full sync).
+     * Default OFF unless explicitly enabled.
+     */
+    enableInventorySync: process.env.ENABLE_INVENTORY_SYNC === "true",
     /**
      * Controls the scheduled product inventory reconciliation cron only.
      * Manual inventory reconciliation endpoints/events remain available.
      */
-    enableProductInventorySyncCron: process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON !== "false",
+    enableProductInventorySyncCron:
+      process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
     enabledGpsOutboundMock: false,
     /**
      * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
