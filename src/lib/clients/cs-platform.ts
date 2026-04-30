@@ -95,12 +95,33 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
   }
 }
 
+/** Shopify REST `created_at` for Hub date filters / `orders.created_at` (ISO string). */
+function resolveShopifyOrderCreatedAt(orderData: Record<string, unknown>): string | undefined {
+  const fromTop = orderData.shopifyOrderCreatedAt;
+  if (typeof fromTop === "string" && fromTop.trim()) return fromTop;
+
+  const orderJson = orderData.orderJson;
+  if (orderJson && typeof orderJson === "object" && orderJson !== null && "created_at" in orderJson) {
+    const c = (orderJson as { created_at?: string }).created_at;
+    if (typeof c === "string" && c.trim()) return c;
+  }
+
+  const ord = orderData.order;
+  if (ord && typeof ord === "object" && ord !== null && "created_at" in ord) {
+    const c = (ord as { created_at?: string }).created_at;
+    if (typeof c === "string" && c.trim()) return c;
+  }
+
+  return undefined;
+}
+
 export async function sendOrderCreated(
   orderData: any,
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
 ): Promise<void> {
   // Extract sync statuses - these are derived from what processing has completed
   const syncStatuses: Record<string, string> = {};
+  const shopifyOrderCreatedAt = resolveShopifyOrderCreatedAt(orderData);
 
   // If we have D365 order number, Shopify import and D365 sync succeeded
   if (orderData.d365OrderNumber) {
@@ -124,6 +145,7 @@ export async function sendOrderCreated(
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
       ...syncStatuses,
+      ...(shopifyOrderCreatedAt ? { shopifyOrderCreatedAt } : {}),
       // Include Inngest IDs for linking to dashboard:
       // - inngestIdempotencyKey: the event-level idempotency key (e.g., "shopify-order-paid-xxx")
       // - inngestRunId: the run ID for /runs/ URLs (e.g., "01KGWWR0AKZMSTNYJ6VWJMR7DD")
@@ -174,6 +196,7 @@ export async function sendOrderUpdate(
   },
   inngestIds?: { inngestIdempotencyKey?: string; inngestRunId?: string }
 ): Promise<void> {
+  const shopifyOrderCreatedAt = resolveShopifyOrderCreatedAt(orderData);
   await sendOrderEvent({
     event: "order.status_update",
     data: {
@@ -181,6 +204,7 @@ export async function sendOrderUpdate(
       shopifyOrderName: orderData.name || orderData.shopifyOrderName,
       shopifyOrderId: orderData.id || orderData.shopifyOrderId,
       ...orderData,
+      ...(shopifyOrderCreatedAt ? { shopifyOrderCreatedAt } : {}),
       inngestIdempotencyKey: inngestIds?.inngestIdempotencyKey,
       inngestRunId: inngestIds?.inngestRunId,
       inngestEventId: inngestIds?.inngestIdempotencyKey,
