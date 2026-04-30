@@ -377,7 +377,7 @@ export type InventoryFullSyncRequestedEvent = {
 export type ReconciliationRunEvent = {
   name: "reconciliation/run";
   data: {
-    type?: "all" | "salesorder" | "gps_us" | "gps_uk";
+    type?: "all" | "salesorder" | "gps_us" | "gps_uk" | "fulfillment";
     dateFrom?: string;
     dateTo?: string;
     requestedAt?: string;

@@ -14,7 +14,7 @@ import { SlackChannelEnum } from "@/lib/types/slack";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
 import { shopifyAdminGraphql } from "@/lib/clients/shopify";
 
-type ReconType = "salesorder" | "gps_us" | "gps_uk";
+type ReconType = "salesorder" | "gps_us" | "gps_uk" | "fulfillment";
 
 type OrderRow = {
   shopify_order_name: string | null;
@@ -101,6 +101,72 @@ async function fetchShopifyPaidOrderNames(params: {
   return Array.from(new Set(out));
 }
 
+async function fetchShopifyFulfilledOrderNames(params: {
+  dateFromIso: string;
+  dateToIso: string;
+}): Promise<string[]> {
+  const out: string[] = [];
+  let hasNextPage = true;
+  let cursor: string | null = null;
+
+  const query = `
+    query ReconciliationFulfilledOrders($query: String!, $after: String) {
+      orders(first: 250, query: $query, after: $after, reverse: false, sortKey: UPDATED_AT) {
+        edges {
+          cursor
+          node {
+            name
+            cancelledAt
+            displayFulfillmentStatus
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+  `;
+
+  type ShopifyOrdersQueryResponse = {
+    data?: {
+      orders?: {
+        edges?: Array<{
+          cursor?: string;
+          node?: {
+            name?: string;
+            cancelledAt?: string | null;
+            displayFulfillmentStatus?: string | null;
+          };
+        }>;
+        pageInfo?: { hasNextPage?: boolean };
+      };
+    };
+  };
+
+  const dateFrom = params.dateFromIso.replace(".000Z", "Z");
+  const dateTo = params.dateToIso.replace(".000Z", "Z");
+  const shopifyQuery = `updated_at:>=${dateFrom} updated_at:<${dateTo} fulfillment_status:fulfilled`;
+
+  while (hasNextPage) {
+    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
+      query: shopifyQuery,
+      after: cursor,
+    });
+
+    const edges = res?.data?.orders?.edges || [];
+    for (const edge of edges) {
+      const name = String(edge?.node?.name || "").trim();
+      if (!name) continue;
+      if (edge?.node?.cancelledAt) continue;
+      out.push(name);
+    }
+    cursor = edges.length > 0 ? (edges[edges.length - 1]?.cursor ?? null) : null;
+    hasNextPage = Boolean(res?.data?.orders?.pageInfo?.hasNextPage && cursor);
+  }
+
+  return Array.from(new Set(out));
+}
+
 function getSupabaseClient(): SupabaseClient | null {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -138,6 +204,7 @@ function toStoreCode(): string {
 function typeLabel(t: ReconType): string {
   if (t === "salesorder") return "SalesOrder Reconciliation";
   if (t === "gps_us") return "GPS SalesOrder Reconciliation";
+  if (t === "fulfillment") return "Fulfillment Reconciliation";
   return "GPS UK SalesOrder Reconciliation";
 }
 
@@ -159,7 +226,9 @@ async function runOneRecon(params: {
   ).toISOString();
   const { data, error } = await supabase
     .from("orders")
-    .select("shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, warehouse")
+    .select(
+      "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_fulfillment_status, warehouse"
+    )
     .gte("created_at", dateFromIso)
     .lt("created_at", delayedTo)
     .eq("shopify_financial_status", "paid")
@@ -197,7 +266,9 @@ async function runOneRecon(params: {
     };
   }
 
-  const rows = (data || []) as Array<OrderRow & { warehouse?: string | null }>;
+  const rows = (data || []) as Array<
+    OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
+  >;
   const dbByName = new Map(
     rows
       .map((r) => [String(r.shopify_order_name || "").trim(), r] as const)
@@ -217,7 +288,7 @@ async function runOneRecon(params: {
       .map((r) => String(r.shopify_order_name || "").trim())
       .filter(Boolean);
     unsyncedOrders = Array.from(new Set([...missingInDb, ...dbUnsynced]));
-  } else {
+  } else if (type === "gps_us" || type === "gps_uk") {
     const wh = type === "gps_us" ? "GPS Warehouse" : "GPS UK Warehouse";
     const dbUnsynced = rows
       .filter((r) => String(r.warehouse || "") === wh)
@@ -230,6 +301,80 @@ async function runOneRecon(params: {
       .filter(Boolean);
     // Keep Shopify-missing rows too; we cannot derive GPS-US/UK location reliably from Shopify query in this codebase.
     unsyncedOrders = Array.from(new Set([...missingInDb, ...dbUnsynced]));
+  } else {
+    const shopifyFulfilledNames = await fetchShopifyFulfilledOrderNames({
+      dateFromIso,
+      dateToIso: delayedTo,
+    });
+    const dbFulfilledNames = rows
+      .filter(
+        (r) => String(r.shopify_fulfillment_status || "").toLowerCase() === "fulfilled"
+      )
+      .map((r) => String(r.shopify_order_name || "").trim())
+      .filter(Boolean);
+
+    const missingDbFulfillments = shopifyFulfilledNames.filter(
+      (name) => !dbFulfilledNames.includes(name)
+    );
+    const missingShopifyFulfillments = dbFulfilledNames.filter(
+      (name) => !shopifyFulfilledNames.includes(name)
+    );
+
+    const errors: string[] = [];
+    if (missingDbFulfillments.length > 0) {
+      errors.push(
+        `${missingDbFulfillments.length} orders fulfilled in Shopify but not in database:\n${missingDbFulfillments.join(
+          "\n"
+        )}`
+      );
+    }
+    if (missingShopifyFulfillments.length > 0) {
+      errors.push(
+        `${missingShopifyFulfillments.length} orders fulfilled in database but not in Shopify:\n${missingShopifyFulfillments.join(
+          "\n"
+        )}`
+      );
+    }
+
+    unsyncedOrders = Array.from(
+      new Set([...missingDbFulfillments, ...missingShopifyFulfillments])
+    );
+    if (errors.length > 0) {
+      const message = `Found fulfillment discrepancies for ${storeCode} store:\n${errors.join("\n")}`;
+      const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${message}`;
+      await slack.sendErrorMessage(SlackChannelEnum.GENERAL, failMessage);
+      logFlowEvent({
+        level: "error",
+        flow: `reconciliation_${type}`,
+        step: "daily",
+        status: "failed",
+        runId,
+        errorType: "reconciliation_unsynced_orders",
+        errorMessage: failMessage,
+        payload: {
+          type,
+          checkId,
+          store: storeCode,
+          dateFrom,
+          dateTo,
+          totalOrders: rows.length,
+          unsyncedCount: unsyncedOrders.length,
+          unsyncedOrders,
+          missingDbFulfillments,
+          missingShopifyFulfillments,
+        },
+      });
+      return {
+        type,
+        checkId,
+        dateFrom,
+        dateTo,
+        totalOrders: rows.length,
+        unsyncedOrders,
+        status: "error",
+        message: failMessage,
+      };
+    }
   }
 
   const status: "ok" | "error" = unsyncedOrders.length === 0 ? "ok" : "error";
@@ -332,7 +477,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
 
     const types: ReconType[] =
       requestedType === "all"
-        ? ["salesorder", "gps_us", "gps_uk"]
+        ? ["salesorder", "gps_us", "gps_uk", "fulfillment"]
         : [requestedType];
     const results: ReconResult[] = [];
     for (const type of types) {
