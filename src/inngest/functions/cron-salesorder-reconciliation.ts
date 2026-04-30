@@ -15,13 +15,19 @@
 //       a) Fulfilled in Shopify, not fulfilled in DB (or row missing).
 //       b) Fulfilled in DB, not fulfilled in Shopify.
 //
-// We never filter the DB by `created_at` — Supabase's `created_at` is the row
-// insert time (often slightly after Shopify). All windowing is done on the
-// Shopify side.
+// Shopify order windowing uses Admin GraphQL `orders(query: ...)`.
+// Date-only tokens in `query` (e.g. created_at:>=2026-04-30 created_at:<2026-05-01) are
+// evaluated in the store's timezone (same as Shopify admin), not in UTC instants.
 //
+// We never filter the DB by `created_at` for matching — Supabase `created_at` is row insert time.
 // Manual trigger: `event = "reconciliation/run"` with
 //   `data: { type, dateFrom, dateTo }` (YYYY-MM-DD in store TZ).
 // Cron: 00:00 UTC daily, reconciles previous closed store-TZ calendar day.
+//
+// Logging:
+//   • Every run emits one-line JSON on stdout with tag "reconciliation" (grep in Vercel / Inngest logs).
+//   • Set RECONCILIATION_VERBOSE_LOG=1 on Battle Bus to also write flow_logs with flow=reconciliation_trace
+//     (per-Shopify page + per-Supabase batch detail).
 // ============================================================================
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -49,9 +55,12 @@ type OrderRow = {
 };
 
 type ShopifyWindowOrder = {
+  id: string;
   name: string;
+  createdAt: string;
   financialStatus: string;
   fulfillmentStatus: string;
+  totalPrice: string | null;
 };
 
 type ReconResult = {
@@ -64,6 +73,34 @@ type ReconResult = {
   status: "ok" | "error";
   message: string;
 };
+
+/** Structured stdout + optional flow_logs (`reconciliation_trace`) when `RECONCILIATION_VERBOSE_LOG` is set. */
+function reconTrace(
+  runId: string,
+  reconType: ReconType,
+  phase: string,
+  data: Record<string, unknown>
+): void {
+  const line = {
+    tag: "reconciliation",
+    at: new Date().toISOString(),
+    runId: runId || undefined,
+    reconType,
+    phase,
+    ...data,
+  };
+  console.log(JSON.stringify(line));
+  if (config.reconciliation.verboseLog && runId) {
+    logFlowEvent({
+      level: "info",
+      flow: "reconciliation_trace",
+      step: phase,
+      status: "running",
+      runId,
+      payload: { reconType, ...data },
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Date helpers (store-TZ-aware)
@@ -122,17 +159,21 @@ function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
 // ---------------------------------------------------------------------------
 
 /**
- * Pull orders from Shopify in `[fromIso, endExclusiveIso)` (UTC).
- * `extraQuery` lets callers add Shopify search qualifiers (e.g. `financial_status:paid`).
+ * Pull orders from Shopify for civil dates [{@link createdAtFromYmd}, {@link createdAtBeforeYmd})
+ * in the **store timezone** (date-only `created_at` filters in the GraphQL `query` string).
+ * `extraQuery` adds AND clauses (e.g. `financial_status:paid`).
  */
 async function fetchShopifyWindowOrders(params: {
-  dateFromIso: string;
-  dateEndExclusiveIso: string;
+  createdAtFromYmd: string;
+  /** Exclusive end calendar day as YYYY-MM-DD in store TZ (first day not included). */
+  createdAtBeforeYmd: string;
   extraQuery?: string;
+  trace?: { runId: string; type: ReconType };
 }): Promise<ShopifyWindowOrder[]> {
   const items: ShopifyWindowOrder[] = [];
   let hasNextPage = true;
   let cursor: string | null = null;
+  let pageIndex = 0;
 
   const query = `
     query ReconciliationWindowOrders($query: String!, $after: String) {
@@ -140,13 +181,24 @@ async function fetchShopifyWindowOrders(params: {
         edges {
           cursor
           node {
+            id
             name
+            createdAt
             cancelledAt
             displayFinancialStatus
             displayFulfillmentStatus
+            totalPriceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
           }
         }
-        pageInfo { hasNextPage }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
     }
   `;
@@ -157,47 +209,94 @@ async function fetchShopifyWindowOrders(params: {
         edges?: Array<{
           cursor?: string;
           node?: {
+            id?: string;
             name?: string;
+            createdAt?: string | null;
             cancelledAt?: string | null;
             displayFinancialStatus?: string | null;
             displayFulfillmentStatus?: string | null;
+            totalPriceSet?: {
+              shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
+            } | null;
           };
         }>;
-        pageInfo?: { hasNextPage?: boolean };
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
       };
     };
   };
 
-  const dateFrom = params.dateFromIso.replace(".000Z", "Z");
-  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
-  const baseQuery = `created_at:>=${dateFrom} created_at:<${dateEndExclusive}`;
+  const { createdAtFromYmd, createdAtBeforeYmd } = params;
+  const baseQuery = `created_at:>=${createdAtFromYmd} created_at:<${createdAtBeforeYmd}`;
   const shopifyQuery = params.extraQuery ? `${baseQuery} ${params.extraQuery}` : baseQuery;
 
+  const { trace } = params;
+  if (trace) {
+    reconTrace(trace.runId, trace.type, "shopify_window_start", {
+      shopifyQuery,
+      createdAtFromYmd,
+      createdAtBeforeYmd,
+      storeTimeZone: config.reconciliation.storeTimeZone,
+      extraQuery: params.extraQuery ?? null,
+    });
+  }
+
   while (hasNextPage) {
+    pageIndex += 1;
     const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
       query: shopifyQuery,
       after: cursor,
     });
 
     const edges = res?.data?.orders?.edges || [];
+    const pageInfo = res?.data?.orders?.pageInfo;
+    if (trace && config.reconciliation.verboseLog) {
+      reconTrace(trace.runId, trace.type, "shopify_window_page", {
+        page: pageIndex,
+        edgeCount: edges.length,
+        hasNextPage: Boolean(pageInfo?.hasNextPage),
+      });
+    }
     for (const edge of edges) {
       const name = String(edge?.node?.name || "").trim();
       if (!name) continue;
       if (edge?.node?.cancelledAt) continue;
+      const amount = edge?.node?.totalPriceSet?.shopMoney?.amount;
       items.push({
+        id: String(edge?.node?.id || ""),
         name,
+        createdAt: String(edge?.node?.createdAt || ""),
         financialStatus: String(edge?.node?.displayFinancialStatus || "").toUpperCase(),
         fulfillmentStatus: String(edge?.node?.displayFulfillmentStatus || "").toUpperCase(),
+        totalPrice: amount != null && amount !== "" ? String(amount) : null,
       });
     }
-    cursor = edges.length > 0 ? (edges[edges.length - 1]?.cursor ?? null) : null;
-    hasNextPage = Boolean(res?.data?.orders?.pageInfo?.hasNextPage && cursor);
+    const endCursor = pageInfo?.endCursor || (edges.length > 0 ? edges[edges.length - 1]?.cursor : null) || null;
+    cursor = endCursor;
+    hasNextPage = Boolean(pageInfo?.hasNextPage && cursor);
   }
 
-  // Dedupe by name (Shopify shouldn't return duplicates, but be safe).
+  // Dedupe by name (keep latest createdAt if duplicates).
   const byName = new Map<string, ShopifyWindowOrder>();
-  for (const it of items) byName.set(it.name, it);
-  return Array.from(byName.values());
+  for (const it of items) {
+    const prev = byName.get(it.name);
+    if (!prev || (it.createdAt && it.createdAt > (prev.createdAt || ""))) {
+      byName.set(it.name, it);
+    }
+  }
+  const unique = Array.from(byName.values());
+  if (trace) {
+    const sorted = unique.map((o) => o.name).sort();
+    const head = sorted.slice(0, 8);
+    const tail = sorted.length > 16 ? sorted.slice(-8) : [];
+    reconTrace(trace.runId, trace.type, "shopify_window_done", {
+      pages: pageIndex,
+      rowsRaw: items.length,
+      uniqueOrderCount: unique.length,
+      sampleNamesStart: head,
+      sampleNamesEnd: tail.length ? tail : undefined,
+    });
+  }
+  return unique;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,14 +315,17 @@ function getSupabaseClient(): SupabaseClient | null {
 /** Look up rows by `shopify_order_name`. Batched to keep `IN (…)` short. */
 async function fetchOrderRowsByName(
   supabase: SupabaseClient,
-  names: string[]
+  names: string[],
+  trace?: { runId: string; type: ReconType }
 ): Promise<{ rows: OrderRow[]; error: { message: string } | null }> {
   const out: OrderRow[] = [];
   if (names.length === 0) return { rows: out, error: null };
 
   const BATCH = 200;
   const seen = new Set<string>();
+  let batchIdx = 0;
   for (let i = 0; i < names.length; i += BATCH) {
+    batchIdx += 1;
     const batchNames = names.slice(i, i + BATCH);
     const { data, error } = await supabase
       .from("orders")
@@ -231,6 +333,13 @@ async function fetchOrderRowsByName(
         "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_financial_status, shopify_cancelled_at, shopify_fulfillment_status, warehouse"
       )
       .in("shopify_order_name", batchNames);
+    if (trace && !error && config.reconciliation.verboseLog) {
+      reconTrace(trace.runId, trace.type, "supabase_orders_in_batch", {
+        batch: batchIdx,
+        namesInBatch: batchNames.length,
+        rowsReturned: (data || []).length,
+      });
+    }
     if (error) return { rows: out, error };
     for (const r of (data || []) as OrderRow[]) {
       const key = String(r.shopify_order_name || "").trim();
@@ -238,6 +347,13 @@ async function fetchOrderRowsByName(
       seen.add(key);
       out.push(r);
     }
+  }
+  if (trace) {
+    reconTrace(trace.runId, trace.type, "supabase_orders_done", {
+      namesRequested: names.length,
+      uniqueRows: out.length,
+      batches: batchIdx,
+    });
   }
   return { rows: out, error: null };
 }
@@ -278,20 +394,36 @@ async function runOneRecon(params: {
 }): Promise<ReconResult> {
   const { supabase, type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
   const checkId = crypto.randomUUID();
+  const trace = runId ? { runId, type } : undefined;
+  const createdAtBeforeYmd = addCalendarDaysYmd(dateTo, 1);
 
-  // Step 1 — Pull Shopify orders for the window, with status info.
-  // SalesOrder + GPS recons only care about paid orders.
-  // Fulfillment recon needs everything to detect bidirectional discrepancies.
+  if (trace) {
+    reconTrace(trace.runId, trace.type, "recon_start", {
+      checkId,
+      storeCode,
+      dateFrom,
+      dateTo,
+      shopifyCreatedAtFromYmd: dateFrom,
+      shopifyCreatedAtBeforeYmd: createdAtBeforeYmd,
+      storeTimeZone: config.reconciliation.storeTimeZone,
+      dateFromIso,
+      dateEndExclusiveIso,
+    });
+  }
+
+  // Step 1 — Pull orders via Admin GraphQL `orders` + search `query` (store-TZ date bounds).
+  // SalesOrder + GPS: paid only. Fulfillment: all orders in the window (for status cross-check).
   const extraQuery = type === "fulfillment" ? undefined : "financial_status:paid";
   const shopifyOrders = await fetchShopifyWindowOrders({
-    dateFromIso,
-    dateEndExclusiveIso,
+    createdAtFromYmd: dateFrom,
+    createdAtBeforeYmd,
     extraQuery,
+    trace,
   });
   const shopifyNames = shopifyOrders.map((o) => o.name);
 
   // Step 2 — Look those names up in DB by name. No `created_at` filter.
-  const { rows, error } = await fetchOrderRowsByName(supabase, shopifyNames);
+  const { rows, error } = await fetchOrderRowsByName(supabase, shopifyNames, trace);
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
@@ -306,6 +438,13 @@ async function runOneRecon(params: {
       errorMessage: error.message,
       payload: { type, checkId, store: storeCode, dateFrom, dateTo, shopifyOrderCount: shopifyNames.length },
     });
+    if (trace) {
+      reconTrace(trace.runId, trace.type, "recon_failed", {
+        checkId,
+        stage: "supabase_orders",
+        error: error.message,
+      });
+    }
     return {
       type,
       checkId,
@@ -428,6 +567,18 @@ async function runOneRecon(params: {
     },
   });
 
+  if (trace) {
+    const unsyncedSample = unsyncedOrders.slice(0, 12);
+    reconTrace(trace.runId, trace.type, "recon_done", {
+      checkId,
+      status,
+      shopifyOrderCount: shopifyNames.length,
+      dbRowsMatched: dbByName.size,
+      unsyncedCount: unsyncedOrders.length,
+      unsyncedSample: unsyncedSample.length > 0 ? unsyncedSample : undefined,
+    });
+  }
+
   return {
     type,
     checkId,
@@ -469,6 +620,22 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       : getPreviousStoreDayRange(new Date());
     const { fromIso, dateEndExclusiveIso, fromDate, toDate } = computed;
     const safeRunId = String(runId || "");
+
+    console.log(
+      JSON.stringify({
+        tag: "reconciliation",
+        phase: "cron_invoke",
+        at: new Date().toISOString(),
+        runId: safeRunId || undefined,
+        storeCode,
+        requestedType,
+        dateFrom: fromDate,
+        dateTo: toDate,
+        fromIso,
+        dateEndExclusiveIso,
+        verboseFlowLogs: config.reconciliation.verboseLog,
+      })
+    );
 
     if (!supabase) {
       const message = `SalesOrder Reconciliation: Error for store ${storeCode} from ${fromDate} to ${toDate}:\n Supabase is not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing).`;

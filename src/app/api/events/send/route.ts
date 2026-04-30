@@ -30,8 +30,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Event name is required" }, { status: 400 });
     }
 
-    console.log(`[send-event] Receiving event: ${name}`);
-    console.log(`[send-event] Data:`, JSON.stringify(data, null, 2));
+    console.log(
+      JSON.stringify({
+        tag: "battle-bus.events.send",
+        at: new Date().toISOString(),
+        phase: "receive",
+        eventName: name,
+        dataKeys:
+          data && typeof data === "object" ? Object.keys(data as object) : [],
+        dataPreview:
+          name === "reconciliation/run" && data && typeof data === "object"
+            ? {
+                type: (data as Record<string, unknown>).type,
+                dateFrom: (data as Record<string, unknown>).dateFrom,
+                dateTo: (data as Record<string, unknown>).dateTo,
+              }
+            : undefined,
+      })
+    );
 
     // Send the event to Inngest
     const result = await inngest.send({
@@ -39,7 +55,15 @@ export async function POST(request: NextRequest) {
       data: data || {},
     });
 
-    console.log(`[send-event] Event sent successfully:`, result);
+    console.log(
+      JSON.stringify({
+        tag: "battle-bus.events.send",
+        at: new Date().toISOString(),
+        phase: "sent",
+        eventName: name,
+        inngestIds: result.ids ?? [],
+      })
+    );
 
     return NextResponse.json({
       success: true,

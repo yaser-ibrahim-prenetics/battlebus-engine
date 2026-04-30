@@ -230,6 +230,10 @@ export const config = {
   /** Daily/manual reconciliation windows (Hub dates = civil days in this zone; aligns with Shopify admin NY). */
   reconciliation: {
     storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "America/New_York",
+    /** When true: `reconciliation_trace` flow_logs + richer Shopify/DB stats on stdout (set RECONCILIATION_VERBOSE_LOG). */
+    verboseLog:
+      process.env.RECONCILIATION_VERBOSE_LOG === "1" ||
+      process.env.RECONCILIATION_VERBOSE_LOG === "true",
   },
 
   // Backorder Queue Configuration
