@@ -1,12 +1,15 @@
 // ============================================================================
 // DAILY SALES ORDER RECONCILIATION
 // ============================================================================
-// Runs at 00:00 UTC and checks previous UTC day orders for sync gaps:
+// Runs at 00:00 UTC and checks the previous *calendar day in America/New_York*
+// (Shopify store time) for sync gaps. Hub/API date picks are YYYY-MM-DD in NY.
 // 1) D365 SalesOrder reconciliation
 // 2) GPS US SalesOrder reconciliation
 // 3) GPS UK SalesOrder reconciliation
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { addDays, format } from "date-fns";
+import { formatInTimeZone, toDate } from "date-fns-tz";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as slack from "@/lib/clients/slack";
@@ -37,7 +40,8 @@ type ReconResult = {
 
 async function fetchShopifyPaidOrderNames(params: {
   dateFromIso: string;
-  dateToIso: string;
+  /** Exclusive end (UTC ISO): Shopify `created_at` uses `< this`. */
+  dateEndExclusiveIso: string;
 }): Promise<string[]> {
   const out: string[] = [];
   let hasNextPage = true;
@@ -78,8 +82,8 @@ async function fetchShopifyPaidOrderNames(params: {
   };
 
   const dateFrom = params.dateFromIso.replace(".000Z", "Z");
-  const dateTo = params.dateToIso.replace(".000Z", "Z");
-  const shopifyQuery = `created_at:>=${dateFrom} created_at:<${dateTo} financial_status:paid`;
+  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
+  const shopifyQuery = `created_at:>=${dateFrom} created_at:<${dateEndExclusive} financial_status:paid`;
 
   while (hasNextPage) {
     const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
@@ -103,7 +107,8 @@ async function fetchShopifyPaidOrderNames(params: {
 
 async function fetchShopifyFulfilledOrderNames(params: {
   dateFromIso: string;
-  dateToIso: string;
+  /** Exclusive end (UTC ISO) for `updated_at` upper bound. */
+  dateEndExclusiveIso: string;
 }): Promise<string[]> {
   const out: string[] = [];
   let hasNextPage = true;
@@ -144,8 +149,8 @@ async function fetchShopifyFulfilledOrderNames(params: {
   };
 
   const dateFrom = params.dateFromIso.replace(".000Z", "Z");
-  const dateTo = params.dateToIso.replace(".000Z", "Z");
-  const shopifyQuery = `updated_at:>=${dateFrom} updated_at:<${dateTo} fulfillment_status:fulfilled`;
+  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
+  const shopifyQuery = `updated_at:>=${dateFrom} updated_at:<${dateEndExclusive} fulfillment_status:fulfilled`;
 
   while (hasNextPage) {
     const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
@@ -176,20 +181,51 @@ function getSupabaseClient(): SupabaseClient | null {
   });
 }
 
-function formatUtcDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+function addCalendarDaysYmd(ymd: string, deltaDays: number): string {
+  const parts = ymd.split("-").map((x) => parseInt(x, 10));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+    throw new Error(`Invalid YYYY-MM-DD: ${ymd}`);
+  }
+  const [y, m, d] = parts;
+  const cal = new Date(Date.UTC(y, m - 1, d));
+  return format(addDays(cal, deltaDays), "yyyy-MM-dd");
 }
 
-function getPreviousUtcDayRange(now: Date): { fromIso: string; toIso: string; fromDate: string; toDate: string } {
-  const utcTodayStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0)
-  );
-  const utcYesterdayStart = new Date(utcTodayStart.getTime() - 24 * 60 * 60 * 1000);
+/** Civil midnight on `ymd` in the store TZ → UTC instant as ISO string. */
+function storeMidnightUtcIso(ymd: string): string {
+  return toDate(`${ymd}T00:00:00`, { timeZone: config.reconciliation.storeTimeZone }).toISOString();
+}
+
+/** Last closed calendar day in America/New_York (for the cron at 00:00 UTC). */
+function getPreviousStoreDayRange(now: Date): {
+  fromIso: string;
+  dateEndExclusiveIso: string;
+  fromDate: string;
+  toDate: string;
+} {
+  const todayYmd = formatInTimeZone(now, config.reconciliation.storeTimeZone, "yyyy-MM-dd");
+  const yesterdayYmd = addCalendarDaysYmd(todayYmd, -1);
   return {
-    fromIso: utcYesterdayStart.toISOString(),
-    toIso: utcTodayStart.toISOString(),
-    fromDate: formatUtcDate(utcYesterdayStart),
-    toDate: formatUtcDate(utcTodayStart),
+    fromIso: storeMidnightUtcIso(yesterdayYmd),
+    dateEndExclusiveIso: storeMidnightUtcIso(todayYmd),
+    fromDate: yesterdayYmd,
+    toDate: yesterdayYmd,
+  };
+}
+
+/** Inclusive `[fromYmd, toYmd]` in store TZ → UTC bounds for queries (`>= from`, `< endExclusive`). */
+function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
+  fromIso: string;
+  dateEndExclusiveIso: string;
+  fromDate: string;
+  toDate: string;
+} {
+  const dayAfterTo = addCalendarDaysYmd(toYmd, 1);
+  return {
+    fromIso: storeMidnightUtcIso(fromYmd),
+    dateEndExclusiveIso: storeMidnightUtcIso(dayAfterTo),
+    fromDate: fromYmd,
+    toDate: toYmd,
   };
 }
 
@@ -212,17 +248,18 @@ async function runOneRecon(params: {
   supabase: SupabaseClient;
   type: ReconType;
   dateFromIso: string;
-  dateToIso: string;
+  /** Exclusive end instant (UTC) for primary window; Supabase uses `< delayedTo` with delay slack. */
+  dateEndExclusiveIso: string;
   dateFrom: string;
   dateTo: string;
   storeCode: string;
   runId: string;
 }): Promise<ReconResult> {
-  const { supabase, type, dateFromIso, dateToIso, dateFrom, dateTo, storeCode, runId } = params;
+  const { supabase, type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
   const checkId = crypto.randomUUID();
 
   const delayedTo = new Date(
-    new Date(dateToIso).getTime() + config.delays.orderSyncDelayMinutes * 60_000
+    new Date(dateEndExclusiveIso).getTime() + config.delays.orderSyncDelayMinutes * 60_000
   ).toISOString();
 
   // PostgREST / Supabase often enforces a per-response row cap (commonly 1000). A single
@@ -297,7 +334,10 @@ async function runOneRecon(params: {
       .map((r) => [String(r.shopify_order_name || "").trim(), r] as const)
       .filter(([n]) => Boolean(n))
   );
-  const shopifyPaidNames = await fetchShopifyPaidOrderNames({ dateFromIso, dateToIso });
+  const shopifyPaidNames = await fetchShopifyPaidOrderNames({
+    dateFromIso,
+    dateEndExclusiveIso,
+  });
   const missingInDb = shopifyPaidNames.filter((name) => !dbByName.has(name));
 
   let unsyncedOrders: string[] = [];
@@ -339,7 +379,7 @@ async function runOneRecon(params: {
   } else {
     const shopifyFulfilledNames = await fetchShopifyFulfilledOrderNames({
       dateFromIso,
-      dateToIso: delayedTo,
+      dateEndExclusiveIso: delayedTo,
     });
     const dbFulfilledNames = rows
       .filter(
@@ -486,19 +526,15 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       | "all"
       | "salesorder"
       | "gps_us"
-      | "gps_uk";
+      | "gps_uk"
+      | "fulfillment";
     const manualFrom = String(event?.data?.dateFrom || "").trim();
     const manualTo = String(event?.data?.dateTo || "").trim();
     const hasManualRange = eventType === "reconciliation/run" && manualFrom && manualTo;
     const computed = hasManualRange
-      ? {
-          fromIso: `${manualFrom}T00:00:00.000Z`,
-          toIso: `${manualTo}T23:59:59.999Z`,
-          fromDate: manualFrom,
-          toDate: manualTo,
-        }
-      : getPreviousUtcDayRange(new Date());
-    const { fromIso, toIso, fromDate, toDate } = computed;
+      ? storeInclusiveRangeToUtcBounds(manualFrom, manualTo)
+      : getPreviousStoreDayRange(new Date());
+    const { fromIso, dateEndExclusiveIso, fromDate, toDate } = computed;
     const safeRunId = String(runId || "");
 
     if (!supabase) {
@@ -535,7 +571,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
         supabase,
         type,
         dateFromIso: fromIso,
-        dateToIso: toIso,
+        dateEndExclusiveIso,
         dateFrom: fromDate,
         dateTo: toDate,
         storeCode,

@@ -227,6 +227,11 @@ export const config = {
     outOfStockRetryHours: safeParseInt(process.env.OOS_RETRY_HOURS, 4),
   },
 
+  /** Daily/manual reconciliation windows (Hub dates = civil days in this zone; aligns with Shopify admin NY). */
+  reconciliation: {
+    storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "America/New_York",
+  },
+
   // Backorder Queue Configuration
   backorder: {
     enabled: process.env.BACKORDER_RETRY_ENABLED !== "false",
