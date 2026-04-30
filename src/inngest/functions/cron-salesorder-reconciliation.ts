@@ -224,16 +224,42 @@ async function runOneRecon(params: {
   const delayedTo = new Date(
     new Date(dateToIso).getTime() + config.delays.orderSyncDelayMinutes * 60_000
   ).toISOString();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(
-      "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_fulfillment_status, warehouse"
-    )
-    .gte("created_at", dateFromIso)
-    .lt("created_at", delayedTo)
-    .eq("shopify_financial_status", "paid")
-    .is("shopify_cancelled_at", null)
-    .limit(4000);
+
+  // PostgREST / Supabase often enforces a per-response row cap (commonly 1000). A single
+  // `.limit(4000)` can still return only the first page, which makes every other paid order
+  // look "missing" from the DB and inflates `unsynced` false positives.
+  const PAGE_SIZE = 1000;
+  const rows: Array<
+    OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
+  > = [];
+  let pageOffset = 0;
+  let error: { message: string } | null = null;
+
+  for (;;) {
+    const { data, error: pageError } = await supabase
+      .from("orders")
+      .select(
+        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_fulfillment_status, warehouse"
+      )
+      .gte("created_at", dateFromIso)
+      .lt("created_at", delayedTo)
+      .eq("shopify_financial_status", "paid")
+      .is("shopify_cancelled_at", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(pageOffset, pageOffset + PAGE_SIZE - 1);
+
+    if (pageError) {
+      error = pageError;
+      break;
+    }
+    const batch = (data || []) as Array<
+      OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
+    >;
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    pageOffset += PAGE_SIZE;
+  }
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
@@ -266,9 +292,6 @@ async function runOneRecon(params: {
     };
   }
 
-  const rows = (data || []) as Array<
-    OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
-  >;
   const dbByName = new Map(
     rows
       .map((r) => [String(r.shopify_order_name || "").trim(), r] as const)
@@ -278,16 +301,28 @@ async function runOneRecon(params: {
   const missingInDb = shopifyPaidNames.filter((name) => !dbByName.has(name));
 
   let unsyncedOrders: string[] = [];
+  /** Sales-order reconcile only: paid orders in Shopify with no matching `shopify_order_name` row in window. */
+  let salesorderMissingDbNames: string[] = [];
+  /** Sales-order reconcile only: row exists but D365 number/status incomplete. */
+  let salesorderD365IncompleteNames: string[] = [];
+
   if (type === "salesorder") {
-    const dbUnsynced = rows
-      .filter(
-        (r) =>
-          !r.d365_order_number ||
-          ["failed", "pending"].includes(String(r.d365_sync_status || "").toLowerCase())
+    salesorderD365IncompleteNames = Array.from(
+      new Set(
+        rows
+          .filter(
+            (r) =>
+              !r.d365_order_number ||
+              ["failed", "pending"].includes(String(r.d365_sync_status || "").toLowerCase())
+          )
+          .map((r) => String(r.shopify_order_name || "").trim())
+          .filter(Boolean)
       )
-      .map((r) => String(r.shopify_order_name || "").trim())
-      .filter(Boolean);
-    unsyncedOrders = Array.from(new Set([...missingInDb, ...dbUnsynced]));
+    );
+    salesorderMissingDbNames = [...missingInDb];
+    unsyncedOrders = Array.from(
+      new Set([...salesorderMissingDbNames, ...salesorderD365IncompleteNames])
+    );
   } else if (type === "gps_us" || type === "gps_uk") {
     const wh = type === "gps_us" ? "GPS Warehouse" : "GPS UK Warehouse";
     const dbUnsynced = rows
@@ -378,12 +413,18 @@ async function runOneRecon(params: {
   }
 
   const status: "ok" | "error" = unsyncedOrders.length === 0 ? "ok" : "error";
+  const issueKindLabel =
+    type === "salesorder"
+      ? "issues (missing paid order row in DB and/or D365 sales order not fully synced)"
+      : type === "gps_uk"
+        ? "GPS UK orders missing in DB and/or GPS not fully synced"
+        : type === "gps_us"
+          ? "GPS US orders missing in DB and/or GPS not fully synced"
+          : "fulfillment discrepancies";
   const message =
     status === "ok"
       ? `${typeLabel(type)}: Order for store ${storeCode} from ${dateFrom} to ${dateTo}:\nAll orders are synced to DB.`
-      : `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: Found ${unsyncedOrders.length} unsynced ${
-          type === "gps_uk" ? "GPS UK" : type === "gps_us" ? "GPS US" : "SalesOrder"
-        } orders in database:\n${unsyncedOrders.join("\n")}`;
+      : `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: Found ${unsyncedOrders.length} ${issueKindLabel}:\n${unsyncedOrders.join("\n")}`;
 
   if (status === "ok") {
     await slack.sendInfoMessage(SlackChannelEnum.GENERAL, message);
@@ -408,6 +449,13 @@ async function runOneRecon(params: {
       totalOrders: rows.length,
       unsyncedCount: unsyncedOrders.length,
       unsyncedOrders,
+      shopifyPaidOrderCount: shopifyPaidNames.length,
+      ...(type === "salesorder"
+        ? {
+            missingFromDbCount: salesorderMissingDbNames.length,
+            d365IncompleteOrderCount: salesorderD365IncompleteNames.length,
+          }
+        : {}),
     },
   });
 
