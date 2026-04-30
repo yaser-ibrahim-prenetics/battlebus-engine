@@ -1,11 +1,28 @@
 // ============================================================================
 // DAILY SALES ORDER RECONCILIATION
 // ============================================================================
-// Runs at 00:00 UTC and checks the previous *calendar day in America/New_York*
-// (Shopify store time) for sync gaps. Hub/API date picks are YYYY-MM-DD in NY.
-// 1) D365 SalesOrder reconciliation
-// 2) GPS US SalesOrder reconciliation
-// 3) GPS UK SalesOrder reconciliation
+// Strategy (per-type):
+//
+//   - SALESORDER: Pull paid orders from Shopify in the window. Look them up in
+//     DB by `shopify_order_name`. Unsynced = names not in DB.
+//
+//   - GPS_US / GPS_UK: Pull paid orders from Shopify in the window. Look them
+//     up in DB. Unsynced = DB rows whose `warehouse` matches the GPS location
+//     AND `gps_order_no` is missing (or `gps_sync_status` is failed/pending).
+//
+//   - FULFILLMENT: Pull ALL orders from Shopify in the window with their
+//     fulfillment status. Look them up in DB. Two buckets:
+//       a) Fulfilled in Shopify, not fulfilled in DB (or row missing).
+//       b) Fulfilled in DB, not fulfilled in Shopify.
+//
+// We never filter the DB by `created_at` — Supabase's `created_at` is the row
+// insert time (often slightly after Shopify). All windowing is done on the
+// Shopify side.
+//
+// Manual trigger: `event = "reconciliation/run"` with
+//   `data: { type, dateFrom, dateTo }` (YYYY-MM-DD in store TZ).
+// Cron: 00:00 UTC daily, reconciles previous closed store-TZ calendar day.
+// ============================================================================
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { addDays, format } from "date-fns";
@@ -25,6 +42,16 @@ type OrderRow = {
   d365_sync_status: string | null;
   gps_order_no: string | null;
   gps_sync_status: string | null;
+  shopify_financial_status: string | null;
+  shopify_cancelled_at: string | null;
+  shopify_fulfillment_status: string | null;
+  warehouse: string | null;
+};
+
+type ShopifyWindowOrder = {
+  name: string;
+  financialStatus: string;
+  fulfillmentStatus: string;
 };
 
 type ReconResult = {
@@ -38,148 +65,9 @@ type ReconResult = {
   message: string;
 };
 
-async function fetchShopifyPaidOrderNames(params: {
-  dateFromIso: string;
-  /** Exclusive end (UTC ISO): Shopify `created_at` uses `< this`. */
-  dateEndExclusiveIso: string;
-}): Promise<string[]> {
-  const out: string[] = [];
-  let hasNextPage = true;
-  let cursor: string | null = null;
-
-  const query = `
-    query ReconciliationPaidOrders($query: String!, $after: String) {
-      orders(first: 250, query: $query, after: $after, reverse: false, sortKey: CREATED_AT) {
-        edges {
-          cursor
-          node {
-            name
-            cancelledAt
-            displayFinancialStatus
-          }
-        }
-        pageInfo {
-          hasNextPage
-        }
-      }
-    }
-  `;
-
-  type ShopifyOrdersQueryResponse = {
-    data?: {
-      orders?: {
-        edges?: Array<{
-          cursor?: string;
-          node?: {
-            name?: string;
-            cancelledAt?: string | null;
-            displayFinancialStatus?: string | null;
-          };
-        }>;
-        pageInfo?: { hasNextPage?: boolean };
-      };
-    };
-  };
-
-  const dateFrom = params.dateFromIso.replace(".000Z", "Z");
-  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
-  const shopifyQuery = `created_at:>=${dateFrom} created_at:<${dateEndExclusive} financial_status:paid`;
-
-  while (hasNextPage) {
-    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
-      query: shopifyQuery,
-      after: cursor,
-    });
-
-    const edges = res?.data?.orders?.edges || [];
-    for (const edge of edges) {
-      const name = String(edge?.node?.name || "").trim();
-      if (!name) continue;
-      if (edge?.node?.cancelledAt) continue;
-      out.push(name);
-    }
-    cursor = edges.length > 0 ? (edges[edges.length - 1]?.cursor ?? null) : null;
-    hasNextPage = Boolean(res?.data?.orders?.pageInfo?.hasNextPage && cursor);
-  }
-
-  return Array.from(new Set(out));
-}
-
-async function fetchShopifyFulfilledOrderNames(params: {
-  dateFromIso: string;
-  /** Exclusive end (UTC ISO) for `updated_at` upper bound. */
-  dateEndExclusiveIso: string;
-}): Promise<string[]> {
-  const out: string[] = [];
-  let hasNextPage = true;
-  let cursor: string | null = null;
-
-  const query = `
-    query ReconciliationFulfilledOrders($query: String!, $after: String) {
-      orders(first: 250, query: $query, after: $after, reverse: false, sortKey: UPDATED_AT) {
-        edges {
-          cursor
-          node {
-            name
-            cancelledAt
-            displayFulfillmentStatus
-          }
-        }
-        pageInfo {
-          hasNextPage
-        }
-      }
-    }
-  `;
-
-  type ShopifyOrdersQueryResponse = {
-    data?: {
-      orders?: {
-        edges?: Array<{
-          cursor?: string;
-          node?: {
-            name?: string;
-            cancelledAt?: string | null;
-            displayFulfillmentStatus?: string | null;
-          };
-        }>;
-        pageInfo?: { hasNextPage?: boolean };
-      };
-    };
-  };
-
-  const dateFrom = params.dateFromIso.replace(".000Z", "Z");
-  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
-  const shopifyQuery = `updated_at:>=${dateFrom} updated_at:<${dateEndExclusive} fulfillment_status:fulfilled`;
-
-  while (hasNextPage) {
-    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
-      query: shopifyQuery,
-      after: cursor,
-    });
-
-    const edges = res?.data?.orders?.edges || [];
-    for (const edge of edges) {
-      const name = String(edge?.node?.name || "").trim();
-      if (!name) continue;
-      if (edge?.node?.cancelledAt) continue;
-      out.push(name);
-    }
-    cursor = edges.length > 0 ? (edges[edges.length - 1]?.cursor ?? null) : null;
-    hasNextPage = Boolean(res?.data?.orders?.pageInfo?.hasNextPage && cursor);
-  }
-
-  return Array.from(new Set(out));
-}
-
-function getSupabaseClient(): SupabaseClient | null {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!supabaseUrl || !supabaseKey) return null;
-  return createClient(supabaseUrl, supabaseKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+// ---------------------------------------------------------------------------
+// Date helpers (store-TZ-aware)
+// ---------------------------------------------------------------------------
 
 function addCalendarDaysYmd(ymd: string, deltaDays: number): string {
   const parts = ymd.split("-").map((x) => parseInt(x, 10));
@@ -196,7 +84,7 @@ function storeMidnightUtcIso(ymd: string): string {
   return toDate(`${ymd}T00:00:00`, { timeZone: config.reconciliation.storeTimeZone }).toISOString();
 }
 
-/** Last closed calendar day in America/New_York (for the cron at 00:00 UTC). */
+/** Last closed calendar day in store TZ (for the cron at 00:00 UTC). */
 function getPreviousStoreDayRange(now: Date): {
   fromIso: string;
   dateEndExclusiveIso: string;
@@ -213,7 +101,7 @@ function getPreviousStoreDayRange(now: Date): {
   };
 }
 
-/** Inclusive `[fromYmd, toYmd]` in store TZ → UTC bounds for queries (`>= from`, `< endExclusive`). */
+/** Inclusive `[fromYmd, toYmd]` in store TZ → UTC bounds. */
 function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
   fromIso: string;
   dateEndExclusiveIso: string;
@@ -228,6 +116,135 @@ function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
     toDate: toYmd,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Shopify queries
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull orders from Shopify in `[fromIso, endExclusiveIso)` (UTC).
+ * `extraQuery` lets callers add Shopify search qualifiers (e.g. `financial_status:paid`).
+ */
+async function fetchShopifyWindowOrders(params: {
+  dateFromIso: string;
+  dateEndExclusiveIso: string;
+  extraQuery?: string;
+}): Promise<ShopifyWindowOrder[]> {
+  const items: ShopifyWindowOrder[] = [];
+  let hasNextPage = true;
+  let cursor: string | null = null;
+
+  const query = `
+    query ReconciliationWindowOrders($query: String!, $after: String) {
+      orders(first: 250, query: $query, after: $after, reverse: false, sortKey: CREATED_AT) {
+        edges {
+          cursor
+          node {
+            name
+            cancelledAt
+            displayFinancialStatus
+            displayFulfillmentStatus
+          }
+        }
+        pageInfo { hasNextPage }
+      }
+    }
+  `;
+
+  type ShopifyOrdersQueryResponse = {
+    data?: {
+      orders?: {
+        edges?: Array<{
+          cursor?: string;
+          node?: {
+            name?: string;
+            cancelledAt?: string | null;
+            displayFinancialStatus?: string | null;
+            displayFulfillmentStatus?: string | null;
+          };
+        }>;
+        pageInfo?: { hasNextPage?: boolean };
+      };
+    };
+  };
+
+  const dateFrom = params.dateFromIso.replace(".000Z", "Z");
+  const dateEndExclusive = params.dateEndExclusiveIso.replace(".000Z", "Z");
+  const baseQuery = `created_at:>=${dateFrom} created_at:<${dateEndExclusive}`;
+  const shopifyQuery = params.extraQuery ? `${baseQuery} ${params.extraQuery}` : baseQuery;
+
+  while (hasNextPage) {
+    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
+      query: shopifyQuery,
+      after: cursor,
+    });
+
+    const edges = res?.data?.orders?.edges || [];
+    for (const edge of edges) {
+      const name = String(edge?.node?.name || "").trim();
+      if (!name) continue;
+      if (edge?.node?.cancelledAt) continue;
+      items.push({
+        name,
+        financialStatus: String(edge?.node?.displayFinancialStatus || "").toUpperCase(),
+        fulfillmentStatus: String(edge?.node?.displayFulfillmentStatus || "").toUpperCase(),
+      });
+    }
+    cursor = edges.length > 0 ? (edges[edges.length - 1]?.cursor ?? null) : null;
+    hasNextPage = Boolean(res?.data?.orders?.pageInfo?.hasNextPage && cursor);
+  }
+
+  // Dedupe by name (Shopify shouldn't return duplicates, but be safe).
+  const byName = new Map<string, ShopifyWindowOrder>();
+  for (const it of items) byName.set(it.name, it);
+  return Array.from(byName.values());
+}
+
+// ---------------------------------------------------------------------------
+// Supabase helpers
+// ---------------------------------------------------------------------------
+
+function getSupabaseClient(): SupabaseClient | null {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !supabaseKey) return null;
+  return createClient(supabaseUrl, supabaseKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+/** Look up rows by `shopify_order_name`. Batched to keep `IN (…)` short. */
+async function fetchOrderRowsByName(
+  supabase: SupabaseClient,
+  names: string[]
+): Promise<{ rows: OrderRow[]; error: { message: string } | null }> {
+  const out: OrderRow[] = [];
+  if (names.length === 0) return { rows: out, error: null };
+
+  const BATCH = 200;
+  const seen = new Set<string>();
+  for (let i = 0; i < names.length; i += BATCH) {
+    const batchNames = names.slice(i, i + BATCH);
+    const { data, error } = await supabase
+      .from("orders")
+      .select(
+        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_financial_status, shopify_cancelled_at, shopify_fulfillment_status, warehouse"
+      )
+      .in("shopify_order_name", batchNames);
+    if (error) return { rows: out, error };
+    for (const r of (data || []) as OrderRow[]) {
+      const key = String(r.shopify_order_name || "").trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+  }
+  return { rows: out, error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Misc
+// ---------------------------------------------------------------------------
 
 function toStoreCode(): string {
   const fromEnv = process.env.RECONCILIATION_STORE_CODE?.trim();
@@ -244,11 +261,15 @@ function typeLabel(t: ReconType): string {
   return "GPS UK SalesOrder Reconciliation";
 }
 
+// ---------------------------------------------------------------------------
+// Per-recon-type orchestration
+// ---------------------------------------------------------------------------
+
 async function runOneRecon(params: {
   supabase: SupabaseClient;
   type: ReconType;
   dateFromIso: string;
-  /** Exclusive end instant (UTC) for primary window; Supabase uses `< delayedTo` with delay slack. */
+  /** Exclusive end instant (UTC) for the Shopify window. */
   dateEndExclusiveIso: string;
   dateFrom: string;
   dateTo: string;
@@ -258,45 +279,19 @@ async function runOneRecon(params: {
   const { supabase, type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
   const checkId = crypto.randomUUID();
 
-  const delayedTo = new Date(
-    new Date(dateEndExclusiveIso).getTime() + config.delays.orderSyncDelayMinutes * 60_000
-  ).toISOString();
+  // Step 1 — Pull Shopify orders for the window, with status info.
+  // SalesOrder + GPS recons only care about paid orders.
+  // Fulfillment recon needs everything to detect bidirectional discrepancies.
+  const extraQuery = type === "fulfillment" ? undefined : "financial_status:paid";
+  const shopifyOrders = await fetchShopifyWindowOrders({
+    dateFromIso,
+    dateEndExclusiveIso,
+    extraQuery,
+  });
+  const shopifyNames = shopifyOrders.map((o) => o.name);
 
-  // PostgREST / Supabase often enforces a per-response row cap (commonly 1000). A single
-  // `.limit(4000)` can still return only the first page, which makes every other paid order
-  // look "missing" from the DB and inflates `unsynced` false positives.
-  const PAGE_SIZE = 1000;
-  const rows: Array<
-    OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
-  > = [];
-  let pageOffset = 0;
-  let error: { message: string } | null = null;
-
-  for (;;) {
-    const { data, error: pageError } = await supabase
-      .from("orders")
-      .select(
-        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_fulfillment_status, warehouse"
-      )
-      .gte("created_at", dateFromIso)
-      .lt("created_at", delayedTo)
-      .eq("shopify_financial_status", "paid")
-      .is("shopify_cancelled_at", null)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true })
-      .range(pageOffset, pageOffset + PAGE_SIZE - 1);
-
-    if (pageError) {
-      error = pageError;
-      break;
-    }
-    const batch = (data || []) as Array<
-      OrderRow & { warehouse?: string | null; shopify_fulfillment_status?: string | null }
-    >;
-    rows.push(...batch);
-    if (batch.length < PAGE_SIZE) break;
-    pageOffset += PAGE_SIZE;
-  }
+  // Step 2 — Look those names up in DB by name. No `created_at` filter.
+  const { rows, error } = await fetchOrderRowsByName(supabase, shopifyNames);
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
@@ -309,13 +304,7 @@ async function runOneRecon(params: {
       runId,
       errorType: "reconciliation_query_error",
       errorMessage: error.message,
-      payload: {
-        type,
-        checkId,
-        store: storeCode,
-        dateFrom,
-        dateTo,
-      },
+      payload: { type, checkId, store: storeCode, dateFrom, dateTo, shopifyOrderCount: shopifyNames.length },
     });
     return {
       type,
@@ -329,137 +318,64 @@ async function runOneRecon(params: {
     };
   }
 
-  const dbByName = new Map(
-    rows
-      .map((r) => [String(r.shopify_order_name || "").trim(), r] as const)
-      .filter(([n]) => Boolean(n))
-  );
-  const shopifyPaidNames = await fetchShopifyPaidOrderNames({
-    dateFromIso,
-    dateEndExclusiveIso,
-  });
-  const missingInDb = shopifyPaidNames.filter((name) => !dbByName.has(name));
+  const dbByName = new Map<string, OrderRow>();
+  for (const r of rows) {
+    const key = String(r.shopify_order_name || "").trim();
+    if (key) dbByName.set(key, r);
+  }
 
+  // Per-type comparison + extra payload buckets for the modal.
   let unsyncedOrders: string[] = [];
-  /** Sales-order reconcile only: paid orders in Shopify with no matching `shopify_order_name` row in window. */
   let salesorderMissingDbNames: string[] = [];
-  /** Sales-order reconcile only: row exists but D365 number/status incomplete. */
-  let salesorderD365IncompleteNames: string[] = [];
+  /** GPS recons: DB row exists, warehouse matches, but GPS sync incomplete. */
+  let gpsUnsyncedNames: string[] = [];
+  /** Fulfillment recon: fulfilled in Shopify, not fulfilled in DB (or row missing). */
+  let missingDbFulfillments: string[] = [];
+  /** Fulfillment recon: fulfilled in DB, not fulfilled in Shopify. */
+  let missingShopifyFulfillments: string[] = [];
 
   if (type === "salesorder") {
-    salesorderD365IncompleteNames = Array.from(
-      new Set(
-        rows
-          .filter(
-            (r) =>
-              !r.d365_order_number ||
-              ["failed", "pending"].includes(String(r.d365_sync_status || "").toLowerCase())
-          )
-          .map((r) => String(r.shopify_order_name || "").trim())
-          .filter(Boolean)
-      )
-    );
-    salesorderMissingDbNames = [...missingInDb];
-    unsyncedOrders = Array.from(
-      new Set([...salesorderMissingDbNames, ...salesorderD365IncompleteNames])
-    );
+    salesorderMissingDbNames = shopifyNames.filter((n) => !dbByName.has(n));
+    unsyncedOrders = [...salesorderMissingDbNames];
   } else if (type === "gps_us" || type === "gps_uk") {
     const wh = type === "gps_us" ? "GPS Warehouse" : "GPS UK Warehouse";
-    const dbUnsynced = rows
-      .filter((r) => String(r.warehouse || "") === wh)
-      .filter(
-        (r) =>
-          !r.gps_order_no ||
-          ["failed", "pending"].includes(String(r.gps_sync_status || "").toLowerCase())
-      )
-      .map((r) => String(r.shopify_order_name || "").trim())
-      .filter(Boolean);
-    // Keep Shopify-missing rows too; we cannot derive GPS-US/UK location reliably from Shopify query in this codebase.
-    unsyncedOrders = Array.from(new Set([...missingInDb, ...dbUnsynced]));
+    for (const name of shopifyNames) {
+      const r = dbByName.get(name);
+      if (!r) continue; // missing-row is salesorder recon's concern, not GPS.
+      if (String(r.warehouse || "") !== wh) continue;
+      const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
+      if (!r.gps_order_no || ["failed", "pending"].includes(gpsStatus)) {
+        gpsUnsyncedNames.push(name);
+      }
+    }
+    unsyncedOrders = Array.from(new Set(gpsUnsyncedNames));
   } else {
-    const shopifyFulfilledNames = await fetchShopifyFulfilledOrderNames({
-      dateFromIso,
-      dateEndExclusiveIso: delayedTo,
-    });
-    const dbFulfilledNames = rows
-      .filter(
-        (r) => String(r.shopify_fulfillment_status || "").toLowerCase() === "fulfilled"
-      )
-      .map((r) => String(r.shopify_order_name || "").trim())
-      .filter(Boolean);
-
-    const missingDbFulfillments = shopifyFulfilledNames.filter(
-      (name) => !dbFulfilledNames.includes(name)
-    );
-    const missingShopifyFulfillments = dbFulfilledNames.filter(
-      (name) => !shopifyFulfilledNames.includes(name)
-    );
-
-    const errors: string[] = [];
-    if (missingDbFulfillments.length > 0) {
-      errors.push(
-        `${missingDbFulfillments.length} orders fulfilled in Shopify but not in database:\n${missingDbFulfillments.join(
-          "\n"
-        )}`
-      );
+    // fulfillment
+    for (const o of shopifyOrders) {
+      const shopifyFulfilled = o.fulfillmentStatus === "FULFILLED";
+      const r = dbByName.get(o.name);
+      const dbFulfilled =
+        !!r && String(r.shopify_fulfillment_status || "").toLowerCase() === "fulfilled";
+      if (shopifyFulfilled && !dbFulfilled) {
+        missingDbFulfillments.push(o.name);
+      } else if (!shopifyFulfilled && dbFulfilled) {
+        missingShopifyFulfillments.push(o.name);
+      }
     }
-    if (missingShopifyFulfillments.length > 0) {
-      errors.push(
-        `${missingShopifyFulfillments.length} orders fulfilled in database but not in Shopify:\n${missingShopifyFulfillments.join(
-          "\n"
-        )}`
-      );
-    }
-
     unsyncedOrders = Array.from(
       new Set([...missingDbFulfillments, ...missingShopifyFulfillments])
     );
-    if (errors.length > 0) {
-      const message = `Found fulfillment discrepancies for ${storeCode} store:\n${errors.join("\n")}`;
-      const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${message}`;
-      await slack.sendErrorMessage(SlackChannelEnum.GENERAL, failMessage);
-      logFlowEvent({
-        level: "error",
-        flow: `reconciliation_${type}`,
-        step: "daily",
-        status: "failed",
-        runId,
-        errorType: "reconciliation_unsynced_orders",
-        errorMessage: failMessage,
-        payload: {
-          type,
-          checkId,
-          store: storeCode,
-          dateFrom,
-          dateTo,
-          totalOrders: rows.length,
-          unsyncedCount: unsyncedOrders.length,
-          unsyncedOrders,
-          missingDbFulfillments,
-          missingShopifyFulfillments,
-        },
-      });
-      return {
-        type,
-        checkId,
-        dateFrom,
-        dateTo,
-        totalOrders: rows.length,
-        unsyncedOrders,
-        status: "error",
-        message: failMessage,
-      };
-    }
   }
 
+  // Step 3 — Compose status, log, and notify.
   const status: "ok" | "error" = unsyncedOrders.length === 0 ? "ok" : "error";
   const issueKindLabel =
     type === "salesorder"
-      ? "issues (missing paid order row in DB and/or D365 sales order not fully synced)"
+      ? "paid order(s) present in Shopify but missing in DB"
       : type === "gps_uk"
-        ? "GPS UK orders missing in DB and/or GPS not fully synced"
+        ? "GPS UK orders missing GPS order id in DB"
         : type === "gps_us"
-          ? "GPS US orders missing in DB and/or GPS not fully synced"
+          ? "GPS US orders missing GPS order id in DB"
           : "fulfillment discrepancies";
   const message =
     status === "ok"
@@ -486,14 +402,27 @@ async function runOneRecon(params: {
       store: storeCode,
       dateFrom,
       dateTo,
-      totalOrders: rows.length,
+      totalOrders: shopifyNames.length,
       unsyncedCount: unsyncedOrders.length,
       unsyncedOrders,
-      shopifyPaidOrderCount: shopifyPaidNames.length,
+      shopifyOrderCount: shopifyNames.length,
+      dbRowsMatchedCount: dbByName.size,
       ...(type === "salesorder"
         ? {
             missingFromDbCount: salesorderMissingDbNames.length,
-            d365IncompleteOrderCount: salesorderD365IncompleteNames.length,
+            missingFromDb: salesorderMissingDbNames,
+          }
+        : {}),
+      ...(type === "gps_us" || type === "gps_uk"
+        ? {
+            gpsUnsyncedCount: gpsUnsyncedNames.length,
+            gpsUnsyncedOrders: gpsUnsyncedNames,
+          }
+        : {}),
+      ...(type === "fulfillment"
+        ? {
+            missingDbFulfillments,
+            missingShopifyFulfillments,
           }
         : {}),
     },
@@ -504,12 +433,16 @@ async function runOneRecon(params: {
     checkId,
     dateFrom,
     dateTo,
-    totalOrders: rows.length,
+    totalOrders: shopifyNames.length,
     unsyncedOrders,
     status,
     message,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Inngest function
+// ---------------------------------------------------------------------------
 
 export const cronSalesorderReconciliation = inngest.createFunction(
   {
@@ -591,4 +524,3 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     };
   }
 );
-
