@@ -1634,6 +1634,7 @@ export const processShopifyOrder = inngest.createFunction(
               lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
               lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
               retryAt: null,
+              state: { failureContext: null },
             },
             { inngestIdempotencyKey, inngestRunId }
           ),
@@ -1868,8 +1869,8 @@ export const processShopifyOrder = inngest.createFunction(
               lastErrorType: null,
               retryAt: null,
               ...(Object.keys(d365InventoryLotsBySku).length > 0
-                ? { state: { d365InventoryLotsBySku } }
-                : {}),
+                ? { state: { d365InventoryLotsBySku, failureContext: null } }
+                : { state: { failureContext: null } }),
             },
             { inngestIdempotencyKey, inngestRunId }
           ),
