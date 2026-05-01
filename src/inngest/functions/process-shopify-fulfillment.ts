@@ -115,6 +115,8 @@ export const processShopifyFulfillment = inngest.createFunction(
       payload: { fulfillmentCount: fulfillments?.length },
     });
 
+    try {
+
     // Identify fulfillment source for routing
     const fulfillmentSources = fulfillments.map((f: ShopifyFulfillment) => ({
       id: f.id,
@@ -181,11 +183,78 @@ export const processShopifyFulfillment = inngest.createFunction(
           "dynamics",
           `[PendingActions] D365 order still not found for ${shopifyOrderName} after drain — fulfillment cannot be synced`
         );
+
+        const errorMsg = `D365 order not found after drain — fulfillment permanently skipped`;
+        const failedShipFromWarehouse = (() => {
+          const firstFulfillment = Array.isArray(fulfillments) && fulfillments.length > 0
+            ? (fulfillments[0] as ShopifyFulfillment)
+            : undefined;
+          return firstFulfillment
+            ? getWarehouseNameFromLocation(firstFulfillment.location_id || "") || undefined
+            : undefined;
+        })();
+
+        await step.run("emit-backorder-fulfillment-no-d365-after-drain", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: "",
+              warehouse: failedShipFromWarehouse || "Unknown",
+              errorMessage: errorMsg,
+              errorType: "d365_fulfillment_error",
+              failedSkus: [],
+              retryCount: 0,
+              maxRetries: 0,
+              orderJson: order,
+              createdAt: new Date().toISOString(),
+              source: "shopify/order.fulfilled",
+              sourceEventName: "shopify/order.fulfilled",
+              failureStage: "fulfillment",
+              failureSystem: "d365",
+              retryMode: "fulfillment_replay",
+              backorderQueue: "fulfilment",
+              shipFromWarehouseName: failedShipFromWarehouse,
+            },
+          });
+        });
+
+        await step.run("notify-hub-fulfillment-no-d365-after-drain", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "backorder",
+              d365FulfillmentStatus: "failed",
+              error: errorMsg,
+              lastError: errorMsg,
+              errorType: "d365_fulfillment_error",
+              lastErrorType: "d365_fulfillment_error",
+              state: {
+                failureContext: {
+                  stage: "fulfillment",
+                  system: "d365",
+                  sourceEventName: "shopify/order.fulfilled",
+                  retryMode: "fulfillment_replay",
+                  backorderQueue: "fulfilment",
+                  shipFromWarehouseName: failedShipFromWarehouse,
+                },
+              },
+            },
+            { inngestRunId: _runId || undefined }
+          );
+        });
+
         return {
           status: "failed",
           shopifyOrderId,
           shopifyOrderName,
-          message: "D365 order not found after drain — fulfillment permanently skipped",
+          message: errorMsg,
         };
       }
       await step.run("store-pending-fulfill", async () => {
@@ -667,29 +736,31 @@ export const processShopifyFulfillment = inngest.createFunction(
         : undefined;
 
       if (!hasBackorderQueued) {
-        await inngest.send({
-          name: "backorder/created",
-          data: {
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber: d365Order.SalesOrderNumber,
-            warehouse: failedShipFromWarehouse || d365Site?.name || "Unknown",
-            errorMessage: firstErrorMessage,
-            errorType: queueErrorType,
-            failedSkus: [],
-            retryCount: 0,
-            maxRetries: 0,
-            orderJson: order,
-            createdAt: new Date().toISOString(),
-            source: "shopify/order.fulfilled",
-            sourceEventName: "shopify/order.fulfilled",
-            failureStage: "fulfillment",
-            failureSystem: "d365",
-            retryMode: "fulfillment_replay",
-            backorderQueue: "fulfilment",
-            d365WarehouseName: d365Site?.name,
-            shipFromWarehouseName: failedShipFromWarehouse,
-          },
+        await step.run("emit-backorder-fulfillment-non-inventory", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: d365Order.SalesOrderNumber,
+              warehouse: failedShipFromWarehouse || d365Site?.name || "Unknown",
+              errorMessage: firstErrorMessage,
+              errorType: queueErrorType,
+              failedSkus: [],
+              retryCount: 0,
+              maxRetries: 0,
+              orderJson: order,
+              createdAt: new Date().toISOString(),
+              source: "shopify/order.fulfilled",
+              sourceEventName: "shopify/order.fulfilled",
+              failureStage: "fulfillment",
+              failureSystem: "d365",
+              retryMode: "fulfillment_replay",
+              backorderQueue: "fulfilment",
+              d365WarehouseName: d365Site?.name,
+              shipFromWarehouseName: failedShipFromWarehouse,
+            },
+          });
         });
       }
 
@@ -895,5 +966,117 @@ export const processShopifyFulfillment = inngest.createFunction(
       paypalResult,
       processedAt: new Date().toISOString(),
     };
+    } catch (error) {
+      // Top-level safety net: any uncaught error in the fulfillment pipeline
+      // (D365 lookup throws, Supabase blip, transformer crash, etc.) must
+      // still produce a fulfilment backorder + Hub status update so the
+      // order is visible/retryable in Battle Hub. Without this, a Shopify
+      // fulfillment that crashed mid-pipeline would silently disappear from
+      // CS Platform.
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isInventoryIssue = isFulfillmentInventoryIssueError(errorMsg);
+      const errorType = isInventoryIssue
+        ? "inventory_insufficient"
+        : "d365_fulfillment_error";
+
+      const failedShipFromWarehouse = (() => {
+        const firstFulfillment = Array.isArray(fulfillments) && fulfillments.length > 0
+          ? (fulfillments[0] as ShopifyFulfillment)
+          : undefined;
+        return firstFulfillment
+          ? getWarehouseNameFromLocation(firstFulfillment.location_id || "") || undefined
+          : undefined;
+      })();
+
+      logFlowEvent({
+        flow: "fulfillment",
+        step: "uncaught-error",
+        status: "failed",
+        level: "error",
+        runId: _runId || undefined,
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName,
+        durationMs: Date.now() - _flowStart,
+        errorType,
+        errorMessage: errorMsg,
+      });
+
+      try {
+        await step.run("emit-backorder-fulfillment-catch-all", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: "",
+              warehouse: failedShipFromWarehouse || "Unknown",
+              errorMessage: errorMsg,
+              errorType,
+              failedSkus: [],
+              retryCount: 0,
+              maxRetries: 0,
+              orderJson: order,
+              createdAt: new Date().toISOString(),
+              source: "shopify/order.fulfilled",
+              sourceEventName: "shopify/order.fulfilled",
+              failureStage: "fulfillment",
+              failureSystem: "d365",
+              retryMode: "fulfillment_replay",
+              backorderQueue: "fulfilment",
+              shipFromWarehouseName: failedShipFromWarehouse,
+            },
+          });
+        });
+
+        await step.run("notify-hub-fulfillment-catch-all", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "backorder",
+              d365FulfillmentStatus: "failed",
+              error: errorMsg,
+              lastError: errorMsg,
+              errorType,
+              lastErrorType: errorType,
+              state: {
+                failureContext: {
+                  stage: "fulfillment",
+                  system: "d365",
+                  sourceEventName: "shopify/order.fulfilled",
+                  retryMode: "fulfillment_replay",
+                  backorderQueue: "fulfilment",
+                  shipFromWarehouseName: failedShipFromWarehouse,
+                },
+              },
+            },
+            { inngestRunId: _runId || undefined }
+          );
+        });
+
+        await slack.sendErrorMessage(
+          "dynamics",
+          `[Fulfillment] Uncaught error for ${shopifyOrderName} — moved to fulfilment backorder queue: ${errorMsg}`
+        );
+      } catch (notifyErr) {
+        // If notifying Hub itself crashes, we still need to surface the original
+        // error so Inngest retries (and the next attempt may succeed).
+        console.error(
+          `[Fulfillment] Failed to notify Hub of catch-all error for ${shopifyOrderName}:`,
+          notifyErr
+        );
+      }
+
+      // Re-throw so Inngest marks the run as failed and retries (the
+      // emit/notify step.run results are persisted, so they won't be re-run
+      // unnecessarily; idempotent for transient failures).
+      throw error instanceof Error
+        ? error
+        : new Error(`[Fulfillment] Uncaught: ${errorMsg}`);
+    }
   }
 );
