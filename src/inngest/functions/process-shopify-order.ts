@@ -18,7 +18,7 @@ import {
   setGpsOrderMetafield,
   shopifyAdminGraphql,
 } from "@/lib/clients/shopify";
-import { OutOfStockError } from "@/lib/clients/gps";
+import { OutOfStockError, classifyGpsError, isGpsInventoryError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
   toD365SalesOrderLines,
@@ -1350,6 +1350,18 @@ export const processShopifyOrder = inngest.createFunction(
 
             const errorMessage = error instanceof Error ? error.message : String(error);
 
+            if (isGpsInventoryError(errorMessage)) {
+              console.log(`[GPS] ⚠️ Out of stock (message): ${errorMessage}`);
+              return {
+                type: "sync_complete" as const,
+                salesOrderNumber: salesOrderNo,
+                lineItems,
+                d365InventoryLotsBySku,
+                orderLinesSupabase,
+                gpsResult: { type: "out_of_stock" as const, error: errorMessage },
+              };
+            }
+
             await publishStatus(
               "gps.send-order",
               "failed",
@@ -1418,7 +1430,8 @@ export const processShopifyOrder = inngest.createFunction(
         type ExistingOrderGpsRetryResult =
           | { type: "real"; gpsOrderNo?: string }
           | { type: "skipped"; reason: string }
-          | { type: "failed"; error: string };
+          | { type: "failed"; error: string }
+          | { type: "out_of_stock"; error: string };
 
         const gpsRetryResult = await step.run("retry-gps-for-existing-d365-order", async () => {
           const shouldSendToRealGps =
@@ -1458,7 +1471,7 @@ export const processShopifyOrder = inngest.createFunction(
           } catch (error) {
             if (error instanceof OutOfStockError) {
               return {
-                type: "failed" as const,
+                type: "out_of_stock" as const,
                 error: error.message,
               } satisfies ExistingOrderGpsRetryResult;
             }
@@ -1481,6 +1494,89 @@ export const processShopifyOrder = inngest.createFunction(
           await publishStatus("gps.send-order", "skipped", gpsRetryResult.reason, {
             warehouse: warehouseName,
           });
+        } else if (
+          gpsRetryResult.type === "out_of_stock" ||
+          (gpsRetryResult.type === "failed" && isGpsInventoryError(gpsRetryResult.error))
+        ) {
+          const oosError = gpsRetryResult.error;
+
+          const errorType = classifyGpsError(oosError);
+          const failedSkus =
+            order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
+
+          await publishStatus(
+            "gps.send-order",
+            "failed",
+            `Inventory error: ${oosError}. Sending to backorder queue.`,
+            { errorType, error: oosError }
+          );
+
+          await slack.sendWarningMessage(
+            "gpslow",
+            `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`
+          );
+
+          await step.run("emit-backorder-event-existing-d365-oos", async () => {
+            await inngest.send({
+              name: "backorder/created",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                warehouse: warehouseName,
+                errorMessage: oosError,
+                errorType,
+                failedSkus,
+                retryCount: 0,
+                maxRetries: 0,
+                createdAt: new Date().toISOString(),
+                sourceEventName: "shopify/order.paid",
+                failureStage: "order_creation",
+                failureSystem: "gps",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+              },
+            });
+          });
+
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: reusedSalesOrderNumber,
+              warehouse: warehouseName,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "waiting_stock",
+              gpsSyncStatus: "failed",
+              error: oosError,
+              lastError: oosError,
+              errorType,
+              lastErrorType: errorType,
+              state: {
+                failureContext: {
+                  stage: "order_creation",
+                  system: "gps",
+                  sourceEventName: "shopify/order.paid",
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                },
+              },
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          );
+
+          await publishResult("failed", {
+            error: oosError,
+            d365OrderNumber: reusedSalesOrderNumber,
+            warehouse: warehouseName,
+          });
+
+          throw new NonRetriableError(
+            `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue due to inventory issue`
+          );
         } else {
           await publishStatus(
             "gps.send-order",
@@ -1494,7 +1590,7 @@ export const processShopifyOrder = inngest.createFunction(
           );
         }
 
-        const gpsSyncStatus =
+        const gpsSyncStatusFromRetry: "synced" | "skipped" | "failed" =
           gpsRetryResult.type === "real"
             ? "synced"
             : gpsRetryResult.type === "skipped"
@@ -1534,7 +1630,7 @@ export const processShopifyOrder = inngest.createFunction(
               status: "completed",
               processingStatus: "completed",
               d365SyncStatus: "synced",
-              gpsSyncStatus,
+              gpsSyncStatus: gpsSyncStatusFromRetry,
               lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
               lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
               retryAt: null,
@@ -1551,7 +1647,7 @@ export const processShopifyOrder = inngest.createFunction(
         return {
           status: "already_exists",
           d365OrderNumber: reusedSalesOrderNumber,
-          gpsSyncStatus,
+          gpsSyncStatus: gpsSyncStatusFromRetry,
           gpsOrderNo: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
           shopifyOrderId,
         };
@@ -1593,7 +1689,7 @@ export const processShopifyOrder = inngest.createFunction(
             { inngestIdempotencyKey, inngestRunId }
           );
         }
-      } else if (gpsResult.type === "failed") {
+      } else if (gpsResult.type === "failed" && !isGpsInventoryError(gpsResult.error)) {
         console.log(`[GPS] Order processing will continue despite GPS failure`);
       } else if (gpsResult.type === "skipped") {
         await publishStatus("gps.send-order", "skipped", "GPS sync not required for this order");
@@ -1601,9 +1697,16 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Handle inventory errors — emit to backorder queue for durable retry
       let routedToBackorder = false;
-      if (gpsResult.type === "out_of_stock") {
-        const oosError = "error" in gpsResult ? gpsResult.error : "Unknown";
-        const { classifyGpsError } = await import("@/lib/clients/gps");
+      if (
+        gpsResult.type === "out_of_stock" ||
+        (gpsResult.type === "failed" && isGpsInventoryError(gpsResult.error))
+      ) {
+        const oosError =
+          gpsResult.type === "out_of_stock"
+            ? "error" in gpsResult
+              ? gpsResult.error
+              : "Unknown"
+            : gpsResult.error;
         const errorType = classifyGpsError(oosError);
         const failedSkus =
           order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
@@ -1652,6 +1755,7 @@ export const processShopifyOrder = inngest.createFunction(
             shopifyOrderName,
             d365OrderNumber: salesOrderNo,
             warehouse: warehouseName,
+            orderJson: order,
             status: "backorder",
             processingStatus: "waiting_stock",
             gpsSyncStatus: "failed",
