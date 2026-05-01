@@ -105,10 +105,12 @@ export const processOrderUpdate = inngest.createFunction(
       processedAt: new Date().toISOString(),
     };
 
-    // Send order updated event to CS platform
-    await csPlatform.sendOrderUpdated(order, changedFields, {
-      inngestIdempotencyKey,
-      inngestRunId,
+    // Send order updated event to CS platform (durable via step.run)
+    await step.run("notify-cs-platform-order-updated", async () => {
+      await csPlatform.sendOrderUpdated(order, changedFields, {
+        inngestIdempotencyKey,
+        inngestRunId,
+      });
     });
 
     logFlowEvent({

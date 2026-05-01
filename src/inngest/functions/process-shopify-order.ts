@@ -1539,34 +1539,36 @@ export const processShopifyOrder = inngest.createFunction(
             });
           });
 
-          await csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber: reusedSalesOrderNumber,
-              warehouse: warehouseName,
-              orderJson: order,
-              status: "backorder",
-              processingStatus: "waiting_stock",
-              gpsSyncStatus: "failed",
-              error: oosError,
-              lastError: oosError,
-              errorType,
-              lastErrorType: errorType,
-              state: {
-                failureContext: {
-                  stage: "order_creation",
-                  system: "gps",
-                  sourceEventName: "shopify/order.paid",
-                  retryMode: "gps_outbound",
-                  backorderQueue: "sync",
+          await step.run("notify-hub-backorder-existing-d365-oos", async () => {
+            await csPlatform.sendOrderUpdate(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                warehouse: warehouseName,
+                orderJson: order,
+                status: "backorder",
+                processingStatus: "waiting_stock",
+                gpsSyncStatus: "failed",
+                error: oosError,
+                lastError: oosError,
+                errorType,
+                lastErrorType: errorType,
+                state: {
+                  failureContext: {
+                    stage: "order_creation",
+                    system: "gps",
+                    sourceEventName: "shopify/order.paid",
+                    retryMode: "gps_outbound",
+                    backorderQueue: "sync",
+                  },
                 },
               },
-            },
-            { inngestIdempotencyKey, inngestRunId }
-          );
+              { inngestIdempotencyKey, inngestRunId }
+            );
+          });
 
           await publishResult("failed", {
             error: oosError,
@@ -1748,34 +1750,36 @@ export const processShopifyOrder = inngest.createFunction(
         });
         routedToBackorder = true;
 
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber: salesOrderNo,
-            warehouse: warehouseName,
-            orderJson: order,
-            status: "backorder",
-            processingStatus: "waiting_stock",
-            gpsSyncStatus: "failed",
-            error: oosError,
-            lastError: oosError,
-            errorType,
-            lastErrorType: errorType,
-            state: {
-              failureContext: {
-                stage: "order_creation",
-                system: "gps",
-                sourceEventName: "shopify/order.paid",
-                retryMode: "gps_outbound",
-                backorderQueue: "sync",
+        await step.run("notify-hub-backorder-oos", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNo,
+              warehouse: warehouseName,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "waiting_stock",
+              gpsSyncStatus: "failed",
+              error: oosError,
+              lastError: oosError,
+              errorType,
+              lastErrorType: errorType,
+              state: {
+                failureContext: {
+                  stage: "order_creation",
+                  system: "gps",
+                  sourceEventName: "shopify/order.paid",
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                },
               },
             },
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
+            { inngestIdempotencyKey, inngestRunId }
+          );
+        });
       }
 
       await publishStatus("send-to-gps", "completed", "GPS warehouse order processed", {
@@ -1974,36 +1978,38 @@ export const processShopifyOrder = inngest.createFunction(
           });
         });
 
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber: salesOrderNumber,
-            orderJson: order,
-            status: "backorder",
-            processingStatus: "waiting_stock",
-            gpsSyncStatus: "failed",
-            error: errorMsg,
-            lastError: errorMsg,
-            errorType: inventoryErrorType,
-            lastErrorType: inventoryErrorType,
-            state: {
-              failureContext: {
-                stage: "order_creation",
-                system:
-                  normalizedError.includes("d365") || normalizedError.includes("dynamics")
-                    ? "d365"
-                    : "gps",
-                sourceEventName: "shopify/order.paid",
-                retryMode: "gps_outbound",
-                backorderQueue: "sync",
+        await step.run("notify-hub-backorder-on-catch", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: salesOrderNumber,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "waiting_stock",
+              gpsSyncStatus: "failed",
+              error: errorMsg,
+              lastError: errorMsg,
+              errorType: inventoryErrorType,
+              lastErrorType: inventoryErrorType,
+              state: {
+                failureContext: {
+                  stage: "order_creation",
+                  system:
+                    normalizedError.includes("d365") || normalizedError.includes("dynamics")
+                      ? "d365"
+                      : "gps",
+                  sourceEventName: "shopify/order.paid",
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                },
               },
             },
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
+            { inngestIdempotencyKey, inngestRunId }
+          );
+        });
 
         await publishResult("failed", {
           error: `Moved to backorder queue: ${errorMsg}`,
@@ -2104,32 +2110,34 @@ export const processShopifyOrder = inngest.createFunction(
           });
         });
 
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            orderJson: order,
-            status: "backorder",
-            processingStatus: "backorder",
-            gpsSyncStatus: "failed",
-            error: errorMsg,
-            lastError: errorMsg,
-            errorType: nonRetryableErrorType,
-            lastErrorType: nonRetryableErrorType,
-            state: {
-              failureContext: {
-                stage: "order_creation",
-                system: syncFailureSystem,
-                sourceEventName: "shopify/order.paid",
-                retryMode: "gps_outbound",
-                backorderQueue: "sync",
+        await step.run("notify-hub-backorder-non-retryable", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              orderJson: order,
+              status: "backorder",
+              processingStatus: "backorder",
+              gpsSyncStatus: "failed",
+              error: errorMsg,
+              lastError: errorMsg,
+              errorType: nonRetryableErrorType,
+              lastErrorType: nonRetryableErrorType,
+              state: {
+                failureContext: {
+                  stage: "order_creation",
+                  system: syncFailureSystem,
+                  sourceEventName: "shopify/order.paid",
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                },
               },
             },
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
+            { inngestIdempotencyKey, inngestRunId }
+          );
+        });
 
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
@@ -2184,32 +2192,34 @@ export const processShopifyOrder = inngest.createFunction(
 
       // Persist terminal failure back to Battle Hub via webhook so Orders/Testing
       // can report final run errors even when a run fails before a normal status update.
-      await csPlatform.sendOrderUpdate(
-        {
-          id: shopifyOrderId,
-          name: shopifyOrderName,
-          shopifyOrderId,
-          shopifyOrderName,
-          orderJson: order,
-          status: "backorder",
-          processingStatus: "backorder",
-          gpsSyncStatus: "failed",
-          error: errorMsg,
-          lastError: errorMsg,
-          errorType,
-          lastErrorType: errorType,
-          state: {
-            failureContext: {
-              stage: "order_creation",
-              system: syncFailureSystem,
-              sourceEventName: "shopify/order.paid",
-              retryMode: "gps_outbound",
-              backorderQueue: "sync",
+      await step.run("notify-hub-backorder-catch-all", async () => {
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            orderJson: order,
+            status: "backorder",
+            processingStatus: "backorder",
+            gpsSyncStatus: "failed",
+            error: errorMsg,
+            lastError: errorMsg,
+            errorType,
+            lastErrorType: errorType,
+            state: {
+              failureContext: {
+                stage: "order_creation",
+                system: syncFailureSystem,
+                sourceEventName: "shopify/order.paid",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+              },
             },
           },
-        },
-        { inngestIdempotencyKey, inngestRunId }
-      );
+          { inngestIdempotencyKey, inngestRunId }
+        );
+      });
 
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(

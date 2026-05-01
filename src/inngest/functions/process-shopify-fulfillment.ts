@@ -608,19 +608,22 @@ export const processShopifyFulfillment = inngest.createFunction(
     const fulfillmentSource: "gps" | "stord" | "shopify" = isFromGpsSyncPath ? "gps" : "shopify";
 
     // Send fulfillment events to CS platform with Shopify status and source
-    for (const fulfillmentResult of fulfillmentResults) {
+    for (let i = 0; i < fulfillmentResults.length; i++) {
+      const fulfillmentResult = fulfillmentResults[i];
       if (fulfillmentResult.status === "success" && fulfillmentResult.trackingNumber) {
-        await csPlatform.sendOrderFulfilled({
-          orderId: shopifyOrderId,
-          shopifyOrderName,
-          trackingNumber: fulfillmentResult.trackingNumber,
-          carrier: fulfillmentResult.carrier || "",
-          fulfillmentId: fulfillmentResult.fulfillmentId,
-          shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
-          shopifyFinancialStatus: order.financial_status,
-          fulfillmentSource,
-          d365FulfillmentStatus: "synced",
-          gpsFulfillmentStatus: fulfillmentSource === "gps" ? "synced" : undefined,
+        await step.run(`notify-hub-fulfilled-${i}`, async () => {
+          await csPlatform.sendOrderFulfilled({
+            orderId: shopifyOrderId,
+            shopifyOrderName,
+            trackingNumber: fulfillmentResult.trackingNumber,
+            carrier: fulfillmentResult.carrier || "",
+            fulfillmentId: fulfillmentResult.fulfillmentId,
+            shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
+            shopifyFinancialStatus: order.financial_status,
+            fulfillmentSource,
+            d365FulfillmentStatus: "synced",
+            gpsFulfillmentStatus: fulfillmentSource === "gps" ? "synced" : undefined,
+          });
         });
       }
     }
@@ -690,49 +693,40 @@ export const processShopifyFulfillment = inngest.createFunction(
         });
       }
 
-      await csPlatform.sendOrderUpdate(
-        {
-          id: shopifyOrderId,
-          name: shopifyOrderName,
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber: d365Order.SalesOrderNumber,
-          // Keep Shopify lifecycle state up to date even when D365 fulfillment
-          // fails, so GPS cron does not keep polling this order as "unfulfilled"
-          // and re-open duplicate backorders with GPS errors.
-          shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
-          shopifyFinancialStatus: order.financial_status,
-          // Do not set `warehouse` here: it must stay the Shopify routing /
-          // ship-from label (e.g. STORD ATL Location). D365 inventory site
-          // belongs in failureContext only — Hub also guards against the
-          // overwrite using failureContext.stage.
-          status: "backorder",
-          processingStatus: "backorder",
-          d365SyncStatus: "synced",
-          // Mark the actual failing system; do NOT touch gpsSyncStatus — GPS
-          // outbound was already complete (or skipped) at order-creation time
-          // and overwriting it here would falsely paint the warehouse card as
-          // out-of-stock for STORD orders.
-          d365FulfillmentStatus: "failed",
-          error: firstErrorMessage,
-          lastError: firstErrorMessage,
-          errorType: queueErrorType,
-          lastErrorType: queueErrorType,
-          state: {
-            failureContext: {
-              stage: "fulfillment",
-              system: "d365",
-              sourceEventName: "shopify/order.fulfilled",
-              retryMode: "fulfillment_replay",
-              backorderQueue: "fulfilment",
-              d365WarehouseName: d365Site?.name,
-              d365DataAreaId,
-              shipFromWarehouseName: failedShipFromWarehouse,
+      await step.run("notify-hub-fulfillment-backorder", async () => {
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber,
+            shopifyFulfillmentStatus: order.fulfillment_status || "fulfilled",
+            shopifyFinancialStatus: order.financial_status,
+            status: "backorder",
+            processingStatus: "backorder",
+            d365SyncStatus: "synced",
+            d365FulfillmentStatus: "failed",
+            error: firstErrorMessage,
+            lastError: firstErrorMessage,
+            errorType: queueErrorType,
+            lastErrorType: queueErrorType,
+            state: {
+              failureContext: {
+                stage: "fulfillment",
+                system: "d365",
+                sourceEventName: "shopify/order.fulfilled",
+                retryMode: "fulfillment_replay",
+                backorderQueue: "fulfilment",
+                d365WarehouseName: d365Site?.name,
+                d365DataAreaId,
+                shipFromWarehouseName: failedShipFromWarehouse,
+              },
             },
           },
-        },
-        { inngestRunId: _runId || undefined }
-      );
+          { inngestRunId: _runId || undefined }
+        );
+      });
     }
 
     // ========================================================================

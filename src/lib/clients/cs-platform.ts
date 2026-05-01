@@ -92,6 +92,11 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
       errorMessage: error instanceof Error ? error.message : String(error),
       shopifyOrderName: event.data?.shopifyOrderName,
     });
+    // Re-throw so callers (especially step.run wrappers) can detect the
+    // failure, retry, and surface it in the Inngest UI. Previously this
+    // catch swallowed errors silently which made dropped Hub updates
+    // (e.g. backorder parking) invisible.
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
