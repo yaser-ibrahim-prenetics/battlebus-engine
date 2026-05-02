@@ -1548,7 +1548,7 @@ export const processShopifyOrder = inngest.createFunction(
                 shopifyOrderName,
                 d365OrderNumber: reusedSalesOrderNumber,
                 warehouse: warehouseName,
-                orderJson: order,
+                shopifyOrderCreatedAt: order?.created_at,
                 status: "backorder",
                 processingStatus: "waiting_stock",
                 gpsSyncStatus: "failed",
@@ -1605,42 +1605,45 @@ export const processShopifyOrder = inngest.createFunction(
           warehouse: warehouseName,
         });
 
-        await Promise.allSettled([
-          csPlatform.sendOrderCreated(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber: reusedSalesOrderNumber,
-              warehouse: warehouseName,
-              gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
-              gpsSkipped: gpsRetryResult.type === "skipped",
-              orderJson: order,
-            },
-            { inngestIdempotencyKey, inngestRunId }
-          ),
-          csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber: reusedSalesOrderNumber,
-              warehouse: warehouseName,
-              gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
-              status: "completed",
-              processingStatus: "completed",
-              d365SyncStatus: "synced",
-              gpsSyncStatus: gpsSyncStatusFromRetry,
-              lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
-              lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
-              retryAt: null,
-              state: { failureContext: null },
-            },
-            { inngestIdempotencyKey, inngestRunId }
-          ),
-        ]).catch(() => {});
+        await step.run("notify-hub-already-exists-synced", async () => {
+          await Promise.all([
+            csPlatform.sendOrderCreated(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                warehouse: warehouseName,
+                gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
+                gpsSkipped: gpsRetryResult.type === "skipped",
+                orderJson: order,
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            ),
+            csPlatform.sendOrderUpdate(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                warehouse: warehouseName,
+                gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
+                shopifyOrderCreatedAt: order?.created_at,
+                status: "completed",
+                processingStatus: "completed",
+                d365SyncStatus: "synced",
+                gpsSyncStatus: gpsSyncStatusFromRetry,
+                lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
+                lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
+                retryAt: null,
+                state: { failureContext: null },
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            ),
+          ]);
+        });
 
         await handOffSequencedRunIfAny({
           status: "already_exists",
@@ -1688,6 +1691,7 @@ export const processShopifyOrder = inngest.createFunction(
               warehouse: warehouseName,
               gpsOrderId: gpsOrderNo,
               gpsSyncStatus: "synced",
+              shopifyOrderCreatedAt: order?.created_at,
             },
             { inngestIdempotencyKey, inngestRunId }
           );
@@ -1759,7 +1763,7 @@ export const processShopifyOrder = inngest.createFunction(
               shopifyOrderName,
               d365OrderNumber: salesOrderNo,
               warehouse: warehouseName,
-              orderJson: order,
+              shopifyOrderCreatedAt: order?.created_at,
               status: "backorder",
               processingStatus: "waiting_stock",
               gpsSyncStatus: "failed",
@@ -1787,10 +1791,17 @@ export const processShopifyOrder = inngest.createFunction(
       });
 
       if (!routedToBackorder) {
-        await slack.sendOrderMessage(
-          SlackChannelEnum.SHOPIFY,
-          `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNo}`
-        );
+        try {
+          await slack.sendOrderMessage(
+            SlackChannelEnum.SHOPIFY,
+            `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNo}`
+          );
+        } catch (slackErr) {
+          console.warn(
+            `[Slack] Success notify failed (non-fatal) for ${shopifyOrderName}:`,
+            slackErr instanceof Error ? slackErr.message : slackErr
+          );
+        }
       }
 
       const result = {
@@ -1829,56 +1840,59 @@ export const processShopifyOrder = inngest.createFunction(
       }
 
       if (!routedToBackorder) {
-        Promise.allSettled([
-          csPlatform.sendOrderCreated(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber: salesOrderNo,
-              warehouse: warehouseName,
-              gpsOrderId,
-              gpsUkOrderId:
-                isGpsUkWarehouse(warehouseName) && gpsOrderId
-                  ? gpsOrderId
-                  : undefined,
-              gpsSkipped,
-              orderJson: order,
-              ...(Object.keys(d365InventoryLotsBySku).length > 0
-                ? { state: { d365InventoryLotsBySku } }
-                : {}),
-            },
-            { inngestIdempotencyKey, inngestRunId }
-          ),
-          csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber: salesOrderNo,
-              warehouse: warehouseName,
-              gpsOrderId,
-              gpsUkOrderId:
-                isGpsUkWarehouse(warehouseName) && gpsOrderId
-                  ? gpsOrderId
-                  : undefined,
-              status: "completed",
-              processingStatus: "completed",
-              d365SyncStatus: "synced",
-              gpsSyncStatus:
-                gpsResult?.type === "real" ? "synced" : gpsSkipped ? "skipped" : "pending",
-              lastError: null,
-              lastErrorType: null,
-              retryAt: null,
-              ...(Object.keys(d365InventoryLotsBySku).length > 0
-                ? { state: { d365InventoryLotsBySku, failureContext: null } }
-                : { state: { failureContext: null } }),
-            },
-            { inngestIdempotencyKey, inngestRunId }
-          ),
-        ]).catch(() => {});
+        await step.run("notify-hub-order-created-and-synced", async () => {
+          await Promise.all([
+            csPlatform.sendOrderCreated(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: salesOrderNo,
+                warehouse: warehouseName,
+                gpsOrderId,
+                gpsUkOrderId:
+                  isGpsUkWarehouse(warehouseName) && gpsOrderId
+                    ? gpsOrderId
+                    : undefined,
+                gpsSkipped,
+                orderJson: order,
+                ...(Object.keys(d365InventoryLotsBySku).length > 0
+                  ? { state: { d365InventoryLotsBySku } }
+                  : {}),
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            ),
+            csPlatform.sendOrderUpdate(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: salesOrderNo,
+                warehouse: warehouseName,
+                gpsOrderId,
+                gpsUkOrderId:
+                  isGpsUkWarehouse(warehouseName) && gpsOrderId
+                    ? gpsOrderId
+                    : undefined,
+                shopifyOrderCreatedAt: order?.created_at,
+                status: "completed",
+                processingStatus: "completed",
+                d365SyncStatus: "synced",
+                gpsSyncStatus:
+                  gpsResult?.type === "real" ? "synced" : gpsSkipped ? "skipped" : "pending",
+                lastError: null,
+                lastErrorType: null,
+                retryAt: null,
+                ...(Object.keys(d365InventoryLotsBySku).length > 0
+                  ? { state: { d365InventoryLotsBySku, failureContext: null } }
+                  : { state: { failureContext: null } }),
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            ),
+          ]);
+        });
       }
 
       if (routedToBackorder) {
@@ -1986,7 +2000,7 @@ export const processShopifyOrder = inngest.createFunction(
               shopifyOrderId,
               shopifyOrderName,
               d365OrderNumber: salesOrderNumber,
-              orderJson: order,
+              shopifyOrderCreatedAt: order?.created_at,
               status: "backorder",
               processingStatus: "waiting_stock",
               gpsSyncStatus: "failed",
@@ -2040,21 +2054,24 @@ export const processShopifyOrder = inngest.createFunction(
           d365OrderNumber: salesOrderNumber,
         });
 
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            status: "completed",
-            processingStatus: "completed",
-            d365SyncStatus: "synced",
-            d365OrderNumber: salesOrderNumber,
-            lastError: `Service SKU ${serviceSkuMatch[1]} not registered in D365 (non-fatal)`,
-            lastErrorType: "service_sku_missing",
-          },
-          { inngestIdempotencyKey, inngestRunId }
-        );
+        await step.run("notify-hub-service-sku-warning", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              shopifyOrderCreatedAt: order?.created_at,
+              status: "completed",
+              processingStatus: "completed",
+              d365SyncStatus: "synced",
+              d365OrderNumber: salesOrderNumber,
+              lastError: `Service SKU ${serviceSkuMatch[1]} not registered in D365 (non-fatal)`,
+              lastErrorType: "service_sku_missing",
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          );
+        });
 
         return {
           status: "completed",
@@ -2117,7 +2134,8 @@ export const processShopifyOrder = inngest.createFunction(
               name: shopifyOrderName,
               shopifyOrderId,
               shopifyOrderName,
-              orderJson: order,
+              d365OrderNumber: salesOrderNumber,
+              shopifyOrderCreatedAt: order?.created_at,
               status: "backorder",
               processingStatus: "backorder",
               gpsSyncStatus: "failed",
@@ -2199,7 +2217,8 @@ export const processShopifyOrder = inngest.createFunction(
             name: shopifyOrderName,
             shopifyOrderId,
             shopifyOrderName,
-            orderJson: order,
+            d365OrderNumber: salesOrderNumber,
+            shopifyOrderCreatedAt: order?.created_at,
             status: "backorder",
             processingStatus: "backorder",
             gpsSyncStatus: "failed",

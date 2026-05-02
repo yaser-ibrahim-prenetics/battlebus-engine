@@ -56,8 +56,19 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error(`[CS Platform] Failed to send event ${event.event}: ${error}`);
+      const raw = await response.text();
+      let detail = raw;
+      try {
+        const parsed = JSON.parse(raw) as { message?: string; error?: string };
+        if (typeof parsed?.message === "string" && parsed.message.trim()) {
+          detail = parsed.message.trim();
+        } else if (typeof parsed?.error === "string" && parsed.error.trim()) {
+          detail = `${parsed.error.trim()}: ${raw}`;
+        }
+      } catch {
+        /* use raw body */
+      }
+      console.error(`[CS Platform] Failed to send event ${event.event}: ${detail}`);
       logFlowEvent({
         flow: "cs_platform",
         client: "cs_platform",
@@ -65,10 +76,10 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
         status: "failed",
         level: "error",
         durationMs: Date.now() - _start,
-        errorMessage: error,
+        errorMessage: detail,
         shopifyOrderName: event.data?.shopifyOrderName,
       });
-      throw new Error(`CS Platform webhook failed: ${error}`);
+      throw new Error(`CS Platform webhook failed: ${detail}`);
     }
 
     console.log(`[CS Platform] ✅ Sent event: ${event.event}`);
