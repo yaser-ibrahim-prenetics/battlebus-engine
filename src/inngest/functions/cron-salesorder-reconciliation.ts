@@ -47,6 +47,7 @@ type OrderRow = {
   d365_order_number: string | null;
   d365_sync_status: string | null;
   gps_order_no: string | null;
+  gps_uk_order_no: string | null;
   gps_sync_status: string | null;
   shopify_financial_status: string | null;
   shopify_cancelled_at: string | null;
@@ -359,7 +360,7 @@ async function fetchOrderRowsByName(
     const { data, error } = await supabase
       .from("orders")
       .select(
-        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_sync_status, shopify_financial_status, shopify_cancelled_at, shopify_fulfillment_status, warehouse"
+        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_uk_order_no, gps_sync_status, shopify_financial_status, shopify_cancelled_at, shopify_fulfillment_status, warehouse"
       )
       .in("shopify_order_name", batchNames);
     if (trace && !error && config.reconciliation.verboseLog) {
@@ -512,7 +513,9 @@ async function runOneRecon(params: {
       if (!r) continue; // missing-row is salesorder recon's concern, not GPS.
       if (String(r.warehouse || "") !== wh) continue;
       const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
-      if (!r.gps_order_no || ["failed", "pending"].includes(gpsStatus)) {
+      const gpsOrderNoForWarehouse =
+        type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
+      if (!gpsOrderNoForWarehouse || ["failed", "pending"].includes(gpsStatus)) {
         gpsUnsyncedNames.push(name);
       }
     }
