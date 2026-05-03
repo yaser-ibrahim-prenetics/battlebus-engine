@@ -385,6 +385,23 @@ export type ReconciliationRunEvent = {
   };
 };
 
+export type ShopifyOrderRecoverEvent = {
+  name: "shopify/order.recover";
+  data: {
+    /** Preferred path: numeric Shopify Admin order ids. */
+    shopifyOrderIds?: string[];
+    /** Fallback path (when ids are unavailable): IM8-style order names. */
+    shopifyOrderNames?: string[];
+    /** Optional store hint (e.g. im8-store.myshopify.com) for token bucket selection. */
+    shopifyStore?: string;
+    /** If true, dispatch recovery even if Hub already has the order row. */
+    force?: boolean;
+    requestedAt?: string;
+    requestedBy?: string;
+    source?: "reconciliation" | "manual";
+  };
+};
+
 // ============================================================================
 // ORDER LIFECYCLE EVENTS
 // ============================================================================
@@ -421,6 +438,7 @@ export type BattleBusEvents =
   | InventorySyncEvent
   | InventoryFullSyncRequestedEvent
   | ReconciliationRunEvent
+  | ShopifyOrderRecoverEvent
   | SubscriptionRenewalEvent
   | BackorderCreatedEvent
   | BackorderResolvedEvent

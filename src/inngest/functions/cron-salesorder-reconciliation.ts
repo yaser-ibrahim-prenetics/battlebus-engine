@@ -71,6 +71,8 @@ type ReconResult = {
   dateTo: string;
   totalOrders: number;
   unsyncedOrders: string[];
+  unsyncedOrderIds: string[];
+  missingDbFulfillmentIds?: string[];
   status: "ok" | "error";
   message: string;
 };
@@ -407,6 +409,14 @@ function typeLabel(t: ReconType): string {
   return "GPS UK SalesOrder Reconciliation";
 }
 
+function extractShopifyOrderId(orderId: string): string | null {
+  const raw = String(orderId || "").trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return raw;
+  const match = raw.match(/\/(\d+)\s*$/);
+  return match ? match[1] : null;
+}
+
 // ---------------------------------------------------------------------------
 // Per-recon-type orchestration
 // ---------------------------------------------------------------------------
@@ -451,6 +461,11 @@ async function runOneRecon(params: {
     trace,
   });
   const shopifyNames = shopifyOrders.map((o) => o.name);
+  const shopifyIdByName = new Map<string, string>();
+  for (const order of shopifyOrders) {
+    const orderId = extractShopifyOrderId(order.id);
+    if (orderId) shopifyIdByName.set(order.name, orderId);
+  }
 
   // Step 2 — Look those names up in DB by name. No `created_at` filter.
   const { rows, error } = await fetchOrderRowsByName(supabase, shopifyNames, trace);
@@ -482,6 +497,7 @@ async function runOneRecon(params: {
       dateTo,
       totalOrders: 0,
       unsyncedOrders: [],
+      unsyncedOrderIds: [],
       status: "error",
       message: failMessage,
     };
@@ -495,17 +511,22 @@ async function runOneRecon(params: {
 
   // Per-type comparison + extra payload buckets for the modal.
   let unsyncedOrders: string[] = [];
+  let unsyncedOrderIds: string[] = [];
   let salesorderMissingDbNames: string[] = [];
   /** GPS recons: DB row exists, warehouse matches, but GPS sync incomplete. */
   let gpsUnsyncedNames: string[] = [];
   /** Fulfillment recon: fulfilled in Shopify, not fulfilled in DB (or row missing). */
   let missingDbFulfillments: string[] = [];
+  let missingDbFulfillmentIds: string[] = [];
   /** Fulfillment recon: fulfilled in DB, not fulfilled in Shopify. */
   let missingShopifyFulfillments: string[] = [];
 
   if (type === "salesorder") {
     salesorderMissingDbNames = shopifyNames.filter((n) => !dbByName.has(n));
     unsyncedOrders = [...salesorderMissingDbNames];
+    unsyncedOrderIds = salesorderMissingDbNames
+      .map((name) => shopifyIdByName.get(name) || "")
+      .filter(Boolean);
   } else if (type === "gps_us" || type === "gps_uk") {
     const wh = type === "gps_us" ? "GPS Warehouse" : "GPS UK Warehouse";
     for (const name of shopifyNames) {
@@ -520,6 +541,9 @@ async function runOneRecon(params: {
       }
     }
     unsyncedOrders = Array.from(new Set(gpsUnsyncedNames));
+    unsyncedOrderIds = unsyncedOrders
+      .map((name) => shopifyIdByName.get(name) || "")
+      .filter(Boolean);
   } else {
     // fulfillment
     for (const o of shopifyOrders) {
@@ -529,6 +553,8 @@ async function runOneRecon(params: {
         !!r && String(r.shopify_fulfillment_status || "").toLowerCase() === "fulfilled";
       if (shopifyFulfilled && !dbFulfilled) {
         missingDbFulfillments.push(o.name);
+        const oid = shopifyIdByName.get(o.name) || extractShopifyOrderId(o.id) || "";
+        if (oid) missingDbFulfillmentIds.push(oid);
       } else if (!shopifyFulfilled && dbFulfilled) {
         missingShopifyFulfillments.push(o.name);
       }
@@ -536,6 +562,7 @@ async function runOneRecon(params: {
     unsyncedOrders = Array.from(
       new Set([...missingDbFulfillments, ...missingShopifyFulfillments])
     );
+    unsyncedOrderIds = [...missingDbFulfillmentIds];
   }
 
   // Step 3 — Compose status, log, and notify.
@@ -576,6 +603,7 @@ async function runOneRecon(params: {
       totalOrders: shopifyNames.length,
       unsyncedCount: unsyncedOrders.length,
       unsyncedOrders,
+      unsyncedOrderIds,
       shopifyOrderCount: shopifyNames.length,
       dbRowsMatchedCount: dbByName.size,
       ...(type === "salesorder"
@@ -593,6 +621,7 @@ async function runOneRecon(params: {
       ...(type === "fulfillment"
         ? {
             missingDbFulfillments,
+            missingDbFulfillmentIds,
             missingShopifyFulfillments,
           }
         : {}),
@@ -618,6 +647,8 @@ async function runOneRecon(params: {
     dateTo,
     totalOrders: shopifyNames.length,
     unsyncedOrders,
+    unsyncedOrderIds,
+    ...(type === "fulfillment" ? { missingDbFulfillmentIds } : {}),
     status,
     message,
   };
