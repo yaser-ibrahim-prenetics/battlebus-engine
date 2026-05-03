@@ -7,8 +7,9 @@
 //     DB by `shopify_order_name`. Unsynced = names not in DB.
 //
 //   - GPS_US / GPS_UK: Pull paid orders from Shopify in the window. Look them
-//     up in DB. Unsynced = DB rows whose `warehouse` matches the GPS location
-//     AND `gps_order_no` is missing (or `gps_sync_status` is failed/pending).
+//     up in DB. Unsynced = DB rows whose `warehouse` matches the GPS warehouse
+//     AND (missing `gps_order_no` for US / `gps_uk_order_no` for UK, OR
+//     `gps_sync_status` is `failed` — i.e. GPS outbound did not succeed).
 //
 //   - FULFILLMENT: Pull ALL orders from Shopify in the window with their
 //     fulfillment status. Look them up in DB. Two buckets:
@@ -533,10 +534,12 @@ async function runOneRecon(params: {
       const r = dbByName.get(name);
       if (!r) continue; // missing-row is salesorder recon's concern, not GPS.
       if (String(r.warehouse || "") !== wh) continue;
-      const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
       const gpsOrderNoForWarehouse =
         type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
-      if (!gpsOrderNoForWarehouse || ["failed", "pending"].includes(gpsStatus)) {
+      const hasGpsId = Boolean(String(gpsOrderNoForWarehouse || "").trim());
+      const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
+      const gpsFailed = gpsStatus === "failed";
+      if (!hasGpsId || gpsFailed) {
         gpsUnsyncedNames.push(name);
       }
     }
@@ -571,9 +574,9 @@ async function runOneRecon(params: {
     type === "salesorder"
       ? "paid order(s) present in Shopify but missing in DB"
       : type === "gps_uk"
-        ? "GPS UK orders missing GPS order id in DB"
+        ? "GPS UK orders missing gps_uk_order_no or GPS sync failed"
         : type === "gps_us"
-          ? "GPS US orders missing GPS order id in DB"
+          ? "GPS US orders missing gps_order_no or GPS sync failed"
           : "fulfillment discrepancies";
   const message =
     status === "ok"

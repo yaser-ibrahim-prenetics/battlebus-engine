@@ -388,10 +388,13 @@ export type ReconciliationRunEvent = {
 export type ShopifyOrderRecoverEvent = {
   name: "shopify/order.recover";
   data: {
-    /** Preferred path: numeric Shopify Admin order ids. */
-    shopifyOrderIds?: string[];
-    /** Fallback path (when ids are unavailable): IM8-style order names. */
+    /**
+     * Primary path: Shopify order names (e.g. IM8-12345). Required when
+     * `source` is `reconciliation` (Hub only queues by name).
+     */
     shopifyOrderNames?: string[];
+    /** Legacy / non-Hub callers only — prefer `shopifyOrderNames`. */
+    shopifyOrderIds?: string[];
     /** Optional store hint (e.g. im8-store.myshopify.com) for token bucket selection. */
     shopifyStore?: string;
     /** If true, dispatch recovery even if Hub already has the order row. */

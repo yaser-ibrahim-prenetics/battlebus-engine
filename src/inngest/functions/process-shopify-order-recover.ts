@@ -32,6 +32,34 @@ function toNumericShopifyOrderId(id: string): string | null {
   return gidMatch ? gidMatch[1] : null;
 }
 
+/** Try variants Shopify search accepts (with/without #). */
+async function getOrderByShopifyName(
+  name: string,
+  shopDomainHint: string | null
+): Promise<ShopifyOrder | null> {
+  const raw = String(name || "").trim();
+  if (!raw) return null;
+  const variants = Array.from(
+    new Set([
+      raw,
+      raw.replace(/^#/, "").trim(),
+      raw.startsWith("#") ? raw : `#${raw.replace(/^#/, "")}`,
+    ])
+  ).filter(Boolean);
+
+  for (const q of variants) {
+    try {
+      const rows = await searchOrdersByName(q, shopDomainHint);
+      const orderLite = rows?.[0];
+      if (!orderLite?.id) continue;
+      return await getOrder(String(orderLite.id), shopDomainHint);
+    } catch {
+      /* try next variant */
+    }
+  }
+  return null;
+}
+
 function getSupabaseClient(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -67,8 +95,8 @@ async function fetchExistingHubOrderKeys(params: {
       .select("shopify_order_name")
       .in("shopify_order_name", shopifyOrderNames);
     for (const row of (data || []) as Array<{ shopify_order_name?: string | null }>) {
-      const name = String(row.shopify_order_name || "").trim();
-      if (name) nameKeys.add(name);
+      const n = String(row.shopify_order_name || "").trim();
+      if (n) nameKeys.add(n);
     }
   }
 
@@ -95,13 +123,21 @@ export const processShopifyOrderRecover = inngest.createFunction(
   },
   async ({ event, step }) => {
     const data = (event.data || {}) as RecoverInput;
-    const requestedIds = normalizeTokens(data.shopifyOrderIds);
-    const requestedNames = normalizeTokens(data.shopifyOrderNames);
+    const source = data.source === "reconciliation" ? "reconciliation" : "manual";
+    let requestedIds = normalizeTokens(data.shopifyOrderIds);
+    let requestedNames = normalizeTokens(data.shopifyOrderNames);
     const force = Boolean(data.force);
     const shopDomainHint = String(data.shopifyStore || "").trim() || null;
 
+    if (source === "reconciliation") {
+      if (requestedNames.length === 0) {
+        throw new Error("reconciliation recover requires shopifyOrderNames (Shopify order names)");
+      }
+      requestedIds = [];
+    }
+
     if (requestedIds.length === 0 && requestedNames.length === 0) {
-      throw new Error("No shopifyOrderIds or shopifyOrderNames provided");
+      throw new Error("No shopifyOrderNames (or legacy shopifyOrderIds) provided");
     }
 
     const fetchedOrders = new Map<string, ShopifyOrder>();
@@ -128,13 +164,11 @@ export const processShopifyOrderRecover = inngest.createFunction(
 
       for (const name of requestedNames) {
         try {
-          const rows = await searchOrdersByName(name, shopDomainHint);
-          const orderLite = rows?.[0];
-          if (!orderLite?.id) {
+          const order = await getOrderByShopifyName(name, shopDomainHint);
+          if (!order?.id) {
             failures.push({ input: name, reason: "order_not_found_by_name" });
             continue;
           }
-          const order = await getOrder(String(orderLite.id), shopDomainHint);
           const key = String(order.id || "").trim();
           if (key) fetchedOrders.set(key, order);
         } catch (error) {
@@ -237,8 +271,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
       failures,
       force,
       requestedBy: data.requestedBy || null,
-      source: data.source || "manual",
+      source,
     };
   }
 );
-
