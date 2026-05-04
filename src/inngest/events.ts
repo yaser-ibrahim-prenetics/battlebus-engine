@@ -84,6 +84,11 @@ export type ShopifyOrderFulfilledEvent = {
     fromSequencedRetry?: boolean;
     /** Set when replaying a fulfillment from a backorder retry. */
     fromBackorderRetry?: boolean;
+    /** Hub / tooling hint (e.g. battle-hub-reconciliation). */
+    source?: string;
+    /** Battle Hub user who triggered a replay or manual fulfillment pipeline. */
+    triggeredByUserId?: string;
+    triggeredByUserEmail?: string;
   };
 };
 
@@ -284,6 +289,9 @@ export type BackorderRetryEvent = {
     warehouse: string;
     retryCount: number;
     triggeredBy: "auto" | "manual" | "manual_bulk";
+    /** Hub-authenticated user who queued the retry (when triggered from Battle Hub). */
+    triggeredByUserId?: string;
+    triggeredByUserEmail?: string;
     sourceEventName?: string;
     failureStage?: "order_creation" | "fulfillment";
     failureSystem?: "d365" | "gps" | "validation";
@@ -385,6 +393,8 @@ export type ReconciliationRunEvent = {
     dateTo?: string;
     requestedAt?: string;
     requestedBy?: string;
+    triggeredByUserId?: string;
+    triggeredByUserEmail?: string;
   };
 };
 
@@ -404,6 +414,8 @@ export type ShopifyOrderRecoverEvent = {
     force?: boolean;
     requestedAt?: string;
     requestedBy?: string;
+    triggeredByUserId?: string;
+    triggeredByUserEmail?: string;
     source?: "reconciliation" | "manual";
   };
 };
