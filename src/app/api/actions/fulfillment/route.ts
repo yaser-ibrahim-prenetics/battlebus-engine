@@ -30,7 +30,28 @@ export async function POST(request: NextRequest) {
       lineItems,
       notifyCustomer,
       platform,
+      reconciliationMirror,
     } = body ?? {};
+
+    /** Hub recon: DB shows fulfilled but Shopify does not — mirror in Shopify without D365 packing slip. */
+    const reconciliationMirrorMode = reconciliationMirror === true;
+    const effectiveFulfillmentType = reconciliationMirrorMode
+      ? "recon_db_shopify_align"
+      : fulfillmentType || "manual";
+    const notifyShopifyCustomer = reconciliationMirrorMode
+      ? notifyCustomer === true
+      : notifyCustomer !== false;
+
+    if (
+      !reconciliationMirrorMode &&
+      fulfillmentType !== "gps" &&
+      fulfillmentType !== "manual"
+    ) {
+      return NextResponse.json(
+        { error: "fulfillmentType must be manual or gps" },
+        { status: 400 }
+      );
+    }
 
     // Support both orderName and orderId for backward compatibility
     // If platform is 'shopify', try orderId first, then fallback to orderName
@@ -131,7 +152,7 @@ export async function POST(request: NextRequest) {
     // Build tracking info based on fulfillment type
     let trackingInfo: { number: string; company: string; url?: string };
 
-    if (fulfillmentType === "gps") {
+    if (fulfillmentType === "gps" && !reconciliationMirrorMode) {
       // For GPS fulfillment, fetch tracking info from GPS API
       try {
         // Get GPS order metafield from Shopify order
@@ -200,8 +221,12 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
-      // For manual fulfillment, use tracking info from API payload
-      if (!trackingNumber) {
+      // For manual / reconciliation mirror, use tracking info from API payload
+      const tn = String(trackingNumber || "").trim();
+      const effectiveTracking =
+        tn ||
+        (reconciliationMirrorMode ? `RECON-ALIGN-${numericOrderId}` : "");
+      if (!effectiveTracking) {
         return NextResponse.json(
           { error: "trackingNumber is required for manual fulfillment" },
           { status: 400 }
@@ -209,9 +234,9 @@ export async function POST(request: NextRequest) {
       }
 
       trackingInfo = {
-        number: trackingNumber as string,
+        number: effectiveTracking,
         company: carrier || "Other",
-        url: getTrackingUrl(carrier || "", trackingNumber as string),
+        url: getTrackingUrl(carrier || "", effectiveTracking),
       };
     }
 
@@ -309,17 +334,18 @@ export async function POST(request: NextRequest) {
       resolvedFulfillmentOrderId,
       trackingInfo,
       fulfillmentLineItems, // undefined if mapping failed - will fulfill all items
-      fulfillmentType || "manual",
-      platform || "shopify"
+      effectiveFulfillmentType,
+      platform || "shopify",
+      { notifyCustomer: notifyShopifyCustomer }
     );
 
     // Store fulfillmentType and platform as order metafields for tracking
     try {
-      if (fulfillmentType || platform) {
+      if (effectiveFulfillmentType || platform) {
         await shopify.setFulfillmentMetadata(
           numericOrderId,
           fulfillment.id,
-          fulfillmentType || "manual",
+          effectiveFulfillmentType,
           platform || "shopify"
         );
       }
@@ -339,7 +365,7 @@ export async function POST(request: NextRequest) {
         shopifyOrderId: String(numericOrderId),
         shopifyOrderName: resolvedOrderName,
         fulfillmentId: fulfillment.id ? String(fulfillment.id) : undefined,
-        fulfillmentType: fulfillmentType || "manual",
+        fulfillmentType: effectiveFulfillmentType,
         platform: platform || "shopify",
         trackingNumber: trackingInfo.number,
         carrier: trackingInfo.company,
@@ -347,6 +373,10 @@ export async function POST(request: NextRequest) {
         source: "battle-hub",
       },
     });
+
+    const reconMirrorNote = reconciliationMirrorMode
+      ? `FulfillmentType: recon_db_shopify_align | Platform: ${platform || "shopify"}`
+      : undefined;
 
     // Emit canonical shopify/order.fulfilled so D365 sync runs immediately,
     // even for GPS orders (which are normally skipped from webhook echo).
@@ -366,6 +396,7 @@ export async function POST(request: NextRequest) {
             tracking_number: trackingInfo.number,
             tracking_company: trackingInfo.company,
             tracking_url: trackingInfo.url || null,
+            ...(reconMirrorNote ? { note: reconMirrorNote } : {}),
             // Use actual fulfilled line items returned by Shopify to avoid stale/mismatched
             // fulfillment-order snapshots causing downstream D365 lotId lookup failures.
             line_items:
@@ -384,6 +415,7 @@ export async function POST(request: NextRequest) {
           },
         ],
         fromManualFulfillment: true,
+        reconciliationMirror: reconciliationMirrorMode,
         receivedAt: new Date().toISOString(),
         source: "battle-hub-action",
       },

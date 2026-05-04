@@ -24,7 +24,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, data } = body;
+    const { name, data, id: clientEventId } = body as {
+      name?: string;
+      data?: unknown;
+      id?: string;
+    };
 
     if (!name) {
       return NextResponse.json({ error: "Event name is required" }, { status: 400 });
@@ -49,11 +53,12 @@ export async function POST(request: NextRequest) {
       })
     );
 
-    // Send the event to Inngest
-    const result = await inngest.send({
-      name,
-      data: data || {},
-    });
+    // Send the event to Inngest (optional id allows safe replays per order)
+    const result = await inngest.send(
+      clientEventId && String(clientEventId).trim()
+        ? { id: String(clientEventId).trim(), name, data: data || {} }
+        : { name, data: data || {} }
+    );
 
     console.log(
       JSON.stringify({

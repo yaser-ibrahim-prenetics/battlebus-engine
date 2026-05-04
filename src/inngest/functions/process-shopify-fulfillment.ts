@@ -150,6 +150,58 @@ export const processShopifyFulfillment = inngest.createFunction(
       };
     }
 
+    const isReconDbShopifyMirror = fulfillments.some((f: ShopifyFulfillment) => {
+      const note = String((f as unknown as { note?: string }).note || "");
+      return note.includes("FulfillmentType: recon_db_shopify_align");
+    });
+    if (isReconDbShopifyMirror) {
+      await step.run("notify-hub-recon-db-shopify-mirror", async () => {
+        const f =
+          Array.isArray(fulfillments) && fulfillments.length > 0
+            ? (fulfillments[0] as ShopifyFulfillment)
+            : undefined;
+        const tracking = String(f?.tracking_number || "RECON-ALIGN");
+        const carrier = String(f?.tracking_company || "Other");
+        let financial: string | undefined;
+        let shopifyFulfillmentStatus = "fulfilled";
+        try {
+          const fresh = await shopifyClient.getOrder(Number(shopifyOrderId));
+          financial = fresh?.financial_status;
+          shopifyFulfillmentStatus = fresh?.fulfillment_status || "fulfilled";
+        } catch {
+          /* Hub update still worthwhile without fresh financials */
+        }
+        await csPlatform.sendOrderFulfilled({
+          orderId: shopifyOrderId,
+          shopifyOrderName: shopifyOrderName || order?.name || String(shopifyOrderId),
+          trackingNumber: tracking,
+          carrier,
+          fulfillmentId: f?.id ? String(f.id) : undefined,
+          shopifyFulfillmentStatus,
+          shopifyFinancialStatus: financial,
+          fulfillmentSource: "shopify",
+          d365FulfillmentStatus: "synced",
+        });
+      });
+      logFlowEvent({
+        flow: "fulfillment",
+        step: "skip_d365",
+        status: "completed",
+        runId: _runId || undefined,
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName,
+        payload: { reason: "recon_db_shopify_align" },
+        durationMs: Date.now() - _flowStart,
+      });
+      return {
+        status: "skipped",
+        shopifyOrderId,
+        shopifyOrderName,
+        reason:
+          "Reconciliation mirror: Shopify updated to match DB; D365 packing slip not sent again",
+      };
+    }
+
     if (config.features.dryRunMode) {
       return await step.run("dry-run", async () => ({
         status: "dry_run",

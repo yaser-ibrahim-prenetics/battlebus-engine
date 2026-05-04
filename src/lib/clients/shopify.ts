@@ -419,7 +419,8 @@ export async function createFulfillment(
   },
   lineItems?: { id: number; quantity: number }[],
   fulfillmentType?: string,
-  platform?: string
+  platform?: string,
+  options?: { notifyCustomer?: boolean }
 ): Promise<ShopifyFulfillment> {
   if (config.features.enabledShopifyCreateFulfillmentMock) {
     const mockData = await import("../mocks/shopify/fulfillmentsCreate.json");
@@ -458,7 +459,7 @@ export async function createFulfillment(
         company: trackingInfo.company || "Other",
         ...(trackingInfo.url && { url: trackingInfo.url }),
       },
-      notify_customer: true,
+      notify_customer: options?.notifyCustomer !== false,
       ...(note && { note }),
     },
   };
