@@ -68,7 +68,7 @@ export const processBackorder = inngest.createFunction(
       event.data.triggeredBy === "manual_bulk";
     const backorderQueueTag = event.data.backorderQueue;
     const manualRetryOnly = !autoRetryEnabled;
-    const defaultFailureSystem: "d365" | "gps" =
+    const defaultFailureSystem: "d365" | "gps" | "validation" =
       event.data.failureStage === "fulfillment" ||
       event.data.sourceEventName === "shopify/order.fulfilled" ||
       (typeof event.data.sourceEventName === "string" &&
@@ -243,6 +243,21 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
+          const d365NumManual = String(d365OrderNumber || "").trim();
+          if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
+            await inngest.send({
+              name: "shopify/order.paid",
+              data: {
+                shopifyOrderId: String(shopifyOrderId),
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                receivedAt: new Date().toISOString(),
+              },
+            });
+            return { success: true, replayDispatched: true };
+          }
+
           if (effectiveRetryMode === "fulfillment_replay") {
             const fulfillments = Array.isArray((order as any)?.fulfillments)
               ? ((order as any).fulfillments as any[])
@@ -301,12 +316,19 @@ export const processBackorder = inngest.createFunction(
 
       if (retryResult.success) {
         await step.run("notify-backorder-resolved-manual", async () => {
+          const paidReplay =
+            effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
             effectiveRetryMode === "fulfillment_replay"
               ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
-              : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
+              : paidReplay
+                ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.paid`
+                : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
           );
+          const replayDispatchedManual =
+            effectiveRetryMode === "fulfillment_replay" ||
+            (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
           await csPlatform.sendOrderUpdate(
             {
               id: shopifyOrderId,
@@ -316,7 +338,7 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: effectiveRetryMode === "fulfillment_replay" ? undefined : "synced",
+              gpsSyncStatus: replayDispatchedManual ? undefined : "synced",
               status: "processing",
               processingStatus: "processing",
               error: undefined,
@@ -451,6 +473,26 @@ export const processBackorder = inngest.createFunction(
           const freshOrder = await getOrder(shopifyOrderId);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
+          const d365NumLoop = String(d365OrderNumber || "").trim();
+          if (effectiveRetryMode === "gps_outbound" && !d365NumLoop) {
+            await inngest.send({
+              name: "shopify/order.paid",
+              data: {
+                shopifyOrderId: String(shopifyOrderId),
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                receivedAt: new Date().toISOString(),
+              },
+            });
+            return {
+              success: true,
+              retryCount,
+              triggeredBy,
+              replayDispatched: true,
+            };
+          }
+
           if (effectiveRetryMode === "fulfillment_replay") {
             const fulfillments = Array.isArray((order as any)?.fulfillments)
               ? ((order as any).fulfillments as any[])
@@ -530,13 +572,20 @@ export const processBackorder = inngest.createFunction(
         console.log(`[Backorder] Order ${shopifyOrderName} resolved on retry ${retryCount}`);
 
         await step.run("notify-backorder-resolved", async () => {
+          const paidReplayLoop =
+            effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
             effectiveRetryMode === "fulfillment_replay"
               ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
-              : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
+              : paidReplayLoop
+                ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.paid`
+                : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
           );
 
+          const replayDispatchedAuto =
+            effectiveRetryMode === "fulfillment_replay" ||
+            (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
           await csPlatform.sendOrderUpdate(
             {
               id: shopifyOrderId,
@@ -546,7 +595,7 @@ export const processBackorder = inngest.createFunction(
               d365OrderNumber,
               warehouse,
               gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: effectiveRetryMode === "fulfillment_replay" ? undefined : "synced",
+              gpsSyncStatus: replayDispatchedAuto ? undefined : "synced",
               status: "processing",
               processingStatus: "processing",
               error: undefined,

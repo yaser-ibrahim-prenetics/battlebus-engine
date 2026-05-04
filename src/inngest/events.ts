@@ -240,7 +240,8 @@ export type BackorderCreatedEvent = {
       | "unmaintained_product"
       | "gps_error"
       | "inventory_insufficient"
-      | "d365_fulfillment_error";
+      | "d365_fulfillment_error"
+      | "order_validation";
     failedSkus: string[];
     retryCount: number;
     maxRetries: number;
@@ -250,7 +251,7 @@ export type BackorderCreatedEvent = {
     /** High-level stage where failure happened (order_creation, fulfillment). */
     failureStage?: "order_creation" | "fulfillment";
     /** Primary system that failed for this backorder. */
-    failureSystem?: "d365" | "gps";
+    failureSystem?: "d365" | "gps" | "validation";
     /**
      * Retry strategy consumed by process-backorder:
      * - gps_outbound: retry GPS outbound order creation
@@ -259,6 +260,8 @@ export type BackorderCreatedEvent = {
     retryMode?: "gps_outbound" | "fulfillment_replay";
     /** Hub Backorders sub-queue tag used for route segmentation and replay policy. */
     backorderQueue?: "sync" | "fulfilment";
+    /** Store hint for replays (e.g. shopify/order.paid after validation fix). */
+    shopifyStore?: string;
   };
 };
 
@@ -283,7 +286,7 @@ export type BackorderRetryEvent = {
     triggeredBy: "auto" | "manual" | "manual_bulk";
     sourceEventName?: string;
     failureStage?: "order_creation" | "fulfillment";
-    failureSystem?: "d365" | "gps";
+    failureSystem?: "d365" | "gps" | "validation";
     retryMode?: "gps_outbound" | "fulfillment_replay";
     /** Hub Backorders sub-queue — stored in order state via CS platform update. */
     backorderQueue?: "sync" | "fulfilment";

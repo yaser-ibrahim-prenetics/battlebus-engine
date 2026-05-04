@@ -772,6 +772,86 @@ export const processShopifyOrder = inngest.createFunction(
     // Handle validation failures (returned from within the consolidated step)
     if (prepareResult.type === "validation_failed") {
       const validation = prepareResult.validation;
+      const parkedOrder = prepareResult.updatedOrder as ShopifyOrderPayload;
+
+      // Park on Hub sync backorders (operator visibility + manual replay) for all
+      // validation blocks except cancelled Shopify orders and configured test-order skips.
+      if (
+        validation.status !== "cancelled" &&
+        !(validation.status === "skipped" && validation.reason === "Test order")
+      ) {
+        const countryCode =
+          parkedOrder.shipping_address?.country_code ||
+          parkedOrder.billing_address?.country_code ||
+          "US";
+        const warehouseName = determineWarehouse(countryCode);
+        const failedSkus = Array.isArray(parkedOrder.line_items)
+          ? parkedOrder.line_items
+              .map((li: { sku?: string }) => String(li.sku || "").trim())
+              .filter(Boolean)
+          : [];
+        const validationMessage =
+          [
+            validation.reason,
+            ...(Array.isArray(validation.message) ? validation.message : []),
+          ]
+            .filter(Boolean)
+            .join("; ") || "Order validation failed";
+
+        await step.run("emit-order-validation-backorder", async () => {
+          await inngest.send({
+            name: "backorder/created",
+            data: {
+              shopifyOrderId,
+              shopifyOrderName,
+              d365OrderNumber: "",
+              warehouse: warehouseName,
+              errorMessage: validationMessage,
+              errorType: "order_validation",
+              failedSkus,
+              retryCount: 0,
+              maxRetries: 0,
+              createdAt: new Date().toISOString(),
+              sourceEventName: String(event.name || "shopify/order.paid"),
+              failureStage: "order_creation",
+              failureSystem: "validation",
+              retryMode: "gps_outbound",
+              backorderQueue: "sync",
+              shopifyStore,
+            },
+          });
+        });
+
+        await step.run("notify-hub-order-validation-backorder", async () => {
+          await csPlatform.sendOrderUpdate(
+            {
+              id: shopifyOrderId,
+              name: shopifyOrderName,
+              shopifyOrderId,
+              shopifyOrderName,
+              warehouse: warehouseName,
+              shopifyOrderCreatedAt: parkedOrder?.created_at,
+              status: "backorder",
+              processingStatus: "waiting_stock",
+              error: validationMessage,
+              lastError: validationMessage,
+              errorType: "order_validation",
+              lastErrorType: "order_validation",
+              state: {
+                failureContext: {
+                  stage: "order_creation",
+                  system: "validation",
+                  sourceEventName: String(event.name || "shopify/order.paid"),
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                },
+              },
+            },
+            { inngestIdempotencyKey, inngestRunId }
+          );
+        });
+      }
+
       await publishStatus("validate-order", "skipped", validation.reason);
       await publishResult("skipped", { error: validation.reason });
 
