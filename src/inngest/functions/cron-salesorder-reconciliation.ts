@@ -17,13 +17,13 @@
 //       b) Fulfilled in DB, not fulfilled in Shopify.
 //
 // Shopify order windowing uses Admin GraphQL `orders(query: ...)` plus a strict check on each
-// `createdAt`: keep only orders in `[store midnight dateFrom, store midnight dayAfterTo)` so the
+// `createdAt`: keep only orders in `[UTC midnight dateFrom, UTC midnight dayAfterTo)` so the
 // search bar cannot pull in the next/previous civil day (e.g. Apr 30 orders when reconciling Apr 29).
 //
 // We never filter the DB by `created_at` for matching — Supabase `created_at` is row insert time.
 // Manual trigger: `event = "reconciliation/run"` with
-//   `data: { type, dateFrom, dateTo }` (YYYY-MM-DD in store TZ).
-// Cron: 00:00 UTC daily, reconciles previous closed store-TZ calendar day.
+//   `data: { type, dateFrom, dateTo }` (YYYY-MM-DD in UTC calendar days).
+// Cron: 00:00 UTC daily, reconciles previous closed UTC calendar day.
 //
 // Logging:
 //   • Every run emits one-line JSON on stdout with tag "reconciliation" (grep in Vercel / Inngest logs).
@@ -32,8 +32,6 @@
 // ============================================================================
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { addDays, format } from "date-fns";
-import { formatInTimeZone, toDate } from "date-fns-tz";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as slack from "@/lib/clients/slack";
@@ -107,64 +105,75 @@ function reconTrace(
 }
 
 // ---------------------------------------------------------------------------
-// Date helpers (store-TZ-aware)
+// Date helpers (UTC day windows)
 // ---------------------------------------------------------------------------
 
-function addCalendarDaysYmd(ymd: string, deltaDays: number): string {
+function ymdToUtcDate(ymd: string): Date {
   const parts = ymd.split("-").map((x) => parseInt(x, 10));
   if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
     throw new Error(`Invalid YYYY-MM-DD: ${ymd}`);
   }
   const [y, m, d] = parts;
-  const cal = new Date(Date.UTC(y, m - 1, d));
-  return format(addDays(cal, deltaDays), "yyyy-MM-dd");
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
-/** Civil midnight on `ymd` in the store TZ → UTC instant as ISO string. */
-function storeMidnightUtcIso(ymd: string): string {
-  return toDate(`${ymd}T00:00:00`, { timeZone: config.reconciliation.storeTimeZone }).toISOString();
+function utcDateToYmd(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addCalendarDaysYmd(ymd: string, deltaDays: number): string {
+  const d = ymdToUtcDate(ymd);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return utcDateToYmd(d);
+}
+
+/** UTC midnight on `ymd` as ISO string. */
+function utcMidnightIso(ymd: string): string {
+  return ymdToUtcDate(ymd).toISOString();
 }
 
 /**
- * True if Shopify's order {@link createdAtIso} falls in the half-open window
- * `[start of fromYmd, start of beforeYmd)` in {@link config.reconciliation.storeTimeZone}.
- * `beforeYmd` must be the exclusive end date (e.g. 2026-04-30 when the last included day is 2026-04-29).
+ * True if Shopify's order {@link createdAtIso} falls in the half-open UTC
+ * window `[fromIso, beforeIso)`.
  *
- * The GraphQL `orders(query: "created_at:…")` filter can return orders outside this civil window;
- * we always enforce the intended range using the API's `createdAt` field.
+ * The GraphQL `orders(query: "created_at:…")` filter can still return neighbors;
+ * we always enforce the intended UTC range using the API's `createdAt` field.
  */
-function orderCreatedAtInStoreHalfOpenWindow(
+function orderCreatedAtInUtcHalfOpenWindow(
   createdAtIso: string,
-  fromYmd: string,
-  beforeYmd: string
+  fromIso: string,
+  beforeIso: string
 ): boolean {
   const t = Date.parse(createdAtIso);
   if (Number.isNaN(t)) return false;
-  const startMs = Date.parse(storeMidnightUtcIso(fromYmd));
-  const endMs = Date.parse(storeMidnightUtcIso(beforeYmd));
+  const startMs = Date.parse(fromIso);
+  const endMs = Date.parse(beforeIso);
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) return false;
   return t >= startMs && t < endMs;
 }
 
-/** Last closed calendar day in store TZ (for the cron at 00:00 UTC). */
-function getPreviousStoreDayRange(now: Date): {
+/** Last closed UTC calendar day (for the cron at 00:00 UTC). */
+function getPreviousUtcDayRange(now: Date): {
   fromIso: string;
   dateEndExclusiveIso: string;
   fromDate: string;
   toDate: string;
 } {
-  const todayYmd = formatInTimeZone(now, config.reconciliation.storeTimeZone, "yyyy-MM-dd");
+  const todayYmd = utcDateToYmd(now);
   const yesterdayYmd = addCalendarDaysYmd(todayYmd, -1);
   return {
-    fromIso: storeMidnightUtcIso(yesterdayYmd),
-    dateEndExclusiveIso: storeMidnightUtcIso(todayYmd),
+    fromIso: utcMidnightIso(yesterdayYmd),
+    dateEndExclusiveIso: utcMidnightIso(todayYmd),
     fromDate: yesterdayYmd,
     toDate: yesterdayYmd,
   };
 }
 
-/** Inclusive `[fromYmd, toYmd]` in store TZ → UTC bounds. */
-function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
+/** Inclusive `[fromYmd, toYmd]` in UTC calendar days → UTC bounds. */
+function utcInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
   fromIso: string;
   dateEndExclusiveIso: string;
   fromDate: string;
@@ -172,8 +181,8 @@ function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
 } {
   const dayAfterTo = addCalendarDaysYmd(toYmd, 1);
   return {
-    fromIso: storeMidnightUtcIso(fromYmd),
-    dateEndExclusiveIso: storeMidnightUtcIso(dayAfterTo),
+    fromIso: utcMidnightIso(fromYmd),
+    dateEndExclusiveIso: utcMidnightIso(dayAfterTo),
     fromDate: fromYmd,
     toDate: toYmd,
   };
@@ -184,15 +193,16 @@ function storeInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
 // ---------------------------------------------------------------------------
 
 /**
- * Pull orders from Shopify for civil dates [{@link createdAtFromYmd}, {@link createdAtBeforeYmd})
- * in the **store timezone**.
- * The `query` string pre-filters in Shopify; each order is then kept only if {@link orderCreatedAtInStoreHalfOpenWindow}
- * passes (GraphQL `createdAt` vs store midnights), because search can return neighbors outside the intended day.
+ * Pull orders from Shopify for UTC timestamps
+ * [{@link createdAtFromIso}, {@link createdAtBeforeIso}).
+ * The `query` string pre-filters in Shopify; each order is then kept only if
+ * {@link orderCreatedAtInUtcHalfOpenWindow} passes (GraphQL `createdAt` vs UTC
+ * bounds), because search can return neighbors outside the intended day.
  */
 async function fetchShopifyWindowOrders(params: {
-  createdAtFromYmd: string;
-  /** Exclusive end calendar day as YYYY-MM-DD in store TZ (first day not included). */
-  createdAtBeforeYmd: string;
+  createdAtFromIso: string;
+  /** Exclusive end UTC instant (first instant not included). */
+  createdAtBeforeIso: string;
   extraQuery?: string;
   trace?: { runId: string; type: ReconType };
 }): Promise<ShopifyWindowOrder[]> {
@@ -252,17 +262,17 @@ async function fetchShopifyWindowOrders(params: {
     };
   };
 
-  const { createdAtFromYmd, createdAtBeforeYmd } = params;
-  const baseQuery = `created_at:>=${createdAtFromYmd} created_at:<${createdAtBeforeYmd}`;
+  const { createdAtFromIso, createdAtBeforeIso } = params;
+  const baseQuery = `created_at:>=${createdAtFromIso} created_at:<${createdAtBeforeIso}`;
   const shopifyQuery = params.extraQuery ? `${baseQuery} ${params.extraQuery}` : baseQuery;
 
   const { trace } = params;
   if (trace) {
     reconTrace(trace.runId, trace.type, "shopify_window_start", {
       shopifyQuery,
-      createdAtFromYmd,
-      createdAtBeforeYmd,
-      storeTimeZone: config.reconciliation.storeTimeZone,
+      createdAtFromIso,
+      createdAtBeforeIso,
+      windowMode: "utc",
       extraQuery: params.extraQuery ?? null,
     });
   }
@@ -288,7 +298,7 @@ async function fetchShopifyWindowOrders(params: {
       if (!name) continue;
       if (edge?.node?.cancelledAt) continue;
       const createdAt = String(edge?.node?.createdAt || "").trim();
-      if (!orderCreatedAtInStoreHalfOpenWindow(createdAt, createdAtFromYmd, createdAtBeforeYmd)) {
+      if (!orderCreatedAtInUtcHalfOpenWindow(createdAt, createdAtFromIso, createdAtBeforeIso)) {
         skippedOutsideCreatedAtWindow += 1;
         continue;
       }
@@ -436,7 +446,6 @@ async function runOneRecon(params: {
   const { supabase, type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
   const checkId = crypto.randomUUID();
   const trace = runId ? { runId, type } : undefined;
-  const createdAtBeforeYmd = addCalendarDaysYmd(dateTo, 1);
 
   if (trace) {
     reconTrace(trace.runId, trace.type, "recon_start", {
@@ -444,9 +453,9 @@ async function runOneRecon(params: {
       storeCode,
       dateFrom,
       dateTo,
-      shopifyCreatedAtFromYmd: dateFrom,
-      shopifyCreatedAtBeforeYmd: createdAtBeforeYmd,
-      storeTimeZone: config.reconciliation.storeTimeZone,
+      shopifyCreatedAtFromIso: dateFromIso,
+      shopifyCreatedAtBeforeIso: dateEndExclusiveIso,
+      windowMode: "utc",
       dateFromIso,
       dateEndExclusiveIso,
     });
@@ -456,8 +465,8 @@ async function runOneRecon(params: {
   // SalesOrder + GPS: paid only. Fulfillment: all orders in the window (for status cross-check).
   const extraQuery = type === "fulfillment" ? undefined : "financial_status:paid";
   const shopifyOrders = await fetchShopifyWindowOrders({
-    createdAtFromYmd: dateFrom,
-    createdAtBeforeYmd,
+    createdAtFromIso: dateFromIso,
+    createdAtBeforeIso: dateEndExclusiveIso,
     extraQuery,
     trace,
   });
@@ -682,8 +691,8 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     const manualTo = String(event?.data?.dateTo || "").trim();
     const hasManualRange = eventType === "reconciliation/run" && manualFrom && manualTo;
     const computed = hasManualRange
-      ? storeInclusiveRangeToUtcBounds(manualFrom, manualTo)
-      : getPreviousStoreDayRange(new Date());
+      ? utcInclusiveRangeToUtcBounds(manualFrom, manualTo)
+      : getPreviousUtcDayRange(new Date());
     const { fromIso, dateEndExclusiveIso, fromDate, toDate } = computed;
     const safeRunId = String(runId || "");
 

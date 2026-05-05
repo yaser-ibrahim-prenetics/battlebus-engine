@@ -227,9 +227,9 @@ export const config = {
     outOfStockRetryHours: safeParseInt(process.env.OOS_RETRY_HOURS, 4),
   },
 
-  /** Daily/manual reconciliation windows (Hub dates = civil days in this zone; aligns with Shopify admin NY). */
+  /** Daily/manual reconciliation windows use UTC calendar days. */
   reconciliation: {
-    storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "America/New_York",
+    storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "UTC",
     /** When true: `reconciliation_trace` flow_logs + richer Shopify/DB stats on stdout (set RECONCILIATION_VERBOSE_LOG). */
     verboseLog:
       process.env.RECONCILIATION_VERBOSE_LOG === "1" ||
