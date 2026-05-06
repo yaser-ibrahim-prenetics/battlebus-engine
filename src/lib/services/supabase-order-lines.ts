@@ -361,10 +361,17 @@ export function getLotFromSavedOrderLineByShopifyLineItemId(
   return row ? String(row.dynamics_inventory_lot_id).trim() : "";
 }
 
+/** Synthetic Hub refund rows use `shopify_line_item_id` `refund:<refundId>` — never ship these on product fulfilment. */
+function isRefundSyntheticOrderLine(l: SavedOrderLine): boolean {
+  return String(l.shopify_line_item_id || "").startsWith(REFUND_LINE_ITEM_ID_PREFIX);
+}
+
 export function filterUnfulfilledServiceLines(lines: SavedOrderLine[]): SavedOrderLine[] {
   return lines.filter(
     (l) =>
-      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) && !l.is_fulfilled_to_dynamics
+      !isRefundSyntheticOrderLine(l) &&
+      (l.is_service_line || isServiceItemNumber(l.d365_item_number)) &&
+      !l.is_fulfilled_to_dynamics
   );
 }
 

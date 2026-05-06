@@ -67,7 +67,44 @@ export const processRefund = inngest.createFunction(
       payload: { refundId: String(refundId) },
     });
 
+    const emitRefundConfirmation = (
+      stepName: string,
+      status: "running" | "completed" | "failed" | "skipped",
+      payload?: Record<string, unknown>
+    ) => {
+      const row = {
+        msg: "[Refund] confirmation",
+        runId: String(runId || ""),
+        refundId: String(refundId),
+        shopifyOrderId: String(shopifyOrderId),
+        step: stepName,
+        status,
+        ...payload,
+      };
+      if (status === "failed") {
+        console.error(JSON.stringify(row));
+      } else if (status === "skipped") {
+        console.warn(JSON.stringify(row));
+      } else {
+        console.log(JSON.stringify(row));
+      }
+      logFlowEvent({
+        flow: "refund",
+        step: stepName,
+        status,
+        runId,
+        shopifyOrderId: String(shopifyOrderId),
+        payload: {
+          refundId: String(refundId),
+          ...payload,
+        },
+      });
+    };
+
     if (config.features.dryRunMode) {
+      emitRefundConfirmation("dry_run", "skipped", {
+        reason: "dry_run_mode",
+      });
       return {
         status: "dry_run",
         refundId,
@@ -150,6 +187,11 @@ export const processRefund = inngest.createFunction(
       };
     });
     const d365Order = d365Step.header;
+    emitRefundConfirmation("d365_order_resolved", d365Order ? "completed" : "failed", {
+      resolved: Boolean(d365Order),
+      d365OrderNumber: d365Order?.SalesOrderNumber || null,
+      dataAreaId: d365Order?.dataAreaId || null,
+    });
 
     if (!d365Order && config.features.enableDynamicsSync) {
       if ((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain) {
@@ -196,6 +238,9 @@ export const processRefund = inngest.createFunction(
     }
 
     if (!d365Order && !config.features.enableDynamicsSync) {
+      emitRefundConfirmation("dynamics_disabled", "skipped", {
+        reason: "enableDynamicsSync=false",
+      });
       return { status: "skipped", reason: "Dynamics sync disabled" };
     }
 
@@ -282,7 +327,24 @@ export const processRefund = inngest.createFunction(
       }
     );
 
+    emitRefundConfirmation("refund_amount_resolved", "completed", {
+      refundAmount,
+      refundAmountUsd,
+      sourceCurrency: (shopifyOrder.currency || "USD").toUpperCase(),
+      exchangeRateSource: exchangeRateInfo?.source || null,
+      txCount: Array.isArray(refund.transactions) ? refund.transactions.length : 0,
+      refundLineItemsCount: Array.isArray(refund.refund_line_items)
+        ? refund.refund_line_items.length
+        : 0,
+      adjustmentsCount: Array.isArray(refund.order_adjustments) ? refund.order_adjustments.length : 0,
+    });
+
     if (refundAmountUsd <= 0) {
+      emitRefundConfirmation("skip_zero_refund_amount", "skipped", {
+        reason: "refund_amount_usd_le_zero",
+        refundAmount,
+        refundAmountUsd,
+      });
       return {
         status: "skipped",
         reason: "Refund amount is 0",
@@ -315,6 +377,12 @@ export const processRefund = inngest.createFunction(
     // any duplicate `refundId` event landing later can short-circuit in step 0,
     // even if the current run fails before the `done` log is written.
     if (refundLine.status === "created") {
+      emitRefundConfirmation("d365_refund_line_created", "completed", {
+        d365OrderNumber: d365Order?.SalesOrderNumber || null,
+        refundSku: warehouseInfo.refundSku,
+        refundAmountUsd,
+        lotId: refundLine.InventoryLotId,
+      });
       logFlowEvent({
         flow: "refund",
         step: "refund_line_created",
@@ -330,6 +398,40 @@ export const processRefund = inngest.createFunction(
           inventoryLotId: refundLine.InventoryLotId,
         },
       });
+
+      // Align Supabase `order_lines` with D365 as soon as the negative line exists
+      // (fulfilment / credit note updated in a second upsert below).
+      const draftSave = await step.run("save-refund-order-line-draft", async () =>
+        saveRefundOrderLine({
+          shopify_order_id: String(shopifyOrderId),
+          shopify_order_name: shopifyOrder.name ?? null,
+          refund_id: String(refundId),
+          refund_sku: warehouseInfo.refundSku,
+          d365_sales_order_number: d365Order?.SalesOrderNumber ?? null,
+          data_area_id:
+            (d365Order?.dataAreaId || warehouseInfo.dataAreaId || config.dynamics.dataAreaId) ??
+            null,
+          refund_amount_usd: refundAmountUsd,
+          dynamics_inventory_lot_id: refundLine.InventoryLotId ?? null,
+          is_fulfilled_to_dynamics: false,
+          credit_note_number: null,
+          exchange_rate: exchangeRateInfo?.rate ?? null,
+          exchange_rate_source: exchangeRateInfo?.source ?? null,
+          source_currency: exchangeRateInfo?.from ?? (shopifyOrder.currency || "USD").toUpperCase(),
+        })
+      );
+      if (draftSave.ok) {
+        emitRefundConfirmation("order_lines_refund_draft_saved", "completed", {
+          phase: "draft",
+          degraded: Boolean(draftSave.degraded),
+        });
+      } else {
+        emitRefundConfirmation("order_lines_refund_draft_saved", "failed", {
+          phase: "draft",
+          reason: draftSave.reason,
+          message: "message" in draftSave ? draftSave.message : undefined,
+        });
+      }
     }
 
     // 6. Fulfill the Negative Line (Post it)
@@ -360,6 +462,15 @@ export const processRefund = inngest.createFunction(
 
       return { status: "success" };
     });
+    emitRefundConfirmation(
+      "d365_refund_fulfilment",
+      fulfillment.status === "success" ? "completed" : "skipped",
+      {
+        d365OrderNumber: d365Order?.SalesOrderNumber || null,
+        lotId: refundLine.InventoryLotId,
+        refundSku: warehouseInfo.refundSku,
+      }
+    );
 
     // 7. Post Return Order Invoice (opt-in).
     //
@@ -426,14 +537,11 @@ export const processRefund = inngest.createFunction(
         ? invoiceResult.creditNoteNumber
         : undefined;
 
-    // 7b. Persist the D365 refund line to Supabase `order_lines` so the Hub's
-    // order-detail view can render it alongside the product / service lines
-    // (and surface credit note + FX rate + source currency). Best-effort: failures
-    // here do not roll back the D365-side refund posting, which has already
-    // succeeded at this point.
+    // 7b. Final upsert: fulfilment + credit note on the same `order_lines` row
+    // (draft row was written right after D365 line creation).
     if (refundLine.status === "created" && d365Order) {
-      await step.run("save-refund-order-line", async () => {
-        return saveRefundOrderLine({
+      const finalSave = await step.run("save-refund-order-line-final", async () =>
+        saveRefundOrderLine({
           shopify_order_id: String(shopifyOrderId),
           shopify_order_name: shopifyOrder.name ?? null,
           refund_id: String(refundId),
@@ -449,8 +557,20 @@ export const processRefund = inngest.createFunction(
           exchange_rate: exchangeRateInfo?.rate ?? null,
           exchange_rate_source: exchangeRateInfo?.source ?? null,
           source_currency: exchangeRateInfo?.from ?? (shopifyOrder.currency || "USD").toUpperCase(),
+        })
+      );
+      if (finalSave.ok) {
+        emitRefundConfirmation("order_lines_refund_final_saved", "completed", {
+          phase: "final",
+          degraded: Boolean(finalSave.degraded),
         });
-      });
+      } else {
+        emitRefundConfirmation("order_lines_refund_final_saved", "failed", {
+          phase: "final",
+          reason: finalSave.reason,
+          message: "message" in finalSave ? finalSave.message : undefined,
+        });
+      }
     }
 
     const result = {
@@ -492,6 +612,13 @@ export const processRefund = inngest.createFunction(
       d365OrderNumber: d365Order?.SalesOrderNumber,
       durationMs: Date.now() - _flowStart,
       payload: { refundId: String(refundId), refundAmountUsd, creditNoteNumber },
+    });
+    emitRefundConfirmation("refund_pipeline_done", "completed", {
+      d365OrderNumber: d365Order?.SalesOrderNumber || null,
+      refundAmountUsd,
+      creditNoteNumber: creditNoteNumber || null,
+      invoiceResult: invoiceResult.status,
+      durationMs: Date.now() - _flowStart,
     });
     return result;
   }

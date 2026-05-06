@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   SHOPIFY_SHIPPING_LINE_ITEM_ID,
   SHOPIFY_TAX_LINE_ITEM_ID,
+  buildRefundLineItemId,
   buildLotIdMapFromOrderLines,
   getLotFromSavedOrderLineByShopifyLineItemId,
   filterUnfulfilledServiceLines,
@@ -112,5 +113,20 @@ describe("supabase-order-lines (unit)", () => {
       is_service_line: false,
     };
     expect(filterUnfulfilledServiceLines([serOnly])).toHaveLength(1);
+  });
+
+  it("excludes synthetic refund order_lines from unfulfilled service picks", () => {
+    const refundLine: SavedOrderLine = {
+      ...shippingLine,
+      id: "rid1",
+      shopify_line_item_id: buildRefundLineItemId("987422032039"),
+      d365_item_number: "IM8-SER-REFUND",
+      is_service_line: true,
+      is_fulfilled_to_dynamics: false,
+    };
+    const lines = [shippingLine, taxLine, refundLine];
+    const result = filterUnfulfilledServiceLines(lines);
+    expect(result).toHaveLength(2);
+    expect(result.map((l) => l.shopify_line_item_id)).not.toContain(refundLine.shopify_line_item_id);
   });
 });
