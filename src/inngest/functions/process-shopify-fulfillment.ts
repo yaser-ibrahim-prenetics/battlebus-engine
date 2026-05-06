@@ -586,7 +586,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           }
 
           // Create D365 packing slip (retry only transient API failures, not inventory/OData business errors)
-          await retryWithBackoff(
+          const fulfilmentPost = await retryWithBackoff(
             () =>
               dynamics.createFulfilment({
                 dataAreaId,
@@ -603,6 +603,32 @@ export const processShopifyFulfillment = inngest.createFunction(
               shouldRetry: (err) => isTransientFulfillmentApiError(err),
             }
           );
+
+          logFlowEvent({
+            flow: "fulfillment",
+            step: "d365_fulfilment_posted",
+            status: "completed",
+            runId: _runId || undefined,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber,
+            payload: {
+              fulfillmentId: fulfillment.id,
+              salesOrderNumber: d365Order.SalesOrderNumber,
+              dataAreaId,
+              fulfilmentType: "shipment",
+              thkApiStatus: fulfilmentPost.response?.status,
+              thkApiMessage: fulfilmentPost.response?.Message,
+              thkApiResult: fulfilmentPost.response?.Result,
+              lineCount: fulfilmentLinesWithService.length,
+              lines: fulfilmentLinesWithService.map((l) => ({
+                itemNumber: l.itemNumber,
+                quantity: l.quantity,
+                lotId: l.lotId,
+                site: l.shippingSiteId,
+              })),
+            },
+          });
 
           // Mark service lines fulfilled so they are not sent again on subsequent fulfillments
           if (serviceLinesToAppend.length > 0) {
