@@ -41,4 +41,38 @@ describe("computeRefundAmountShopifyPresentment", () => {
     });
     expect(computeRefundAmountShopifyPresentment(refund)).toBe(108);
   });
+
+  it("uses pending refund transactions when success rows are unavailable", () => {
+    const refund = baseRefund({
+      transactions: [
+        { id: 1, kind: "refund", gateway: "paypal", status: "pending", amount: "245.70" },
+      ],
+      refund_line_items: [],
+    });
+    expect(computeRefundAmountShopifyPresentment(refund)).toBe(245.7);
+  });
+
+  it("falls back to positive order_adjustments when other refund sources are empty", () => {
+    const refund = baseRefund({
+      transactions: [],
+      refund_line_items: [],
+      order_adjustments: [
+        {
+          amount: "-287.84",
+          amount_set: {
+            presentment_money: { amount: "-245.70", currency_code: "EUR" },
+            shop_money: { amount: "-287.84", currency_code: "USD" },
+          },
+        },
+        {
+          amount: "287.84",
+          amount_set: {
+            presentment_money: { amount: "245.70", currency_code: "EUR" },
+            shop_money: { amount: "287.84", currency_code: "USD" },
+          },
+        },
+      ] as any,
+    });
+    expect(computeRefundAmountShopifyPresentment(refund)).toBe(245.7);
+  });
 });

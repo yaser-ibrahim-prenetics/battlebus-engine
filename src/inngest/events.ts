@@ -608,6 +608,14 @@ export interface ShopifyRefundPayload {
   created_at: string;
   refund_line_items: ShopifyRefundLineItem[];
   transactions: ShopifyTransaction[];
+  order_adjustments?: Array<{
+    amount?: string;
+    kind?: string;
+    amount_set?: {
+      shop_money?: { amount?: string; currency_code?: string };
+      presentment_money?: { amount?: string; currency_code?: string };
+    };
+  }>;
 }
 
 export interface GpsFulfilmentPayload {
