@@ -286,6 +286,82 @@ describe("Warehouse Routing Helpers", () => {
       expect(getRefundSku("Some Custom Location", "H007")).toBe("IM8-SER-000003");
       expect(getShippingSku("Some Custom Location", "H007")).toBe("IM8-SER-000002");
     });
+
+    it("applies env override SKUs per dataAreaId", () => {
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON = JSON.stringify({
+        U001: {
+          tax: "UAT-TAX-SKU",
+          refund: "UAT-REFUND-SKU",
+          shipping: "UAT-SHIPPING-SKU",
+        },
+      });
+
+      expect(getTaxSku("GPS Warehouse")).toBe("UAT-TAX-SKU");
+      expect(getRefundSku("GPS Warehouse")).toBe("UAT-REFUND-SKU");
+      expect(getShippingSku("GPS Warehouse")).toBe("UAT-SHIPPING-SKU");
+      // Override follows routed dataArea, independent of arbitrary warehouse label.
+      expect(getShippingSku("Some Custom Location", "U001")).toBe("UAT-SHIPPING-SKU");
+    });
+
+    it("prefers profile-specific override key when selected", () => {
+      process.env.D365_SERVICE_SKU_PROFILE = "UAT";
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
+        U001: {
+          tax: "UAT-TAX-SKU-2",
+          refund: "UAT-REFUND-SKU-2",
+          shipping: "UAT-SHIPPING-SKU-2",
+        },
+      });
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = JSON.stringify({
+        U001: {
+          tax: "PROD-TAX-SKU",
+          refund: "PROD-REFUND-SKU",
+          shipping: "PROD-SHIPPING-SKU",
+        },
+      });
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON = JSON.stringify({
+        U001: {
+          tax: "GENERIC-TAX-SKU",
+          refund: "GENERIC-REFUND-SKU",
+          shipping: "GENERIC-SHIPPING-SKU",
+        },
+      });
+
+      expect(getTaxSku("GPS Warehouse")).toBe("UAT-TAX-SKU-2");
+      expect(getRefundSku("GPS Warehouse")).toBe("UAT-REFUND-SKU-2");
+      expect(getShippingSku("GPS Warehouse")).toBe("UAT-SHIPPING-SKU-2");
+    });
+
+    it("parses double-encoded JSON env values", () => {
+      const inner = {
+        U001: {
+          tax: "ENC-TAX",
+          refund: "ENC-REFUND",
+          shipping: "ENC-SHIP",
+        },
+      };
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON = JSON.stringify(
+        JSON.stringify(inner)
+      );
+
+      expect(getTaxSku("GPS Warehouse")).toBe("ENC-TAX");
+      expect(getRefundSku("GPS Warehouse")).toBe("ENC-REFUND");
+      expect(getShippingSku("GPS Warehouse")).toBe("ENC-SHIP");
+    });
+
+    it("parses env value wrapped in outer single quotes (invalid JSON first pass)", () => {
+      const body = JSON.stringify({
+        U001: {
+          tax: "WRAP-TAX",
+          refund: "WRAP-REFUND",
+          shipping: "WRAP-SHIP",
+        },
+      });
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON = `'${body}'`;
+
+      expect(getTaxSku("GPS Warehouse")).toBe("WRAP-TAX");
+      expect(getShippingSku("GPS Warehouse")).toBe("WRAP-SHIP");
+    });
   });
 
   describe("Fulfilment / Return Helpers", () => {

@@ -45,6 +45,12 @@ export interface WarehouseConfig {
   };
 }
 
+interface ServiceSkuByDataArea {
+  tax?: string;
+  refund?: string;
+  shipping?: string;
+}
+
 export interface RoutingResult {
   warehouseName: WarehouseName;
   dataAreaId: string;
@@ -414,6 +420,7 @@ function resolveServiceSkuConfig(
   dataAreaIdOverride?: string
 ): WarehouseConfig {
   const normalizedDataAreaId = (dataAreaIdOverride || "").toUpperCase();
+  const serviceSkuOverridesByArea = loadServiceSkuOverridesByDataArea();
 
   // If a routed dataAreaId is provided, prefer a profile aligned to it.
   // Keep warehouse-specific profile when it already matches the routed area
@@ -422,15 +429,149 @@ function resolveServiceSkuConfig(
     try {
       const byWarehouse = getWarehouseConfig(warehouseName);
       if ((byWarehouse.dataAreaId || "").toUpperCase() === normalizedDataAreaId) {
-        return byWarehouse;
+        return applyServiceSkuOverrides(byWarehouse, normalizedDataAreaId, serviceSkuOverridesByArea);
       }
     } catch {
       // Ignore unknown warehouse names and fall back to dataArea profile below.
     }
-    return getWarehouseConfigForDataAreaId(normalizedDataAreaId);
+    return applyServiceSkuOverrides(
+      getWarehouseConfigForDataAreaId(normalizedDataAreaId),
+      normalizedDataAreaId,
+      serviceSkuOverridesByArea
+    );
   }
 
-  return getWarehouseConfig(warehouseName);
+  const profile = getWarehouseConfig(warehouseName);
+  const profileArea = (profile.dataAreaId || "").toUpperCase();
+  return applyServiceSkuOverrides(profile, profileArea, serviceSkuOverridesByArea);
+}
+
+/**
+ * Optional per-dataArea service SKU overrides.
+ *
+ * Supported env patterns:
+ * - D365_SERVICE_SKU_BY_DATA_AREA_JSON                (generic)
+ * - D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT            (profile-specific)
+ * - D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD           (profile-specific)
+ * - D365_SERVICE_SKU_PROFILE=uat|prod|<suffix>        (explicit profile selector)
+ *
+ * If profile is not provided, selection falls back to D365_BASE_URL heuristic:
+ * - contains "sandbox" or "uat" -> UAT key
+ * - otherwise -> PROD key
+ */
+function loadServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
+  const raw = resolveServiceSkuOverrideRawJson();
+  if (!raw) return {};
+  return parseServiceSkuOverridesByDataArea(raw);
+}
+
+function resolveServiceSkuOverrideRawJson(): string | undefined {
+  const explicitProfile = String(process.env.D365_SERVICE_SKU_PROFILE || "")
+    .trim()
+    .toUpperCase();
+  const baseUrl = String(process.env.D365_BASE_URL || "")
+    .trim()
+    .toLowerCase();
+  const inferredProfile = explicitProfile
+    ? explicitProfile
+    : baseUrl.includes("sandbox") || baseUrl.includes("uat")
+      ? "UAT"
+      : "PROD";
+
+  const profileVarName = `D365_SERVICE_SKU_BY_DATA_AREA_JSON_${inferredProfile.replace(/[^A-Z0-9_]/g, "_")}`;
+  const profileRaw = process.env[profileVarName];
+  if (profileRaw && String(profileRaw).trim()) {
+    return profileRaw;
+  }
+
+  const genericRaw = process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
+  if (genericRaw && String(genericRaw).trim()) {
+    return genericRaw;
+  }
+
+  return undefined;
+}
+
+/**
+ * Parse JSON from an env string: trims BOM/whitespace, accepts double-encoded JSON strings,
+ * and one layer of outer wrapping quotes (common when pasting into hosts that escape).
+ */
+function parseEnvJsonValue<T>(raw: string, label: string): T | null {
+  const s = String(raw ?? "").replace(/^\uFEFF/, "").trim();
+  if (!s) return null;
+
+  const tryParse = (input: string): unknown => {
+    const v = JSON.parse(input) as unknown;
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (t.startsWith("{") || t.startsWith("[")) {
+        try {
+          return JSON.parse(t);
+        } catch {
+          return v;
+        }
+      }
+    }
+    return v;
+  };
+
+  const candidates: string[] = [s];
+  if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+    const inner = s.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
+    if (inner.trim().startsWith("{")) {
+      candidates.push(inner);
+    }
+  }
+
+  for (const c of candidates) {
+    try {
+      const parsed = tryParse(c) as T;
+      if (parsed !== null && parsed !== undefined && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {
+      /* next candidate */
+    }
+  }
+
+  console.warn(`[Routing] ${label} is not valid JSON — ignoring`);
+  return null;
+}
+
+function parseServiceSkuOverridesByDataArea(raw: string): Record<string, ServiceSkuByDataArea> {
+  const parsed = parseEnvJsonValue<Record<string, ServiceSkuByDataArea>>(
+    raw,
+    "D365 service SKU override env"
+  );
+  if (!parsed || typeof parsed !== "object") {
+    return {};
+  }
+  const out: Record<string, ServiceSkuByDataArea> = {};
+  for (const [area, skuSet] of Object.entries(parsed)) {
+    const key = String(area || "").toUpperCase().trim();
+    if (!key || !skuSet || typeof skuSet !== "object") continue;
+    out[key] = {
+      tax: typeof skuSet.tax === "string" ? skuSet.tax.trim() : undefined,
+      refund: typeof skuSet.refund === "string" ? skuSet.refund.trim() : undefined,
+      shipping: typeof skuSet.shipping === "string" ? skuSet.shipping.trim() : undefined,
+    };
+  }
+  return out;
+}
+
+function applyServiceSkuOverrides(
+  config: WarehouseConfig,
+  dataAreaId: string,
+  overridesByArea: Record<string, ServiceSkuByDataArea>
+): WarehouseConfig {
+  const override = overridesByArea[(dataAreaId || "").toUpperCase()];
+  if (!override) return config;
+  const nextItem = {
+    tax: override.tax || config.item.tax,
+    refund: override.refund || config.item.refund,
+    shipping: override.shipping || config.item.shipping,
+  };
+  return { ...config, item: nextItem };
 }
 
 /**
