@@ -244,8 +244,9 @@ export const processRefund = inngest.createFunction(
       return { status: "skipped", reason: "Dynamics sync disabled" };
     }
 
-    // 3. Refund SKU + return sites: legal entity comes from the D365 header (dataAreaId).
-    // Return warehouse / location must match that entity’s profile — not shipping country alone.
+    // 3. Refund SKU + return sites: D365 legal entity comes from the header (`dataAreaId`).
+    // Fulfillment profile (GPS vs STORD VATL, both often U001) comes from Hub `orders.warehouse`
+    // when present — not shipping-country routing alone (US would wrongly pick GPS SKUs).
     const warehouseInfo = await step.run("determine-warehouse-info", async () => {
       let dataAreaId = (d365Order?.dataAreaId || config.dynamics.dataAreaId || "")
         .toUpperCase()
@@ -253,16 +254,18 @@ export const processRefund = inngest.createFunction(
       if (!dataAreaId) {
         dataAreaId = warehouseHelper.getDefaultWarehouse().dataAreaId.toUpperCase();
       }
-      const countryCode = shopifyOrder.shipping_address?.country_code || "US";
-      const warehouseName = warehouseHelper.determineWarehouse(countryCode);
-      const areaProfile = warehouseHelper.getWarehouseConfigForDataAreaId(dataAreaId);
-      const refundSku = warehouseHelper.getRefundSku(warehouseName, dataAreaId);
+      const fulfillmentWarehouse = warehouseHelper.resolveRefundFulfillmentWarehouse(
+        shopifyOrder.shipping_address?.country_code,
+        d365Step.audit.supabaseLookup.warehouse
+      );
+      const fulfillmentProfile = warehouseHelper.getWarehouseConfig(fulfillmentWarehouse);
+      const refundSku = warehouseHelper.getRefundSku(fulfillmentWarehouse, dataAreaId);
 
       return {
         dataAreaId,
-        warehouseName,
+        warehouseName: fulfillmentWarehouse,
         refundSku,
-        returnConfig: areaProfile.return,
+        returnConfig: fulfillmentProfile.return,
       };
     });
 

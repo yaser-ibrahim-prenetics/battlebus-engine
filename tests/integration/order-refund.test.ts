@@ -3,7 +3,13 @@ import { createInngestHarness } from "../helpers/inngest-harness";
 import { loadFixture } from "../fixtures";
 import { mockDynamics, resetMockD365 } from "../mocks/dynamics";
 import { mockCsPlatform, resetMockCsPlatform } from "../mocks/cs-platform";
-import { determineWarehouse, getRefundSku, getReturnConfig } from "@/lib/helpers/warehouse";
+import {
+  determineWarehouse,
+  getRefundSku,
+  getReturnConfig,
+  getWarehouseConfig,
+  resolveRefundFulfillmentWarehouse,
+} from "@/lib/helpers/warehouse";
 
 describe("Order Refund Flow (Integration)", () => {
   let harness: ReturnType<typeof createInngestHarness>;
@@ -109,6 +115,14 @@ describe("Order Refund Flow (Integration)", () => {
 
     it("uses IM8-SER-000005 for STORD ATL (warehouse-specific service SKU)", () => {
       expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
+    });
+
+    it("matches process-refund: Hub STORD + US + U001 → STORD refund SKU and return warehouse", () => {
+      const fulfillment = resolveRefundFulfillmentWarehouse("US", "STORD ATL Location");
+      const profile = getWarehouseConfig(fulfillment);
+      expect(fulfillment).toBe("STORD ATL Location");
+      expect(getRefundSku(fulfillment, "U001")).toBe("IM8-SER-000005");
+      expect(profile.return.shippingWarehouseId).toBe("USOPS-WH05-Q");
     });
   });
 

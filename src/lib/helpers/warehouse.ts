@@ -299,6 +299,22 @@ export function determineWarehouse(shippingCountryCode: string): WarehouseName {
 }
 
 /**
+ * Prefer the Hub-persisted fulfillment warehouse (when it matches `warehouse-config.json`)
+ * so refund service SKUs and return warehouses stay aligned with GPS vs STORD profiles that
+ * share the same D365 `dataAreaId` (e.g. U001). Otherwise same as {@link determineWarehouse}.
+ */
+export function resolveRefundFulfillmentWarehouse(
+  shippingCountryCode: string | null | undefined,
+  hubWarehouseLabel: string | null | undefined
+): WarehouseName {
+  const hub = typeof hubWarehouseLabel === "string" ? hubWarehouseLabel.trim() : "";
+  if (hub && isKnownWarehouseName(hub)) {
+    return hub;
+  }
+  return determineWarehouse(shippingCountryCode || "US");
+}
+
+/**
  * Resolve full routing from a country code in one call.
  * Returns warehouseName + dataAreaId together.
  *

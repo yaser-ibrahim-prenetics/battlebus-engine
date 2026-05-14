@@ -13,6 +13,7 @@ import {
   toDefaultLedgerDimensionDisplayValue,
   toDefaultLedgerDimensionDisplayValueByDataArea,
   determineWarehouse,
+  resolveRefundFulfillmentWarehouse,
   resolveCountryRouting,
   getGpsWarehouseCode,
   getGpsLogisticsChannel,
@@ -237,6 +238,28 @@ describe("Warehouse Routing Helpers", () => {
       it("returns default source for unknown country", () => {
         const result = resolveCountryRouting("ZZ");
         expect(result.source).toBe("default");
+      });
+    });
+
+    describe("resolveRefundFulfillmentWarehouse", () => {
+      it("prefers Hub STORD label on US shipments (GPS and STORD share U001)", () => {
+        expect(resolveRefundFulfillmentWarehouse("US", "STORD ATL Location")).toBe(
+          "STORD ATL Location"
+        );
+      });
+
+      it("ignores unknown Hub labels and uses country routing", () => {
+        expect(resolveRefundFulfillmentWarehouse("US", "Custom 3PL")).toBe("GPS Warehouse");
+      });
+
+      it("uses country routing when Hub warehouse is absent", () => {
+        expect(resolveRefundFulfillmentWarehouse("GB", null)).toBe("GPS UK Warehouse");
+      });
+
+      it("STORD hub + GB still resolves refund profile via warehouse + dataArea", () => {
+        const w = resolveRefundFulfillmentWarehouse("GB", "STORD EU Location");
+        expect(w).toBe("STORD EU Location");
+        expect(getRefundSku(w, "H007")).toBe("IM8-SER-000003");
       });
     });
   });
