@@ -18,6 +18,7 @@ import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-re
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/supabase-flow-logs";
 import { saveRefundOrderLine } from "@/lib/services/supabase-order-lines";
+import { shopifyRefundCreatedByLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 
 export const processRefund = inngest.createFunction(
   {
@@ -43,6 +44,8 @@ export const processRefund = inngest.createFunction(
   },
   async ({ event, step, runId }) => {
     const { shopifyOrderId, refundId, refundJson } = event.data;
+    const refundInitiator =
+      (event.data as ShopifyRefundCreatedEvent["data"]).refundInitiator ?? "shopify_webhook";
     const refund = refundJson as ShopifyRefundPayload;
     const _flowStart = Date.now();
 
@@ -50,6 +53,7 @@ export const processRefund = inngest.createFunction(
       refundId: String(refundId),
       shopifyOrderId: String(shopifyOrderId),
       inngestRunId: String(runId ?? ""),
+      refundInitiator,
     };
 
     logRefundTraceLifecycle({
@@ -157,6 +161,45 @@ export const processRefund = inngest.createFunction(
       });
       return order;
     });
+
+    // Mirror spock-store `refund.processRefund`: Loop posts the financial refund via its own webhook
+    // path first; Shopify's `refunds/create` repeats the signal. Skip D365 dupes using order events.
+    if (refundInitiator === "shopify_webhook") {
+      const isLoopBackedShopifyRefund = await step.run(
+        "detect-loop-returns-shopify-refund-duplicate",
+        async () => {
+          if ((refund.transactions || []).length !== 1) {
+            return false;
+          }
+          return shopifyRefundCreatedByLoopReturns(String(shopifyOrderId), refund);
+        }
+      );
+      if (isLoopBackedShopifyRefund) {
+        logRefundTraceLifecycle({
+          ...refundTrace,
+          phase: "process_refund_skipped_shopify_webhook_loop_duplicate",
+        });
+        emitRefundConfirmation("skipped_loop_returns_duplicate_shopify_webhook", "skipped", {
+          reason: "refund_processed_from_loop_webhook_already",
+          refundInitiator,
+        });
+        logFlowEvent({
+          flow: "refund",
+          step: "skipped_loop_returns_duplicate",
+          status: "skipped",
+          runId,
+          shopifyOrderId: String(shopifyOrderId),
+          payload: { refundId: String(refundId), refundInitiator },
+        });
+        return {
+          status: "skipped",
+          refundId,
+          shopifyOrderId,
+          reason:
+            "Shopify refunds/create for Loop-backed refunds ignored — same as spock-store isLoopRefund (D365 line expected from Loop return.closed webhook).",
+        };
+      }
+    }
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
     // THK_ShopifyReference is set from Shopify order `name` at header creation (see toD365SalesOrderHeaderV3).

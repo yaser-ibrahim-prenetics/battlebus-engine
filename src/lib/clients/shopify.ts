@@ -576,6 +576,36 @@ export async function getOrderTransactions(
   return data.transactions;
 }
 
+/**
+ * Order events timeline (REST) — used to detect refunds initiated by Loop Returns.
+ */
+export interface ShopifyOrderEvent {
+  id: number;
+  verb?: string | null;
+  path?: string | null;
+  author?: string | null;
+  subject?: string | null;
+  subject_id?: number | null;
+}
+
+export async function getOrderEvents(orderId: string | number): Promise<{ events: ShopifyOrderEvent[] }> {
+  const url = buildUrl(`/orders/${orderId}/events.json`);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to get order events: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const events = Array.isArray(data?.events) ? (data.events as ShopifyOrderEvent[]) : [];
+  return { events };
+}
+
 function normalizeShopifyShopDomain(domain: string | null | undefined): string {
   return (domain || "").toLowerCase().trim();
 }

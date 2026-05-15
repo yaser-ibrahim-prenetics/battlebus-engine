@@ -212,6 +212,18 @@ export const config = {
      * double-post. Enable only for tenants that require the explicit action.
      */
     enableReturnInvoicePosting: process.env.ENABLE_RETURN_INVOICE_POSTING === "true",
+    /**
+     * When false, refuses Loop Returns webhooks (no forwarded refund events).
+     * Default true — override with ENABLE_LOOP_RETURN_REFUND_WEBHOOK=false to disable entirely.
+     */
+    enableLoopReturnRefundWebhook: process.env.ENABLE_LOOP_RETURN_REFUND_WEBHOOK !== "false",
+  },
+
+  /** Loop Returns (return.closed → D365 refund line, mirrored from spock-store). */
+  loop: {
+    /** HMAC key from Loop webhook settings (`x-loop-signature`, SHA-256 digest base64). */
+    webhookKey: process.env.LOOP_WEBHOOK_KEY || "",
+    disableWebhookVerification: process.env.DISABLE_LOOP_WEBHOOK_VERIFICATION === "true",
   },
 
   // Retry Configuration
