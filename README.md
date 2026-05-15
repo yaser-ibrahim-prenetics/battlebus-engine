@@ -368,6 +368,7 @@ src/
 │       ├── inngest/route.ts           # Inngest handler
 │       └── webhooks/
 │           ├── shopify/route.ts       # Shopify webhooks
+│           ├── loop/route.ts          # Loop Returns (return.closed → refund pipeline)
 │           ├── gps/route.ts           # GPS webhooks
 │           └── stord/route.ts         # STORD webhooks
 ├── inngest/
@@ -444,6 +445,12 @@ src/
 - Point primary webhooks to Battle Bus
 - Disable Spock Store polling
 - Monitor via Battle Hub dashboard
+
+### Loop Returns (refunds)
+
+- Set **`ENABLE_LOOP_RETURNS=true`** and **`LOOP_WEBHOOK_KEY`** (same value as spock-store `api.loop.webhookKey`).
+- In Loop, register webhook URL **`POST https://<battle-bus-host>/api/webhooks/loop`** (topic `return` / `return.closed` as delivered by Loop).
+- Use **`GET /api/webhooks/loop`** for a safe config summary (no secrets). For local dev only: **`DISABLE_LOOP_WEBHOOK_VERIFICATION=true`** skips HMAC checks.
 
 ---
 

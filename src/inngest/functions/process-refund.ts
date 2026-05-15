@@ -163,8 +163,9 @@ export const processRefund = inngest.createFunction(
     });
 
     // Mirror spock-store `refund.processRefund`: Loop posts the financial refund via its own webhook
-    // path first; Shopify's `refunds/create` repeats the signal. Skip D365 dupes using order events.
-    if (refundInitiator === "shopify_webhook") {
+    // path first; Shopify's `refunds/create` repeats the signal. Skip D365 dupes using order events
+    // (only when Loop integration is enabled — avoids Shopify Admin calls when Loop is unused).
+    if (config.loop.enabled && refundInitiator === "shopify_webhook") {
       const isLoopBackedShopifyRefund = await step.run(
         "detect-loop-returns-shopify-refund-duplicate",
         async () => {

@@ -37,13 +37,50 @@ async function sendRefundEvent(ev: RefundCreatedIngressEvent, requestId: string)
   }
 }
 
+/** Safe readiness / config summary (no secrets). */
+export async function GET() {
+  const loop = config.loop;
+  return NextResponse.json({
+    ok: true,
+    integration: "loop_returns",
+    path: "/api/webhooks/loop",
+    loopReturns: {
+      enabled: loop.enabled,
+      signingKeyConfigured: loop.signingKeyConfigured,
+      webhookVerificationSkipped: loop.disableWebhookVerification,
+    },
+    refundPipeline: {
+      /** Shopify `refunds/create` timeline check vs Loop — off when Loop integration disabled. */
+      shopifyDedupeAgainstLoopUsesOrderEvents: loop.enabled,
+    },
+    env: {
+      ENABLE_LOOP_RETURNS: process.env.ENABLE_LOOP_RETURNS ?? null,
+      ENABLE_LOOP_RETURN_REFUND_WEBHOOK: process.env.ENABLE_LOOP_RETURN_REFUND_WEBHOOK ?? null,
+      DISABLE_LOOP_WEBHOOK_VERIFICATION: process.env.DISABLE_LOOP_WEBHOOK_VERIFICATION ?? null,
+      LOOP_WEBHOOK_KEY: loop.signingKeyConfigured ? "***set***" : null,
+    },
+    implementation: [
+      "POST: Loop sends `topic=return`, `trigger=return.closed`; we verify `x-loop-signature` (HMAC-SHA256, base64 unless verification disabled locally).",
+      "Refund total must be > 0; we emit `shopify/refund.created` with `refundInitiator=loop_return_closed`.",
+      "Shopify `refunds/create` is ignored when order events show Loop Returns authored the refund (same as spock-store `isLoopRefund`).",
+    ],
+    requiredHeadersPost: [{ name: "x-loop-signature", purpose: "HMAC-SHA256 of raw UTF-8 body, base64" }],
+  });
+}
+
 export async function POST(request: NextRequest) {
   const requestId = `loop-webhook-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-  if (!config.features.enableLoopReturnRefundWebhook) {
-    console.warn(`[LoopWebhook] [${requestId}] Disabled via ENABLE_LOOP_RETURN_REFUND_WEBHOOK=false`);
+  if (!config.loop.enabled) {
+    console.warn(`[LoopWebhook] [${requestId}] Loop integration disabled`);
     return NextResponse.json(
-      { ok: false, error: "loop_return_webhook_disabled", requestId },
+      {
+        ok: false,
+        error: "loop_returns_disabled",
+        requestId,
+        hint:
+          "Set ENABLE_LOOP_RETURNS=true, configure LOOP_WEBHOOK_KEY, and register POST /api/webhooks/loop in Loop. See GET /api/webhooks/loop.",
+      },
       { status: 503 }
     );
   }
