@@ -4,10 +4,24 @@ import {
   buildSyntheticShopifyRefundFromLoopReturn,
   isLoopReturnClosedPayload,
   loopClosedReturnRefundIsPositive,
+  normalizeShopifyOrderIdFromLoopProvider,
   verifyLoopWebhookSignature,
 } from "../loop-return-refund";
 
 describe("loop-return-refund helpers", () => {
+  describe("normalizeShopifyOrderIdFromLoopProvider", () => {
+    it("extracts numeric id from Shopify GraphQL GID", () => {
+      expect(normalizeShopifyOrderIdFromLoopProvider("gid://shopify/Order/6854207078567")).toBe(
+        "6854207078567"
+      );
+      expect(normalizeShopifyOrderIdFromLoopProvider(" GID://shopify/ORDER/123\n")).toBe("123");
+    });
+
+    it("passes through plain numeric strings", () => {
+      expect(normalizeShopifyOrderIdFromLoopProvider("6854207078567")).toBe("6854207078567");
+    });
+  });
+
   describe("verifyLoopWebhookSignature", () => {
     it("accepts matching spock-style SHA256 HMAC (UTF-8 body → base64)", () => {
       const key = "abcd";
@@ -38,6 +52,15 @@ describe("loop-return-refund helpers", () => {
           topic: "return",
           trigger: "return.closed",
           provider_order_id: "6854207078567",
+          refund: "10",
+        })
+      ).toBe(true);
+      expect(
+        isLoopReturnClosedPayload({
+          id: "108646244",
+          topic: "return",
+          trigger: "return.closed",
+          provider_order_id: "gid://shopify/Order/6854207078567",
           refund: "10",
         })
       ).toBe(true);
@@ -73,6 +96,18 @@ describe("loop-return-refund helpers", () => {
       expect(synthetic.transactions[0].status).toBe("success");
       expect(synthetic.transactions[0].gateway).toBe("loop_returns");
       expect(synthetic.transactions[0].receipt?.balance_transaction?.exchange_rate).toBe(1);
+    });
+
+    it("parses order id when provider_order_id is a Shopify GID string", () => {
+      const synthetic = buildSyntheticShopifyRefundFromLoopReturn({
+        id: "108646244",
+        topic: "return",
+        trigger: "return.closed",
+        provider_order_id: "gid://shopify/Order/6854207078567",
+        refund: "10",
+        currency: "USD",
+      });
+      expect(synthetic.order_id).toBe(6854207078567);
     });
   });
 });

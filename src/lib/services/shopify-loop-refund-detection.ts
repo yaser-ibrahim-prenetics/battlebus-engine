@@ -37,6 +37,14 @@ export async function shopifyRefundCreatedByLoopReturns(
     return false;
   }
 
-  const { events } = await getOrderEvents(shopifyOrderNumericId);
-  return events.some((e) => isShopifyRefundEventFromLoop(transactionId, e));
+  try {
+    const { events } = await getOrderEvents(shopifyOrderNumericId);
+    return events.some((e) => isShopifyRefundEventFromLoop(transactionId, e));
+  } catch (error) {
+    console.warn(
+      `[LoopDedupe] Order events lookup failed for order ${shopifyOrderNumericId} — treating as non-Loop duplicate:`,
+      error instanceof Error ? error.message : error
+    );
+    return false;
+  }
 }

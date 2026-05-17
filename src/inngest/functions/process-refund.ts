@@ -19,6 +19,7 @@ import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/supabase-flow-logs";
 import { saveRefundOrderLine } from "@/lib/services/supabase-order-lines";
 import { shopifyRefundCreatedByLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
+import { normalizeShopifyOrderIdFromLoopProvider } from "@/lib/helpers/loop-return-refund";
 
 export const processRefund = inngest.createFunction(
   {
@@ -43,7 +44,10 @@ export const processRefund = inngest.createFunction(
     triggers: [{ event: "shopify/refund.created" }],
   },
   async ({ event, step, runId }) => {
-    const { shopifyOrderId, refundId, refundJson } = event.data;
+    const { shopifyOrderId: shopifyOrderIdRaw, refundId, refundJson } = event.data;
+    const shopifyOrderId =
+      normalizeShopifyOrderIdFromLoopProvider(String(shopifyOrderIdRaw)) ||
+      String(shopifyOrderIdRaw);
     const refundInitiator =
       (event.data as ShopifyRefundCreatedEvent["data"]).refundInitiator ?? "shopify_webhook";
     const refund = refundJson as ShopifyRefundPayload;

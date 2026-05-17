@@ -60,4 +60,18 @@ describe("shopifyRefundCreatedByLoopReturns", () => {
 
     await expect(shopifyRefundCreatedByLoopReturns("2", refund)).resolves.toBe(true);
   });
+
+  it("returns false when order events API fails so Shopify refunds are not wrongly suppressed", async () => {
+    vi.mocked(shopify.getOrderEvents).mockRejectedValue(new Error("429"));
+
+    const refund: ShopifyRefundPayload = {
+      id: 99,
+      order_id: 2,
+      created_at: "",
+      refund_line_items: [],
+      transactions: [{ id: 988553904295, kind: "refund", status: "success", amount: "50" }],
+    };
+
+    await expect(shopifyRefundCreatedByLoopReturns("2", refund)).resolves.toBe(false);
+  });
 });

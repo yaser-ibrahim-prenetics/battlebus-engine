@@ -11,6 +11,7 @@ import {
   buildSyntheticShopifyRefundFromLoopReturn,
   isLoopReturnClosedPayload,
   loopClosedReturnRefundIsPositive,
+  normalizeShopifyOrderIdFromLoopProvider,
   verifyLoopWebhookSignature,
   type LoopReturnRefundWebhookBody,
 } from "@/lib/helpers/loop-return-refund";
@@ -142,11 +143,12 @@ export async function POST(request: NextRequest) {
 
   const shopifyStoreDomain = activeIm8ShopDomainForEvents();
   const synthetic = buildSyntheticShopifyRefundFromLoopReturn(body);
+  const shopifyOrderNumericId = normalizeShopifyOrderIdFromLoopProvider(body.provider_order_id);
 
   const event: ShopifyRefundCreatedEvent = {
     name: "shopify/refund.created",
     data: {
-      shopifyOrderId: String(body.provider_order_id),
+      shopifyOrderId: shopifyOrderNumericId || String(body.provider_order_id).trim(),
       refundId: String(body.id),
       shopifyStore: shopifyStoreDomain,
       refundJson: synthetic,

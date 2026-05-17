@@ -16,6 +16,19 @@ export type LoopReturnRefundWebhookBody = {
   refunds?: Array<{ provider_refund_id?: number }>;
 };
 
+/**
+ * Shopify REST `/orders/:id.json` requires the numeric resource id.
+ * Loop sometimes sends `provider_order_id` as a GraphQL GID (`gid://shopify/Order/123`).
+ */
+export function normalizeShopifyOrderIdFromLoopProvider(providerOrderId: string): string {
+  const s = String(providerOrderId ?? "").trim();
+  if (!s) return "";
+  const gid = /^gid:\/\/shopify\/Order\/(\d+)$/i.exec(s);
+  if (gid?.[1]) return gid[1];
+  if (/^\d+$/.test(s)) return s;
+  return s;
+}
+
 /** HMAC-SHA256 (UTF-8 body) → Base64 digest, compared to `x-loop-signature`. */
 export function verifyLoopWebhookSignature(
   rawBodyUtf8: string,
@@ -62,7 +75,8 @@ export function isLoopReturnClosedPayload(
 export function buildSyntheticShopifyRefundFromLoopReturn(
   body: LoopReturnRefundWebhookBody
 ): ShopifyRefundPayload {
-  const orderIdNum = Number.parseInt(String(body.provider_order_id), 10);
+  const normalizedOrderId = normalizeShopifyOrderIdFromLoopProvider(body.provider_order_id);
+  const orderIdNum = Number.parseInt(normalizedOrderId, 10);
   const digitsOnly = String(body.id).replace(/\D/g, "");
   const loopIdNum = Number.parseInt(digitsOnly, 10);
   const providerTx = body.refunds?.[0]?.provider_refund_id;
