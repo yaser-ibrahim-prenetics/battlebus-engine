@@ -161,18 +161,55 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Build event payload - DO NOT spread eventData as it may contain
-      // conflicting fields like orderId that would overwrite shopifyOrderId
-      // IMPORTANT: Append timestamp to shopifyOrderId to bypass idempotency for reruns
-      // The function uses idempotency: "event.data.shopifyOrderId" which would
-      // otherwise deduplicate and skip the rerun
       const rerunTimestamp = Date.now();
+      const resolvedEventName =
+        typeof eventName === "string" && eventName.trim().length > 0
+          ? eventName.trim()
+          : "shopify/order.paid";
+
+      // Hub bulk "Rerun fulfillments" — replay fulfillment → D365 pipeline from current Shopify payloads.
+      if (resolvedEventName === "shopify/order.fulfilled") {
+        const orderAny = shopifyOrder as unknown as Record<string, unknown>;
+        const fulfillments = Array.isArray(orderAny.fulfillments) ? orderAny.fulfillments : [];
+        if (fulfillments.length === 0) {
+          return NextResponse.json(
+            {
+              error: `Order ${orderName} has no fulfillments in Shopify — nothing to send for fulfillment rerun.`,
+            },
+            { status: 400 }
+          );
+        }
+
+        const eventPayload = {
+          name: "shopify/order.fulfilled" as const,
+          data: {
+            shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
+            originalShopifyOrderId: String(shopifyOrder.id),
+            shopifyOrderName: shopifyOrder.name,
+            shopifyStore: "im8-battle-bus",
+            orderJson: shopifyOrder,
+            fulfillments,
+            receivedAt: new Date().toISOString(),
+            source: "battle-hub",
+            isRerun: true,
+            ...(eventData?.fromStart !== undefined && { fromStart: eventData.fromStart }),
+          },
+        };
+
+        const result = await inngest.send(eventPayload);
+
+        return NextResponse.json({
+          success: true,
+          message: `Fulfillment rerun event sent for order ${orderName}`,
+          eventId: result.ids?.[0],
+        });
+      }
+
+      // Default: full order pipeline (shopify/order.paid)
       const eventPayload = {
-        name: eventName || "shopify/order.paid",
+        name: resolvedEventName,
         data: {
-          // Append rerun timestamp to make idempotency key unique
           shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
-          // Keep original ID for reference
           originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
@@ -181,12 +218,10 @@ export async function POST(request: NextRequest) {
           source: "battle-hub",
           receivedAt: new Date().toISOString(),
           isRerun: true,
-          // Only include safe fields from eventData
           ...(eventData?.fromStart !== undefined && { fromStart: eventData.fromStart }),
         },
       };
 
-      // Send the event using the Inngest client
       const result = await inngest.send(eventPayload);
 
       return NextResponse.json({
@@ -214,10 +249,48 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Append timestamp to bypass idempotency for reruns
       const rerunTimestamp = Date.now();
+      const resolvedEventName =
+        typeof eventName === "string" && eventName.trim().length > 0
+          ? eventName.trim()
+          : "shopify/order.paid";
+
+      if (resolvedEventName === "shopify/order.fulfilled") {
+        const orderAny = shopifyOrder as unknown as Record<string, unknown>;
+        const fulfillments = Array.isArray(orderAny.fulfillments) ? orderAny.fulfillments : [];
+        if (fulfillments.length === 0) {
+          return NextResponse.json(
+            {
+              error: `Order ${shopifyOrderName} has no fulfillments in Shopify — nothing to send for fulfillment rerun.`,
+            },
+            { status: 400 }
+          );
+        }
+
+        const result = await inngest.send({
+          name: "shopify/order.fulfilled",
+          data: {
+            shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
+            originalShopifyOrderId: String(shopifyOrder.id),
+            shopifyOrderName: shopifyOrder.name,
+            shopifyStore: "im8-battle-bus",
+            orderJson: shopifyOrder,
+            fulfillments,
+            receivedAt: new Date().toISOString(),
+            source: "battle-hub",
+            isRerun: true,
+          },
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: `Fulfillment rerun event sent for order ${shopifyOrderName}`,
+          eventId: result.ids?.[0],
+        });
+      }
+
       const eventPayload = {
-        name: eventName || "shopify/order.paid",
+        name: resolvedEventName,
         data: {
           shopifyOrderId: `${shopifyOrder.id}-rerun-${rerunTimestamp}`,
           originalShopifyOrderId: String(shopifyOrder.id),
