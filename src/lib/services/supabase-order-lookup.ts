@@ -29,6 +29,16 @@ export type SupabaseOrderD365Hint = {
   warehouse: string | null;
 };
 
+export type GpsRecoveryOrderContext = {
+  shopifyOrderName: string;
+  shopifyOrderId: string | null;
+  warehouse: string | null;
+  gpsOrderNo: string | null;
+  gpsUkOrderNo: string | null;
+  shopifyFulfillmentStatus: string | null;
+  d365OrderNumber: string | null;
+};
+
 function rowToHint(data: Record<string, unknown> | null | undefined): SupabaseOrderD365Hint | null {
   if (!data?.d365_order_number || typeof data.d365_order_number !== "string") {
     return null;
@@ -153,4 +163,48 @@ export async function fetchD365InventoryLotsByShopifyOrder(
     console.warn(`[SupabaseOrderLookup] state fetch by id failed for id=${id}: ${errId.message}`);
   }
   return extractLots(byId ?? null);
+}
+
+/**
+ * Hub order row for GPS fulfilment recovery (poll outbound detail by GPS id).
+ */
+export async function fetchGpsRecoveryContextByShopifyOrderName(
+  shopifyOrderName: string
+): Promise<GpsRecoveryOrderContext | null> {
+  const supabase = getClient();
+  if (!supabase) return null;
+
+  const select =
+    "shopify_order_name, shopify_order_id, warehouse, gps_order_no, gps_uk_order_no, shopify_fulfillment_status, d365_order_number";
+
+  for (const v of shopifyNameLookupVariants(shopifyOrderName)) {
+    for (const column of ["shopify_order_name", "order_number", "id"] as const) {
+      const { data, error } = await supabase
+        .from("orders")
+        .select(select)
+        .eq(column, v)
+        .limit(1)
+        .maybeSingle();
+      if (error) {
+        console.warn(`[SupabaseOrderLookup] GPS recovery ${column}=${v}: ${error.message}`);
+        continue;
+      }
+      if (!data) continue;
+      const name = String(data.shopify_order_name || v).trim();
+      return {
+        shopifyOrderName: name,
+        shopifyOrderId: data.shopify_order_id ? String(data.shopify_order_id) : null,
+        warehouse: typeof data.warehouse === "string" ? data.warehouse : null,
+        gpsOrderNo: data.gps_order_no ? String(data.gps_order_no).trim() : null,
+        gpsUkOrderNo: data.gps_uk_order_no ? String(data.gps_uk_order_no).trim() : null,
+        shopifyFulfillmentStatus:
+          typeof data.shopify_fulfillment_status === "string"
+            ? data.shopify_fulfillment_status
+            : null,
+        d365OrderNumber:
+          typeof data.d365_order_number === "string" ? data.d365_order_number.trim() : null,
+      };
+    }
+  }
+  return null;
 }

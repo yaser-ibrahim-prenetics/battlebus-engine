@@ -404,6 +404,17 @@ export type ReconciliationRunEvent = {
   };
 };
 
+export type GpsRecoverFulfilmentEvent = {
+  name: "gps/recover.fulfilment";
+  data: {
+    shopifyOrderName: string;
+    source?: string;
+    requestedAt?: string;
+    triggeredByUserId?: string;
+    triggeredByUserEmail?: string;
+  };
+};
+
 export type ShopifyOrderRecoverEvent = {
   name: "shopify/order.recover";
   data: {
@@ -463,6 +474,7 @@ export type BattleBusEvents =
   | InventoryFullSyncRequestedEvent
   | ReconciliationRunEvent
   | ShopifyOrderRecoverEvent
+  | GpsRecoverFulfilmentEvent
   | SubscriptionRenewalEvent
   | BackorderCreatedEvent
   | BackorderResolvedEvent

@@ -34,6 +34,7 @@ export { refreshLocationConfigCache } from "./refresh-location-config-cache";
 export { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 export { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 export { processShopifyOrderRecover } from "./process-shopify-order-recover";
+export { recoverGpsFulfilment } from "./recover-gps-fulfillment";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -67,6 +68,7 @@ import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 import { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 import { processShopifyOrderRecover } from "./process-shopify-order-recover";
+import { recoverGpsFulfilment } from "./recover-gps-fulfillment";
 
 const inventoryFunctions = config.features.enableInventoryRuns
   ? [
@@ -113,4 +115,5 @@ export const functions = [
   cronSalesorderReconciliation,
   // Manual Shopify pull/recover (Hub-triggered)
   processShopifyOrderRecover,
+  recoverGpsFulfilment,
 ];
