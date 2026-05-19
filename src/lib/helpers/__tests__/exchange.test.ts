@@ -4,6 +4,7 @@ import {
   extractExchangeRateFromTransactions,
   getFallbackRate,
   convertToShopCurrency,
+  resolveRefundAmountUsd,
 } from "../exchange";
 
 describe("extractExchangeRateFromRefundReceipt", () => {
@@ -157,5 +158,63 @@ describe("FX priority integration (receipt → pair → fallback)", () => {
       "HKD"
     );
     expect(convertToShopCurrency(100, "HKD", resolved)).toBe(12.8);
+  });
+});
+
+describe("resolveRefundAmountUsd", () => {
+  it("converts GBP presentment refunds even when shop order currency is USD", () => {
+    const result = resolveRefundAmountUsd({
+      refundAmount: 208,
+      shopifyOrder: { currency: "USD", presentment_currency: "GBP" },
+      refund: {
+        id: 1,
+        order_id: 2,
+        created_at: "",
+        refund_line_items: [],
+        transactions: [
+          {
+            id: 1,
+            kind: "refund",
+            gateway: "shopify_payments",
+            status: "success",
+            amount: "208.00",
+            currency: "GBP",
+            receipt: { balance_transaction: { exchange_rate: 1.35 } },
+          },
+        ],
+      },
+    });
+
+    expect(result.conversionApplied).toBe(true);
+    expect(result.presentmentCurrency).toBe("GBP");
+    expect(result.shopOrderCurrency).toBe("USD");
+    expect(result.refundAmountUsd).toBe(280.8);
+    expect(result.exchangeRateInfo?.source).toBe("shopify_receipt");
+  });
+
+  it("skips conversion when presentment is already USD", () => {
+    const result = resolveRefundAmountUsd({
+      refundAmount: 100,
+      shopifyOrder: { currency: "USD", presentment_currency: "USD" },
+      refund: {
+        id: 1,
+        order_id: 2,
+        created_at: "",
+        refund_line_items: [],
+        transactions: [
+          {
+            id: 1,
+            kind: "refund",
+            gateway: "bogus",
+            status: "success",
+            amount: "100.00",
+            currency: "USD",
+          },
+        ],
+      },
+    });
+
+    expect(result.conversionApplied).toBe(false);
+    expect(result.refundAmountUsd).toBe(100);
   });
 });

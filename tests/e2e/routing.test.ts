@@ -24,6 +24,7 @@ import {
   getShippingSku,
   getTaxSku,
   getRefundSku,
+  getBuiltinServiceSkuOverridesByDataArea,
   getReturnConfig,
   isGpsWarehouse,
   isStordWarehouse,
@@ -81,10 +82,13 @@ describe("E2E: Routing Verification", () => {
           expect(isServiceSku(cfg.item.shipping)).toBe(true);
         });
 
-        it("service SKU helpers return matching values", () => {
-          expect(getTaxSku(name)).toBe(cfg.item.tax);
-          expect(getRefundSku(name)).toBe(cfg.item.refund);
-          expect(getShippingSku(name)).toBe(cfg.item.shipping);
+        it("service SKU helpers return profile fallback or warehouse-config values", () => {
+          const area = (cfg.dataAreaId || "").toUpperCase();
+          const fallback =
+            getBuiltinServiceSkuOverridesByDataArea()[area] ?? null;
+          expect(getTaxSku(name)).toBe(fallback?.tax ?? cfg.item.tax);
+          expect(getRefundSku(name)).toBe(fallback?.refund ?? cfg.item.refund);
+          expect(getShippingSku(name)).toBe(fallback?.shipping ?? cfg.item.shipping);
         });
 
         it("return config helpers return matching values", () => {

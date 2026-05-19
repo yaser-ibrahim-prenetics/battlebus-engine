@@ -113,15 +113,15 @@ describe("Order Refund Flow (Integration)", () => {
       expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
     });
 
-    it("uses IM8-SER-000005 for STORD ATL (warehouse-specific service SKU)", () => {
-      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
+    it("uses built-in PROD U001 refund SKU for STORD ATL (dataArea override, not warehouse-config 000005)", () => {
+      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000003");
     });
 
     it("matches process-refund: Hub STORD + US + U001 → STORD refund SKU and return warehouse", () => {
       const fulfillment = resolveRefundFulfillmentWarehouse("US", "STORD ATL Location");
       const profile = getWarehouseConfig(fulfillment);
       expect(fulfillment).toBe("STORD ATL Location");
-      expect(getRefundSku(fulfillment, "U001")).toBe("IM8-SER-000005");
+      expect(getRefundSku(fulfillment, "U001")).toBe("IM8-SER-000003");
       expect(profile.return.shippingWarehouseId).toBe("USOPS-WH05-Q");
     });
   });

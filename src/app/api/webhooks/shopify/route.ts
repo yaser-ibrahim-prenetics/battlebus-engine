@@ -230,9 +230,17 @@ export async function POST(request: NextRequest) {
     } else if (topic === "refunds/create") {
       console.log(`[Webhook] [${requestId}] Refund ID: ${payload.id}`);
       console.log(`[Webhook] [${requestId}] Order ID: ${payload.order_id}`);
+      const refundTx = payload.transactions?.[0];
       console.log(
-        `[Webhook] [${requestId}] Refund Amount: ${payload.transactions?.[0]?.amount || "N/A"}`
+        `[Webhook] [${requestId}] Refund Amount: ${refundTx?.amount || "N/A"} ${refundTx?.currency || ""}`.trim()
       );
+      if (payload.order_adjustments?.length) {
+        const adj = payload.order_adjustments[0]?.amount_set;
+        console.log(
+          `[Webhook] [${requestId}] Refund adjustments presentment: ` +
+            `${adj?.presentment_money?.amount ?? "N/A"} ${adj?.presentment_money?.currency_code ?? ""}`.trim()
+        );
+      }
     } else if (topic === "products/create" || topic === "products/update") {
       console.log(`[Webhook] [${requestId}] Product ID: ${payload.id}`);
       console.log(`[Webhook] [${requestId}] Product Title: ${payload.title}`);

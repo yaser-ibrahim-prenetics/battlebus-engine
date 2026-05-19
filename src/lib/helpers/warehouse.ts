@@ -462,39 +462,105 @@ function resolveServiceSkuConfig(
   return applyServiceSkuOverrides(profile, profileArea, serviceSkuOverridesByArea);
 }
 
+type ServiceSkuProfile = "UAT" | "PROD";
+
 /**
- * Optional per-dataArea service SKU overrides.
+ * Built-in service SKU map when env JSON is unset (mirrors spock-store / IM8 D365 practice).
+ * Env `D365_SERVICE_SKU_BY_DATA_AREA_JSON_*` overrides these per deploy.
+ */
+export const BUILTIN_SERVICE_SKU_BY_PROFILE: Record<
+  ServiceSkuProfile,
+  Record<string, ServiceSkuByDataArea>
+> = {
+  UAT: {
+    U001: {
+      tax: "IM8-SER-000004",
+      refund: "IM8-SER-000005",
+      shipping: "IM8-SER-000003",
+    },
+    H007: {
+      tax: "IM8-SER-000001",
+      refund: "IM8-SER-000003",
+      shipping: "IM8-SER-000002",
+    },
+  },
+  PROD: {
+    U001: {
+      tax: "IM8-SER-000001",
+      refund: "IM8-SER-000003",
+      shipping: "IM8-SER-000002",
+    },
+    H007: {
+      tax: "IM8-SER-000001",
+      refund: "IM8-SER-000003",
+      shipping: "IM8-SER-000002",
+    },
+  },
+};
+
+/**
+ * Per-dataArea service SKU overrides.
  *
- * Supported env patterns:
- * - D365_SERVICE_SKU_BY_DATA_AREA_JSON                (generic)
- * - D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT            (profile-specific)
- * - D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD           (profile-specific)
- * - D365_SERVICE_SKU_PROFILE=uat|prod|<suffix>        (explicit profile selector)
+ * Priority:
+ * 1. Env JSON (`D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` / generic)
+ * 2. Built-in profile map {@link BUILTIN_SERVICE_SKU_BY_PROFILE} (U001 + H007)
+ * 3. Per-warehouse values in `warehouse-config.json` (when data area not in map)
  *
- * If profile is not provided, selection falls back to D365_BASE_URL heuristic:
- * - contains "sandbox" or "uat" -> UAT key
- * - otherwise -> PROD key
+ * Profile: `D365_SERVICE_SKU_PROFILE` or `D365_BASE_URL` containing `uat`/`sandbox` → UAT.
  */
 function loadServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
   const raw = resolveServiceSkuOverrideRawJson();
-  if (!raw) return {};
-  return parseServiceSkuOverridesByDataArea(raw);
+  if (raw) {
+    const fromEnv = parseServiceSkuOverridesByDataArea(raw);
+    if (Object.keys(fromEnv).length > 0) {
+      return fromEnv;
+    }
+  }
+  return getBuiltinServiceSkuOverridesByDataArea();
 }
 
-function resolveServiceSkuOverrideRawJson(): string | undefined {
+/** Active profile's built-in U001/H007 service SKUs (used when env JSON is not set). */
+export function getBuiltinServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
+  const profile = getServiceSkuEnvProfile();
+  const key: ServiceSkuProfile =
+    profile === "UAT" || profile === "PROD" ? profile : "PROD";
+  return { ...BUILTIN_SERVICE_SKU_BY_PROFILE[key] };
+}
+
+export type ServiceSkuOverrideKind = "env" | "builtin";
+
+export function getServiceSkuOverrideKind(): ServiceSkuOverrideKind {
+  const raw = resolveServiceSkuOverrideRawJson();
+  if (raw && Object.keys(parseServiceSkuOverridesByDataArea(raw)).length > 0) {
+    return "env";
+  }
+  return "builtin";
+}
+
+/** UAT vs PROD selector for `D365_SERVICE_SKU_BY_DATA_AREA_JSON_*` env vars. */
+export function getServiceSkuEnvProfile(): string {
   const explicitProfile = String(process.env.D365_SERVICE_SKU_PROFILE || "")
     .trim()
     .toUpperCase();
-  const baseUrl = String(process.env.D365_BASE_URL || "")
-    .trim()
-    .toLowerCase();
-  const inferredProfile = explicitProfile
-    ? explicitProfile
-    : baseUrl.includes("sandbox") || baseUrl.includes("uat")
-      ? "UAT"
-      : "PROD";
+  if (explicitProfile) return explicitProfile;
+  const baseUrl = String(process.env.D365_BASE_URL || "").trim().toLowerCase();
+  return baseUrl.includes("sandbox") || baseUrl.includes("uat") ? "UAT" : "PROD";
+}
 
-  const profileVarName = `D365_SERVICE_SKU_BY_DATA_AREA_JSON_${inferredProfile.replace(/[^A-Z0-9_]/g, "_")}`;
+/** Which env var supplied the service SKU JSON (for logs), if any. */
+export function getActiveServiceSkuEnvVarName(): string | null {
+  const profile = getServiceSkuEnvProfile();
+  const profileVarName = `D365_SERVICE_SKU_BY_DATA_AREA_JSON_${profile.replace(/[^A-Z0-9_]/g, "_")}`;
+  if (process.env[profileVarName]?.trim()) return profileVarName;
+  if (process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON?.trim()) {
+    return "D365_SERVICE_SKU_BY_DATA_AREA_JSON";
+  }
+  return null;
+}
+
+function resolveServiceSkuOverrideRawJson(): string | undefined {
+  const profile = getServiceSkuEnvProfile();
+  const profileVarName = `D365_SERVICE_SKU_BY_DATA_AREA_JSON_${profile.replace(/[^A-Z0-9_]/g, "_")}`;
   const profileRaw = process.env[profileVarName];
   if (profileRaw && String(profileRaw).trim()) {
     return profileRaw;
@@ -606,12 +672,97 @@ export function getTaxSku(warehouseName: string, dataAreaIdOverride?: string): s
   return config.item.tax;
 }
 
+export type RefundSkuResolution = {
+  refundSku: string;
+  dataAreaId: string;
+  warehouseName: string;
+  source: "env_json_override" | "profile_sku_fallback" | "warehouse_config";
+  envProfile: string;
+  envVarName: string | null;
+  overrideKind: ServiceSkuOverrideKind;
+  envDataAreaKeys: string[];
+  warehouseConfigRefund: string;
+  envRefundSku: string | null;
+};
+
+function resolveBaseWarehouseConfigForServiceSku(
+  warehouseName: string,
+  normalizedDataAreaId: string
+): WarehouseConfig {
+  if (normalizedDataAreaId) {
+    try {
+      const byWarehouse = getWarehouseConfig(warehouseName);
+      if ((byWarehouse.dataAreaId || "").toUpperCase() === normalizedDataAreaId) {
+        return byWarehouse;
+      }
+    } catch {
+      // Unknown warehouse label — fall back to dataArea profile.
+    }
+    return getWarehouseConfigForDataAreaId(normalizedDataAreaId);
+  }
+  return getWarehouseConfig(warehouseName);
+}
+
+/**
+ * Resolve refund SKU with audit metadata. Env JSON wins; else built-in UAT/PROD map; else warehouse-config.
+ */
+export function resolveRefundSkuAudit(
+  warehouseName: string,
+  dataAreaIdOverride?: string
+): RefundSkuResolution {
+  const normalizedDataAreaId = (dataAreaIdOverride || "")
+    .toUpperCase()
+    .trim();
+  const baseConfig = resolveBaseWarehouseConfigForServiceSku(
+    warehouseName,
+    normalizedDataAreaId || (getWarehouseConfig(warehouseName).dataAreaId || "").toUpperCase()
+  );
+  const dataAreaId =
+    normalizedDataAreaId || (baseConfig.dataAreaId || "").toUpperCase().trim();
+
+  const overridesByArea = loadServiceSkuOverridesByDataArea();
+  const overrideKind = getServiceSkuOverrideKind();
+  const envVarName = getActiveServiceSkuEnvVarName();
+  const envProfile = getServiceSkuEnvProfile();
+  const envDataAreaKeys = Object.keys(overridesByArea);
+  const envEntry = overridesByArea[dataAreaId] ?? null;
+  const envRefundSku = envEntry?.refund?.trim() || null;
+  const warehouseConfigRefund = baseConfig.item.refund;
+
+  if (overrideKind === "env" && envVarName && envDataAreaKeys.length > 0 && !envRefundSku) {
+    throw new Error(
+      `[Refund SKU] ${envVarName} must define JSON "${dataAreaId}.refund" ` +
+        `(profile ${envProfile}). Keys in env: ${envDataAreaKeys.join(", ") || "(none)"}`
+    );
+  }
+
+  const finalConfig = applyServiceSkuOverrides(baseConfig, dataAreaId, overridesByArea);
+
+  const source: RefundSkuResolution["source"] = envRefundSku
+    ? overrideKind === "env"
+      ? "env_json_override"
+      : "profile_sku_fallback"
+    : "warehouse_config";
+
+  return {
+    refundSku: finalConfig.item.refund,
+    dataAreaId,
+    warehouseName,
+    source,
+    envProfile,
+    envVarName,
+    overrideKind,
+    envDataAreaKeys,
+    warehouseConfigRefund,
+    envRefundSku,
+  };
+}
+
 /**
  * Get refund SKU for warehouse or routed dataArea profile.
  */
 export function getRefundSku(warehouseName: string, dataAreaIdOverride?: string): string {
-  const config = resolveServiceSkuConfig(warehouseName, dataAreaIdOverride);
-  return config.item.refund;
+  return resolveRefundSkuAudit(warehouseName, dataAreaIdOverride).refundSku;
 }
 
 // ============================================================================

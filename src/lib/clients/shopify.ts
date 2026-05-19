@@ -943,6 +943,8 @@ export interface ShopifyOrder {
   total_tax: string;
   total_refunded?: string;
   currency: string;
+  /** Customer-facing checkout currency when it differs from shop `currency`. */
+  presentment_currency?: string;
   financial_status: string;
   fulfillment_status: string | null;
   line_items: ShopifyLineItem[];

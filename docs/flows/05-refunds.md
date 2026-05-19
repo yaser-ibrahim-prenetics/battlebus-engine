@@ -59,13 +59,25 @@ Looks up the D365 sales order by `THK_ShopifyReference` (order name). If not fou
 
 ### Step 3: Determine Warehouse Info
 
-Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment) from the warehouse configuration, aligned with spock-store `dynamics.services.dataArea.*.item.refund` in `api.json`. For IM8 GPS/UK/HK and STORD EU, refund is `IM8-SER-000003`. STORD ATL uses `IM8-SER-000005`. CircleDNA warehouses use `PRE-SER-000023`.
+Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment).
+
+**Refund SKU source (priority):**
+
+1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` (or generic `D365_SERVICE_SKU_BY_DATA_AREA_JSON`). When set, `{dataAreaId}.refund` is **required** for that data area.
+2. **Built-in profile map** (`BUILTIN_SERVICE_SKU_BY_PROFILE` in `warehouse.ts`) when env is unset:
+   - **UAT:** U001 → tax `IM8-SER-000004`, refund `IM8-SER-000005`, shipping `IM8-SER-000003`; H007 → tax/refund/shipping `000001` / `000003` / `000002`
+   - **PROD:** U001 + H007 → tax `IM8-SER-000001`, refund `IM8-SER-000003`, shipping `IM8-SER-000002`
+3. **`warehouse-config.json`** only for data areas not in the map (e.g. H001 CircleDNA).
+
+Return sites still come from `warehouse-config.json` for the fulfillment warehouse profile.
 
 ### Step 4: Calculate Refund Amount
 
 Sums successful refund transactions (`kind="refund"`, `status="success"`) from the Shopify refund payload, falling back to `refund_line_items` subtotal + tax when the gateway omits transaction rows.
 
 ### Step 4b: Convert to USD
+
+Uses **presentment currency** (refund transaction currency → `order.presentment_currency` → `order.currency`), not shop `currency` alone. IM8’s shop currency is often USD while UK/EU customers pay and refund in GBP/EUR; skipping conversion when `order.currency === "USD"` was incorrect.
 
 Priority order for the FX rate used when converting a non-USD refund to the D365 currency (USD):
 

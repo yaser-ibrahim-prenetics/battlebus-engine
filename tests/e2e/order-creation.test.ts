@@ -264,9 +264,9 @@ describe("E2E: Order Creation Flow", () => {
       },
       {
         warehouse: "STORD ATL Location",
-        tax: "IM8-SER-000004",
-        refund: "IM8-SER-000005",
-        shipping: "IM8-SER-000003",
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
+        shipping: "IM8-SER-000002",
       },
     ];
 

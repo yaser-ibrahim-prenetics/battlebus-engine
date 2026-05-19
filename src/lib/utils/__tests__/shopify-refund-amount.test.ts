@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { computeRefundAmountShopifyPresentment } from "../shopify-refund-amount";
+import {
+  analyzeRefundAmount,
+  computeRefundAmountShopifyPresentment,
+  resolveRefundPresentmentCurrency,
+} from "../shopify-refund-amount";
 import type { ShopifyRefundPayload } from "@/inngest/events";
 
 function baseRefund(overrides: Partial<ShopifyRefundPayload> = {}): ShopifyRefundPayload {
@@ -74,5 +78,44 @@ describe("computeRefundAmountShopifyPresentment", () => {
       ] as any,
     });
     expect(computeRefundAmountShopifyPresentment(refund)).toBe(245.7);
+  });
+
+  it("analyzeRefundAmount reports the winning source", () => {
+    const refund = baseRefund({
+      transactions: [
+        { id: 1, kind: "refund", gateway: "bogus", status: "success", amount: "208.00", currency: "GBP" },
+      ],
+    });
+    expect(analyzeRefundAmount(refund)).toMatchObject({
+      amount: 208,
+      source: "success_transactions",
+      transactionCurrencies: ["GBP"],
+    });
+  });
+});
+
+describe("resolveRefundPresentmentCurrency", () => {
+  it("prefers refund transaction currency over shop USD", () => {
+    const currency = resolveRefundPresentmentCurrency(
+      { currency: "USD", presentment_currency: "GBP" },
+      baseRefund({
+        transactions: [
+          { id: 1, kind: "refund", gateway: "shopify", status: "success", amount: "208.00", currency: "GBP" },
+        ],
+      })
+    );
+    expect(currency).toBe("GBP");
+  });
+
+  it("falls back to order presentment_currency when refund tx has no currency", () => {
+    const currency = resolveRefundPresentmentCurrency(
+      { currency: "USD", presentment_currency: "GBP" },
+      baseRefund({
+        transactions: [
+          { id: 1, kind: "refund", gateway: "shopify", status: "success", amount: "208.00" },
+        ],
+      })
+    );
+    expect(currency).toBe("GBP");
   });
 });

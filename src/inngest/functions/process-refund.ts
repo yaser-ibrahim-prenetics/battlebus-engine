@@ -7,7 +7,10 @@ import * as exchangeHelper from "@/lib/helpers/exchange";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyRefundCreatedEvent, ShopifyRefundPayload } from "../events";
-import { computeRefundAmountShopifyPresentment } from "@/lib/utils/shopify-refund-amount";
+import {
+  analyzeRefundAmount,
+  resolveRefundPresentmentCurrency,
+} from "@/lib/utils/shopify-refund-amount";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -302,87 +305,118 @@ export const processRefund = inngest.createFunction(
       if (!dataAreaId) {
         dataAreaId = warehouseHelper.getDefaultWarehouse().dataAreaId.toUpperCase();
       }
+      const shippingCountry = shopifyOrder.shipping_address?.country_code || null;
+      const hubWarehouse = d365Step.audit.supabaseLookup.warehouse ?? null;
       const fulfillmentWarehouse = warehouseHelper.resolveRefundFulfillmentWarehouse(
-        shopifyOrder.shipping_address?.country_code,
-        d365Step.audit.supabaseLookup.warehouse
+        shippingCountry,
+        hubWarehouse
       );
       const fulfillmentProfile = warehouseHelper.getWarehouseConfig(fulfillmentWarehouse);
-      const refundSku = warehouseHelper.getRefundSku(fulfillmentWarehouse, dataAreaId);
+      const refundSkuAudit = warehouseHelper.resolveRefundSkuAudit(
+        fulfillmentWarehouse,
+        dataAreaId
+      );
+      const refundSku = refundSkuAudit.refundSku;
+      const countryRoutedWarehouse = warehouseHelper.determineWarehouse(shippingCountry || "US");
 
-      return {
+      const skuResolution = {
         dataAreaId,
         warehouseName: fulfillmentWarehouse,
         refundSku,
         returnConfig: fulfillmentProfile.return,
+        skuResolution: {
+          shippingCountry,
+          hubWarehouseFromSupabase: hubWarehouse,
+          countryRoutedWarehouse,
+          fulfillmentWarehouseUsed: fulfillmentWarehouse,
+          d365HeaderDataAreaId: d365Order?.dataAreaId ?? null,
+          refundSkuSource: refundSkuAudit.source,
+          refundSkuOverrideKind: refundSkuAudit.overrideKind,
+          refundSkuEnvVar: refundSkuAudit.envVarName,
+          refundSkuEnvProfile: refundSkuAudit.envProfile,
+          refundSkuEnvDataAreaKeys: refundSkuAudit.envDataAreaKeys,
+          refundSkuFromEnvJson: refundSkuAudit.envRefundSku,
+          refundSkuWarehouseConfigDefault: refundSkuAudit.warehouseConfigRefund,
+          returnShippingSiteId: fulfillmentProfile.return.shippingSiteId,
+          returnShippingWarehouseId: fulfillmentProfile.return.shippingWarehouseId,
+        },
       };
+
+      console.log(
+        JSON.stringify({
+          msg: "[Refund] d365_refund_sku_resolved",
+          ...refundTrace,
+          orderName: shopifyOrder.name ?? null,
+          ...skuResolution.skuResolution,
+          refundSku,
+          dataAreaId,
+        })
+      );
+
+      return skuResolution;
     });
 
     // 4. Calculate Refund Amount (for the negative line price)
     // Note: In spock-store, price is positive, quantity is negative (-1).
-    const refundAmount = await step.run("calculate-refund-amount", async () => {
-      return computeRefundAmountShopifyPresentment(refund);
+    const refundAmountBreakdown = await step.run("calculate-refund-amount", async () => {
+      const breakdown = analyzeRefundAmount(refund);
+      console.log(
+        JSON.stringify({
+          msg: "[Refund] refund_amount_calculated",
+          ...refundTrace,
+          orderName: shopifyOrder.name ?? null,
+          amount: breakdown.amount,
+          source: breakdown.source,
+          transactionCurrencies: breakdown.transactionCurrencies,
+          adjustmentPresentmentCurrency: breakdown.adjustmentPresentmentCurrency,
+          presentmentCurrency: resolveRefundPresentmentCurrency(shopifyOrder, refund),
+          shopOrderCurrency: (shopifyOrder.currency || "USD").toUpperCase(),
+        })
+      );
+      return breakdown;
     });
+    const refundAmount = refundAmountBreakdown.amount;
 
-    // 4b. Convert refund amount to USD if order is in a different currency.
-    //
-    // Priority (matches spock-store's convertToUsd):
-    //   1. The refund transaction's own `receipt.balance_transaction.exchange_rate`
-    //      (authoritative Stripe/Shopify FX rate actually applied to this refund).
-    //   2. Pair-based derivation from two differing-currency transactions on the order.
-    //   3. Hand-maintained static fallback table.
-    const { refundAmountUsd, exchangeRateInfo } = await step.run(
-      "convert-refund-currency",
-      async () => {
-        const orderCurrency = (shopifyOrder.currency || "USD").toUpperCase();
+    // 4b. Convert presentment refund total to USD for D365 (shop `currency` may still be USD).
+    const usdResolution = await step.run("convert-refund-currency", async () => {
+      const resolved = exchangeHelper.resolveRefundAmountUsd({
+        refundAmount,
+        shopifyOrder,
+        refund,
+      });
 
-        if (orderCurrency === "USD") {
-          return {
-            refundAmountUsd: refundAmount,
-            exchangeRateInfo: null,
-          };
-        }
+      console.log(
+        JSON.stringify({
+          msg: "[Refund] refund_currency_conversion",
+          ...refundTrace,
+          orderName: shopifyOrder.name ?? null,
+          refundAmountPresentment: refundAmount,
+          presentmentCurrency: resolved.presentmentCurrency,
+          shopOrderCurrency: resolved.shopOrderCurrency,
+          refundAmountUsd: resolved.refundAmountUsd,
+          conversionApplied: resolved.conversionApplied,
+          exchangeRate: resolved.exchangeRateInfo?.rate ?? null,
+          exchangeRateSource: resolved.exchangeRateInfo?.source ?? null,
+        })
+      );
 
-        let exchangeRate = exchangeHelper.extractExchangeRateFromRefundReceipt(refund, "USD");
-
-        if (!exchangeRate) {
-          const transactions = shopifyOrder.transactions || refund.transactions || [];
-          exchangeRate = exchangeHelper.extractExchangeRateFromTransactions(transactions, "USD");
-        }
-
-        if (!exchangeRate) {
-          exchangeRate = exchangeHelper.getFallbackRate(orderCurrency, "USD");
-        }
-
-        const convertedAmount = exchangeHelper.convertToShopCurrency(
-          refundAmount,
-          orderCurrency,
-          exchangeRate
-        );
-
-        console.log(
-          `[Refund ${refundId}] Currency conversion: ${refundAmount} ${orderCurrency} → ${convertedAmount} USD` +
-            ` (rate: ${exchangeRate?.rate ?? "1:1 fallback"}, source: ${exchangeRate?.source ?? "none"})`
-        );
-
-        return {
-          refundAmountUsd: convertedAmount,
-          exchangeRateInfo: exchangeRate
-            ? {
-                from: exchangeRate.from,
-                to: exchangeRate.to,
-                rate: exchangeRate.rate,
-                source: exchangeRate.source,
-              }
-            : null,
-        };
-      }
-    );
+      return resolved;
+    });
+    const { refundAmountUsd, exchangeRateInfo } = {
+      refundAmountUsd: usdResolution.refundAmountUsd,
+      exchangeRateInfo: usdResolution.exchangeRateInfo,
+    };
 
     emitRefundConfirmation("refund_amount_resolved", "completed", {
       refundAmount,
       refundAmountUsd,
-      sourceCurrency: (shopifyOrder.currency || "USD").toUpperCase(),
+      refundAmountSource: refundAmountBreakdown.source,
+      presentmentCurrency: usdResolution.presentmentCurrency,
+      shopOrderCurrency: usdResolution.shopOrderCurrency,
+      conversionApplied: usdResolution.conversionApplied,
+      exchangeRate: exchangeRateInfo?.rate ?? null,
       exchangeRateSource: exchangeRateInfo?.source || null,
+      transactionCurrencies: refundAmountBreakdown.transactionCurrencies,
       txCount: Array.isArray(refund.transactions) ? refund.transactions.length : 0,
       refundLineItemsCount: Array.isArray(refund.refund_line_items)
         ? refund.refund_line_items.length
@@ -411,17 +445,30 @@ export const processRefund = inngest.createFunction(
 
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
-      // Create negative line
-      // Quantity -1, Price = Refund Amount
-      const result = await dynamics.createSalesOrderLine({
+      const d365LinePayload = {
         salesOrderNumber: d365Order.SalesOrderNumber!,
         dataAreaId,
         itemNumber: warehouseInfo.refundSku,
         quantity: -1,
         price: refundAmountUsd,
-      });
+      };
 
-      return { ...result, status: "created" };
+      console.log(
+        JSON.stringify({
+          msg: "[Refund] d365_create_refund_line_request",
+          ...refundTrace,
+          orderName: shopifyOrder.name ?? null,
+          d365OrderNumber: d365Order.SalesOrderNumber,
+          ...d365LinePayload,
+          refundAmountPresentment: refundAmount,
+          presentmentCurrency: usdResolution.presentmentCurrency,
+          skuResolution: warehouseInfo.skuResolution,
+        })
+      );
+
+      const result = await dynamics.createSalesOrderLine(d365LinePayload);
+
+      return { ...result, status: "created", request: d365LinePayload };
     });
 
     // Emit the dedupe anchor immediately after the negative line is created so that
@@ -432,6 +479,9 @@ export const processRefund = inngest.createFunction(
         d365OrderNumber: d365Order?.SalesOrderNumber || null,
         refundSku: warehouseInfo.refundSku,
         refundAmountUsd,
+        refundAmountPresentment: refundAmount,
+        presentmentCurrency: usdResolution.presentmentCurrency,
+        skuResolution: warehouseInfo.skuResolution,
         lotId: refundLine.InventoryLotId,
       });
       logFlowEvent({

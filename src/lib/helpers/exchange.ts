@@ -4,6 +4,12 @@
 // Ported from spock-store's exchange.ts
 // IM8 uses USD as primary currency but needs to handle multi-currency refunds
 
+import {
+  resolveRefundPresentmentCurrency,
+  type OrderCurrencyHints,
+} from "@/lib/utils/shopify-refund-amount";
+import type { ShopifyRefundPayload } from "@/inngest/events";
+
 export interface ExchangeRate {
   from: string;
   to: string;
@@ -138,4 +144,72 @@ export function convertToShopCurrency(
   if (fromCurrency === "USD") return amount;
   if (!exchangeRate) return amount; // fallback: assume 1:1
   return Math.round(amount * exchangeRate.rate * 100) / 100; // round to 2 decimal places
+}
+
+export type RefundUsdResolution = {
+  refundAmountUsd: number;
+  presentmentCurrency: string;
+  shopOrderCurrency: string;
+  conversionApplied: boolean;
+  exchangeRateInfo: {
+    from: string;
+    to: string;
+    rate: number;
+    source: ExchangeRate["source"];
+  } | null;
+};
+
+/**
+ * Convert a presentment refund total to USD for D365 posting.
+ * Uses presentment currency (not shop `currency`) so GBP refunds on USD shops still convert.
+ */
+export function resolveRefundAmountUsd(params: {
+  refundAmount: number;
+  shopifyOrder: OrderCurrencyHints & {
+    transactions?: Array<{ amount: string; currency?: string }>;
+  };
+  refund: ShopifyRefundPayload;
+  d365Currency?: string;
+}): RefundUsdResolution {
+  const d365Currency = (params.d365Currency || "USD").toUpperCase();
+  const shopOrderCurrency = (params.shopifyOrder.currency || "USD").toUpperCase();
+  const presentmentCurrency = resolveRefundPresentmentCurrency(params.shopifyOrder, params.refund);
+
+  if (presentmentCurrency === d365Currency) {
+    return {
+      refundAmountUsd: params.refundAmount,
+      presentmentCurrency,
+      shopOrderCurrency,
+      conversionApplied: false,
+      exchangeRateInfo: null,
+    };
+  }
+
+  const orderTransactions = params.shopifyOrder.transactions || params.refund.transactions || [];
+
+  let exchangeRate =
+    extractExchangeRateFromRefundReceipt(params.refund, d365Currency) ||
+    extractExchangeRateFromTransactions(orderTransactions, d365Currency) ||
+    getFallbackRate(presentmentCurrency, d365Currency);
+
+  const refundAmountUsd = convertToShopCurrency(
+    params.refundAmount,
+    presentmentCurrency,
+    exchangeRate
+  );
+
+  return {
+    refundAmountUsd,
+    presentmentCurrency,
+    shopOrderCurrency,
+    conversionApplied: true,
+    exchangeRateInfo: exchangeRate
+      ? {
+          from: exchangeRate.from,
+          to: exchangeRate.to,
+          rate: exchangeRate.rate,
+          source: exchangeRate.source,
+        }
+      : null,
+  };
 }

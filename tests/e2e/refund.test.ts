@@ -205,12 +205,12 @@ describe("E2E: Refund Flow", () => {
     }, 120_000);
   });
 
-  describe("STORD refund with IM8-SER-000005", () => {
-    it("uses the STORD-specific refund SKU", () => {
+  describe("STORD refund uses U001 PROD profile fallback", () => {
+    it("uses built-in PROD U001 refund SKU (not warehouse-config STORD 000005)", () => {
       const refundSku = getRefundSku("STORD ATL Location");
       const returnCfg = getReturnConfig("STORD ATL Location");
 
-      expect(refundSku).toBe("IM8-SER-000005");
+      expect(refundSku).toBe("IM8-SER-000003");
       expect(returnCfg.shippingWarehouseId).toBe("USOPS-WH05-Q");
       expect(returnCfg.shippingWarehouseLocationId).toBe("Return");
     });
@@ -221,7 +221,7 @@ describe("E2E: Refund Flow", () => {
       { warehouse: "GPS Warehouse", expectedSku: "IM8-SER-000003" },
       { warehouse: "GPS UK Warehouse", expectedSku: "IM8-SER-000003" },
       { warehouse: "HK Warehouse", expectedSku: "IM8-SER-000003" },
-      { warehouse: "STORD ATL Location", expectedSku: "IM8-SER-000005" },
+      { warehouse: "STORD ATL Location", expectedSku: "IM8-SER-000003" },
     ];
 
     for (const tc of cases) {

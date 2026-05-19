@@ -20,6 +20,7 @@ import {
   getShippingSku,
   getTaxSku,
   getRefundSku,
+  resolveRefundSkuAudit,
   getFulfilmentConfig,
   getReturnConfig,
   shouldSkipFulfilmentNotification,
@@ -285,21 +286,33 @@ describe("Warehouse Routing Helpers", () => {
       expect(getShippingSku("GPS Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("GPS UK Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("HK Warehouse")).toBe("IM8-SER-000002");
-      expect(getShippingSku("STORD ATL Location")).toBe("IM8-SER-000003");
+      expect(getShippingSku("STORD ATL Location")).toBe("IM8-SER-000002");
     });
 
-    it("getTaxSku returns correct SKU per warehouse", () => {
+    it("getTaxSku returns correct SKU per warehouse (PROD profile fallback for U001/H007)", () => {
       expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000001");
-      expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000004");
+      expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000001");
     });
 
-    it("getRefundSku returns correct SKU per warehouse", () => {
+    it("getRefundSku uses built-in PROD profile map for U001/H007 when env unset", () => {
       expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
-      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
+      // U001 PROD fallback is GPS-style refund SKU (not STORD warehouse-config 000005)
+      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000003");
+    });
+
+    it("getRefundSku uses built-in UAT profile map when profile is UAT", () => {
+      process.env.D365_SERVICE_SKU_PROFILE = "UAT";
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
+
+      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
+      expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000004");
+      expect(getShippingSku("GPS Warehouse")).toBe("IM8-SER-000003");
+      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
     });
 
     it("resolves SKU profile by routed dataAreaId when provided", () => {
@@ -324,6 +337,49 @@ describe("Warehouse Routing Helpers", () => {
       expect(getShippingSku("GPS Warehouse")).toBe("UAT-SHIPPING-SKU");
       // Override follows routed dataArea, independent of arbitrary warehouse label.
       expect(getShippingSku("Some Custom Location", "U001")).toBe("UAT-SHIPPING-SKU");
+    });
+
+    it("resolveRefundSkuAudit reports env_json_override when UAT JSON is set", () => {
+      process.env.D365_SERVICE_SKU_PROFILE = "UAT";
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
+        U001: {
+          tax: "UAT-TAX",
+          refund: "UAT-REFUND-FROM-ENV",
+          shipping: "UAT-SHIP",
+        },
+      });
+
+      const audit = resolveRefundSkuAudit("GPS UK Warehouse", "U001");
+      expect(audit.refundSku).toBe("UAT-REFUND-FROM-ENV");
+      expect(audit.source).toBe("env_json_override");
+      expect(audit.overrideKind).toBe("env");
+      expect(audit.envVarName).toBe("D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT");
+      expect(audit.envProfile).toBe("UAT");
+      expect(audit.envRefundSku).toBe("UAT-REFUND-FROM-ENV");
+      expect(audit.warehouseConfigRefund).toBe("IM8-SER-000003");
+    });
+
+    it("resolveRefundSkuAudit uses profile_sku_fallback without env", () => {
+      delete process.env.D365_SERVICE_SKU_PROFILE;
+      delete process.env.D365_BASE_URL;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD;
+
+      const audit = resolveRefundSkuAudit("GPS Warehouse", "U001");
+      expect(audit.refundSku).toBe("IM8-SER-000003");
+      expect(audit.source).toBe("profile_sku_fallback");
+      expect(audit.overrideKind).toBe("builtin");
+      expect(audit.envVarName).toBeNull();
+    });
+
+    it("resolveRefundSkuAudit throws when env JSON is set but dataArea refund is missing", () => {
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON = JSON.stringify({
+        U001: { tax: "ONLY-TAX", shipping: "ONLY-SHIP" },
+      });
+
+      expect(() => resolveRefundSkuAudit("GPS Warehouse", "U001")).toThrow(
+        /must define JSON "U001\.refund"/
+      );
     });
 
     it("prefers profile-specific override key when selected", () => {
