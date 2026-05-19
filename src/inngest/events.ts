@@ -252,6 +252,7 @@ export type BackorderCreatedEvent = {
       | "gps_error"
       | "inventory_insufficient"
       | "d365_fulfillment_error"
+      | "d365_fulfilment_incomplete"
       | "order_validation";
     failedSkus: string[];
     retryCount: number;

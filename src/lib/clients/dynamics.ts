@@ -5,6 +5,7 @@
 // Uses THK custom API endpoints (not generic OData)
 
 import { config } from "../config";
+import { assertThkFulfilmentSucceeded } from "../helpers/d365-thk-fulfilment";
 import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
 import { logFlowEvent } from "../services/supabase-flow-logs";
 import type {
@@ -1260,6 +1261,7 @@ export async function createFulfilment(
     );
 
     if (result.status === DYNAMICS_THK_API_SUCCESS_STATUS) {
+      assertThkFulfilmentSucceeded(result, salesOrderNumber);
       console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
       return { response: result, request: body };
     }

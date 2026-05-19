@@ -46,6 +46,7 @@ import {
   markServiceLinesFulfilled,
 } from "@/lib/services/supabase-order-lines";
 import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
+import { isThkFulfilmentIncompleteError } from "@/lib/helpers/d365-thk-fulfilment";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -67,8 +68,9 @@ function isFulfillmentInventoryIssueError(message: string): boolean {
 
 /** Retries inside `createFulfilment` — never for terminal inventory / business-rule failures. */
 function isTransientFulfillmentApiError(err: unknown): boolean {
-  const m = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const m = err instanceof Error ? err.message : String(err);
   if (isFulfillmentInventoryIssueError(m)) return false;
+  if (isThkFulfilmentIncompleteError(m)) return false;
   if (m.includes("rate limit") || m.includes("429")) return true;
   if (m.includes("503") || m.includes("502") || m.includes("504")) return true;
   if (m.includes("timeout") || m.includes("etimedout") || m.includes("econnreset")) return true;
@@ -655,6 +657,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           );
 
           const invTerminal = isFulfillmentInventoryIssueError(errorMsg);
+          const fulfilmentIncomplete = isThkFulfilmentIncompleteError(errorMsg);
           await logFlowEventSync({
             flow: "fulfillment",
             step: "d365-create-fulfilment",
@@ -665,7 +668,11 @@ export const processShopifyFulfillment = inngest.createFunction(
             shopifyOrderName,
             d365OrderNumber: d365Order.SalesOrderNumber || undefined,
             errorMessage: errorMsg,
-            errorType: invTerminal ? "inventory_terminal" : "d365_fulfillment_error",
+            errorType: fulfilmentIncomplete
+              ? "d365_fulfilment_incomplete"
+              : invTerminal
+                ? "inventory_terminal"
+                : "d365_fulfillment_error",
             payload: {
               fulfillmentId: fulfillment.id,
               terminalInventory: invTerminal,
@@ -678,7 +685,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             error: errorMsg,
           });
 
-          if (!backorderQueued && invTerminal) {
+          if (!backorderQueued && (invTerminal || fulfilmentIncomplete)) {
             backorderQueued = true;
             const failedSkus = fulfillmentSkuCandidates;
             // D365 inventory site (e.g. "GPS Warehouse" for U001) — used only
@@ -706,7 +713,9 @@ export const processShopifyFulfillment = inngest.createFunction(
                 // Prefer real ship-from; fall back to D365 site only if unknown.
                 warehouse: shipFromWarehouseName || d365WarehouseName,
                 errorMessage: errorMsg,
-                errorType: "inventory_insufficient",
+                errorType: fulfilmentIncomplete
+                  ? "d365_fulfilment_incomplete"
+                  : "inventory_insufficient",
                 failedSkus,
                 retryCount: 0,
                 maxRetries: BACKORDER_CONFIGS.maxRetries,
@@ -723,7 +732,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               },
             });
             console.warn(
-              `[Backorder] Queued from fulfillment for ${shopifyOrderName}: ${errorMsg}; SKUs=${failedSkus.join(", ")}`
+              `[Backorder] Queued from fulfillment (${fulfilmentIncomplete ? "d365_fulfilment_incomplete" : "inventory"}) for ${shopifyOrderName}: ${errorMsg}; SKUs=${failedSkus.join(", ")}`
             );
           }
         }
@@ -780,7 +789,9 @@ export const processShopifyFulfillment = inngest.createFunction(
     );
     const hasBackorderQueued = fulfillmentResults.some(
       (r: { status: string; error?: string }) =>
-        r.status === "error" && isFulfillmentInventoryIssueError(String(r.error || ""))
+        r.status === "error" &&
+        (isFulfillmentInventoryIssueError(String(r.error || "")) ||
+          isThkFulfilmentIncompleteError(String(r.error || "")))
     );
     if (anyFulfillmentError) {
       const firstErrorResult = fulfillmentResults.find(
@@ -788,9 +799,13 @@ export const processShopifyFulfillment = inngest.createFunction(
       ) as { error?: string } | undefined;
       const firstErrorMessage = String(firstErrorResult?.error || "Fulfillment persistence failed");
       const firstErrorIsInventory = isFulfillmentInventoryIssueError(firstErrorMessage);
-      const queueErrorType = firstErrorIsInventory
-        ? "inventory_insufficient"
-        : "d365_fulfillment_error";
+      const firstErrorIsFulfilmentIncomplete =
+        isThkFulfilmentIncompleteError(firstErrorMessage);
+      const queueErrorType = firstErrorIsFulfilmentIncomplete
+        ? "d365_fulfilment_incomplete"
+        : firstErrorIsInventory
+          ? "inventory_insufficient"
+          : "d365_fulfillment_error";
       const d365Site = (() => {
         try {
           return getWarehouseConfigForDataAreaId(

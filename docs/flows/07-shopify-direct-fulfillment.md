@@ -73,7 +73,11 @@ For each fulfillment in the event:
 
 ### Step 3: Post Prepayment
 
-After successful packing slip, calls `dynamics.createPrepayment` to post the D365 prepayment (invoicing).
+Skipped at fulfillment time — prepayment is posted during order creation (`shopify/order.paid`).
+
+### THK response validation
+
+`createFulfilment` treats THK `status: 1` as failure when `Message` contains blocking warnings (e.g. `Dimension Warehouse is still specified on the inventory transaction`). Those orders are **not** marked D365-fulfilled; they are queued on the **Fulfilment** backorder queue (`d365_fulfilment_incomplete`) for manual replay after D365 is corrected.
 
 ### Step 4: PayPal Tracking Sync (non-blocking)
 
