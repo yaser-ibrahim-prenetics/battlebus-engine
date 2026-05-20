@@ -77,7 +77,7 @@ Skipped at fulfillment time — prepayment is posted during order creation (`sho
 
 ### THK response validation
 
-`createFulfilment` treats THK `status: 1` as failure when `Message` contains blocking warnings (e.g. `Dimension Warehouse is still specified on the inventory transaction`). Those orders are **not** marked D365-fulfilled; they are queued on the **Fulfilment** backorder queue (`d365_fulfilment_incomplete`) for manual replay after D365 is corrected.
+When THK returns `status: 1`, fulfilment is **success** even if `Message` includes informational warehouse-dimension text (e.g. `Dimension Warehouse is still specified … USOPS-WH04`). That text is stored on the flow log as `thkApiWarning` with `level: warn` (fulfilment still completes). Only explicit invoice-failure phrases fail fulfilment and may queue `d365_fulfilment_incomplete` on the fulfilment backorder queue.
 
 ### Step 4: PayPal Tracking Sync (non-blocking)
 

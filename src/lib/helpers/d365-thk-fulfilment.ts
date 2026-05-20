@@ -1,13 +1,18 @@
 /**
- * THK fulfilment API can return status=1 while Message contains blocking warnings
- * (e.g. warehouse dimension on inventory transactions). Those must not be treated
- * as invoiced / fulfilled — callers should fail and route to fulfilment backlog.
+ * THK fulfilment API often returns status=1 with informational Message text
+ * (e.g. warehouse dimension on inventory transactions). Those are success when
+ * status=1 — same as spock-store / historical Hub behaviour.
  */
 
-/** Substrings (lowercase) that indicate D365 did not fully invoice / close fulfilment. */
-export const THK_FULFILMENT_BLOCKING_MESSAGE_HINTS = [
+/** Informational THK text on status=1 — do not fail fulfilment or queue backorders. */
+export const THK_FULFILMENT_INFORMATIONAL_WARNING_HINTS = [
   "dimension warehouse is still specified",
   "dimension site is still specified",
+  "number of vouchers posted to the journal",
+] as const;
+
+/** Substrings that indicate D365 did not fully invoice / close fulfilment. */
+export const THK_FULFILMENT_BLOCKING_MESSAGE_HINTS = [
   "not fully invoiced",
   "failed to invoice",
   "could not be invoiced",
@@ -20,6 +25,27 @@ const BENIGN_THK_MESSAGES = new Set([
   "mock_success",
 ]);
 
+export function isThkFulfilmentInformationalWarning(
+  message: string | null | undefined
+): boolean {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return THK_FULFILMENT_INFORMATIONAL_WARNING_HINTS.some((hint) =>
+    normalized.includes(hint)
+  );
+}
+
+/** Non-blocking THK warning text to surface in logs/Hub when status=1. */
+export function getThkFulfilmentWarningMessage(
+  message: string | null | undefined
+): string | null {
+  const trimmed = String(message || "").trim();
+  if (!trimmed || BENIGN_THK_MESSAGES.has(trimmed.toLowerCase())) {
+    return null;
+  }
+  return isThkFulfilmentInformationalWarning(trimmed) ? trimmed : null;
+}
+
 /**
  * Returns the matched blocking hint, or null when the THK message is acceptable.
  */
@@ -28,6 +54,9 @@ export function getThkFulfilmentBlockingIssue(
 ): string | null {
   const normalized = String(message || "").trim().toLowerCase();
   if (!normalized || BENIGN_THK_MESSAGES.has(normalized)) {
+    return null;
+  }
+  if (isThkFulfilmentInformationalWarning(normalized)) {
     return null;
   }
   for (const hint of THK_FULFILMENT_BLOCKING_MESSAGE_HINTS) {
@@ -48,6 +77,7 @@ export function isThkFulfilmentIncompleteError(message: string): boolean {
 
 /**
  * Throws when THK status is success but Message indicates incomplete invoicing.
+ * Warehouse dimension warnings on status=1 are ignored (informational only).
  */
 export function assertThkFulfilmentSucceeded(
   response: { Message?: string | null },

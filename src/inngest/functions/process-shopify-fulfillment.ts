@@ -46,7 +46,10 @@ import {
   markServiceLinesFulfilled,
 } from "@/lib/services/supabase-order-lines";
 import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
-import { isThkFulfilmentIncompleteError } from "@/lib/helpers/d365-thk-fulfilment";
+import {
+  getThkFulfilmentWarningMessage,
+  isThkFulfilmentIncompleteError,
+} from "@/lib/helpers/d365-thk-fulfilment";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -606,9 +609,19 @@ export const processShopifyFulfillment = inngest.createFunction(
             }
           );
 
+          const thkWarning = getThkFulfilmentWarningMessage(
+            fulfilmentPost.response?.Message
+          );
+          if (thkWarning) {
+            console.warn(
+              `[D365] THK fulfilment warning for ${shopifyOrderName} (${d365Order.SalesOrderNumber}): ${thkWarning}`
+            );
+          }
+
           logFlowEvent({
             flow: "fulfillment",
             step: "d365_fulfilment_posted",
+            level: thkWarning ? "warn" : "info",
             status: "completed",
             runId: _runId || undefined,
             shopifyOrderId: String(shopifyOrderId),
@@ -621,6 +634,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               fulfilmentType: "shipment",
               thkApiStatus: fulfilmentPost.response?.status,
               thkApiMessage: fulfilmentPost.response?.Message,
+              thkApiWarning: thkWarning ?? undefined,
               thkApiResult: fulfilmentPost.response?.Result,
               lineCount: fulfilmentLinesWithService.length,
               lines: fulfilmentLinesWithService.map((l) => ({
