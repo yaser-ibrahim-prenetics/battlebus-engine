@@ -725,6 +725,49 @@ export async function resolveStordHubWhenFulfillmentLocationUnmapped(
 }
 
 /**
+ * spock-store parity: if Shopify location resolves to STORD ATL, but the
+ * ship-to country belongs to the EU bucket, force routing to STORD EU profile.
+ */
+export async function resolveStordEuOverrideForMappedLocation(
+  warehouseName: string | null | undefined,
+  countryCode: string,
+  store = "im8"
+): Promise<{
+  warehouseName: string;
+  dataAreaId: string;
+  hubShopifyLocationId: string;
+} | null> {
+  const normalizedWarehouse = String(warehouseName || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedWarehouse.includes("stord atl")) {
+    return null;
+  }
+
+  if (stordWarehouseNameForShipCountry(countryCode) !== "STORD EU Location") {
+    return null;
+  }
+
+  const euHub = await findLocationByWarehouseName("STORD EU Location", store);
+  if (!euHub?.shopifyLocationId || !euHub.warehouseName) {
+    return null;
+  }
+
+  const dataAreaId = await getDataAreaIdForLocationAndCountry(
+    euHub.shopifyLocationId,
+    countryCode,
+    store
+  );
+  if (!dataAreaId) return null;
+
+  return {
+    warehouseName: euHub.warehouseName,
+    dataAreaId,
+    hubShopifyLocationId: euHub.shopifyLocationId,
+  };
+}
+
+/**
  * Get the Shopify location ID for a warehouse name.
  * Used by inventory-sync and cron-gps-sync to replace hardcoded location IDs.
  */

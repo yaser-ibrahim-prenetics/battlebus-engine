@@ -56,6 +56,7 @@ import {
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
   findLocationByWarehouseName,
+  resolveStordEuOverrideForMappedLocation,
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse, isGpsUkWarehouse } from "@/lib/helpers/warehouse";
@@ -688,6 +689,23 @@ export const processShopifyOrder = inngest.createFunction(
         "im8"
       );
 
+      const stordEuOverride = await resolveStordEuOverrideForMappedLocation(
+        warehouseNameFromLocation,
+        countryCode,
+        "im8"
+      );
+      if (stordEuOverride) {
+        const originalLocationId = fulfillmentLocationId;
+        fulfillmentLocationId = Number(stordEuOverride.hubShopifyLocationId);
+        locationDataAreaId = stordEuOverride.dataAreaId;
+        warehouseNameFromLocation = stordEuOverride.warehouseName;
+        console.warn(
+          `[Order Routing] ${shopifyOrderName}: STORD ATL location ${originalLocationId} overridden to STORD EU profile ` +
+            `(hub Shopify location id ${stordEuOverride.hubShopifyLocationId}) for country=${countryCode}; ` +
+            `routing to dataAreaId=${stordEuOverride.dataAreaId}.`
+        );
+      }
+
       if (
         intendedLocationId &&
         intendedLocationId !== fulfillmentLocationId &&
@@ -1227,7 +1245,10 @@ export const processShopifyOrder = inngest.createFunction(
             { amount: prepaymentAmount }
           );
           try {
-            await dynamics.createPrepayment(salesOrderNo, dataAreaId);
+            await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNo, dataAreaId), {
+              label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
+              maxAttempts: 3,
+            });
             await publishStatus(
               "d365.create-prepayment",
               "completed",
@@ -1240,16 +1261,11 @@ export const processShopifyOrder = inngest.createFunction(
               errorMessage.includes("Number sequence") &&
               errorMessage.includes("has been exceeded");
 
-            await publishStatus(
-              "d365.create-prepayment",
-              "skipped",
-              `Prepayment ${isNumberSequenceError ? "skipped: D365 number sequence exceeded" : `failed: ${errorMessage}`}. Order will continue without prepayment.`,
-              {
-                amount: prepaymentAmount,
-                error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
-                salesOrderNumber: salesOrderNo,
-              }
-            );
+            await publishStatus("d365.create-prepayment", "failed", `Prepayment failed: ${errorMessage}`, {
+              amount: prepaymentAmount,
+              error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
+              salesOrderNumber: salesOrderNo,
+            });
 
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
@@ -1263,6 +1279,10 @@ export const processShopifyOrder = inngest.createFunction(
               amount: prepaymentAmount,
               error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
             };
+
+            throw new Error(
+              `[D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
+            );
           }
         }
 

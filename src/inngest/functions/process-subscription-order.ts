@@ -38,6 +38,7 @@ import {
   getLocationRoutingDebugContext,
   getWarehouseNameForLocation,
   findLocationByWarehouseName,
+  resolveStordEuOverrideForMappedLocation,
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse } from "@/lib/helpers/warehouse";
@@ -356,6 +357,23 @@ export const processSubscriptionOrder = inngest.createFunction(
         fulfillmentLocationId,
         "im8"
       );
+
+      const stordEuOverride = await resolveStordEuOverrideForMappedLocation(
+        warehouseNameFromLocation,
+        country_code,
+        "im8"
+      );
+      if (stordEuOverride) {
+        const originalLocationId = fulfillmentLocationId;
+        fulfillmentLocationId = Number(stordEuOverride.hubShopifyLocationId);
+        locationDataAreaId = stordEuOverride.dataAreaId;
+        warehouseNameFromLocation = stordEuOverride.warehouseName;
+        console.warn(
+          `[Subscription Routing] ${shopifyOrderName}: STORD ATL location ${originalLocationId} overridden to STORD EU profile ` +
+            `(hub Shopify location id ${stordEuOverride.hubShopifyLocationId}) for country=${country_code}; ` +
+            `routing to dataAreaId=${stordEuOverride.dataAreaId}.`
+        );
+      }
 
       if (
         intendedLocationId &&
