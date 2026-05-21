@@ -105,6 +105,8 @@ export function toD365SalesOrderHeaderV3(
     shippingWarehouseId: warehouseConfig.fulfilment.shippingWarehouseId,
     // Skip fulfilment notification for GPS UK to avoid double notification
     skipFulfillmentNotification: isGpsUkWarehouse(warehouse) ? "Yes" : undefined,
+    // Ensure D365 treats the order under deposit/prepayment flow.
+    depositFulfillment: "Yes",
   };
 }
 

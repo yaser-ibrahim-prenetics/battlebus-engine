@@ -351,6 +351,7 @@ export async function createSalesOrderHeaderV3(
     currency,
     paymentId,
     skipFulfillmentNotification,
+    depositFulfillment,
   } = req;
 
   const body = {
@@ -373,6 +374,7 @@ export async function createSalesOrderHeaderV3(
     THK_ShopifyCustomerPhonenum: billingAddress?.addressPhone,
     THK_Comments: comment,
     THK_ShopifyPaymentReference: paymentId,
+    ...(depositFulfillment ? { THK_DepositFulfillment: depositFulfillment } : {}),
     // Delivery Address
     DeliveryAddressName: shippingAddress?.addressName,
     DeliveryAddressDescription: shippingAddress?.addressLine,
@@ -451,6 +453,7 @@ export async function updateSalesOrderHeaderV3(
     currency,
     paymentId,
     skipFulfillmentNotification,
+    depositFulfillment,
   } = req;
 
   // Build the update body - only include fields that are provided
@@ -472,6 +475,7 @@ export async function updateSalesOrderHeaderV3(
   if (paymentId !== undefined) body.THK_ShopifyPaymentReference = paymentId;
   if (skipFulfillmentNotification !== undefined)
     body.THK_SkipFulfillmentNotification = skipFulfillmentNotification;
+  if (depositFulfillment !== undefined) body.THK_DepositFulfillment = depositFulfillment;
 
   // Billing Address
   if (billingAddress) {

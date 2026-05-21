@@ -57,6 +57,7 @@ export interface D365SalesOrderHeaderV3Request {
   currency?: string;
   paymentId?: string;
   skipFulfillmentNotification?: "Yes" | "No";
+  depositFulfillment?: "Yes" | "No";
 }
 
 export interface D365SalesOrderHeaderV3RequestForReturn {

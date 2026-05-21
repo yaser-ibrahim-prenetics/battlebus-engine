@@ -1527,6 +1527,57 @@ export const processShopifyOrder = inngest.createFunction(
           { d365OrderNumber: reusedSalesOrderNumber, reused: true }
         );
 
+        // Existing D365 order may have been created earlier without a posted
+        // prepayment (e.g. partial prior run). Re-attempt prepayment here.
+        const reusedPrepaymentAmount = calculatePrepaymentAmount(order);
+        if (!skipD365 && reusedPrepaymentAmount > 0) {
+          await publishStatus(
+            "d365.create-prepayment",
+            "running",
+            `Re-attempting prepayment for existing order: $${reusedPrepaymentAmount.toFixed(2)}`,
+            {
+              amount: reusedPrepaymentAmount,
+              salesOrderNumber: reusedSalesOrderNumber,
+              reusedOrder: true,
+            }
+          );
+          try {
+            await retryWithBackoff(
+              () => dynamics.createPrepayment(reusedSalesOrderNumber, dataAreaId),
+              {
+                label: `d365-create-prepayment-existing-${shopifyOrderName}-${reusedSalesOrderNumber}`,
+                maxAttempts: 3,
+              }
+            );
+            await publishStatus(
+              "d365.create-prepayment",
+              "completed",
+              `Prepayment ensured for existing order: $${reusedPrepaymentAmount.toFixed(2)}`,
+              {
+                amount: reusedPrepaymentAmount,
+                salesOrderNumber: reusedSalesOrderNumber,
+                reusedOrder: true,
+              }
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            await publishStatus(
+              "d365.create-prepayment",
+              "failed",
+              `Prepayment failed for existing order: ${errorMessage}`,
+              {
+                amount: reusedPrepaymentAmount,
+                salesOrderNumber: reusedSalesOrderNumber,
+                reusedOrder: true,
+                error: errorMessage,
+              }
+            );
+            throw new Error(
+              `[D365] Prepayment creation failed for existing order ${shopifyOrderName} (${reusedSalesOrderNumber}): ${errorMessage}`
+            );
+          }
+        }
+
         type ExistingOrderGpsRetryResult =
           | { type: "real"; gpsOrderNo?: string }
           | { type: "skipped"; reason: string }

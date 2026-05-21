@@ -468,6 +468,22 @@ export const processSubscriptionOrder = inngest.createFunction(
       console.log(
         `[Subscription] ✅ D365 order already exists for ${shopifyOrderName}: ${existingD365Order.SalesOrderNumber}`
       );
+      await step.run("prepay-existing-d365-order", async () => {
+        if (!config.features.enableDynamicsSync) return { status: "skipped" };
+        const prepayAmount = calculatePrepaymentAmount(order);
+        if (prepayAmount <= 0) return { status: "skipped", reason: "zero amount" };
+        await retryWithBackoff(
+          () => dynamics.createPrepayment(existingD365Order.SalesOrderNumber, dataAreaId),
+          {
+            label: `D365 sub prepay existing ${existingD365Order.SalesOrderNumber}`,
+            maxAttempts: 3,
+          }
+        );
+        console.log(
+          `[Subscription] ✅ D365 prepayment ensured for existing order: ${prepayAmount} ${order.currency}`
+        );
+        return { status: "created", amount: prepayAmount };
+      });
       return {
         status: "already_exists",
         d365OrderNumber: existingD365Order.SalesOrderNumber,
