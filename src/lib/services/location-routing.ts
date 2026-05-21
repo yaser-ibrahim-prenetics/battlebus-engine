@@ -725,8 +725,12 @@ export async function resolveStordHubWhenFulfillmentLocationUnmapped(
 }
 
 /**
- * spock-store parity: if Shopify location resolves to STORD ATL, but the
- * ship-to country belongs to the EU bucket, force routing to STORD EU profile.
+ * Canonical STORD routing:
+ * - EU ship-to countries must route to STORD EU (H007)
+ * - Non-EU ship-to countries must route to STORD ATL (U001)
+ *
+ * This intentionally enforces canonical dataAreaId from warehouse-config.json
+ * even when Battle Hub location rows are misconfigured.
  */
 export async function resolveStordEuOverrideForMappedLocation(
   warehouseName: string | null | undefined,
@@ -740,30 +744,38 @@ export async function resolveStordEuOverrideForMappedLocation(
   const normalizedWarehouse = String(warehouseName || "")
     .trim()
     .toLowerCase();
-  if (!normalizedWarehouse.includes("stord atl")) {
+  if (!normalizedWarehouse.includes("stord")) {
     return null;
   }
 
-  if (stordWarehouseNameForShipCountry(countryCode) !== "STORD EU Location") {
+  const targetWarehouseName = stordWarehouseNameForShipCountry(countryCode);
+
+  const targetHub = await findLocationByWarehouseName(targetWarehouseName, store);
+  if (!targetHub?.shopifyLocationId || !targetHub.warehouseName) {
     return null;
   }
 
-  const euHub = await findLocationByWarehouseName("STORD EU Location", store);
-  if (!euHub?.shopifyLocationId || !euHub.warehouseName) {
-    return null;
-  }
+  // Canonical source of truth for STORD dataAreaId should be warehouse-config.
+  // This avoids routing STORD EU orders to U001 when a Hub row is stale/misconfigured.
+  const canonicalDataAreaId = String(
+    (warehouseConfig as any)?.warehouses?.[targetWarehouseName]?.dataAreaId || ""
+  )
+    .trim()
+    .toUpperCase();
 
-  const dataAreaId = await getDataAreaIdForLocationAndCountry(
-    euHub.shopifyLocationId,
-    countryCode,
-    store
-  );
+  const dataAreaId =
+    canonicalDataAreaId ||
+    (await getDataAreaIdForLocationAndCountry(
+      targetHub.shopifyLocationId,
+      countryCode,
+      store
+    ));
   if (!dataAreaId) return null;
 
   return {
-    warehouseName: euHub.warehouseName,
+    warehouseName: targetHub.warehouseName,
     dataAreaId,
-    hubShopifyLocationId: euHub.shopifyLocationId,
+    hubShopifyLocationId: targetHub.shopifyLocationId,
   };
 }
 

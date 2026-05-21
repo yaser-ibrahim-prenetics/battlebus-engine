@@ -365,13 +365,15 @@ export const processSubscriptionOrder = inngest.createFunction(
       );
       if (stordEuOverride) {
         const originalLocationId = fulfillmentLocationId;
+        const originalWarehouseName = warehouseNameFromLocation;
         fulfillmentLocationId = Number(stordEuOverride.hubShopifyLocationId);
         locationDataAreaId = stordEuOverride.dataAreaId;
         warehouseNameFromLocation = stordEuOverride.warehouseName;
         console.warn(
-          `[Subscription Routing] ${shopifyOrderName}: STORD ATL location ${originalLocationId} overridden to STORD EU profile ` +
-            `(hub Shopify location id ${stordEuOverride.hubShopifyLocationId}) for country=${country_code}; ` +
-            `routing to dataAreaId=${stordEuOverride.dataAreaId}.`
+          `[Subscription Routing] ${shopifyOrderName}: STORD routing normalized for country=${country_code}; ` +
+            `location ${originalLocationId} (${originalWarehouseName || "unknown"}) → ` +
+            `${stordEuOverride.hubShopifyLocationId} (${stordEuOverride.warehouseName}), ` +
+            `dataAreaId=${stordEuOverride.dataAreaId}.`
         );
       }
 
