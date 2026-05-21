@@ -1113,6 +1113,57 @@ export async function createPrepayment(
 }
 
 /**
+ * After PostPrepayment, read the sales order header back and verify D365 set
+ * `THK_DepositFulfillment="Yes"` and moved it into a prepayment/invoiced state.
+ *
+ * This field is server-managed by D365 (we cannot write it on insert — 403),
+ * but it IS the trigger that flips the resulting customer invoice from
+ * "Standard" to "Prepayment". If it is not "Yes" after PostPrepayment, the
+ * underlying cause is on the D365 side: the customer / posting profile is not
+ * configured for deposit fulfillment.
+ *
+ * Returns `{ ok, depositFulfillment, processingStatus, header }` so the caller
+ * can publish a clear actionable flow log instead of silently producing
+ * standard invoices.
+ */
+export async function verifyDepositFulfillmentApplied(
+  salesOrderNumber: string,
+  dataAreaId: string
+): Promise<{
+  ok: boolean;
+  depositFulfillment: string | null;
+  processingStatus: string | null;
+  header: D365SalesOrderHeader | null;
+}> {
+  try {
+    const header = await getSalesOrderHeaderV3ByKey(salesOrderNumber, dataAreaId);
+    const depositFulfillment = String(header?.THK_DepositFulfillment ?? "").trim() || null;
+    const processingStatus = String(header?.SalesOrderProcessingStatus ?? "").trim() || null;
+    const ok = depositFulfillment?.toLowerCase() === "yes";
+    if (!ok) {
+      console.warn(
+        `[D365] ⚠️ Prepayment posted but THK_DepositFulfillment is "${depositFulfillment ?? "<empty>"}" for ` +
+          `${salesOrderNumber} (${dataAreaId}). Resulting customer invoice will be Standard, not Prepayment. ` +
+          `Root cause is D365-side: the customer/posting profile for the ordering customer account is not ` +
+          `configured for deposit fulfillment. Fix in D365 master data (customer or posting profile), not in code.`
+      );
+    } else {
+      console.log(
+        `[D365] ✅ Verified THK_DepositFulfillment=Yes for ${salesOrderNumber} (${dataAreaId}); ` +
+          `SalesOrderProcessingStatus=${processingStatus ?? "n/a"}`
+      );
+    }
+    return { ok, depositFulfillment, processingStatus, header };
+  } catch (error) {
+    console.warn(
+      `[D365] verifyDepositFulfillmentApplied failed for ${salesOrderNumber} (${dataAreaId}): ` +
+        `${error instanceof Error ? error.message : String(error)}`
+    );
+    return { ok: false, depositFulfillment: null, processingStatus: null, header: null };
+  }
+}
+
+/**
  * Create Fulfilment (Packing Slip) using THK API
  * Ported from spock-store - uses THK_APISyncServiceGroup endpoint
  */

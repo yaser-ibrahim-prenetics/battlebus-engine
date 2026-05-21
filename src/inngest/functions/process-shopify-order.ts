@@ -1251,11 +1251,28 @@ export const processShopifyOrder = inngest.createFunction(
               label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
               maxAttempts: 3,
             });
+
+            const depositCheck = await dynamics.verifyDepositFulfillmentApplied(
+              salesOrderNo,
+              dataAreaId
+            );
             await publishStatus(
               "d365.create-prepayment",
               "completed",
-              `Prepayment created: $${prepaymentAmount.toFixed(2)}`,
-              { amount: prepaymentAmount }
+              depositCheck.ok
+                ? `Prepayment created: $${prepaymentAmount.toFixed(2)} (DepositFulfillment=Yes)`
+                : `Prepayment posted but D365 did NOT flip header to deposit fulfillment ` +
+                  `(THK_DepositFulfillment=${depositCheck.depositFulfillment ?? "<empty>"}). ` +
+                  `Invoice will post as Standard, not Prepayment. ` +
+                  `Fix the customer/posting profile in D365 for the ordering account.`,
+              {
+                amount: prepaymentAmount,
+                depositFulfillment: depositCheck.depositFulfillment,
+                processingStatus: depositCheck.processingStatus,
+                expectedInvoiceType: depositCheck.ok ? "Prepayment" : "Standard",
+                salesOrderNumber: salesOrderNo,
+                dataAreaId,
+              }
             );
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1551,14 +1568,26 @@ export const processShopifyOrder = inngest.createFunction(
                 maxAttempts: 3,
               }
             );
+            const reusedDepositCheck = await dynamics.verifyDepositFulfillmentApplied(
+              reusedSalesOrderNumber,
+              dataAreaId
+            );
             await publishStatus(
               "d365.create-prepayment",
               "completed",
-              `Prepayment ensured for existing order: $${reusedPrepaymentAmount.toFixed(2)}`,
+              reusedDepositCheck.ok
+                ? `Prepayment ensured for existing order: $${reusedPrepaymentAmount.toFixed(2)} (DepositFulfillment=Yes)`
+                : `Prepayment posted but THK_DepositFulfillment=${reusedDepositCheck.depositFulfillment ?? "<empty>"} ` +
+                  `— invoice will post as Standard, not Prepayment. ` +
+                  `Fix the customer/posting profile in D365 for the ordering account.`,
               {
                 amount: reusedPrepaymentAmount,
                 salesOrderNumber: reusedSalesOrderNumber,
                 reusedOrder: true,
+                depositFulfillment: reusedDepositCheck.depositFulfillment,
+                processingStatus: reusedDepositCheck.processingStatus,
+                expectedInvoiceType: reusedDepositCheck.ok ? "Prepayment" : "Standard",
+                dataAreaId,
               }
             );
           } catch (error) {

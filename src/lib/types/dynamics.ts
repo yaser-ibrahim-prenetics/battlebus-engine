@@ -195,6 +195,13 @@ export interface D365SalesOrderHeader {
   THK_Comments?: string;
   THK_ShopifyPaymentReference?: string;
   THK_SkipFulfillmentNotification?: string;
+  // Read-only THK / D365 server-managed fields useful for diagnostics.
+  // D365 sets THK_DepositFulfillment="Yes" when the customer/posting profile
+  // is configured for the deposit-fulfillment flow. We cannot write this on
+  // insert (403 ODataSecurityException) but we can read it back to verify
+  // that PostPrepayment produced a prepayment invoice (not a standard one).
+  THK_DepositFulfillment?: "Yes" | "No" | string;
+  SalesOrderProcessingStatus?: string;
 }
 
 export interface D365SalesOrderLine {

@@ -481,10 +481,21 @@ export const processSubscriptionOrder = inngest.createFunction(
             maxAttempts: 3,
           }
         );
-        console.log(
-          `[Subscription] ✅ D365 prepayment ensured for existing order: ${prepayAmount} ${order.currency}`
+        const depositCheck = await dynamics.verifyDepositFulfillmentApplied(
+          existingD365Order.SalesOrderNumber,
+          dataAreaId
         );
-        return { status: "created", amount: prepayAmount };
+        console.log(
+          `[Subscription] ✅ D365 prepayment ensured for existing order: ${prepayAmount} ${order.currency} ` +
+            `(THK_DepositFulfillment=${depositCheck.depositFulfillment ?? "<empty>"}, ` +
+            `expectedInvoiceType=${depositCheck.ok ? "Prepayment" : "Standard"})`
+        );
+        return {
+          status: "created",
+          amount: prepayAmount,
+          depositFulfillment: depositCheck.depositFulfillment,
+          expectedInvoiceType: depositCheck.ok ? "Prepayment" : "Standard",
+        };
       });
       return {
         status: "already_exists",
@@ -660,8 +671,21 @@ export const processSubscriptionOrder = inngest.createFunction(
       await retryWithBackoff(() => dynamics.createPrepayment(d365OrderNumber, dataAreaId), {
         label: `D365 sub prepay ${d365OrderNumber}`,
       });
-      console.log(`[Subscription] ✅ D365 prepayment created: ${prepayAmount} ${order.currency}`);
-      return { status: "created", amount: prepayAmount };
+      const depositCheck = await dynamics.verifyDepositFulfillmentApplied(
+        d365OrderNumber,
+        dataAreaId
+      );
+      console.log(
+        `[Subscription] ✅ D365 prepayment created: ${prepayAmount} ${order.currency} ` +
+          `(THK_DepositFulfillment=${depositCheck.depositFulfillment ?? "<empty>"}, ` +
+          `expectedInvoiceType=${depositCheck.ok ? "Prepayment" : "Standard"})`
+      );
+      return {
+        status: "created",
+        amount: prepayAmount,
+        depositFulfillment: depositCheck.depositFulfillment,
+        expectedInvoiceType: depositCheck.ok ? "Prepayment" : "Standard",
+      };
     });
 
     // =========================================================================
