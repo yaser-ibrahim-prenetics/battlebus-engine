@@ -345,6 +345,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       const results = [];
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
       let backorderQueued = false;
+      let prepaymentBackstopEnsured = false;
 
       // Build a stable map from Shopify order line_item.id -> normalized SKU used in D365.
       // This protects fulfillment when webhook/item SKU labels drift after order creation.
@@ -399,6 +400,71 @@ export const processShopifyFulfillment = inngest.createFunction(
           `[D365][OrderLines] Loaded ${savedOrderLines.length} saved line(s) from Supabase for ${shopifyOrderName}; ` +
             `${unfulfilledServiceLines.length} unfulfilled service line(s)`
         );
+      }
+
+      // Backstop: if a historical/partial run missed PostPrepayment during
+      // order creation, ensure it before posting shipment so D365 can produce
+      // the expected Prepayment + Standard invoice sequence.
+      const prepaymentAmount = Number.parseFloat(String(order?.total_price || "0")) || 0;
+      if (!prepaymentBackstopEnsured && prepaymentAmount > 0) {
+        const precheck = await dynamics.verifyDepositFulfillmentApplied(
+          d365Order.SalesOrderNumber!,
+          dataAreaId
+        );
+        if (!precheck.ok) {
+          await logFlowEventSync({
+            flow: "fulfillment",
+            step: "d365-prepayment-backstop",
+            level: "warn",
+            status: "started",
+            runId: _runId || undefined,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber,
+            payload: {
+              reason:
+                "THK_DepositFulfillment is not Yes before shipment; re-posting prepayment",
+              depositFulfillment: precheck.depositFulfillment,
+              processingStatus: precheck.processingStatus,
+              dataAreaId,
+              amount: prepaymentAmount,
+            },
+          });
+
+          await retryWithBackoff(
+            () => dynamics.createPrepayment(d365Order.SalesOrderNumber!, dataAreaId),
+            {
+              label: `d365-create-prepayment-backstop-${shopifyOrderName}-${d365Order.SalesOrderNumber}`,
+              maxAttempts: 3,
+            }
+          );
+
+          const postcheck = await dynamics.verifyDepositFulfillmentApplied(
+            d365Order.SalesOrderNumber!,
+            dataAreaId
+          );
+          await logFlowEventSync({
+            flow: "fulfillment",
+            step: "d365-prepayment-backstop",
+            level: postcheck.ok ? "info" : "warn",
+            status: "completed",
+            runId: _runId || undefined,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyOrderName,
+            d365OrderNumber: d365Order.SalesOrderNumber,
+            payload: {
+              result: postcheck.ok
+                ? "DepositFulfillment verified after prepayment backstop"
+                : "Prepayment posted but D365 still did not set DepositFulfillment",
+              depositFulfillment: postcheck.depositFulfillment,
+              processingStatus: postcheck.processingStatus,
+              expectedInvoiceType: postcheck.ok ? "Prepayment + Standard" : "Standard",
+              dataAreaId,
+              amount: prepaymentAmount,
+            },
+          });
+        }
+        prepaymentBackstopEnsured = true;
       }
 
       for (const fulfillment of fulfillments) {
