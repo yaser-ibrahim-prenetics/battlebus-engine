@@ -15,7 +15,6 @@ import {
   RETRY_CONFIGS,
   retryWithBackoff,
 } from "@/lib/utils/constants";
-import { calculatePrepaymentAmount } from "@/lib/transformers/order";
 import { getTrackingUrl, mapGpsCarrierToShopify } from "@/lib/helpers/tracking";
 
 // Interfaces
@@ -191,87 +190,7 @@ export const processGpsIndividual = inngest.createFunction(
       return { skipped: false, fulfillmentId: fulfillment.id };
     });
 
-    // Step 5: Ensure prepayment invoice exists BEFORE packing slip (Standard on ship).
-    const invoiceResult = await step.run("d365-post-prepayment", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return {
-          skipped: true,
-          reason: "Dynamics sync disabled",
-        };
-      }
-
-      const dataAreaId = getDataAreaId(warehouse);
-      const d365Order = await resolveD365OrderHeaderForLifecycle({
-        shopifyOrderId: String(shopifyOrder.id),
-        shopifyOrderName: fulfilmentData.shopifyOrderName || shopifyOrder.name,
-        shippingCountryCode: shopifyOrder.shipping_address?.country_code,
-        preferredDataAreaId: dataAreaId,
-      });
-      if (!d365Order?.SalesOrderNumber) {
-        return {
-          skipped: true,
-          reason: `D365 order not found ${fulfilmentData.shopifyOrderName}`,
-        };
-      }
-
-      const salesOrderNumber = d365Order.SalesOrderNumber;
-      const prepaymentAmount = calculatePrepaymentAmount(shopifyOrder);
-      if (prepaymentAmount <= 0) {
-        return {
-          skipped: true,
-          reason: "zero amount",
-          amount: prepaymentAmount,
-        };
-      }
-
-      const precheck = await dynamics.verifyDepositFulfillmentApplied(
-        salesOrderNumber,
-        dataAreaId
-      );
-
-      await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNumber, dataAreaId), {
-        label: `d365-post-prepayment-gps-${fulfilmentData.shopifyOrderName}-${salesOrderNumber}`,
-        maxAttempts: 3,
-      });
-
-      const postcheck = await dynamics.verifyDepositFulfillmentApplied(
-        salesOrderNumber,
-        dataAreaId
-      );
-
-      const result = {
-        skipped: false,
-        status: postcheck.ok ? ("completed" as const) : ("warning" as const),
-        amount: prepaymentAmount,
-        depositFulfillment: postcheck.depositFulfillment,
-        processingStatus: postcheck.processingStatus,
-        expectedInvoiceType: postcheck.ok ? ("Prepayment + Standard" as const) : ("Standard" as const),
-        alreadyAppliedBeforeAttempt: precheck.ok,
-        salesOrderNumber,
-        dataAreaId,
-        message: postcheck.ok
-          ? precheck.ok
-            ? "Prepayment confirmed before packing slip"
-            : "Prepayment posted before packing slip"
-          : "PostPrepayment ran but THK_DepositFulfillment is not Yes — check D365 customer profile",
-      };
-
-      await logFlowEventSync({
-        flow: "gps_fulfillment",
-        step: "d365-post-prepayment",
-        level: postcheck.ok ? "info" : "warn",
-        status: postcheck.ok ? "completed" : "failed",
-        runId: _runId,
-        shopifyOrderId: String(shopifyOrder.id),
-        shopifyOrderName: fulfilmentData.shopifyOrderName,
-        d365OrderNumber: salesOrderNumber,
-        payload: result,
-      });
-
-      return result;
-    });
-
-    // Step 6: Sync to D365 (create packing slip)
+    // Step 5: Sync to D365 (create packing slip) — spock-store posts prepayment at order create only.
     const dynamicRecord = await step.run("sync-to-d365", async () => {
       if (!config.features.enableDynamicsSync) {
         console.log(`[GPS Individual] D365 sync is disabled`);
@@ -351,8 +270,8 @@ export const processGpsIndividual = inngest.createFunction(
         lines = buildLines();
       }
 
-      // Create fulfilment (packing slip)
-      await dynamics.createFulfilment({
+      // Create fulfilment (packing slip + Standard invoice on deposit orders)
+      const fulfilmentPost = await dynamics.createFulfilment({
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
         type: "shipment",
@@ -360,33 +279,42 @@ export const processGpsIndividual = inngest.createFunction(
         lines,
       });
 
+      const depositPrecheck = await dynamics.verifyDepositFulfillmentApplied(
+        d365Order.SalesOrderNumber,
+        dataAreaId
+      );
+      if (depositPrecheck.ok) {
+        await dynamics.assertDepositShipmentInvoicingComplete(
+          d365Order.SalesOrderNumber,
+          dataAreaId,
+          fulfilmentPost.response,
+          { depositFulfillment: true }
+        );
+      }
+
       console.log(`[GPS Individual] Created D365 packing slip for: ${d365Order.SalesOrderNumber}`);
       return {
         skipped: false,
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
+        depositStandardInvoiceVerified: depositPrecheck.ok,
       };
     });
 
-    // Step 7: Send completion notification
+    // Step 6: Send completion notification
     await step.run("send-completion-notification", async () => {
       const shopifyStatus = shopifyFulfillment.skipped ? "skipped" : "success";
       const d365Status = dynamicRecord.skipped ? "skipped" : "success";
-      const invoiceStatus = invoiceResult.skipped
-        ? "skipped"
-        : invoiceResult.status === "warning"
-          ? "warning"
-          : "success";
 
       const message =
         `GPS Individual Fulfilment: ${fulfilmentData.shopifyOrderName} processed. ` +
-        `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status} \nInvoice: ${invoiceStatus}`;
+        `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
 
       console.log(message);
       await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
     });
 
-    // Step 8: Notify Hub of fulfillment with GPS source
+    // Step 7: Notify Hub of fulfillment with GPS source
     await step.run("notify-hub-fulfillment", async () => {
       await csPlatform.sendOrderFulfilled({
         orderId: shopifyOrder.id?.toString(),
@@ -418,7 +346,6 @@ export const processGpsIndividual = inngest.createFunction(
       shopifyOrderName: fulfilmentData.shopifyOrderName,
       trackingNumber: fulfilmentData.trackingNumber,
       shopifyFulfillment,
-      invoiceResult,
       dynamicRecord,
     };
   }

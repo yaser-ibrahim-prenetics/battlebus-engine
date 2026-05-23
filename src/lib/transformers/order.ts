@@ -102,7 +102,8 @@ export function toD365SalesOrderHeaderV3(
     billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
     comment: buildOrderComment(order),
     currency: order.currency,
-    shippingWarehouseId: warehouseConfig.fulfilment.shippingWarehouseId,
+    // spock-store: DefaultShippingWarehouseId is NOT set on header — warehouse
+    // is applied per product line via ShippingWarehouseId on SalesOrderLines only.
     // Skip fulfilment notification for GPS UK to avoid double notification
     skipFulfillmentNotification: isGpsUkWarehouse(warehouse) ? "Yes" : undefined,
   };

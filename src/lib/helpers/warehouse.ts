@@ -200,14 +200,14 @@ export function getOrderingCustomerAccountNumber(warehouseName: string): string 
 /**
  * Derive customer account number from data area ID
  * Pattern: {dataAreaId}-C{number}
- * - U001 (US): U001-C000000006
+ * - U001 (US): U001-C000000006 — matches spock US snapshots + production STORD/GPS path
  * - H007 (UK): H007-C000000001
  * - H005 (HK): H005-C000000001
  */
 function deriveCustomerAccountNumber(dataAreaId: string): string {
   // Map data area to customer account suffix
   const customerAccountSuffix: Record<string, string> = {
-    U001: "C000000006", // US
+    U001: "C000000006", // US production (spock US order tests / STORD ATL)
     H007: "C000000001", // UK
     H005: "C000000001", // HK
   };
@@ -222,13 +222,6 @@ function deriveCustomerAccountNumber(dataAreaId: string): string {
  */
 export function getOrderingCustomerAccountNumberByDataAreaId(dataAreaId: string): string {
   const normalized = (dataAreaId || "").toUpperCase();
-
-  // Hard safety guard: U001 must use ...000006 in D365.
-  // This prevents accidental config drift from breaking header creation.
-  if (normalized === "U001") {
-    return "U001-C000000006";
-  }
-
   const profile = getWarehouseConfigForDataAreaId(normalized);
   if (profile.orderingCustomerAccountNumber) {
     return profile.orderingCustomerAccountNumber;

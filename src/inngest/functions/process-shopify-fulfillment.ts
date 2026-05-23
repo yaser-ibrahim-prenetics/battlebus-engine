@@ -12,7 +12,6 @@ import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import * as paypal from "@/lib/clients/paypal";
 import * as shopifyClient from "@/lib/clients/shopify";
-import { calculatePrepaymentAmount } from "@/lib/transformers/order";
 import { mapShopifySkuToDynamicsForOrderLine } from "@/lib/transformers/sku";
 import type {
   ShopifyOrderPayload,
@@ -27,7 +26,7 @@ import {
   getWarehouseNameFromLocation,
   filterDummySkus,
 } from "@/lib/utils/validation";
-import { getWarehouseConfigForDataAreaId } from "@/lib/helpers/warehouse";
+import { getFulfilmentConfig, getWarehouseConfigForDataAreaId } from "@/lib/helpers/warehouse";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
@@ -334,73 +333,7 @@ export const processShopifyFulfillment = inngest.createFunction(
       };
     }
 
-    // Ensure prepayment invoice exists BEFORE packing slip (Standard invoice on ship).
-    // PostPrepayment is idempotent when already posted (DuplicateKeyException).
-    const invoiceResult = await step.run("d365-post-prepayment", async () => {
-      if (!config.features.enableDynamicsSync) {
-        return {
-          status: "skipped",
-          reason: "Dynamics sync disabled",
-        };
-      }
-
-      const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
-      const salesOrderNumber = d365Order.SalesOrderNumber!;
-      const prepaymentAmount = calculatePrepaymentAmount(order);
-
-      if (prepaymentAmount <= 0) {
-        return {
-          status: "skipped",
-          reason: "zero amount",
-          amount: prepaymentAmount,
-        };
-      }
-
-      const precheck = await dynamics.verifyDepositFulfillmentApplied(
-        salesOrderNumber,
-        dataAreaId
-      );
-
-      await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNumber, dataAreaId), {
-        label: `d365-post-prepayment-${shopifyOrderName}-${salesOrderNumber}`,
-        maxAttempts: 3,
-      });
-
-      const postcheck = await dynamics.verifyDepositFulfillmentApplied(
-        salesOrderNumber,
-        dataAreaId
-      );
-
-      const result = {
-        status: postcheck.ok ? ("completed" as const) : ("warning" as const),
-        amount: prepaymentAmount,
-        depositFulfillment: postcheck.depositFulfillment,
-        processingStatus: postcheck.processingStatus,
-        expectedInvoiceType: postcheck.ok ? ("Prepayment + Standard" as const) : ("Standard" as const),
-        alreadyAppliedBeforeAttempt: precheck.ok,
-        salesOrderNumber,
-        dataAreaId,
-        message: postcheck.ok
-          ? precheck.ok
-            ? "Prepayment confirmed before packing slip"
-            : "Prepayment posted before packing slip"
-          : "PostPrepayment ran but THK_DepositFulfillment is not Yes — check D365 customer profile",
-      };
-
-      await logFlowEventSync({
-        flow: "fulfillment",
-        step: "d365-post-prepayment",
-        level: postcheck.ok ? "info" : "warn",
-        status: postcheck.ok ? "completed" : "failed",
-        runId: _runId || undefined,
-        shopifyOrderId: String(shopifyOrderId),
-        shopifyOrderName,
-        d365OrderNumber: salesOrderNumber,
-        payload: result,
-      });
-
-      return result;
-    });
+    // spock-store: PostPrepayment runs only at order create (orders/paid), never at fulfillment.
 
     // Process each fulfillment
     const fulfillmentResults = await step.run("process-fulfillments", async () => {
@@ -503,6 +436,22 @@ export const processShopifyFulfillment = inngest.createFunction(
             orderLinesLotMap
           );
 
+          const shipFromWarehouseName =
+            getWarehouseNameFromLocation(fulfillment.location_id || "") ||
+            getWarehouseConfigForDataAreaId(dataAreaId).name;
+          let fulfilmentWarehouseConfig = {
+            shippingSiteId: "Prenetics",
+            shippingWarehouseId: "",
+            shippingWarehouseLocationId: "",
+          };
+          try {
+            fulfilmentWarehouseConfig = getFulfilmentConfig(shipFromWarehouseName);
+          } catch {
+            console.warn(
+              `[D365] No fulfilment warehouse config for ${shipFromWarehouseName}; posting with site only`
+            );
+          }
+
           const buildFulfillmentLines = () =>
             filteredItems.map((item) => ({
               // Prefer fulfillment item SKU, but fall back to order line item SKU when needed.
@@ -526,9 +475,9 @@ export const processShopifyFulfillment = inngest.createFunction(
               // createFulfilment will throw if any line still has no Lotid.
               quantity: item.quantity,
               trackingNumber: fulfillment.tracking_number || "",
-              shippingSiteId: "Prenetics",
-              shippingWarehouseId: "",
-              shippingWarehouseLocationId: "",
+              shippingSiteId: fulfilmentWarehouseConfig.shippingSiteId,
+              shippingWarehouseId: fulfilmentWarehouseConfig.shippingWarehouseId,
+              shippingWarehouseLocationId: fulfilmentWarehouseConfig.shippingWarehouseLocationId,
               lotId: (() => {
                 const lineItemId = Number((item as any)?.id);
                 const lineItemIdStr =
@@ -646,9 +595,9 @@ export const processShopifyFulfillment = inngest.createFunction(
                 quantity: Number(sl.quantity) || 1,
                 lotId,
                 trackingNumber: "",
-                shippingSiteId: "Prenetics",
-                shippingWarehouseId: "",
-                shippingWarehouseLocationId: "",
+                shippingSiteId: fulfilmentWarehouseConfig.shippingSiteId,
+                shippingWarehouseId: fulfilmentWarehouseConfig.shippingWarehouseId,
+                shippingWarehouseLocationId: fulfilmentWarehouseConfig.shippingWarehouseLocationId,
               };
             }),
           ];
@@ -678,6 +627,20 @@ export const processShopifyFulfillment = inngest.createFunction(
             }
           );
 
+          const depositPrecheck = await dynamics.verifyDepositFulfillmentApplied(
+            d365Order.SalesOrderNumber!,
+            dataAreaId
+          );
+          const isDepositOrder = depositPrecheck.ok;
+          const depositShipInvoiceCheck = isDepositOrder
+            ? await dynamics.assertDepositShipmentInvoicingComplete(
+                d365Order.SalesOrderNumber!,
+                dataAreaId,
+                fulfilmentPost.response,
+                { depositFulfillment: true }
+              )
+            : { verified: false, processingStatus: depositPrecheck.processingStatus };
+
           const thkWarning = getThkFulfilmentWarningMessage(
             fulfilmentPost.response?.Message
           );
@@ -705,6 +668,9 @@ export const processShopifyFulfillment = inngest.createFunction(
               thkApiMessage: fulfilmentPost.response?.Message,
               thkApiWarning: thkWarning ?? undefined,
               thkApiResult: fulfilmentPost.response?.Result,
+              depositStandardInvoiceVerified: depositShipInvoiceCheck.verified,
+              salesOrderProcessingStatus: depositShipInvoiceCheck.processingStatus ?? undefined,
+              fulfilmentWarehouse: shipFromWarehouseName,
               lineCount: fulfilmentLinesWithService.length,
               lines: fulfilmentLinesWithService.map((l) => ({
                 itemNumber: l.itemNumber,
@@ -1126,7 +1092,6 @@ export const processShopifyFulfillment = inngest.createFunction(
       d365OrderNumber: d365Order.SalesOrderNumber,
       fulfillmentCount: fulfillments.length,
       fulfillmentResults,
-      invoiceResult,
       paypalResult,
       processedAt: new Date().toISOString(),
     };

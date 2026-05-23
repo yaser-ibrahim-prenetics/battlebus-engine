@@ -6,10 +6,17 @@
 
 import { config } from "../config";
 import {
+  assertDepositShipmentThkInvoiced,
   assertThkFulfilmentSucceeded,
   getThkFulfilmentWarningMessage,
+  isSalesOrderFullyInvoiced,
 } from "../helpers/d365-thk-fulfilment";
 import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
+import {
+  logD365HttpTrace,
+  normalizeBodyForLog,
+  readResponseBodyForLog,
+} from "../utils/d365-http-log";
 import { logFlowEvent } from "../services/supabase-flow-logs";
 import type {
   D365AuthToken,
@@ -210,21 +217,38 @@ async function pacedFetch(
     d365LastRequestAt = Date.now();
   }
 
+  const requestBodyForLog = normalizeBodyForLog(init?.body);
+
   try {
     const response = await fetch(input, init);
+    const durationMs = Date.now() - startedAt;
+    const responseBodyForLog = await readResponseBodyForLog(response);
+
+    logD365HttpTrace({
+      source: "d365_api",
+      method,
+      url,
+      httpStatus: response.status,
+      durationMs,
+      requestBody: requestBodyForLog,
+      responseBody: responseBodyForLog,
+    });
+
     logFlowEvent({
       level: response.ok ? "info" : "error",
       flow: "external_api_call",
       step: "d365_http",
       client: "d365",
       status: response.ok ? "completed" : "failed",
-      durationMs: Date.now() - startedAt,
+      durationMs,
       errorType: response.ok ? undefined : `http_${response.status}`,
       payload: {
         method,
         url,
         httpStatus: response.status,
         isProbe,
+        requestBody: requestBodyForLog,
+        responseBody: responseBodyForLog,
       },
     });
 
@@ -237,16 +261,33 @@ async function pacedFetch(
 
     return response;
   } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    logD365HttpTrace({
+      source: "d365_api",
+      method,
+      url,
+      durationMs,
+      requestBody: requestBodyForLog,
+      errorMessage,
+    });
+
     logFlowEvent({
       level: "error",
       flow: "external_api_call",
       step: "d365_http",
       client: "d365",
       status: "failed",
-      durationMs: Date.now() - startedAt,
+      durationMs,
       errorType: "network_or_runtime_error",
-      errorMessage: err instanceof Error ? err.message : String(err),
-      payload: { method, url, isProbe },
+      errorMessage,
+      payload: {
+        method,
+        url,
+        isProbe,
+        requestBody: requestBodyForLog,
+      },
     });
     circuitRecordFailure();
     throw err;
@@ -288,6 +329,9 @@ export async function authenticate(): Promise<D365AuthToken> {
 
       console.log(`[D365] Authenticating to ${tokenUrl}`);
 
+      const authStartedAt = Date.now();
+      const requestBodyForLog = normalizeBodyForLog(body);
+
       // Use raw fetch for auth (circuit breaker protects D365 API, not Azure AD)
       const response = await fetch(tokenUrl, {
         method: "POST",
@@ -295,6 +339,36 @@ export async function authenticate(): Promise<D365AuthToken> {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: body.toString(),
+      });
+
+      const durationMs = Date.now() - authStartedAt;
+      const responseBodyForLog = await readResponseBodyForLog(response);
+
+      logD365HttpTrace({
+        source: "d365_auth",
+        method: "POST",
+        url: tokenUrl,
+        httpStatus: response.status,
+        durationMs,
+        requestBody: requestBodyForLog,
+        responseBody: responseBodyForLog,
+      });
+
+      logFlowEvent({
+        level: response.ok ? "info" : "error",
+        flow: "external_api_call",
+        step: "d365_auth",
+        client: "d365",
+        status: response.ok ? "completed" : "failed",
+        durationMs,
+        errorType: response.ok ? undefined : `http_${response.status}`,
+        payload: {
+          method: "POST",
+          url: tokenUrl,
+          httpStatus: response.status,
+          requestBody: requestBodyForLog,
+          responseBody: responseBodyForLog,
+        },
       });
 
       if (!response.ok) {
@@ -1126,6 +1200,79 @@ export async function createPrepayment(
  * can publish a clear actionable flow log instead of silently producing
  * standard invoices.
  */
+/**
+ * After shipment on a deposit-fulfillment order, the header must leave
+ * PartiallyInvoiced (prepayment only) and become fully invoiced once the
+ * Standard invoice is posted.
+ */
+export async function verifyDepositShipmentInvoicingComplete(
+  salesOrderNumber: string,
+  dataAreaId: string
+): Promise<{
+  ok: boolean;
+  depositFulfillment: string | null;
+  processingStatus: string | null;
+  header: D365SalesOrderHeader | null;
+}> {
+  try {
+    const header = await getSalesOrderHeaderV3ByKey(salesOrderNumber, dataAreaId);
+    const depositFulfillment = String(header?.THK_DepositFulfillment ?? "").trim() || null;
+    const processingStatus = String(header?.SalesOrderProcessingStatus ?? "").trim() || null;
+    const isDeposit = depositFulfillment?.toLowerCase() === "yes";
+    if (!isDeposit) {
+      return { ok: true, depositFulfillment, processingStatus, header };
+    }
+    const ok = isSalesOrderFullyInvoiced(processingStatus);
+    if (!ok) {
+      console.warn(
+        `[D365] ⚠️ Deposit shipment did not post Standard invoice for ${salesOrderNumber} (${dataAreaId}): ` +
+          `SalesOrderProcessingStatus=${processingStatus ?? "n/a"} (expected fully invoiced, not PartiallyInvoiced)`
+      );
+    } else {
+      console.log(
+        `[D365] ✅ Verified deposit shipment invoicing complete for ${salesOrderNumber} (${dataAreaId}): ` +
+          `SalesOrderProcessingStatus=${processingStatus ?? "n/a"}`
+      );
+    }
+    return { ok, depositFulfillment, processingStatus, header };
+  } catch (error) {
+    console.warn(
+      `[D365] verifyDepositShipmentInvoicingComplete failed for ${salesOrderNumber} (${dataAreaId}): ` +
+        `${error instanceof Error ? error.message : String(error)}`
+    );
+    return { ok: false, depositFulfillment: null, processingStatus: null, header: null };
+  }
+}
+
+/**
+ * Validates THK response and D365 header after shipment for deposit orders.
+ * Throws when packing slip succeeded but Standard invoice was not posted.
+ */
+export async function assertDepositShipmentInvoicingComplete(
+  salesOrderNumber: string,
+  dataAreaId: string,
+  thkResponse: { Message?: string | null },
+  options: { depositFulfillment: boolean }
+): Promise<{
+  verified: boolean;
+  processingStatus: string | null;
+}> {
+  if (!options.depositFulfillment) {
+    return { verified: false, processingStatus: null };
+  }
+
+  assertDepositShipmentThkInvoiced(thkResponse, salesOrderNumber);
+  const check = await verifyDepositShipmentInvoicingComplete(salesOrderNumber, dataAreaId);
+  if (!check.ok) {
+    throw new Error(
+      `[D365] Deposit shipment missing Standard invoice for ${salesOrderNumber} (${dataAreaId}): ` +
+        `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"}. ` +
+        `Expected Prepayment + Standard (header fully invoiced after shipment).`
+    );
+  }
+  return { verified: true, processingStatus: check.processingStatus };
+}
+
 export async function verifyDepositFulfillmentApplied(
   salesOrderNumber: string,
   dataAreaId: string

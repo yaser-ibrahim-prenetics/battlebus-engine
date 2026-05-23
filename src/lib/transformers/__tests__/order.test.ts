@@ -27,7 +27,7 @@ describe("Order Transformers", () => {
       expect(header.customerOrderReference).toBe("IM8-17715");
       expect(header.email).toBe("test-us@example.com");
       expect(header.currency).toBe("USD");
-      expect(header.shippingWarehouseId).toBe("USOPS-WH04");
+      expect(header.shippingWarehouseId).toBeUndefined();
       expect(header.shippingAddress).toBeDefined();
       expect(header.shippingAddress?.addressCountryCode).toBe("USA");
       expect(header.skipFulfillmentNotification).toBeUndefined();

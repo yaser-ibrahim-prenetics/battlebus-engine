@@ -24,7 +24,7 @@ import {
   toD365SalesOrderLines,
   toOrderLineRecords,
   toGpsOutboundOrder,
-  calculatePrepaymentAmount,
+  calculateOrderCost,
   shouldSendToGps,
 } from "@/lib/transformers/order";
 import {
@@ -1232,8 +1232,14 @@ export const processShopifyOrder = inngest.createFunction(
           { d365OrderNumber: salesOrderNo }
         );
 
-        // --- Prepayment (non-blocking) ---
-        const prepaymentAmount = calculatePrepaymentAmount(order);
+        // --- Prepayment (spock-store: after confirm, if line cost > 0) ---
+        const prepaymentAmount = calculateOrderCost(
+          lineItems.map((line) => ({
+            price: line.price,
+            discount: line.discount,
+            quantity: line.quantity,
+          }))
+        );
         let prepaymentResult: { success: boolean; amount: number; error?: string } = {
           success: true,
           amount: prepaymentAmount,
@@ -1548,7 +1554,20 @@ export const processShopifyOrder = inngest.createFunction(
 
         // Existing D365 order may have been created earlier without a posted
         // prepayment (e.g. partial prior run). Re-attempt prepayment here.
-        const reusedPrepaymentAmount = calculatePrepaymentAmount(order);
+        const reusedLines = toD365SalesOrderLines(
+          order,
+          reusedSalesOrderNumber,
+          warehouseName,
+          true,
+          dataAreaId
+        );
+        const reusedPrepaymentAmount = calculateOrderCost(
+          reusedLines.map((line) => ({
+            price: line.price,
+            discount: line.discount,
+            quantity: line.quantity,
+          }))
+        );
         if (!skipD365 && reusedPrepaymentAmount > 0) {
           await publishStatus(
             "d365.create-prepayment",
