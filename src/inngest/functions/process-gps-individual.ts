@@ -30,6 +30,7 @@ import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
 import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
+import { isDepositFulfillmentOrder } from "@/lib/helpers/d365-thk-fulfilment";
 
 // Event configuration
 const processGpsIndividualConfig = Object.freeze({
@@ -229,25 +230,33 @@ export const processGpsIndividual = inngest.createFunction(
         await dynamics.getLotIdMap(d365Order.SalesOrderNumber, dataAreaId),
         supabaseLotMap
       );
+      const d365LineDimensionsMap = await dynamics.getSalesOrderLineFulfilmentDimensionsMap(
+        d365Order.SalesOrderNumber,
+        dataAreaId
+      );
       const shippedDate =
         fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
 
       const fulfilmentConfig = getFulfilmentConfig(warehouse);
       const buildLines = () =>
-        (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => ({
-          itemNumber: item.sku,
-          quantity: item.quantity,
-          trackingNumber: fulfilmentData.trackingNumber,
-          shippingSiteId: fulfilmentConfig.shippingSiteId,
-          shippingWarehouseId: fulfilmentConfig.shippingWarehouseId,
-          shippingWarehouseLocationId: fulfilmentConfig.shippingWarehouseLocationId,
-          lotId:
-            lotIdMap[
-              String(item.sku || "")
-                .trim()
-                .toUpperCase()
-            ] || "",
-        }));
+        (lineItemsFiltered as ILineItem[]).map((item: ILineItem) => {
+          const skuKey = String(item.sku || "")
+            .trim()
+            .toUpperCase();
+          const d365Dims = d365LineDimensionsMap[skuKey];
+          return {
+            itemNumber: item.sku,
+            quantity: item.quantity,
+            trackingNumber: fulfilmentData.trackingNumber,
+            shippingSiteId: d365Dims?.shippingSiteId || fulfilmentConfig.shippingSiteId,
+            shippingWarehouseId:
+              d365Dims?.shippingWarehouseId || fulfilmentConfig.shippingWarehouseId,
+            shippingWarehouseLocationId:
+              d365Dims?.shippingWarehouseLocationId ||
+              fulfilmentConfig.shippingWarehouseLocationId,
+            lotId: lotIdMap[skuKey] || "",
+          };
+        });
 
       let lines = buildLines();
       let missingLotIdSkus = lines
@@ -283,7 +292,11 @@ export const processGpsIndividual = inngest.createFunction(
         d365Order.SalesOrderNumber,
         dataAreaId
       );
-      if (depositPrecheck.ok) {
+      const isDepositOrder = isDepositFulfillmentOrder({
+        depositFulfillment: depositPrecheck.depositFulfillment,
+        processingStatus: depositPrecheck.processingStatus,
+      });
+      if (isDepositOrder) {
         await dynamics.assertDepositShipmentInvoicingComplete(
           d365Order.SalesOrderNumber,
           dataAreaId,
@@ -297,7 +310,7 @@ export const processGpsIndividual = inngest.createFunction(
         skipped: false,
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
-        depositStandardInvoiceVerified: depositPrecheck.ok,
+        depositStandardInvoiceVerified: isDepositOrder,
       };
     });
 

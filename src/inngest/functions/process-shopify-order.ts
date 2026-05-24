@@ -947,7 +947,12 @@ export const processShopifyOrder = inngest.createFunction(
           console.log(
             `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
           );
-          const existing = await dynamics.getSalesOrderByShopifyId(shopifyOrderName, dataAreaId);
+          const existing = await dynamics.getSalesOrderByShopifyId(
+            shopifyOrderName,
+            dataAreaId,
+            undefined,
+            { shopifyNumericId: shopifyOrderId }
+          );
           if (existing) {
             await publishStatus(
               "d365.check-existing",

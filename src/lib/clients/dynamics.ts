@@ -9,7 +9,9 @@ import {
   assertDepositShipmentThkInvoiced,
   assertThkFulfilmentSucceeded,
   getThkFulfilmentWarningMessage,
+  isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
+  isSalesOrderPartiallyInvoiced,
 } from "../helpers/d365-thk-fulfilment";
 import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
 import {
@@ -17,6 +19,10 @@ import {
   normalizeBodyForLog,
   readResponseBodyForLog,
 } from "../utils/d365-http-log";
+import {
+  parseDuplicateShopifyReferenceSalesOrderNumber,
+  shopifyReferenceLookupCandidates,
+} from "../utils/d365-shopify-reference";
 import { logFlowEvent } from "../services/supabase-flow-logs";
 import type {
   D365AuthToken,
@@ -395,6 +401,37 @@ export async function authenticate(): Promise<D365AuthToken> {
 async function getAuthToken(): Promise<string> {
   const token = await authenticate();
   return token.access_token;
+}
+
+/** Dedicated flow_logs step for THK service calls (PostPrepayment, fulfilment, confirmSO). */
+function logD365ThkApiFlow(
+  step: "d365_confirm_so" | "d365_post_prepayment" | "d365_fulfilment",
+  salesOrderNumber: string,
+  dataAreaId: string,
+  request: unknown,
+  response: unknown,
+  options?: { httpStatus?: number; failed?: boolean; errorMessage?: string }
+): void {
+  logFlowEvent({
+    level: options?.failed ? "error" : "info",
+    flow: "external_api_call",
+    step,
+    client: "d365",
+    status: options?.failed ? "failed" : "completed",
+    d365OrderNumber: salesOrderNumber,
+    errorMessage: options?.errorMessage,
+    payload: {
+      dataAreaId,
+      salesOrderNumber,
+      httpStatus: options?.httpStatus,
+      requestBody: normalizeBodyForLog(
+        typeof request === "string" ? request : JSON.stringify(request)
+      ),
+      responseBody: normalizeBodyForLog(
+        typeof response === "string" ? response : JSON.stringify(response)
+      ),
+    },
+  });
 }
 
 // ============================================================================
@@ -1045,6 +1082,11 @@ export async function confirmSalesOrder(
 
   if (!response.ok) {
     const error = await response.text();
+    logD365ThkApiFlow("d365_confirm_so", salesOrderNumber, dataAreaId, body, error, {
+      httpStatus: response.status,
+      failed: true,
+      errorMessage: error.slice(0, 500),
+    });
     throw new Error(
       `[D365] Failed to confirm sales order ${salesOrderNumber}: ${response.status} - ${error}`
     );
@@ -1053,8 +1095,17 @@ export async function confirmSalesOrder(
   const result: D365ThkApiResponse = await response.json();
 
   if (result.status !== DYNAMICS_THK_API_SUCCESS_STATUS) {
+    logD365ThkApiFlow("d365_confirm_so", salesOrderNumber, dataAreaId, body, result, {
+      httpStatus: response.status,
+      failed: true,
+      errorMessage: result.Message,
+    });
     throw new Error(`[D365] THK API failed to confirm ${salesOrderNumber}: ${result.Message}`);
   }
+
+  logD365ThkApiFlow("d365_confirm_so", salesOrderNumber, dataAreaId, body, result, {
+    httpStatus: response.status,
+  });
 
   console.log(`[D365] Confirmed sales order: ${salesOrderNumber}`);
 
@@ -1134,18 +1185,33 @@ export async function createPrepayment(
       (error.includes("DuplicateKeyException") || error.toLowerCase().includes("duplicate key"))
     ) {
       console.warn(
-        `[D365] Prepayment already exists for ${salesOrderNumber} (DuplicateKeyException); treating as success`
+        `[D365] PostPrepayment duplicate journal for ${salesOrderNumber} (DuplicateKeyException); verifying header state`
+      );
+      await assertPrepaymentInvoicePosted(salesOrderNumber, dataAreaId);
+      const idempotentResponse = {
+        status: DYNAMICS_THK_API_SUCCESS_STATUS,
+        Message: "PREPAYMENT_ALREADY_EXISTS",
+        Result: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
+        $id: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
+      };
+      logD365ThkApiFlow(
+        "d365_post_prepayment",
+        salesOrderNumber,
+        dataAreaId,
+        body,
+        { httpError: parsed ?? error, thk: idempotentResponse },
+        { httpStatus: response.status }
       );
       return {
-        response: {
-          status: DYNAMICS_THK_API_SUCCESS_STATUS,
-          Message: "PREPAYMENT_ALREADY_EXISTS",
-          Result: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
-          $id: "DUPLICATE_KEY_IDEMPOTENT_SUCCESS",
-        },
+        response: idempotentResponse,
         request: body,
       };
     }
+    logD365ThkApiFlow("d365_post_prepayment", salesOrderNumber, dataAreaId, body, error, {
+      httpStatus: response.status,
+      failed: true,
+      errorMessage: parsed?.Message || error.slice(0, 500),
+    });
     throw new Error(
       `[D365] Failed to create prepayment for ${salesOrderNumber}: ${response.status} - ${error}`
     );
@@ -1164,17 +1230,31 @@ export async function createPrepayment(
       console.warn(
         `[D365] Prepayment skipped for ${salesOrderNumber}: ${thkMessage.trim() || "No invoice amount"}`
       );
+      const skippedResponse = {
+        status: DYNAMICS_THK_API_SUCCESS_STATUS,
+        Message: "PREPAYMENT_SKIPPED_NO_INVOICE_AMOUNT",
+        Result: "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
+        $id: result.$id || "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
+      };
+      logD365ThkApiFlow(
+        "d365_post_prepayment",
+        salesOrderNumber,
+        dataAreaId,
+        body,
+        skippedResponse,
+        { httpStatus: response.status }
+      );
       return {
-        response: {
-          status: DYNAMICS_THK_API_SUCCESS_STATUS,
-          Message: "PREPAYMENT_SKIPPED_NO_INVOICE_AMOUNT",
-          Result: "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
-          $id: result.$id || "NO_INVOICE_AMOUNT_IDEMPOTENT_SUCCESS",
-        },
+        response: skippedResponse,
         request: body,
       };
     }
     console.error(`[D365] PostPrepayment THK response: ${JSON.stringify(result)}`);
+    logD365ThkApiFlow("d365_post_prepayment", salesOrderNumber, dataAreaId, body, result, {
+      httpStatus: response.status,
+      failed: true,
+      errorMessage: thkMessage,
+    });
     throw new Error(
       `[D365] THK API failed to create prepayment for ${salesOrderNumber}: ${result.Message}` +
         `${result.Result ? ` (Result=${result.Result})` : ""}`
@@ -1182,6 +1262,12 @@ export async function createPrepayment(
   }
 
   console.log(`[D365] Created prepayment for: ${salesOrderNumber}`);
+
+  logD365ThkApiFlow("d365_post_prepayment", salesOrderNumber, dataAreaId, body, result, {
+    httpStatus: response.status,
+  });
+
+  await assertPrepaymentInvoicePosted(salesOrderNumber, dataAreaId);
 
   return { response: result, request: body };
 }
@@ -1219,7 +1305,8 @@ export async function verifyDepositShipmentInvoicingComplete(
     const depositFulfillment = String(header?.THK_DepositFulfillment ?? "").trim() || null;
     const processingStatus = String(header?.SalesOrderProcessingStatus ?? "").trim() || null;
     const isDeposit = depositFulfillment?.toLowerCase() === "yes";
-    if (!isDeposit) {
+    const partiallyInvoiced = isSalesOrderPartiallyInvoiced(processingStatus);
+    if (!isDeposit && !partiallyInvoiced) {
       return { ok: true, depositFulfillment, processingStatus, header };
     }
     const ok = isSalesOrderFullyInvoiced(processingStatus);
@@ -1286,18 +1373,24 @@ export async function verifyDepositFulfillmentApplied(
     const header = await getSalesOrderHeaderV3ByKey(salesOrderNumber, dataAreaId);
     const depositFulfillment = String(header?.THK_DepositFulfillment ?? "").trim() || null;
     const processingStatus = String(header?.SalesOrderProcessingStatus ?? "").trim() || null;
-    const ok = depositFulfillment?.toLowerCase() === "yes";
-    if (!ok) {
+    const depositFlag = depositFulfillment?.toLowerCase() === "yes";
+    const partiallyInvoiced = isSalesOrderPartiallyInvoiced(processingStatus);
+    const ok = depositFlag && partiallyInvoiced;
+    if (!depositFlag) {
       console.warn(
-        `[D365] ⚠️ Prepayment posted but THK_DepositFulfillment is "${depositFulfillment ?? "<empty>"}" for ` +
-          `${salesOrderNumber} (${dataAreaId}). Resulting customer invoice will be Standard, not Prepayment. ` +
-          `Root cause is D365-side: the customer/posting profile for the ordering customer account is not ` +
-          `configured for deposit fulfillment. Fix in D365 master data (customer or posting profile), not in code.`
+        `[D365] ⚠️ PostPrepayment did not enable deposit fulfillment: THK_DepositFulfillment="${depositFulfillment ?? "<empty>"}" for ` +
+          `${salesOrderNumber} (${dataAreaId}), OrderingCustomerAccountNumber=${header?.OrderingCustomerAccountNumber ?? "n/a"}. ` +
+          `No Prepayment invoice will be created — only Standard at ship. Fix customer/posting profile in D365.`
+      );
+    } else if (!partiallyInvoiced) {
+      console.warn(
+        `[D365] ⚠️ PostPrepayment did not move ${salesOrderNumber} (${dataAreaId}) to PartiallyInvoiced: ` +
+          `SalesOrderProcessingStatus=${processingStatus ?? "n/a"}`
       );
     } else {
       console.log(
-        `[D365] ✅ Verified THK_DepositFulfillment=Yes for ${salesOrderNumber} (${dataAreaId}); ` +
-          `SalesOrderProcessingStatus=${processingStatus ?? "n/a"}`
+        `[D365] ✅ Prepayment invoice posted for ${salesOrderNumber} (${dataAreaId}); ` +
+          `THK_DepositFulfillment=Yes, SalesOrderProcessingStatus=${processingStatus ?? "n/a"}`
       );
     }
     return { ok, depositFulfillment, processingStatus, header };
@@ -1308,6 +1401,38 @@ export async function verifyDepositFulfillmentApplied(
     );
     return { ok: false, depositFulfillment: null, processingStatus: null, header: null };
   }
+}
+
+/**
+ * After PostPrepayment (including duplicate-journal idempotent path), the header must show
+ * deposit fulfillment enabled and PartiallyInvoiced — otherwise no Prepayment voucher exists.
+ */
+export async function assertPrepaymentInvoicePosted(
+  salesOrderNumber: string,
+  dataAreaId: string
+): Promise<{
+  depositFulfillment: string | null;
+  processingStatus: string | null;
+  orderingCustomerAccountNumber: string | null;
+}> {
+  const check = await verifyDepositFulfillmentApplied(salesOrderNumber, dataAreaId);
+  if (check.ok) {
+    return {
+      depositFulfillment: check.depositFulfillment,
+      processingStatus: check.processingStatus,
+      orderingCustomerAccountNumber:
+        check.header?.OrderingCustomerAccountNumber ?? null,
+    };
+  }
+
+  const customer = check.header?.OrderingCustomerAccountNumber ?? "unknown";
+  throw new Error(
+    `[D365] PostPrepayment did not create a Prepayment invoice for ${salesOrderNumber} (${dataAreaId}). ` +
+      `THK_DepositFulfillment=${check.depositFulfillment ?? "<empty>"}, ` +
+      `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"}, ` +
+      `OrderingCustomerAccountNumber=${customer}. ` +
+      `Configure deposit fulfillment on this customer/posting profile in D365 UAT (Prepayment at paid + Standard at ship).`
+  );
 }
 
 /**
@@ -1451,6 +1576,11 @@ export async function createFulfilment(
           error: error.slice(0, 4000),
         })}`
       );
+      logD365ThkApiFlow("d365_fulfilment", salesOrderNumber, dataAreaId, body, error, {
+        httpStatus: response.status,
+        failed: true,
+        errorMessage: error.slice(0, 500),
+      });
       throw new Error(
         `[D365] Failed to create fulfilment for ${salesOrderNumber}: ${response.status} - ${error}`
       );
@@ -1471,6 +1601,9 @@ export async function createFulfilment(
       } else {
         console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
       }
+      logD365ThkApiFlow("d365_fulfilment", salesOrderNumber, dataAreaId, body, result, {
+        httpStatus: response.status,
+      });
       return { response: result, request: body };
     }
 
@@ -1654,7 +1787,7 @@ export async function getSalesOrderLines(
   const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
   // Keep select minimal for cross-tenant compatibility:
   // some environments do not expose SalesQuantity/SalesPrice/LineDiscountAmount on SalesOrderLine.
-  const select = "ItemNumber,InventoryLotId";
+  const select = "ItemNumber,InventoryLotId,ShippingWarehouseId,ShippingSiteId";
   const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?${D365_ODATA_CROSS_COMPANY_QUERY}&$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
   const response = await pacedFetch(url, {
@@ -1706,6 +1839,37 @@ export async function getLotIdMap(
   return lotIdMap;
 }
 
+export type SalesOrderLineFulfilmentDimensions = {
+  shippingSiteId: string;
+  shippingWarehouseId: string;
+  shippingWarehouseLocationId: string;
+};
+
+/**
+ * Per-SKU fulfilment warehouse/site from D365 sales order lines (matches order create reservation).
+ */
+export async function getSalesOrderLineFulfilmentDimensionsMap(
+  salesOrderNumber: string,
+  dataAreaId: string = config.dynamics.dataAreaId
+): Promise<Record<string, SalesOrderLineFulfilmentDimensions>> {
+  const lines = await getSalesOrderLines(salesOrderNumber, dataAreaId);
+  const out: Record<string, SalesOrderLineFulfilmentDimensions> = {};
+  for (const line of lines) {
+    const item = String(line.ItemNumber || "").trim().toUpperCase();
+    const warehouse = String(line.ShippingWarehouseId || "").trim();
+    if (!item || !warehouse) continue;
+    out[item] = {
+      shippingSiteId: String(line.ShippingSiteId || "Prenetics").trim() || "Prenetics",
+      shippingWarehouseId: warehouse,
+      shippingWarehouseLocationId: "Primary",
+    };
+  }
+  if (Object.keys(out).length > 0) {
+    console.log(`[D365] Line fulfilment dimensions for ${salesOrderNumber}:`, out);
+  }
+  return out;
+}
+
 /**
  * Merge multiple SKU → InventoryLotId maps (e.g. OData first, Hub snapshot fills gaps).
  * First map wins per SKU; later maps only add keys not yet set.
@@ -1730,6 +1894,19 @@ export function mergeLotIdMaps(
 /** Escape a string for use inside OData single-quoted literals (incl. filter + key segments). */
 function odataQuotedLiteral(value: string): string {
   return String(value || "").replace(/'/g, "''");
+}
+
+function pickRowForPreferredDataArea(
+  rows: D365SalesOrderHeader[],
+  preferredDataAreaId: string
+): D365SalesOrderHeader | null {
+  if (rows.length === 0) return null;
+  const pref = String(preferredDataAreaId || "").toUpperCase();
+  if (pref) {
+    const match = rows.find((row) => String(row.dataAreaId || "").toUpperCase() === pref);
+    if (match) return match;
+  }
+  return rows[0];
 }
 
 async function getSalesOrderHeaderRowsWithV2Fallback(
@@ -1966,7 +2143,8 @@ export async function getSalesOrderHeadersBySalesOrderNumberLoose(
 export async function getSalesOrderByShopifyId(
   shopifyOrderId: string,
   dataAreaId: string = config.dynamics.dataAreaId,
-  trace?: D365ODataTraceContext
+  trace?: D365ODataTraceContext,
+  options?: { shopifyNumericId?: string }
 ): Promise<D365SalesOrderHeader | null> {
   console.log(`[D365] Looking up order by Shopify ID: ${shopifyOrderId}`);
 
@@ -1976,57 +2154,104 @@ export async function getSalesOrderByShopifyId(
   }
 
   const token = await getAuthToken();
-  const filter = `dataAreaId eq '${odataQuotedLiteral(dataAreaId)}' and THK_ShopifyReference eq '${odataQuotedLiteral(shopifyOrderId)}'`;
-  let rows: D365SalesOrderHeader[] = [];
-  let entity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" = "SalesOrderHeadersV3";
-  try {
-    const result = await getSalesOrderHeaderRowsWithV2Fallback(token, filter);
-    rows = result.rows;
-    entity = result.entity;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (trace) {
-      logD365ODataTrace({
-        ...trace,
-        op: "SalesOrderHeadersV3_BY_SHOPIFY_REF",
-        dataAreaId,
-        thkShopifyReference: shopifyOrderId,
-        odataFilter: filter,
-        httpStatus: 500,
-        valueCount: 0,
-        ok: false,
-        errorSnippet: message.slice(0, 500),
-      });
+  const refs = shopifyReferenceLookupCandidates(shopifyOrderId, options?.shopifyNumericId);
+  let lastFilter = "";
+  let lastEntity: "SalesOrderHeadersV3" | "SalesOrderHeadersV2" = "SalesOrderHeadersV3";
+  let lastRowCount = 0;
+
+  const tryFilter = async (
+    filter: string,
+    op:
+      | "SalesOrderHeadersV3_BY_SHOPIFY_REF"
+      | "SalesOrderHeadersV3_BY_CUSTOMER_ORDER_REF"
+      | "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE"
+  ): Promise<D365SalesOrderHeader | null> => {
+    lastFilter = filter;
+    try {
+      const result = await getSalesOrderHeaderRowsWithV2Fallback(token, filter);
+      lastEntity = result.entity;
+      lastRowCount = result.rows.length;
+      const order =
+        op === "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE"
+          ? pickRowForPreferredDataArea(result.rows, dataAreaId)
+          : result.rows[0] || null;
+
+      if (trace) {
+        logD365ODataTrace({
+          ...trace,
+          op,
+          dataAreaId,
+          thkShopifyReference: shopifyOrderId,
+          odataFilter: filter,
+          httpStatus: 200,
+          valueCount: result.rows.length,
+          matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
+          matchedDataAreaId: order?.dataAreaId ?? null,
+          ok: Boolean(order),
+          salesOrderHeadersEntity: result.entity,
+        });
+      }
+
+      return order;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (trace) {
+        logD365ODataTrace({
+          ...trace,
+          op,
+          dataAreaId,
+          thkShopifyReference: shopifyOrderId,
+          odataFilter: filter,
+          httpStatus: 500,
+          valueCount: 0,
+          ok: false,
+          errorSnippet: message.slice(0, 500),
+        });
+      }
+      throw new Error(`[D365] Failed to get sales order: ${message}`);
     }
-    throw new Error(`[D365] Failed to get sales order: ${message}`);
-  }
-  const order = rows[0] || null;
+  };
 
-  if (trace) {
-    logD365ODataTrace({
-      ...trace,
-      op: "SalesOrderHeadersV3_BY_SHOPIFY_REF",
-      dataAreaId,
-      thkShopifyReference: shopifyOrderId,
-      odataFilter: filter,
-      httpStatus: 200,
-      valueCount: rows.length,
-      matchedSalesOrderNumber: order?.SalesOrderNumber ?? null,
-      matchedDataAreaId: order?.dataAreaId ?? null,
-      ok: Boolean(order),
-      salesOrderHeadersEntity: entity,
-    });
+  for (const ref of refs) {
+    const strictThkFilter =
+      `dataAreaId eq '${odataQuotedLiteral(dataAreaId)}' and ` +
+      `THK_ShopifyReference eq '${odataQuotedLiteral(ref)}'`;
+    const strictThkOrder = await tryFilter(strictThkFilter, "SalesOrderHeadersV3_BY_SHOPIFY_REF");
+    if (strictThkOrder) {
+      console.log(`[D365] Found order: ${strictThkOrder.SalesOrderNumber} (strict THK ref=${ref})`);
+      return strictThkOrder;
+    }
+
+    const customerRefFilter =
+      `dataAreaId eq '${odataQuotedLiteral(dataAreaId)}' and ` +
+      `CustomersOrderReference eq '${odataQuotedLiteral(ref)}'`;
+    const customerRefOrder = await tryFilter(
+      customerRefFilter,
+      "SalesOrderHeadersV3_BY_CUSTOMER_ORDER_REF"
+    );
+    if (customerRefOrder) {
+      console.log(
+        `[D365] Found order: ${customerRefOrder.SalesOrderNumber} (CustomersOrderReference=${ref})`
+      );
+      return customerRefOrder;
+    }
+
+    const looseThkFilter = `THK_ShopifyReference eq '${odataQuotedLiteral(ref)}'`;
+    const looseThkOrder = await tryFilter(looseThkFilter, "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE");
+    if (looseThkOrder) {
+      console.log(
+        `[D365] Found order: ${looseThkOrder.SalesOrderNumber} (cross-company THK ref=${ref})`
+      );
+      return looseThkOrder;
+    }
   }
 
-  if (order) {
-    console.log(`[D365] Found order: ${order.SalesOrderNumber}`);
-  } else {
-    console.log(`[D365] No order found for Shopify ID: ${shopifyOrderId}`);
-    console.log(`[D365] Query used: ${filter}`);
-    console.log(`[D365] Response rows: ${rows.length} via ${entity}`);
-  }
+  console.log(`[D365] No order found for Shopify ID: ${shopifyOrderId}`);
+  console.log(`[D365] Last query used: ${lastFilter}`);
+  console.log(`[D365] Last response rows: ${lastRowCount} via ${lastEntity}`);
+  console.log(`[D365] Reference candidates tried: ${refs.join(", ")}`);
 
-  return order;
+  return null;
 }
 
 /**

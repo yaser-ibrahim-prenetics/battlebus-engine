@@ -5,12 +5,28 @@ import {
   getThkFulfilmentBlockingIssue,
   getThkFulfilmentWarningMessage,
   hasThkInvoiceVoucherPosted,
+  isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
+  isSalesOrderPartiallyInvoiced,
   isThkFulfilmentIncompleteError,
   isThkFulfilmentInformationalWarning,
 } from "../d365-thk-fulfilment";
 
 describe("d365-thk-fulfilment", () => {
+  it("detects partially invoiced deposit orders", () => {
+    expect(isSalesOrderPartiallyInvoiced("PartiallyInvoiced")).toBe(true);
+    expect(
+      isDepositFulfillmentOrder({
+        depositFulfillment: "No",
+        processingStatus: "PartiallyInvoiced",
+      })
+    ).toBe(true);
+  });
+
+  it("detects fully invoiced header status", () => {
+    expect(isSalesOrderFullyInvoiced("Invoiced")).toBe(true);
+    expect(isSalesOrderFullyInvoiced("PartiallyInvoiced")).toBe(false);
+  });
   it("treats warehouse dimension messages as informational (success)", () => {
     const msg =
       " Dimension Warehouse is still specified on the inventory transaction with value USOPS-WH04";

@@ -48,6 +48,7 @@ import {
 import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
 import {
   getThkFulfilmentWarningMessage,
+  isDepositFulfillmentOrder,
   isThkFulfilmentIncompleteError,
 } from "@/lib/helpers/d365-thk-fulfilment";
 
@@ -435,6 +436,11 @@ export const processShopifyFulfillment = inngest.createFunction(
             supabaseLotMap,
             orderLinesLotMap
           );
+          const d365LineDimensionsMap =
+            await dynamics.getSalesOrderLineFulfilmentDimensionsMap(
+              d365Order.SalesOrderNumber!,
+              dataAreaId
+            );
 
           const shipFromWarehouseName =
             getWarehouseNameFromLocation(fulfillment.location_id || "") ||
@@ -475,9 +481,30 @@ export const processShopifyFulfillment = inngest.createFunction(
               // createFulfilment will throw if any line still has no Lotid.
               quantity: item.quantity,
               trackingNumber: fulfillment.tracking_number || "",
-              shippingSiteId: fulfilmentWarehouseConfig.shippingSiteId,
-              shippingWarehouseId: fulfilmentWarehouseConfig.shippingWarehouseId,
-              shippingWarehouseLocationId: fulfilmentWarehouseConfig.shippingWarehouseLocationId,
+              ...(() => {
+                const rawFulfillmentSku = String(item.sku || "").trim();
+                const normalizedFulfillmentSku = normalizeSkuForLotLookup(rawFulfillmentSku);
+                const lineItemId = Number((item as any)?.id);
+                const normalizedOrderLineSku =
+                  Number.isFinite(lineItemId) && lineItemId > 0
+                    ? normalizeSkuForLotLookup(
+                        orderLineSkuById[String(Math.trunc(lineItemId))] || ""
+                      )
+                    : "";
+                const d365Dims =
+                  d365LineDimensionsMap[normalizedFulfillmentSku] ||
+                  d365LineDimensionsMap[normalizedOrderLineSku];
+                return {
+                  shippingSiteId:
+                    d365Dims?.shippingSiteId || fulfilmentWarehouseConfig.shippingSiteId,
+                  shippingWarehouseId:
+                    d365Dims?.shippingWarehouseId ||
+                    fulfilmentWarehouseConfig.shippingWarehouseId,
+                  shippingWarehouseLocationId:
+                    d365Dims?.shippingWarehouseLocationId ||
+                    fulfilmentWarehouseConfig.shippingWarehouseLocationId,
+                };
+              })(),
               lotId: (() => {
                 const lineItemId = Number((item as any)?.id);
                 const lineItemIdStr =
@@ -631,7 +658,10 @@ export const processShopifyFulfillment = inngest.createFunction(
             d365Order.SalesOrderNumber!,
             dataAreaId
           );
-          const isDepositOrder = depositPrecheck.ok;
+          const isDepositOrder = isDepositFulfillmentOrder({
+            depositFulfillment: depositPrecheck.depositFulfillment,
+            processingStatus: depositPrecheck.processingStatus,
+          });
           const depositShipInvoiceCheck = isDepositOrder
             ? await dynamics.assertDepositShipmentInvoicingComplete(
                 d365Order.SalesOrderNumber!,

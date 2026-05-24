@@ -88,17 +88,41 @@ export function hasThkInvoiceVoucherPosted(
   return /number of vouchers posted to the journal:\s*\d+/i.test(String(message || ""));
 }
 
-export function isSalesOrderFullyInvoiced(
+export function normalizeSalesOrderProcessingStatus(
   processingStatus: string | null | undefined
-): boolean {
-  const normalized = String(processingStatus || "")
+): string {
+  return String(processingStatus || "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "");
+}
+
+export function isSalesOrderPartiallyInvoiced(
+  processingStatus: string | null | undefined
+): boolean {
+  const normalized = normalizeSalesOrderProcessingStatus(processingStatus);
+  return normalized.includes("partiallyinvoiced") || normalized.includes("partially");
+}
+
+export function isSalesOrderFullyInvoiced(
+  processingStatus: string | null | undefined
+): boolean {
+  const normalized = normalizeSalesOrderProcessingStatus(processingStatus);
   if (!normalized || normalized.includes("partially")) {
     return false;
   }
   return normalized === "invoiced" || normalized.includes("fullyinvoiced");
+}
+
+/** Deposit lane: prepayment posted at order create — header should be PartiallyInvoiced. */
+export function isDepositFulfillmentOrder(fields: {
+  depositFulfillment?: string | null;
+  processingStatus?: string | null;
+}): boolean {
+  if (String(fields.depositFulfillment || "").trim().toLowerCase() === "yes") {
+    return true;
+  }
+  return isSalesOrderPartiallyInvoiced(fields.processingStatus);
 }
 
 /**
