@@ -260,7 +260,7 @@ describe("Warehouse Routing Helpers", () => {
       it("STORD hub + GB still resolves refund profile via warehouse + dataArea", () => {
         const w = resolveRefundFulfillmentWarehouse("GB", "STORD EU Location");
         expect(w).toBe("STORD EU Location");
-        expect(getRefundSku(w, "H007")).toBe("IM8-SER-000003");
+        expect(getRefundSku(w, "H007")).toBe("IM8-SER-000005");
       });
     });
   });
@@ -282,6 +282,14 @@ describe("Warehouse Routing Helpers", () => {
   });
 
   describe("Service SKU Helpers", () => {
+    beforeEach(() => {
+      delete process.env.D365_SERVICE_SKU_PROFILE;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD;
+      process.env.D365_BASE_URL = "https://prod.operations.dynamics.com";
+    });
+
     it("getShippingSku returns correct SKU per warehouse", () => {
       expect(getShippingSku("GPS Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("GPS UK Warehouse")).toBe("IM8-SER-000002");
@@ -296,15 +304,14 @@ describe("Warehouse Routing Helpers", () => {
       expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000001");
     });
 
-    it("getRefundSku uses built-in PROD profile map for U001/H007 when env unset", () => {
+    it("getRefundSku uses built-in PROD profile map when env unset", () => {
       expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
-      // U001 PROD fallback is GPS-style refund SKU (not STORD warehouse-config 000005)
       expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000003");
     });
 
-    it("getRefundSku uses built-in UAT profile map when profile is UAT", () => {
+    it("getRefundSku uses built-in UAT profile map when env unset", () => {
       process.env.D365_SERVICE_SKU_PROFILE = "UAT";
       delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
       delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
@@ -312,7 +319,28 @@ describe("Warehouse Routing Helpers", () => {
       expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
       expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000004");
       expect(getShippingSku("GPS Warehouse")).toBe("IM8-SER-000003");
-      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
+      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000005");
+    });
+
+    it("getRefundSku uses D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT when set", () => {
+      process.env.D365_SERVICE_SKU_PROFILE = "UAT";
+      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
+        U001: {
+          tax: "IM8-SER-000004",
+          refund: "IM8-SER-000005",
+          shipping: "IM8-SER-000003",
+        },
+        H007: {
+          tax: "IM8-SER-000001",
+          refund: "IM8-SER-000005",
+          shipping: "IM8-SER-000003",
+        },
+      });
+
+      expect(getRefundSku("GPS Warehouse", "U001")).toBe("IM8-SER-000005");
+      expect(getShippingSku("GPS Warehouse", "U001")).toBe("IM8-SER-000003");
+      expect(getRefundSku("HK Warehouse", "H007")).toBe("IM8-SER-000005");
+      expect(getShippingSku("HK Warehouse", "H007")).toBe("IM8-SER-000003");
     });
 
     it("resolves SKU profile by routed dataAreaId when provided", () => {
@@ -364,8 +392,9 @@ describe("Warehouse Routing Helpers", () => {
       delete process.env.D365_BASE_URL;
       delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON;
       delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD;
+      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
 
-      const audit = resolveRefundSkuAudit("GPS Warehouse", "U001");
+      const audit = resolveRefundSkuAudit("STORD ATL Location", "U001");
       expect(audit.refundSku).toBe("IM8-SER-000003");
       expect(audit.source).toBe("profile_sku_fallback");
       expect(audit.overrideKind).toBe("builtin");

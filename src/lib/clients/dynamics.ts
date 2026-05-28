@@ -8,6 +8,7 @@ import { config } from "../config";
 import {
   assertDepositShipmentThkInvoiced,
   assertThkFulfilmentSucceeded,
+  buildThkFulfilmentRequestBody,
   getThkFulfilmentWarningMessage,
   isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
@@ -1444,7 +1445,6 @@ export async function createFulfilment(
 ): Promise<{ response: D365ThkApiResponse; request: object }> {
   const endpoint = `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`;
   const { salesOrderNumber, dataAreaId, lines, type, confirmedShippedDate } = req;
-  const normalizedDataAreaId = String(dataAreaId || "").toUpperCase();
   const linesMissingLotId = lines
     .filter((line) => !String(line.lotId || "").trim())
     .map((line) => line.itemNumber);
@@ -1506,36 +1506,14 @@ export async function createFulfilment(
     );
   };
 
-  const buildFulfilmentBody = (fulfilmentLines: D365FulfilmentLine[]) => ({
-    _dataContract: {
-      DataAreaId: dataAreaId,
-      Type: type,
-      D365FOSalesOrder: salesOrderNumber,
-      ConfirmedShippedDate: confirmedShippedDate,
-      Lines: fulfilmentLines.map((line) => {
-        const lineData: Record<string, unknown> = {
-          ItemNumber: line.itemNumber,
-          Quantity: line.quantity,
-          Site: line.shippingSiteId,
-          TrackingNumber: line.trackingNumber,
-          Lotid: line.lotId,
-        };
-
-        if (line.shippingWarehouseId && line.shippingWarehouseLocationId) {
-          // U001 (US) doesn't use warehouse/location in fulfilment
-          if (normalizedDataAreaId === "U001") {
-            lineData["Warehouse"] = "";
-            lineData["Location"] = "";
-          } else {
-            lineData["Warehouse"] = line.shippingWarehouseId;
-            lineData["Location"] = line.shippingWarehouseLocationId;
-          }
-        }
-
-        return lineData;
-      }),
-    },
-  });
+  const buildFulfilmentBody = (fulfilmentLines: D365FulfilmentLine[]) =>
+    buildThkFulfilmentRequestBody({
+      dataAreaId,
+      type,
+      salesOrderNumber,
+      confirmedShippedDate,
+      lines: fulfilmentLines,
+    });
 
   if (config.features.dryRunMode) {
     console.log(`[D365] DRY RUN - Would create fulfilment for ${salesOrderNumber}`);

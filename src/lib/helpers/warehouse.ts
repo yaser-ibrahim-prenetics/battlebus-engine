@@ -473,8 +473,8 @@ export const BUILTIN_SERVICE_SKU_BY_PROFILE: Record<
     },
     H007: {
       tax: "IM8-SER-000001",
-      refund: "IM8-SER-000003",
-      shipping: "IM8-SER-000002",
+      refund: "IM8-SER-000005",
+      shipping: "IM8-SER-000003",
     },
   },
   PROD: {
@@ -492,7 +492,7 @@ export const BUILTIN_SERVICE_SKU_BY_PROFILE: Record<
 };
 
 /**
- * Per-dataArea service SKU overrides.
+ * Per-dataArea service SKU overrides (tax/shipping order lines).
  *
  * Priority:
  * 1. Env JSON (`D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` / generic)
@@ -501,13 +501,16 @@ export const BUILTIN_SERVICE_SKU_BY_PROFILE: Record<
  *
  * Profile: `D365_SERVICE_SKU_PROFILE` or `D365_BASE_URL` containing `uat`/`sandbox` → UAT.
  */
-function loadServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
+function loadEnvOnlyServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
   const raw = resolveServiceSkuOverrideRawJson();
-  if (raw) {
-    const fromEnv = parseServiceSkuOverridesByDataArea(raw);
-    if (Object.keys(fromEnv).length > 0) {
-      return fromEnv;
-    }
+  if (!raw) return {};
+  return parseServiceSkuOverridesByDataArea(raw);
+}
+
+function loadServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
+  const fromEnv = loadEnvOnlyServiceSkuOverridesByDataArea();
+  if (Object.keys(fromEnv).length > 0) {
+    return fromEnv;
   }
   return getBuiltinServiceSkuOverridesByDataArea();
 }
@@ -669,6 +672,7 @@ export type RefundSkuResolution = {
   refundSku: string;
   dataAreaId: string;
   warehouseName: string;
+  /** Env JSON → built-in profile → warehouse-config (same priority as tax/shipping). */
   source: "env_json_override" | "profile_sku_fallback" | "warehouse_config";
   envProfile: string;
   envVarName: string | null;
@@ -697,7 +701,11 @@ function resolveBaseWarehouseConfigForServiceSku(
 }
 
 /**
- * Resolve refund SKU with audit metadata. Env JSON wins; else built-in UAT/PROD map; else warehouse-config.
+ * Resolve refund SKU with audit metadata.
+ *
+ * Same priority as tax/shipping ({@link resolveServiceSkuConfig}):
+ * env JSON → built-in UAT/PROD map → warehouse-config `item.refund`.
+ * UAT: U001 + H007 refund `IM8-SER-000005`, shipping `IM8-SER-000003` (000003 is not refund).
  */
 export function resolveRefundSkuAudit(
   warehouseName: string,
@@ -717,9 +725,9 @@ export function resolveRefundSkuAudit(
   const overrideKind = getServiceSkuOverrideKind();
   const envVarName = getActiveServiceSkuEnvVarName();
   const envProfile = getServiceSkuEnvProfile();
-  const envDataAreaKeys = Object.keys(overridesByArea);
-  const envEntry = overridesByArea[dataAreaId] ?? null;
-  const envRefundSku = envEntry?.refund?.trim() || null;
+  const envOnly = loadEnvOnlyServiceSkuOverridesByDataArea();
+  const envDataAreaKeys = Object.keys(envOnly);
+  const envRefundSku = envOnly[dataAreaId]?.refund?.trim() || null;
   const warehouseConfigRefund = baseConfig.item.refund;
 
   if (overrideKind === "env" && envVarName && envDataAreaKeys.length > 0 && !envRefundSku) {
@@ -730,12 +738,13 @@ export function resolveRefundSkuAudit(
   }
 
   const finalConfig = applyServiceSkuOverrides(baseConfig, dataAreaId, overridesByArea);
+  const profileRefundSku = overridesByArea[dataAreaId]?.refund?.trim() || null;
 
   const source: RefundSkuResolution["source"] = envRefundSku
-    ? overrideKind === "env"
-      ? "env_json_override"
-      : "profile_sku_fallback"
-    : "warehouse_config";
+    ? "env_json_override"
+    : profileRefundSku
+      ? "profile_sku_fallback"
+      : "warehouse_config";
 
   return {
     refundSku: finalConfig.item.refund,

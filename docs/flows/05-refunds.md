@@ -61,13 +61,14 @@ Looks up the D365 sales order by `THK_ShopifyReference` (order name). If not fou
 
 Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment).
 
-**Refund SKU source (priority):**
+**Refund SKU source (priority — same as tax/shipping service SKUs):**
 
-1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` (or generic `D365_SERVICE_SKU_BY_DATA_AREA_JSON`). When set, `{dataAreaId}.refund` is **required** for that data area.
-2. **Built-in profile map** (`BUILTIN_SERVICE_SKU_BY_PROFILE` in `warehouse.ts`) when env is unset:
-   - **UAT:** U001 → tax `IM8-SER-000004`, refund `IM8-SER-000005`, shipping `IM8-SER-000003`; H007 → tax/refund/shipping `000001` / `000003` / `000002`
-   - **PROD:** U001 + H007 → tax `IM8-SER-000001`, refund `IM8-SER-000003`, shipping `IM8-SER-000002`
-3. **`warehouse-config.json`** only for data areas not in the map (e.g. H001 CircleDNA).
+1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` (or generic). Example UAT:
+   `{"U001":{"refund":"IM8-SER-000005","shipping":"IM8-SER-000003",...},"H007":{...}}`
+2. **Built-in profile map** (`BUILTIN_SERVICE_SKU_BY_PROFILE`) when env is unset.
+3. **`warehouse-config.json`** per warehouse when data area is not in the map.
+
+UAT U001 + H007: refund **`IM8-SER-000005`** · shipping **`IM8-SER-000003`** (`000003` is shipping in D365, not refund).
 
 Return sites still come from `warehouse-config.json` for the fulfillment warehouse profile.
 

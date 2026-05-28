@@ -4,6 +4,8 @@
  * status=1 — same as spock-store / historical Hub behaviour.
  */
 
+import type { D365FulfilmentLine, D365FulfilmentRequest } from "@/lib/types/dynamics";
+
 /** Informational THK text on status=1 — do not fail fulfilment or queue backorders. */
 export const THK_FULFILMENT_INFORMATIONAL_WARNING_HINTS = [
   "dimension warehouse is still specified",
@@ -165,4 +167,62 @@ export function assertThkFulfilmentSucceeded(
   throw new Error(
     `[D365] THK fulfilment incomplete for ${salesOrderNumber}: ${detail}`
   );
+}
+
+export interface BuildThkFulfilmentRequestBodyInput {
+  dataAreaId: string;
+  type: D365FulfilmentRequest["type"];
+  salesOrderNumber: string;
+  confirmedShippedDate: string;
+  lines: D365FulfilmentLine[];
+}
+
+/**
+ * Builds the THK `_dataContract` body for `/fulfilment`.
+ *
+ * - `shipment`: Site + Lotid only (warehouse from SO line reservation).
+ * - `return` (refunds): Site + Lotid + Warehouse + Location from return profile;
+ *   U001 sends empty Warehouse/Location strings (spock-store parity).
+ */
+export function buildThkFulfilmentRequestBody(input: BuildThkFulfilmentRequestBodyInput): {
+  _dataContract: {
+    DataAreaId: string;
+    Type: D365FulfilmentRequest["type"];
+    D365FOSalesOrder: string;
+    ConfirmedShippedDate: string;
+    Lines: Record<string, unknown>[];
+  };
+} {
+  const normalizedDataAreaId = String(input.dataAreaId || "").toUpperCase();
+  const isReturn = input.type === "return";
+
+  return {
+    _dataContract: {
+      DataAreaId: input.dataAreaId,
+      Type: input.type,
+      D365FOSalesOrder: input.salesOrderNumber,
+      ConfirmedShippedDate: input.confirmedShippedDate,
+      Lines: input.lines.map((line) => {
+        const fulfilmentLine: Record<string, unknown> = {
+          ItemNumber: line.itemNumber,
+          Quantity: line.quantity,
+          Site: line.shippingSiteId,
+          TrackingNumber: line.trackingNumber,
+          Lotid: line.lotId,
+        };
+
+        if (isReturn && line.shippingWarehouseId && line.shippingWarehouseLocationId) {
+          if (normalizedDataAreaId === "U001") {
+            fulfilmentLine["Warehouse"] = "";
+            fulfilmentLine["Location"] = "";
+          } else {
+            fulfilmentLine["Warehouse"] = line.shippingWarehouseId;
+            fulfilmentLine["Location"] = line.shippingWarehouseLocationId;
+          }
+        }
+
+        return fulfilmentLine;
+      }),
+    },
+  };
 }
