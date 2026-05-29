@@ -61,17 +61,18 @@ Looks up the D365 sales order by `THK_ShopifyReference` (order name). If not fou
 
 Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/location for the return fulfilment).
 
-**Refund SKU source (priority — same as tax/shipping service SKUs):**
+**Refund SKU source (same as tax/shipping service SKUs):**
 
-1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` when `SHOPIFY_STORE_MODE=test`, `_PROD` when `production`.
-2. **Default JSON** for that profile when env is unset or invalid — must match `.env.local` lines 8–9 (`DEFAULT_D365_SERVICE_SKU_JSON_UAT` / `_PROD` in code).
-3. **`warehouse-config.json`** per warehouse when data area is not in the map.
+Service SKUs (tax/shipping/refund) are a **hard-coded constant map** in code — `SERVICE_SKUS_BY_PROFILE` in `src/lib/helpers/warehouse.ts` — keyed by profile and `dataAreaId` (U001 / H007). There are **no SKU env vars**; SKU changes are a code change (reviewed + test-locked).
 
-**Profile:** `SHOPIFY_STORE_MODE=test` → UAT · `SHOPIFY_STORE_MODE=production` → PROD.
+**Profile:** `SHOPIFY_STORE_MODE=test` → UAT · `SHOPIFY_STORE_MODE=production` → PROD (falls back to `NODE_ENV` when unset).
 
-Invalid env JSON logs `[Service SKU] Error reading D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` and falls back to (2).
+| Profile | tax | refund | shipping |
+| ------- | --- | ------ | -------- |
+| UAT (U001 & H007) | `IM8-SER-000004` (U001) / `IM8-SER-000001` (H007) | **`IM8-SER-000005`** | `IM8-SER-000003` |
+| PROD (U001 & H007) | `IM8-SER-000001` | **`IM8-SER-000003`** | `IM8-SER-000002` |
 
-UAT U001 + H007: refund **`IM8-SER-000005`** · shipping **`IM8-SER-000003`** (`000003` is shipping in D365, not refund).
+In UAT, `IM8-SER-000003` is the **shipping** item — never the refund item. Because SKUs are code, a wrong value can't be introduced via a Vercel env paste.
 
 Return sites still come from `warehouse-config.json` for the fulfillment warehouse profile.
 

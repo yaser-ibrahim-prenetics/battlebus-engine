@@ -45,12 +45,6 @@ export interface WarehouseConfig {
   };
 }
 
-interface ServiceSkuByDataArea {
-  tax?: string;
-  refund?: string;
-  shipping?: string;
-}
-
 export interface RoutingResult {
   warehouseName: WarehouseName;
   dataAreaId: string;
@@ -429,7 +423,6 @@ function resolveServiceSkuConfig(
   dataAreaIdOverride?: string
 ): WarehouseConfig {
   const normalizedDataAreaId = (dataAreaIdOverride || "").toUpperCase();
-  const serviceSkuOverridesByArea = loadServiceSkuOverridesByDataArea();
 
   // If a routed dataAreaId is provided, prefer a profile aligned to it.
   // Keep warehouse-specific profile when it already matches the routed area
@@ -438,166 +431,53 @@ function resolveServiceSkuConfig(
     try {
       const byWarehouse = getWarehouseConfig(warehouseName);
       if ((byWarehouse.dataAreaId || "").toUpperCase() === normalizedDataAreaId) {
-        return applyServiceSkuOverrides(byWarehouse, normalizedDataAreaId, serviceSkuOverridesByArea);
+        return applyServiceSkus(byWarehouse, normalizedDataAreaId);
       }
     } catch {
       // Ignore unknown warehouse names and fall back to dataArea profile below.
     }
-    return applyServiceSkuOverrides(
+    return applyServiceSkus(
       getWarehouseConfigForDataAreaId(normalizedDataAreaId),
-      normalizedDataAreaId,
-      serviceSkuOverridesByArea
+      normalizedDataAreaId
     );
   }
 
   const profile = getWarehouseConfig(warehouseName);
-  const profileArea = (profile.dataAreaId || "").toUpperCase();
-  return applyServiceSkuOverrides(profile, profileArea, serviceSkuOverridesByArea);
+  return applyServiceSkus(profile, (profile.dataAreaId || "").toUpperCase());
 }
 
-type ServiceSkuProfile = "UAT" | "PROD";
+export type ServiceSkuProfile = "UAT" | "PROD";
 
-/** Must match `.env.local` `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` (line 8). */
-export const DEFAULT_D365_SERVICE_SKU_JSON_UAT =
-  '{"U001":{"tax":"IM8-SER-000004","refund":"IM8-SER-000005","shipping":"IM8-SER-000003"},"H007":{"tax":"IM8-SER-000001","refund":"IM8-SER-000005","shipping":"IM8-SER-000003"}}';
-
-/** Must match `.env.local` `D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD` (line 9). */
-export const DEFAULT_D365_SERVICE_SKU_JSON_PROD =
-  '{"U001":{"tax":"IM8-SER-000001","refund":"IM8-SER-000003","shipping":"IM8-SER-000002"},"H007": {"tax":"IM8-SER-000001","refund":"IM8-SER-000003","shipping":"IM8-SER-000002"}}';
-
-const DEFAULT_SERVICE_SKU_JSON: Record<ServiceSkuProfile, string> = {
-  UAT: DEFAULT_D365_SERVICE_SKU_JSON_UAT,
-  PROD: DEFAULT_D365_SERVICE_SKU_JSON_PROD,
-};
-
-function serviceSkuEnvVarName(profile: ServiceSkuProfile): string {
-  return `D365_SERVICE_SKU_BY_DATA_AREA_JSON_${profile}`;
-}
-
-function normalizeServiceSkuOverridesByDataArea(
-  parsed: Record<string, ServiceSkuByDataArea>
-): Record<string, ServiceSkuByDataArea> {
-  const out: Record<string, ServiceSkuByDataArea> = {};
-  for (const [area, skuSet] of Object.entries(parsed)) {
-    const key = String(area || "").toUpperCase().trim();
-    if (!key || !skuSet || typeof skuSet !== "object") continue;
-    out[key] = {
-      tax: typeof skuSet.tax === "string" ? skuSet.tax.trim() : undefined,
-      refund: typeof skuSet.refund === "string" ? skuSet.refund.trim() : undefined,
-      shipping: typeof skuSet.shipping === "string" ? skuSet.shipping.trim() : undefined,
-    };
-  }
-  return out;
-}
-
-function parseEnvJsonValue<T>(raw: string): { value: T | null; error: string | null } {
-  const s = String(raw ?? "").replace(/^\uFEFF/, "").trim();
-  if (!s) return { value: null, error: "empty value" };
-
-  let lastError = "invalid JSON";
-
-  const tryParse = (input: string): unknown => {
-    const v = JSON.parse(input) as unknown;
-    if (typeof v === "string") {
-      const t = v.trim();
-      if (t.startsWith("{") || t.startsWith("[")) {
-        try {
-          return JSON.parse(t);
-        } catch (err) {
-          lastError = err instanceof Error ? err.message : String(err);
-          return v;
-        }
-      }
-    }
-    return v;
-  };
-
-  const candidates: string[] = [s];
-  if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
-    const inner = s.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
-    if (inner.trim().startsWith("{")) {
-      candidates.push(inner);
-    }
-  }
-
-  for (const c of candidates) {
-    try {
-      const parsed = tryParse(c) as T;
-      if (parsed !== null && parsed !== undefined && typeof parsed === "object") {
-        return { value: parsed, error: null };
-      }
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  return { value: null, error: lastError };
-}
-
-function tryParseServiceSkuEnvOverrides(
-  envVarName: string,
-  raw: string | undefined
-): Record<string, ServiceSkuByDataArea> | null {
-  const trimmed = String(raw ?? "").replace(/^\uFEFF/, "").trim();
-  if (!trimmed) return null;
-
-  const { value: parsed, error: parseError } =
-    parseEnvJsonValue<Record<string, ServiceSkuByDataArea>>(trimmed);
-  if (!parsed || typeof parsed !== "object") {
-    console.error(
-      `[Service SKU] Error reading ${envVarName}: ${parseError ?? "invalid JSON"} — using default ${envVarName.endsWith("_UAT") ? "UAT" : "PROD"} SKUs (SHOPIFY_STORE_MODE)`
-    );
-    return null;
-  }
-
-  const out = normalizeServiceSkuOverridesByDataArea(parsed);
-  if (Object.keys(out).length === 0) {
-    console.error(
-      `[Service SKU] Error reading ${envVarName}: no valid dataArea entries — using default ${envVarName.endsWith("_UAT") ? "UAT" : "PROD"} SKUs (SHOPIFY_STORE_MODE)`
-    );
-    return null;
-  }
-
-  return out;
-}
-
-function loadDefaultServiceSkuOverrides(profile: ServiceSkuProfile): Record<string, ServiceSkuByDataArea> {
-  const { value } = parseEnvJsonValue<Record<string, ServiceSkuByDataArea>>(
-    DEFAULT_SERVICE_SKU_JSON[profile]
-  );
-  return value ? normalizeServiceSkuOverridesByDataArea(value) : {};
+export interface ServiceSkuSet {
+  tax: string;
+  refund: string;
+  shipping: string;
 }
 
 /**
- * Dynamics service SKUs (tax/shipping/refund) for the active store mode.
- * `SHOPIFY_STORE_MODE=test` → `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT`
- * `SHOPIFY_STORE_MODE=production` → `D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD`
- * Falls back to {@link DEFAULT_SERVICE_SKU_JSON} when env is unset or invalid.
+ * D365 service SKUs (tax / shipping / refund) per environment and legal entity (dataAreaId).
+ *
+ * SINGLE SOURCE OF TRUTH — selected by `SHOPIFY_STORE_MODE` (test → UAT, production → PROD).
+ * These are static D365 item numbers; change them here (code review + tests), never via env vars.
+ *
+ * NOTE: in UAT, `IM8-SER-000003` is the *shipping* item, so the UAT refund item is `IM8-SER-000005`.
+ *       in PROD, the refund item is `IM8-SER-000003` and shipping is `IM8-SER-000002`.
  */
-function loadServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
-  const profile = getServiceSkuEnvProfile();
-  const envVarName = serviceSkuEnvVarName(profile);
-  const fromEnv = tryParseServiceSkuEnvOverrides(envVarName, process.env[envVarName]);
-  if (fromEnv) return fromEnv;
-  return loadDefaultServiceSkuOverrides(profile);
-}
+export const SERVICE_SKUS_BY_PROFILE: Record<
+  ServiceSkuProfile,
+  Record<string, ServiceSkuSet>
+> = {
+  UAT: {
+    U001: { tax: "IM8-SER-000004", refund: "IM8-SER-000005", shipping: "IM8-SER-000003" },
+    H007: { tax: "IM8-SER-000001", refund: "IM8-SER-000005", shipping: "IM8-SER-000003" },
+  },
+  PROD: {
+    U001: { tax: "IM8-SER-000001", refund: "IM8-SER-000003", shipping: "IM8-SER-000002" },
+    H007: { tax: "IM8-SER-000001", refund: "IM8-SER-000003", shipping: "IM8-SER-000002" },
+  },
+};
 
-/** Active Dynamics service SKU map (UAT or PROD per SHOPIFY_STORE_MODE). */
-export function getServiceSkuOverridesByDataArea(): Record<string, ServiceSkuByDataArea> {
-  return loadServiceSkuOverridesByDataArea();
-}
-
-export type ServiceSkuOverrideKind = "env" | "default";
-
-export function getServiceSkuOverrideKind(): ServiceSkuOverrideKind {
-  const profile = getServiceSkuEnvProfile();
-  const envVarName = serviceSkuEnvVarName(profile);
-  const raw = process.env[envVarName];
-  if (!raw?.trim()) return "default";
-  return tryParseServiceSkuEnvOverrides(envVarName, raw) ? "env" : "default";
-}
-
-/** UAT when SHOPIFY_STORE_MODE=test, PROD when production. */
+/** UAT when `SHOPIFY_STORE_MODE=test`, PROD when `production` (NODE_ENV fallback otherwise). */
 export function getServiceSkuEnvProfile(): ServiceSkuProfile {
   const storeMode = String(process.env.SHOPIFY_STORE_MODE || "").trim().toLowerCase();
   if (storeMode === "production") return "PROD";
@@ -605,29 +485,25 @@ export function getServiceSkuEnvProfile(): ServiceSkuProfile {
   return process.env.NODE_ENV === "production" ? "PROD" : "UAT";
 }
 
-export function getActiveServiceSkuEnvVarName(): string {
-  return serviceSkuEnvVarName(getServiceSkuEnvProfile());
+/** Active profile's service SKUs keyed by dataAreaId (U001 / H007). */
+export function getServiceSkuOverridesByDataArea(): Record<string, ServiceSkuSet> {
+  return { ...SERVICE_SKUS_BY_PROFILE[getServiceSkuEnvProfile()] };
 }
 
-function loadValidEnvServiceSkuOverrides(): Record<string, ServiceSkuByDataArea> {
+/** Service SKUs for a single dataAreaId in the active profile, or null when unknown. */
+function getServiceSkuSet(dataAreaId: string): ServiceSkuSet | null {
   const profile = getServiceSkuEnvProfile();
-  const envVarName = serviceSkuEnvVarName(profile);
-  return tryParseServiceSkuEnvOverrides(envVarName, process.env[envVarName]) ?? {};
+  return SERVICE_SKUS_BY_PROFILE[profile][(dataAreaId || "").toUpperCase()] ?? null;
 }
 
-function applyServiceSkuOverrides(
-  config: WarehouseConfig,
-  dataAreaId: string,
-  overridesByArea: Record<string, ServiceSkuByDataArea>
-): WarehouseConfig {
-  const override = overridesByArea[(dataAreaId || "").toUpperCase()];
-  if (!override) return config;
-  const nextItem = {
-    tax: override.tax || config.item.tax,
-    refund: override.refund || config.item.refund,
-    shipping: override.shipping || config.item.shipping,
+/** Overlay the active profile's service SKUs onto a warehouse config for the given dataAreaId. */
+function applyServiceSkus(config: WarehouseConfig, dataAreaId: string): WarehouseConfig {
+  const skus = getServiceSkuSet(dataAreaId);
+  if (!skus) return config;
+  return {
+    ...config,
+    item: { tax: skus.tax, refund: skus.refund, shipping: skus.shipping },
   };
-  return { ...config, item: nextItem };
 }
 
 /**
@@ -650,14 +526,12 @@ export type RefundSkuResolution = {
   refundSku: string;
   dataAreaId: string;
   warehouseName: string;
-  /** Env JSON → default profile JSON → warehouse-config (same priority as tax/shipping). */
-  source: "env_json_override" | "profile_default" | "warehouse_config";
-  envProfile: string;
-  envVarName: string | null;
-  overrideKind: ServiceSkuOverrideKind;
-  envDataAreaKeys: string[];
+  /** profile_constant = from SERVICE_SKUS_BY_PROFILE; warehouse_config = unknown dataArea fallback. */
+  source: "profile_constant" | "warehouse_config";
+  /** UAT or PROD, selected by SHOPIFY_STORE_MODE. */
+  profile: ServiceSkuProfile;
+  /** Refund SKU on the warehouse-config.json profile (before applying the active SKU set). */
   warehouseConfigRefund: string;
-  envRefundSku: string | null;
 };
 
 function resolveBaseWarehouseConfigForServiceSku(
@@ -681,8 +555,9 @@ function resolveBaseWarehouseConfigForServiceSku(
 /**
  * Resolve refund SKU with audit metadata.
  *
- * Same priority as tax/shipping ({@link resolveServiceSkuConfig}):
- * env JSON → default UAT/PROD JSON (SHOPIFY_STORE_MODE) → warehouse-config `item.refund`.
+ * Refund SKU comes from {@link SERVICE_SKUS_BY_PROFILE} for the routed dataAreaId and the
+ * active profile (SHOPIFY_STORE_MODE). Falls back to warehouse-config `item.refund` only when
+ * the dataAreaId is not in the profile map.
  */
 export function resolveRefundSkuAudit(
   warehouseName: string,
@@ -698,42 +573,17 @@ export function resolveRefundSkuAudit(
   const dataAreaId =
     normalizedDataAreaId || (baseConfig.dataAreaId || "").toUpperCase().trim();
 
-  const overridesByArea = loadServiceSkuOverridesByDataArea();
-  const overrideKind = getServiceSkuOverrideKind();
-  const envVarName = getActiveServiceSkuEnvVarName();
-  const envProfile = getServiceSkuEnvProfile();
-  const envOnly = loadValidEnvServiceSkuOverrides();
-  const envDataAreaKeys = Object.keys(envOnly);
-  const envRefundSku = envOnly[dataAreaId]?.refund?.trim() || null;
-  const warehouseConfigRefund = baseConfig.item.refund;
-
-  if (overrideKind === "env" && envDataAreaKeys.length > 0 && !envRefundSku) {
-    throw new Error(
-      `[Refund SKU] ${envVarName} must define JSON "${dataAreaId}.refund" ` +
-        `(profile ${envProfile}). Keys in env: ${envDataAreaKeys.join(", ") || "(none)"}`
-    );
-  }
-
-  const finalConfig = applyServiceSkuOverrides(baseConfig, dataAreaId, overridesByArea);
-  const profileRefundSku = overridesByArea[dataAreaId]?.refund?.trim() || null;
-
-  const source: RefundSkuResolution["source"] = envRefundSku
-    ? "env_json_override"
-    : profileRefundSku
-      ? "profile_default"
-      : "warehouse_config";
+  const profile = getServiceSkuEnvProfile();
+  const skus = getServiceSkuSet(dataAreaId);
+  const finalConfig = applyServiceSkus(baseConfig, dataAreaId);
 
   return {
     refundSku: finalConfig.item.refund,
     dataAreaId,
     warehouseName,
-    source,
-    envProfile,
-    envVarName,
-    overrideKind,
-    envDataAreaKeys,
-    warehouseConfigRefund,
-    envRefundSku,
+    source: skus ? "profile_constant" : "warehouse_config",
+    profile,
+    warehouseConfigRefund: baseConfig.item.refund,
   };
 }
 

@@ -22,10 +22,8 @@ import {
   getRefundSku,
   resolveRefundSkuAudit,
   getServiceSkuEnvProfile,
-  getServiceSkuOverrideKind,
   getServiceSkuOverridesByDataArea,
-  DEFAULT_D365_SERVICE_SKU_JSON_UAT,
-  DEFAULT_D365_SERVICE_SKU_JSON_PROD,
+  SERVICE_SKUS_BY_PROFILE,
   getFulfilmentConfig,
   getReturnConfig,
   shouldSkipFulfilmentNotification,
@@ -288,33 +286,31 @@ describe("Warehouse Routing Helpers", () => {
 
   describe("Service SKU Helpers", () => {
     beforeEach(() => {
-      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
-      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD;
       process.env.SHOPIFY_STORE_MODE = "production";
     });
 
-    it("getShippingSku returns correct SKU per warehouse", () => {
+    it("getShippingSku returns PROD shipping SKU per warehouse", () => {
       expect(getShippingSku("GPS Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("GPS UK Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("HK Warehouse")).toBe("IM8-SER-000002");
       expect(getShippingSku("STORD ATL Location")).toBe("IM8-SER-000002");
     });
 
-    it("getTaxSku returns correct SKU per warehouse (PROD defaults for U001/H007)", () => {
+    it("getTaxSku returns PROD tax SKU per warehouse", () => {
       expect(getTaxSku("GPS Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("GPS UK Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("HK Warehouse")).toBe("IM8-SER-000001");
       expect(getTaxSku("STORD ATL Location")).toBe("IM8-SER-000001");
     });
 
-    it("getRefundSku uses PROD defaults when SHOPIFY_STORE_MODE=production and env unset", () => {
+    it("getRefundSku uses PROD constants when SHOPIFY_STORE_MODE=production", () => {
       expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
       expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000003");
     });
 
-    it("getRefundSku uses UAT defaults when SHOPIFY_STORE_MODE=test and env unset", () => {
+    it("getRefundSku uses UAT constants when SHOPIFY_STORE_MODE=test", () => {
       process.env.SHOPIFY_STORE_MODE = "test";
 
       expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
@@ -330,66 +326,56 @@ describe("Warehouse Routing Helpers", () => {
       expect(getServiceSkuEnvProfile()).toBe("PROD");
     });
 
-    it("default fallbacks match .env.local D365_SERVICE_SKU JSON (lines 8-9)", () => {
-      const envLocalLine8 =
-        '{"U001":{"tax":"IM8-SER-000004","refund":"IM8-SER-000005","shipping":"IM8-SER-000003"},"H007":{"tax":"IM8-SER-000001","refund":"IM8-SER-000005","shipping":"IM8-SER-000003"}}';
-      const envLocalLine9 =
-        '{"U001":{"tax":"IM8-SER-000001","refund":"IM8-SER-000003","shipping":"IM8-SER-000002"},"H007": {"tax":"IM8-SER-000001","refund":"IM8-SER-000003","shipping":"IM8-SER-000002"}}';
-
-      expect(DEFAULT_D365_SERVICE_SKU_JSON_UAT).toBe(envLocalLine8);
-      expect(DEFAULT_D365_SERVICE_SKU_JSON_PROD).toBe(envLocalLine9);
-
-      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT;
-      delete process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD;
-
+    it("UAT constants: IM8-SER-000003 is shipping, refund is IM8-SER-000005", () => {
       process.env.SHOPIFY_STORE_MODE = "test";
-      expect(getServiceSkuOverridesByDataArea()).toEqual({
-        U001: {
-          tax: "IM8-SER-000004",
-          refund: "IM8-SER-000005",
-          shipping: "IM8-SER-000003",
-        },
-        H007: {
-          tax: "IM8-SER-000001",
-          refund: "IM8-SER-000005",
-          shipping: "IM8-SER-000003",
-        },
+      expect(SERVICE_SKUS_BY_PROFILE.UAT.U001).toEqual({
+        tax: "IM8-SER-000004",
+        refund: "IM8-SER-000005",
+        shipping: "IM8-SER-000003",
       });
+      expect(SERVICE_SKUS_BY_PROFILE.UAT.H007).toEqual({
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000005",
+        shipping: "IM8-SER-000003",
+      });
+      // The refund item must never be the shipping item in UAT.
+      expect(SERVICE_SKUS_BY_PROFILE.UAT.U001.refund).not.toBe(
+        SERVICE_SKUS_BY_PROFILE.UAT.U001.shipping
+      );
+      expect(SERVICE_SKUS_BY_PROFILE.UAT.H007.refund).not.toBe(
+        SERVICE_SKUS_BY_PROFILE.UAT.H007.shipping
+      );
+    });
 
-      process.env.SHOPIFY_STORE_MODE = "production";
-      expect(getServiceSkuOverridesByDataArea()).toEqual({
-        U001: {
-          tax: "IM8-SER-000001",
-          refund: "IM8-SER-000003",
-          shipping: "IM8-SER-000002",
-        },
-        H007: {
-          tax: "IM8-SER-000001",
-          refund: "IM8-SER-000003",
-          shipping: "IM8-SER-000002",
-        },
+    it("PROD constants: refund IM8-SER-000003, shipping IM8-SER-000002", () => {
+      expect(SERVICE_SKUS_BY_PROFILE.PROD.U001).toEqual({
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
+        shipping: "IM8-SER-000002",
+      });
+      expect(SERVICE_SKUS_BY_PROFILE.PROD.H007).toEqual({
+        tax: "IM8-SER-000001",
+        refund: "IM8-SER-000003",
+        shipping: "IM8-SER-000002",
       });
     });
 
-    it("getRefundSku uses D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT when SHOPIFY_STORE_MODE=test", () => {
+    it("getServiceSkuOverridesByDataArea returns active profile SKUs", () => {
+      process.env.SHOPIFY_STORE_MODE = "test";
+      expect(getServiceSkuOverridesByDataArea()).toEqual(SERVICE_SKUS_BY_PROFILE.UAT);
+
+      process.env.SHOPIFY_STORE_MODE = "production";
+      expect(getServiceSkuOverridesByDataArea()).toEqual(SERVICE_SKUS_BY_PROFILE.PROD);
+    });
+
+    it("ignores D365_SERVICE_SKU_BY_DATA_AREA_JSON_* env vars (SKUs are code, not config)", () => {
       process.env.SHOPIFY_STORE_MODE = "test";
       process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
-        U001: {
-          tax: "IM8-SER-000004",
-          refund: "IM8-SER-000005",
-          shipping: "IM8-SER-000003",
-        },
-        H007: {
-          tax: "IM8-SER-000001",
-          refund: "IM8-SER-000005",
-          shipping: "IM8-SER-000003",
-        },
+        H007: { tax: "X", refund: "IM8-SER-000003", shipping: "Y" },
       });
 
-      expect(getRefundSku("GPS Warehouse", "U001")).toBe("IM8-SER-000005");
-      expect(getShippingSku("GPS Warehouse", "U001")).toBe("IM8-SER-000003");
-      expect(getRefundSku("HK Warehouse", "H007")).toBe("IM8-SER-000005");
-      expect(getShippingSku("HK Warehouse", "H007")).toBe("IM8-SER-000003");
+      // Env override is no longer consulted; the H007/shipping-SKU misconfig cannot leak in.
+      expect(getRefundSku("STORD EU Location", "H007")).toBe("IM8-SER-000005");
     });
 
     it("resolves SKU profile by routed dataAreaId when provided", () => {
@@ -398,124 +384,24 @@ describe("Warehouse Routing Helpers", () => {
       expect(getShippingSku("Some Custom Location", "H007")).toBe("IM8-SER-000002");
     });
 
-    it("resolveRefundSkuAudit reports env_json_override when UAT JSON is set", () => {
+    it("resolveRefundSkuAudit reports profile_constant source and active profile", () => {
       process.env.SHOPIFY_STORE_MODE = "test";
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
-        U001: {
-          tax: "UAT-TAX",
-          refund: "UAT-REFUND-FROM-ENV",
-          shipping: "UAT-SHIP",
-        },
-      });
 
-      const audit = resolveRefundSkuAudit("GPS UK Warehouse", "U001");
-      expect(audit.refundSku).toBe("UAT-REFUND-FROM-ENV");
-      expect(audit.source).toBe("env_json_override");
-      expect(audit.overrideKind).toBe("env");
-      expect(audit.envVarName).toBe("D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT");
-      expect(audit.envProfile).toBe("UAT");
-      expect(audit.envRefundSku).toBe("UAT-REFUND-FROM-ENV");
-      expect(audit.warehouseConfigRefund).toBe("IM8-SER-000003");
+      const audit = resolveRefundSkuAudit("GPS UK Warehouse", "H007");
+      expect(audit.refundSku).toBe("IM8-SER-000005");
+      expect(audit.source).toBe("profile_constant");
+      expect(audit.profile).toBe("UAT");
+      expect(audit.dataAreaId).toBe("H007");
+      expect(audit.warehouseConfigRefund).toBe("IM8-SER-000005");
     });
 
-    it("resolveRefundSkuAudit uses profile_default when env unset", () => {
+    it("resolveRefundSkuAudit reports PROD profile", () => {
       process.env.SHOPIFY_STORE_MODE = "production";
 
       const audit = resolveRefundSkuAudit("STORD ATL Location", "U001");
       expect(audit.refundSku).toBe("IM8-SER-000003");
-      expect(audit.source).toBe("profile_default");
-      expect(audit.overrideKind).toBe("default");
-      expect(audit.envVarName).toBe("D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD");
-    });
-
-    it("resolveRefundSkuAudit throws when env JSON is set but dataArea refund is missing", () => {
-      process.env.SHOPIFY_STORE_MODE = "production";
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = JSON.stringify({
-        U001: { tax: "ONLY-TAX", shipping: "ONLY-SHIP" },
-      });
-
-      expect(() => resolveRefundSkuAudit("GPS Warehouse", "U001")).toThrow(
-        /must define JSON "U001\.refund"/
-      );
-    });
-
-    it("uses UAT env when SHOPIFY_STORE_MODE=test even if PROD env is also set", () => {
-      process.env.SHOPIFY_STORE_MODE = "test";
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = JSON.stringify({
-        U001: {
-          tax: "UAT-TAX-SKU-2",
-          refund: "UAT-REFUND-SKU-2",
-          shipping: "UAT-SHIPPING-SKU-2",
-        },
-      });
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = JSON.stringify({
-        U001: {
-          tax: "PROD-TAX-SKU",
-          refund: "PROD-REFUND-SKU",
-          shipping: "PROD-SHIPPING-SKU",
-        },
-      });
-
-      expect(getTaxSku("GPS Warehouse")).toBe("UAT-TAX-SKU-2");
-      expect(getRefundSku("GPS Warehouse")).toBe("UAT-REFUND-SKU-2");
-      expect(getShippingSku("GPS Warehouse")).toBe("UAT-SHIPPING-SKU-2");
-    });
-
-    it("parses double-encoded JSON env values", () => {
-      const inner = {
-        U001: {
-          tax: "ENC-TAX",
-          refund: "ENC-REFUND",
-          shipping: "ENC-SHIP",
-        },
-      };
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = JSON.stringify(JSON.stringify(inner));
-
-      expect(getTaxSku("GPS Warehouse")).toBe("ENC-TAX");
-      expect(getRefundSku("GPS Warehouse")).toBe("ENC-REFUND");
-      expect(getShippingSku("GPS Warehouse")).toBe("ENC-SHIP");
-    });
-
-    it("parses env value wrapped in outer single quotes (invalid JSON first pass)", () => {
-      const body = JSON.stringify({
-        U001: {
-          tax: "WRAP-TAX",
-          refund: "WRAP-REFUND",
-          shipping: "WRAP-SHIP",
-        },
-      });
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = `'${body}'`;
-
-      expect(getTaxSku("GPS Warehouse")).toBe("WRAP-TAX");
-      expect(getShippingSku("GPS Warehouse")).toBe("WRAP-SHIP");
-    });
-
-    it("logs error and uses UAT defaults when D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT is invalid", () => {
-      process.env.SHOPIFY_STORE_MODE = "test";
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT = "{not-valid-json";
-
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000005");
-      expect(getServiceSkuOverrideKind()).toBe("default");
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Error reading D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT")
-      );
-
-      errorSpy.mockRestore();
-    });
-
-    it("logs error and uses PROD defaults when D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD is invalid", () => {
-      process.env.SHOPIFY_STORE_MODE = "production";
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      process.env.D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD = "[]";
-
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
-      expect(getServiceSkuOverrideKind()).toBe("default");
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Error reading D365_SERVICE_SKU_BY_DATA_AREA_JSON_PROD")
-      );
-
-      errorSpy.mockRestore();
+      expect(audit.source).toBe("profile_constant");
+      expect(audit.profile).toBe("PROD");
     });
   });
 
