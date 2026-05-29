@@ -13,6 +13,7 @@ import {
 import { config } from "@/lib/config";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 
 function validateWebhookPayload(topic: string | null, payload: any): string | null {
   if (!topic) return "Missing x-shopify-topic header";
@@ -467,7 +468,32 @@ export async function POST(request: NextRequest) {
         break;
 
       // Refund created - need to create credit note in D365
-      case "refunds/create":
+      case "refunds/create": {
+        const loopDuplicate = await shouldSuppressShopifyRefundWebhookForLoopReturns(
+          String(payload.order_id),
+          payload,
+          { loopIntegrationEnabled: config.loop.enabled }
+        );
+        if (loopDuplicate) {
+          console.log(
+            `[Webhook] [${requestId}] ⏭️ Skipping shopify/refund.created — Loop Returns authored this refund (D365 handled from Loop return.closed webhook)`
+          );
+          logFlowEvent({
+            level: "info",
+            flow: "shopify_webhook",
+            step: "skipped_loop_returns_duplicate_refund",
+            client: "shopify",
+            requestId,
+            shopifyOrderId: String(payload.order_id),
+            status: "skipped",
+            payload: {
+              refundId: String(payload.id),
+              reason: "loop_returns_duplicate_shopify_webhook",
+            },
+          });
+          break;
+        }
+
         console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/refund.created`);
         const sent5 = await sendInngestEvent(
           {
@@ -479,6 +505,7 @@ export async function POST(request: NextRequest) {
               shopifyStore: effectiveShopDomain,
               refundJson: payload,
               receivedAt: new Date().toISOString(),
+              refundInitiator: "shopify_webhook",
             },
           },
           requestId
@@ -489,6 +516,7 @@ export async function POST(request: NextRequest) {
           );
         }
         break;
+      }
 
       // Product created - sync to D365 & GPS
       case "products/create":

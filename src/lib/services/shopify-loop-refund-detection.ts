@@ -48,3 +48,17 @@ export async function shopifyRefundCreatedByLoopReturns(
     return false;
   }
 }
+
+/**
+ * When Loop Returns is enabled, Shopify `refunds/create` repeats the signal already handled
+ * from Loop `return.closed`. Suppress the Inngest event at webhook ingress so we do not spawn
+ * a second `process-shopify-refund` run (in-function dedupe remains as fallback).
+ */
+export async function shouldSuppressShopifyRefundWebhookForLoopReturns(
+  shopifyOrderNumericId: string,
+  refund: ShopifyRefundPayload,
+  options: { loopIntegrationEnabled: boolean }
+): Promise<boolean> {
+  if (!options.loopIntegrationEnabled) return false;
+  return shopifyRefundCreatedByLoopReturns(shopifyOrderNumericId, refund);
+}

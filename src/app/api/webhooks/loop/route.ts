@@ -63,7 +63,7 @@ export async function GET() {
     implementation: [
       "POST: Loop sends `topic=return`, `trigger=return.closed`; we verify `x-loop-signature` (HMAC-SHA256, base64 unless verification disabled locally).",
       "Refund total must be > 0; we emit `shopify/refund.created` with `refundInitiator=loop_return_closed`.",
-      "Shopify `refunds/create` is ignored when order events show Loop Returns authored the refund (same as spock-store `isLoopRefund`).",
+      "Shopify `refunds/create` is suppressed at webhook ingress when order events show Loop Returns authored the refund (same as spock-store `isLoopRefund`). In-function dedupe remains as fallback.",
     ],
     requiredHeadersPost: [{ name: "x-loop-signature", purpose: "HMAC-SHA256 of raw UTF-8 body, base64" }],
   });

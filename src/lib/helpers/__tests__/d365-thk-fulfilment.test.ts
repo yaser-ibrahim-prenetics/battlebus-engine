@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertDepositShipmentThkInvoiced,
   assertThkFulfilmentSucceeded,
@@ -81,12 +81,15 @@ describe("d365-thk-fulfilment", () => {
     expect(hasThkInvoiceVoucherPosted(withoutVoucher)).toBe(false);
   });
 
-  it("blocks deposit shipment when warehouse warning has no invoice voucher", () => {
+  it("warns but does not fail deposit shipment when warehouse warning has no invoice voucher", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const msg =
       " Dimension Warehouse is still specified on the inventory transaction with value OPS-WH02";
-    expect(() => assertDepositShipmentThkInvoiced({ Message: msg }, "H007-SO-119969")).toThrow(
-      /no invoice voucher posted for deposit shipment/
+    expect(() => assertDepositShipmentThkInvoiced({ Message: msg }, "H007-SO-119969")).not.toThrow();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("warehouse/site dimension — fulfilment continues")
     );
+    warnSpy.mockRestore();
   });
 
   it("allows deposit shipment when warehouse warning includes invoice voucher", () => {

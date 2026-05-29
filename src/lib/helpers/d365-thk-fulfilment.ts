@@ -13,6 +13,18 @@ export const THK_FULFILMENT_INFORMATIONAL_WARNING_HINTS = [
   "number of vouchers posted to the journal",
 ] as const;
 
+/** Warehouse/site dimension text from THK — warn only, never fail fulfilment. */
+export function isThkWarehouseOrSiteDimensionWarning(
+  message: string | null | undefined
+): boolean {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("dimension warehouse is still specified") ||
+    normalized.includes("dimension site is still specified")
+  );
+}
+
 /** Substrings that indicate D365 did not fully invoice / close fulfilment. */
 export const THK_FULFILMENT_BLOCKING_MESSAGE_HINTS = [
   "not fully invoiced",
@@ -77,9 +89,6 @@ export function isThkFulfilmentIncompleteError(message: string): boolean {
   if (m.includes("Deposit shipment missing Standard invoice")) {
     return true;
   }
-  if (m.includes("no invoice voucher posted for deposit shipment")) {
-    return true;
-  }
   return getThkFulfilmentBlockingIssue(m) !== null;
 }
 
@@ -128,9 +137,8 @@ export function isDepositFulfillmentOrder(fields: {
 }
 
 /**
- * Deposit-fulfillment orders must post a Standard invoice voucher on shipment.
- * THK often returns status=1 with only an OPS-WH02 warehouse warning and no voucher
- * count — packing slip posts but Standard invoice does not.
+ * Deposit lane: after shipment, log when THK returns warehouse/site dimension text
+ * without an invoice voucher count. Fulfilment still succeeds (warning only).
  */
 export function assertDepositShipmentThkInvoiced(
   response: { Message?: string | null },
@@ -144,9 +152,10 @@ export function assertDepositShipmentThkInvoiced(
   if (/^success$/i.test(msg)) {
     return;
   }
-  if (isThkFulfilmentInformationalWarning(msg) && !hasThkInvoiceVoucherPosted(msg)) {
-    throw new Error(
-      `[D365] THK fulfilment incomplete for ${salesOrderNumber}: ${msg} (no invoice voucher posted for deposit shipment)`
+  if (isThkWarehouseOrSiteDimensionWarning(msg) && !hasThkInvoiceVoucherPosted(msg)) {
+    console.warn(
+      `[D365] THK deposit shipment warning for ${salesOrderNumber}: ${msg} ` +
+        `(warehouse/site dimension — fulfilment continues)`
     );
   }
 }

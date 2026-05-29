@@ -13,6 +13,7 @@ import {
   isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
   isSalesOrderPartiallyInvoiced,
+  isThkWarehouseOrSiteDimensionWarning,
 } from "../helpers/d365-thk-fulfilment";
 import { logD365ODataTrace, type D365ODataTraceContext } from "../utils/d365-odata-trace";
 import {
@@ -1350,8 +1351,17 @@ export async function assertDepositShipmentInvoicingComplete(
   }
 
   assertDepositShipmentThkInvoiced(thkResponse, salesOrderNumber);
+  const thkMessage = String(thkResponse.Message || "").trim();
+  const warehouseDimensionWarning = isThkWarehouseOrSiteDimensionWarning(thkMessage);
   const check = await verifyDepositShipmentInvoicingComplete(salesOrderNumber, dataAreaId);
   if (!check.ok) {
+    if (warehouseDimensionWarning) {
+      console.warn(
+        `[D365] Deposit shipment header not fully invoiced for ${salesOrderNumber} (${dataAreaId}) after warehouse/site dimension THK warning: ` +
+          `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"} — fulfilment continues`
+      );
+      return { verified: false, processingStatus: check.processingStatus };
+    }
     throw new Error(
       `[D365] Deposit shipment missing Standard invoice for ${salesOrderNumber} (${dataAreaId}): ` +
         `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"}. ` +
@@ -1586,6 +1596,25 @@ export async function createFulfilment(
     }
 
     const errorMessage = result.Message || "";
+    if (isThkWarehouseOrSiteDimensionWarning(errorMessage)) {
+      const thkWarning = getThkFulfilmentWarningMessage(errorMessage) || errorMessage.trim();
+      console.warn(
+        `[D365] THK fulfilment treated as success despite status=${result.status} for ${salesOrderNumber}: ${thkWarning}`
+      );
+      logD365ThkApiFlow("d365_fulfilment", salesOrderNumber, dataAreaId, body, result, {
+        httpStatus: response.status,
+      });
+      return {
+        response: {
+          status: DYNAMICS_THK_API_SUCCESS_STATUS,
+          Message: result.Message,
+          Result: result.Result || "",
+          $id: result.$id || "",
+        },
+        request: body,
+      };
+    }
+
     const classifiedError = classifyDynamicsFulfilmentError(
       errorMessage,
       dynamicsFulfilmentLines.map((line) => line.itemNumber)

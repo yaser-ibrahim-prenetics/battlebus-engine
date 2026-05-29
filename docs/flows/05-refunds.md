@@ -31,8 +31,16 @@ When a Shopify refund is created, Battle Bus processes it by creating a negative
 ### Shopify webhook
 
 1. Shopify fires `refunds/create` webhook.
-2. Battle Bus emits `shopify/refund.created`.
-3. `process-shopify-refund` handles the D365 refund line + return fulfilment (+ opt-in invoice).
+2. When Loop Returns is enabled, Battle Bus checks Shopify order timeline events. If Loop authored the refund, the webhook is **acknowledged but not forwarded** to Inngest (Loop `return.closed` already emitted `shopify/refund.created`).
+3. Otherwise Battle Bus emits `shopify/refund.created` with `refundInitiator: shopify_webhook`.
+4. `process-shopify-refund` handles the D365 refund line + return fulfilment (+ opt-in invoice).
+
+### Loop Returns webhook
+
+1. Loop fires `return.closed` with a positive refund total.
+2. Battle Bus emits `shopify/refund.created` with `refundInitiator: loop_return_closed` (synthetic REST-shaped payload; `refundId` is the Loop return id).
+3. Shopify then fires its own `refunds/create` for the same money movement — suppressed at webhook ingress (step 2 above) so only **one** Inngest run is created.
+4. `process-shopify-refund` still contains an in-function Loop duplicate check as fallback for replays or manual event sends.
 
 ### Battle Hub action
 
