@@ -24,7 +24,7 @@ import {
   getShippingSku,
   getTaxSku,
   getRefundSku,
-  getBuiltinServiceSkuOverridesByDataArea,
+  getServiceSkuOverridesByDataArea,
   getReturnConfig,
   isGpsWarehouse,
   isStordWarehouse,
@@ -85,7 +85,7 @@ describe("E2E: Routing Verification", () => {
         it("service SKU helpers return profile fallback or warehouse-config values", () => {
           const area = (cfg.dataAreaId || "").toUpperCase();
           const fallback =
-            getBuiltinServiceSkuOverridesByDataArea()[area] ?? null;
+            getServiceSkuOverridesByDataArea()[area] ?? null;
           expect(getTaxSku(name)).toBe(fallback?.tax ?? cfg.item.tax);
           expect(getRefundSku(name)).toBe(fallback?.refund ?? cfg.item.refund);
           expect(getShippingSku(name)).toBe(fallback?.shipping ?? cfg.item.shipping);
@@ -264,13 +264,13 @@ describe("E2E: Routing Verification", () => {
       },
       "GPS UK Warehouse": {
         tax: "IM8-SER-000001",
-        refund: "IM8-SER-000003",
-        shipping: "IM8-SER-000002",
+        refund: "IM8-SER-000005",
+        shipping: "IM8-SER-000003",
       },
       "HK Warehouse": {
         tax: "IM8-SER-000001",
-        refund: "IM8-SER-000003",
-        shipping: "IM8-SER-000002",
+        refund: "IM8-SER-000005",
+        shipping: "IM8-SER-000003",
       },
       "STORD ATL Location": {
         tax: "IM8-SER-000004",

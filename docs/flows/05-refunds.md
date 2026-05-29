@@ -63,10 +63,13 @@ Resolves `dataAreaId`, `refundSku`, and `returnConfig` (shipping site/warehouse/
 
 **Refund SKU source (priority — same as tax/shipping service SKUs):**
 
-1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` (or generic). Example UAT:
-   `{"U001":{"refund":"IM8-SER-000005","shipping":"IM8-SER-000003",...},"H007":{...}}`
-2. **Built-in profile map** (`BUILTIN_SERVICE_SKU_BY_PROFILE`) when env is unset.
+1. **Env JSON** — `D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` when `SHOPIFY_STORE_MODE=test`, `_PROD` when `production`.
+2. **Default JSON** for that profile when env is unset or invalid — must match `.env.local` lines 8–9 (`DEFAULT_D365_SERVICE_SKU_JSON_UAT` / `_PROD` in code).
 3. **`warehouse-config.json`** per warehouse when data area is not in the map.
+
+**Profile:** `SHOPIFY_STORE_MODE=test` → UAT · `SHOPIFY_STORE_MODE=production` → PROD.
+
+Invalid env JSON logs `[Service SKU] Error reading D365_SERVICE_SKU_BY_DATA_AREA_JSON_UAT` / `_PROD` and falls back to (2).
 
 UAT U001 + H007: refund **`IM8-SER-000005`** · shipping **`IM8-SER-000003`** (`000003` is shipping in D365, not refund).
 

@@ -23,7 +23,7 @@ describe("toOrderLineRecords", () => {
 
     const shipping = records.find((r) => r.shopifyLineItemId === "shipping");
     expect(shipping).toBeDefined();
-    expect(shipping!.d365ItemNumber).toBe("IM8-SER-000002");
+    expect(shipping!.d365ItemNumber).toBe("IM8-SER-000003");
     expect(shipping!.price).toBe(9.99);
     expect(shipping!.isServiceLine).toBe(true);
     expect(shipping!.shopifySku).toBeNull();
@@ -35,7 +35,7 @@ describe("toOrderLineRecords", () => {
 
     const tax = records.find((r) => r.shopifyLineItemId === "tax");
     expect(tax).toBeDefined();
-    expect(tax!.d365ItemNumber).toBe("IM8-SER-000001");
+    expect(tax!.d365ItemNumber).toBe("IM8-SER-000004");
     expect(tax!.price).toBe(10);
     expect(tax!.isServiceLine).toBe(true);
   });
@@ -68,7 +68,7 @@ describe("toOrderLineRecords", () => {
 
     const shipping = records.find((r) => r.shopifyLineItemId === "shipping");
     if (shipping) {
-      expect(shipping.d365ItemNumber).toBe("IM8-SER-000002");
+      expect(shipping.d365ItemNumber).toBe("IM8-SER-000003");
     }
   });
 });

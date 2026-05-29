@@ -11,10 +11,14 @@ import {
   resolveRefundFulfillmentWarehouse,
 } from "@/lib/helpers/warehouse";
 
+const UAT_REFUND_SKU = "IM8-SER-000005";
+const PROD_REFUND_SKU = "IM8-SER-000003";
+
 describe("Order Refund Flow (Integration)", () => {
   let harness: ReturnType<typeof createInngestHarness>;
 
   beforeEach(() => {
+    process.env.SHOPIFY_STORE_MODE = "test";
     harness = createInngestHarness();
     resetMockD365();
     resetMockCsPlatform();
@@ -41,7 +45,7 @@ describe("Order Refund Flow (Integration)", () => {
       });
 
       expect(warehouseInfo.warehouseName).toBe("GPS Warehouse");
-      expect(warehouseInfo.refundSku).toBe("IM8-SER-000003");
+      expect(warehouseInfo.refundSku).toBe(UAT_REFUND_SKU);
       expect(warehouseInfo.returnConfig.shippingWarehouseLocationId).toBe("Return");
 
       const refundLine = await harness.step.run("create-d365-refund-line", async () => {
@@ -56,7 +60,7 @@ describe("Order Refund Flow (Integration)", () => {
 
       expect(mockDynamics.createSalesOrderLine).toHaveBeenCalledWith(
         expect.objectContaining({
-          itemNumber: "IM8-SER-000003",
+          itemNumber: UAT_REFUND_SKU,
           quantity: -1,
           price: 129.99,
         })
@@ -90,7 +94,7 @@ describe("Order Refund Flow (Integration)", () => {
           type: "return",
           lines: expect.arrayContaining([
             expect.objectContaining({
-              itemNumber: "IM8-SER-000003",
+              itemNumber: UAT_REFUND_SKU,
               quantity: -1,
               shippingWarehouseLocationId: "Return",
             }),
@@ -100,29 +104,43 @@ describe("Order Refund Flow (Integration)", () => {
     });
   });
 
-  describe("Refund with correct service SKU per warehouse (spock-store item.refund)", () => {
-    it("uses IM8-SER-000003 for GPS US", () => {
-      expect(getRefundSku("GPS Warehouse")).toBe("IM8-SER-000003");
+  describe("Refund with correct service SKU per warehouse (SHOPIFY_STORE_MODE=test)", () => {
+    it("uses UAT refund SKU for GPS US", () => {
+      expect(getRefundSku("GPS Warehouse")).toBe(UAT_REFUND_SKU);
     });
 
-    it("uses IM8-SER-000003 for GPS UK", () => {
-      expect(getRefundSku("GPS UK Warehouse")).toBe("IM8-SER-000003");
+    it("uses UAT refund SKU for GPS UK", () => {
+      expect(getRefundSku("GPS UK Warehouse")).toBe(UAT_REFUND_SKU);
     });
 
-    it("uses IM8-SER-000003 for HK Warehouse", () => {
-      expect(getRefundSku("HK Warehouse")).toBe("IM8-SER-000003");
+    it("uses UAT refund SKU for HK Warehouse", () => {
+      expect(getRefundSku("HK Warehouse")).toBe(UAT_REFUND_SKU);
     });
 
-    it("uses built-in PROD U001 refund SKU for STORD ATL (dataArea override, not warehouse-config 000005)", () => {
-      expect(getRefundSku("STORD ATL Location")).toBe("IM8-SER-000003");
+    it("uses UAT refund SKU for STORD ATL", () => {
+      expect(getRefundSku("STORD ATL Location")).toBe(UAT_REFUND_SKU);
     });
 
     it("matches process-refund: Hub STORD + US + U001 → STORD refund SKU and return warehouse", () => {
       const fulfillment = resolveRefundFulfillmentWarehouse("US", "STORD ATL Location");
       const profile = getWarehouseConfig(fulfillment);
       expect(fulfillment).toBe("STORD ATL Location");
-      expect(getRefundSku(fulfillment, "U001")).toBe("IM8-SER-000003");
+      expect(getRefundSku(fulfillment, "U001")).toBe(UAT_REFUND_SKU);
       expect(profile.return.shippingWarehouseId).toBe("USOPS-WH05-Q");
+    });
+  });
+
+  describe("Refund SKUs when SHOPIFY_STORE_MODE=production", () => {
+    beforeEach(() => {
+      process.env.SHOPIFY_STORE_MODE = "production";
+    });
+
+    it("uses PROD refund SKU for GPS US", () => {
+      expect(getRefundSku("GPS Warehouse")).toBe(PROD_REFUND_SKU);
+    });
+
+    it("uses PROD refund SKU for STORD ATL", () => {
+      expect(getRefundSku("STORD ATL Location", "U001")).toBe(PROD_REFUND_SKU);
     });
   });
 
@@ -141,7 +159,7 @@ describe("Order Refund Flow (Integration)", () => {
       });
 
       expect(warehouseInfo.warehouseName).toBe("GPS UK Warehouse");
-      expect(warehouseInfo.refundSku).toBe("IM8-SER-000003");
+      expect(warehouseInfo.refundSku).toBe(UAT_REFUND_SKU);
       expect(warehouseInfo.returnConfig.shippingWarehouseId).toBe("OPS-WH02-Q");
     });
   });
@@ -176,7 +194,7 @@ describe("Order Refund Flow (Integration)", () => {
   describe("D365 line creation failure during refund", () => {
     it("propagates error when D365 refund line creation fails", async () => {
       mockDynamics.createSalesOrderLine.mockRejectedValueOnce(
-        new Error("[D365 Mock] Line creation failed for IM8-SER-000003")
+        new Error(`[D365 Mock] Line creation failed for ${UAT_REFUND_SKU}`)
       );
 
       await expect(
@@ -184,7 +202,7 @@ describe("Order Refund Flow (Integration)", () => {
           return mockDynamics.createSalesOrderLine({
             salesOrderNumber: "U001-SO-100001",
             dataAreaId: "U001",
-            itemNumber: "IM8-SER-000003",
+            itemNumber: UAT_REFUND_SKU,
             quantity: -1,
             price: 100,
           });

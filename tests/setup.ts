@@ -21,6 +21,8 @@ process.env.TAG_WAIT_ENABLED = "false";
 process.env.BACKORDER_RETRY_ENABLED = "true";
 process.env.BACKORDER_AUTO_RETRY_ENABLED = "false";
 
+process.env.SHOPIFY_STORE_MODE = process.env.SHOPIFY_STORE_MODE || "test";
+
 // IM8 test store location IDs — matches fixtures/docs so getFulfillmentLocation / isGpsFulfillment work in tests
 process.env.SHOPIFY_TEST_LOCATION_GPS =
   process.env.SHOPIFY_TEST_LOCATION_GPS || "79527313640";

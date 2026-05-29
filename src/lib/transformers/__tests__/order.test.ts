@@ -171,11 +171,11 @@ describe("Order Transformers", () => {
       // Shipping line (9.99) and tax line (10.00) should exist
       expect(serviceLines.length).toBe(2);
 
-      const shippingLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000002");
+      const shippingLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000003");
       expect(shippingLine).toBeDefined();
       expect(shippingLine!.price).toBe(9.99);
 
-      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000001");
+      const taxLine = serviceLines.find((l) => l.itemNumber === "IM8-SER-000004");
       expect(taxLine).toBeDefined();
       expect(taxLine!.price).toBe(10);
 

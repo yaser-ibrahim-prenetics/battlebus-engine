@@ -21,7 +21,7 @@ function clampInt(value: number, min: number, max: number): number {
 
 // ---------------------------------------------------------------------------
 // Shopify store mode — selects SHOPIFY_PROD_* vs SHOPIFY_TEST_* only.
-// D365 and GPS always use the single D365_* / GPS_* / GPS_UK_* env var sets.
+// D365 service SKUs (tax/shipping/refund) also follow this mode: test → UAT, production → PROD.
 //
 // Resolution: SHOPIFY_STORE_MODE → else NODE_ENV (production vs test).
 // On Vercel Preview, set SHOPIFY_STORE_MODE=test explicitly (NODE_ENV is often production).
