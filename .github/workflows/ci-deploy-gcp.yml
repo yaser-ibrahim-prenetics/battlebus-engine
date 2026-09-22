@@ -57,7 +57,7 @@ jobs:
       - name: Audit production dependencies
         id: audit
         continue-on-error: true
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build application
         id: build

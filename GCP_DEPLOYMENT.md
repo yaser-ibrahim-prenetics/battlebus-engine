@@ -73,11 +73,11 @@ Remove dry-run flags only after the shadow/canary acceptance tests pass.
 1. Install the exact `package-lock.json` dependency tree.
 2. Run ESLint.
 3. Run the Vitest suite.
-4. Fail on critical production dependency advisories.
+4. Fail on high or critical production dependency advisories.
 5. Build the Next.js application.
 6. On `main` only, build and push an immutable commit-SHA container image.
 7. Deploy a private, dry-run Cloud Run revision and verify that it becomes ready.
 
 Authentication is keyless. GitHub OIDC is restricted to `Prenetics/battle-bus` on `refs/heads/main` and impersonates `battle-bus-deployer@battle-bus-509406.iam.gserviceaccount.com`. The deployer can update only the existing `battle-bus` Cloud Run service, push only to the `battle-bus` Artifact Registry repository, and attach only the `battle-bus-runtime` runtime identity.
 
-The pipeline intentionally refuses to deploy if the Cloud Run service has an `allUsers` IAM binding. It also remains blocked whenever lint, tests, critical dependency auditing, or the application build fails.
+The pipeline intentionally refuses to deploy if the Cloud Run service has an `allUsers` IAM binding. It also remains blocked whenever lint, tests, high-or-critical dependency auditing, or the application build fails.
