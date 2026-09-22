@@ -45,16 +45,43 @@ jobs:
         run: npm ci
 
       - name: Lint
+        id: lint
+        continue-on-error: true
         run: npm run lint
 
       - name: Test
+        id: test
+        continue-on-error: true
         run: npm test -- --reporter=dot
 
       - name: Audit production dependencies
+        id: audit
+        continue-on-error: true
         run: npm audit --omit=dev --audit-level=critical
 
       - name: Build application
+        id: build
+        continue-on-error: true
         run: npm run build
+
+      - name: Enforce quality gates
+        if: always()
+        env:
+          LINT_RESULT: ${{ steps.lint.outcome }}
+          TEST_RESULT: ${{ steps.test.outcome }}
+          AUDIT_RESULT: ${{ steps.audit.outcome }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+        run: |
+          failed=0
+          for gate in LINT TEST AUDIT BUILD; do
+            result_variable="${gate}_RESULT"
+            result="${!result_variable}"
+            echo "${gate}: ${result}"
+            if [ "${result}" != "success" ]; then
+              failed=1
+            fi
+          done
+          exit "${failed}"
 
   deploy:
     name: Build image and deploy
