@@ -117,4 +117,4 @@ allow_runtime_identity battle-hub-deployer battle-hub-runtime
 
 provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${provider_id}"
 printf 'GCP bootstrap complete.\nWorkload Identity Provider: %s\n' "${provider_name}"
-printf 'Deployment remains disabled until ENABLE_GCP_DEPLOY=true is set in each GitHub gcp-production environment.\n'
+printf 'Deployment remains disabled until the repository Actions variable ENABLE_GCP_DEPLOY=true is set.\n'

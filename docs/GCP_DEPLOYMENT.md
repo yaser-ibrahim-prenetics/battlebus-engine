@@ -19,9 +19,11 @@ contain a Google Cloud service-account key.
 - Deployment identity: `battle-bus-deployer@battle-bus-509406.iam.gserviceaccount.com`
 - GitHub environment: `gcp-production`
 
-Set the GitHub environment variable `ENABLE_GCP_DEPLOY=true` only after the GCP
-OIDC and IAM bindings have been verified. Until then, pushes run all quality
-gates but skip deployment.
+Set the repository Actions variable `ENABLE_GCP_DEPLOY=true` only after the GCP
+OIDC and IAM bindings have been verified. The deploy job references the
+`gcp-production` environment, but the gate must be repository-scoped because
+GitHub evaluates the job-level condition before attaching that environment.
+Until then, pushes run all quality gates but skip deployment.
 
 Run `scripts/bootstrap-gcp.sh` from an authenticated operator workstation to
 create or reconcile the Artifact Registry repository, four service accounts,
