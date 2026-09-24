@@ -244,7 +244,7 @@ jobs:
           sync_response="$(curl --fail --show-error --silent \
             --request PUT \
             --retry 5 --retry-delay 2 --retry-all-errors \
-            "${CLOUD_RUN_URL}/api/inngest?deployId=${GITHUB_SHA}")"
+            "${CLOUD_RUN_URL}/api/inngest")"
           jq --exit-status 'has("modified") and (.message | type == "string")' <<<"${sync_response}"
 
           trap - ERR
