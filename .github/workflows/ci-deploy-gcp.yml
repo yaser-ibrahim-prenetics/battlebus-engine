@@ -129,15 +129,30 @@ jobs:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: docker build --tag "${IMAGE_URI}" .
 
+      - name: Smoke test container image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
+        run: |
+          container_id="$(docker run --detach --publish 127.0.0.1:8080:8080 "${IMAGE_URI}")"
+          cleanup() {
+            docker logs "${container_id}" || true
+            docker rm --force "${container_id}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          curl --fail --show-error --silent \
+            --retry 15 --retry-delay 2 --retry-all-errors \
+            http://127.0.0.1:8080/api/health | jq --exit-status '.ok == true and .service == "battle-bus"'
+
       - name: Push container image
         env:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: docker push "${IMAGE_URI}"
 
-      - name: Deploy private dry-run revision
+      - name: Deploy private dry-run candidate without traffic
         env:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: |
+          candidate_tag="candidate-${GITHUB_SHA::8}"
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --image="${IMAGE_URI}" \
             --region="${GCP_REGION}" \
@@ -151,17 +166,32 @@ jobs:
             --min-instances=0 \
             --max-instances=10 \
             --ingress=all \
+            --no-traffic \
+            --tag="${candidate_tag}" \
             --update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false \
             --quiet
 
-      - name: Verify the deployed revision is ready
+      - name: Verify candidate revision and promote
         run: |
-          ready_revision="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
+          candidate_revision="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
             --region="${GCP_REGION}" \
             --project="${GCP_PROJECT_ID}" \
-            --format='value(status.latestReadyRevisionName)')"
-          if [ -z "${ready_revision}" ]; then
-            echo "Cloud Run did not report a ready revision."
+            --format='value(status.latestCreatedRevisionName)')"
+          if [ -z "${candidate_revision}" ]; then
+            echo "Cloud Run did not report a candidate revision."
             exit 1
           fi
-          echo "Deployed ${ready_revision}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          ready_status="$(gcloud run revisions describe "${candidate_revision}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --format=json | jq -r '.status.conditions[] | select(.type == "Ready") | .status')"
+          if [ "${ready_status}" != "True" ]; then
+            echo "Cloud Run candidate revision is not ready."
+            exit 1
+          fi
+          gcloud run services update-traffic "${CLOUD_RUN_SERVICE}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --to-revisions="${candidate_revision}=100" \
+            --quiet
+          echo "Promoted ${candidate_revision}" | tee -a "${GITHUB_STEP_SUMMARY}"
