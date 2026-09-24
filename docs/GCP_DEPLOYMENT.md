@@ -18,6 +18,11 @@ Set the GitHub environment variable `ENABLE_GCP_DEPLOY=true` only after the GCP
 OIDC and IAM bindings have been verified. Until then, pushes run all quality
 gates but skip deployment.
 
+Run `scripts/bootstrap-gcp.sh` from an authenticated operator workstation to
+create or reconcile the Artifact Registry repository, four service accounts,
+the repository-restricted GitHub OIDC provider, and deployer IAM bindings. The
+script does not create secrets or enable deployment.
+
 Every pull request runs lint, tests, the high-severity production dependency
 audit, and the production build. A push to `main` deploys only after all four
 gates pass. Production-changing feature flags are initially forced off.
