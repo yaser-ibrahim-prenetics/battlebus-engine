@@ -4,10 +4,11 @@
 // Receives fulfilment notifications from STORD warehouse
 
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 import { stordWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 
 export async function POST(request: NextRequest) {
+  const requestId = `stord-webhook-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   try {
     const body = await request.text();
     const authHeader = request.headers.get("authorization");
@@ -44,24 +45,45 @@ export async function POST(request: NextRequest) {
     const stordOrderId = String(typedPayload.orderId || typedPayload.id || "");
     const trackingNumber = typedPayload.trackingNumber || typedPayload.tracking?.number || "";
 
-    await inngest.send({
-      // Event-level idempotency: unique per order + tracking number
-      id: `stord-fulfilment-${stordOrderId}-${trackingNumber}`,
-      name: "stord/fulfilment.received",
-      data: {
-        stordOrderId,
-        shopifyOrderId: String(typedPayload.externalOrderId || typedPayload.shopifyOrderId || ""),
-        trackingNumber,
-        carrierCode: typedPayload.carrier || typedPayload.tracking?.carrier || "",
-        fulfilmentJson: typedPayload,
-        receivedAt: new Date().toISOString(),
-      },
+    const result = await publishWebhookEvents({
+      source: "stord",
+      topic: "stord/fulfilment.received",
+      payload,
+      headers: Object.fromEntries(request.headers.entries()),
+      events: [
+        {
+          // Event-level idempotency: unique per order + tracking number
+          id: `stord-fulfilment-${stordOrderId}-${trackingNumber}`,
+          name: "stord/fulfilment.received",
+          data: {
+            stordOrderId,
+            shopifyOrderId: String(
+              typedPayload.externalOrderId || typedPayload.shopifyOrderId || ""
+            ),
+            trackingNumber,
+            carrierCode: typedPayload.carrier || typedPayload.tracking?.carrier || "",
+            fulfilmentJson: typedPayload,
+            receivedAt: new Date().toISOString(),
+          },
+        },
+      ],
     });
 
-    return NextResponse.json({ received: true }, { status: 200 });
+    if (!result.published) {
+      console.error(
+        `[Webhook] [${requestId}] Failed to publish STORD event to Inngest:`,
+        result.error
+      );
+      return NextResponse.json(
+        { received: false, error: "inngest_publication_failed", requestId },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({ received: true, requestId }, { status: 200 });
   } catch (error) {
     console.error("[Webhook] Error processing STORD webhook:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error", requestId }, { status: 500 });
   }
 }
 

@@ -66,6 +66,15 @@ describe("d365-thk-fulfilment", () => {
     ).toThrow(/THK fulfilment incomplete for H007-SO-119969/);
   });
 
+  it("blocks invoice failures even when a warehouse warning is also present", () => {
+    const msg =
+      "Dimension Warehouse is still specified on the inventory transaction; line failed to invoice";
+    expect(getThkFulfilmentBlockingIssue(msg)).toBe("failed to invoice");
+    expect(() =>
+      assertThkFulfilmentSucceeded({ Message: msg }, "H007-SO-119969")
+    ).toThrow(/THK fulfilment incomplete for H007-SO-119969/);
+  });
+
   it("does not throw for clean success messages", () => {
     expect(() =>
       assertThkFulfilmentSucceeded({ Message: "Success" }, "H007-SO-119969")

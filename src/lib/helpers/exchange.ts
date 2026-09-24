@@ -187,7 +187,7 @@ export function resolveRefundAmountUsd(params: {
 
   const orderTransactions = params.shopifyOrder.transactions || params.refund.transactions || [];
 
-  let exchangeRate =
+  const exchangeRate =
     extractExchangeRateFromRefundReceipt(params.refund, d365Currency) ||
     extractExchangeRateFromTransactions(orderTransactions, d365Currency) ||
     getFallbackRate(presentmentCurrency, d365Currency);

@@ -4,11 +4,12 @@
 // Receives fulfilment notifications from GPS warehouse
 
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 import { verifyWebhookSignature } from "@/lib/clients/gps";
 import { gpsWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 
 export async function POST(request: NextRequest) {
+  const requestId = `gps-webhook-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   try {
     const body = await request.text();
     const signature = request.headers.get("x-signature");
@@ -42,24 +43,43 @@ export async function POST(request: NextRequest) {
     const gpsOrderId = payload.orderId || payload.orderNumber;
     const trackingNumber = payload.trackingNumber;
 
-    await inngest.send({
-      // Event-level idempotency: unique per order + tracking number
-      id: `gps-fulfilment-${gpsOrderId}-${trackingNumber}`,
-      name: "gps/fulfilment.received",
-      data: {
-        gpsOrderId,
-        shopifyOrderId: payload.shopifyOrderId || extractShopifyOrderId(payload),
-        trackingNumber,
-        carrierCode: payload.carrierCode,
-        fulfilmentJson: payload,
-        receivedAt: new Date().toISOString(),
-      },
+    const result = await publishWebhookEvents({
+      source: "gps",
+      topic: "gps/fulfilment.received",
+      payload,
+      headers: Object.fromEntries(request.headers.entries()),
+      events: [
+        {
+          // Event-level idempotency: unique per order + tracking number
+          id: `gps-fulfilment-${gpsOrderId}-${trackingNumber}`,
+          name: "gps/fulfilment.received",
+          data: {
+            gpsOrderId,
+            shopifyOrderId: payload.shopifyOrderId || extractShopifyOrderId(payload),
+            trackingNumber,
+            carrierCode: payload.carrierCode,
+            fulfilmentJson: payload,
+            receivedAt: new Date().toISOString(),
+          },
+        },
+      ],
     });
 
-    return NextResponse.json({ received: true }, { status: 200 });
+    if (!result.published) {
+      console.error(
+        `[Webhook] [${requestId}] Failed to publish GPS event to Inngest:`,
+        result.error
+      );
+      return NextResponse.json(
+        { received: false, error: "inngest_publication_failed", requestId },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({ received: true, requestId }, { status: 200 });
   } catch (error) {
     console.error("[Webhook] Error processing GPS webhook:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error", requestId }, { status: 500 });
   }
 }
 

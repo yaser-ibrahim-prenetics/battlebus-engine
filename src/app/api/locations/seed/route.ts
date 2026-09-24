@@ -16,6 +16,7 @@ import {
   getLocationMappings,
   clearLocationCache,
 } from "@/lib/services/location-routing";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 // ============================================================================
 // GET — inspect current locations in Supabase
@@ -46,13 +47,10 @@ export async function GET() {
 // ============================================================================
 
 export async function POST(req: NextRequest) {
-  // Simple auth check — must supply INNGEST_SIGNING_KEY or BATTLE_BUS_API_KEY header
-  const apiKey =
-    req.headers.get("x-api-key") || req.headers.get("authorization")?.replace("Bearer ", "");
-  const expectedKey = process.env.BATTLE_BUS_API_KEY || process.env.INNGEST_SIGNING_KEY;
-
-  if (expectedKey && apiKey !== expectedKey) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Auth check — must supply BATTLE_BUS_API_KEY or INNGEST_SIGNING_KEY (fail closed if neither configured)
+  const auth = requireServiceAuth(req, { envVars: ["BATTLE_BUS_API_KEY", "INNGEST_SIGNING_KEY"] });
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
   }
 
   try {

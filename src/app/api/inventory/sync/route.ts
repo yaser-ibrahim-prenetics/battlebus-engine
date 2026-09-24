@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
@@ -56,6 +57,11 @@ interface InventorySyncPayload {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     if (!config.features.enableInventorySync) {
       return NextResponse.json(
@@ -211,6 +217,11 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint for health check and documentation
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   const { searchParams } = new URL(request.url);
 
   if (searchParams.get("docs") === "true") {

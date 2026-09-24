@@ -249,7 +249,7 @@ export async function saveRefundOrderLine(
       ignoreDuplicates: false,
     });
 
-  let { error } = await doUpsert(extendedRow);
+  const { error } = await doUpsert(extendedRow);
 
   if (error && /column .* does not exist/i.test(error.message)) {
     console.warn(

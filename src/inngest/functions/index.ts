@@ -24,6 +24,7 @@ export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processLocationSync } from "./process-location-sync";
 export { processBackorder } from "./process-backorder";
 export { drainPendingActions } from "./drain-pending-actions";
+export { drainWebhookInbox } from "./drain-webhook-inbox";
 export { processSubscriptionOrder } from "./process-subscription-order";
 export {
   cronInventoryReconciliation,
@@ -58,6 +59,7 @@ import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processLocationSync } from "./process-location-sync";
 import { processBackorder } from "./process-backorder";
 import { drainPendingActions } from "./drain-pending-actions";
+import { drainWebhookInbox } from "./drain-webhook-inbox";
 import { processSubscriptionOrder } from "./process-subscription-order";
 import {
   cronInventoryReconciliation,
@@ -107,6 +109,8 @@ export const functions = [
   processBackorder,
   // Stacked lifecycle action drain
   drainPendingActions,
+  // Webhook inbox drain (safety net for inngest.send() failures)
+  drainWebhookInbox,
   // Skio Subscription Renewal Orders
   processSubscriptionOrder,
   // Dynamics-originated shipment → create Shopify fulfillments

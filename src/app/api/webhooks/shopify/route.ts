@@ -4,7 +4,6 @@
 // Receives Shopify webhooks and sends events to Inngest
 
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 import {
   verifyWebhookSignature,
   resolveShopifyWebhookSecret,
@@ -14,6 +13,8 @@ import { config } from "@/lib/config";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
+import type { WebhookInboxEvent } from "@/lib/services/supabase-webhook-inbox";
 
 function validateWebhookPayload(topic: string | null, payload: any): string | null {
   if (!topic) return "Missing x-shopify-topic header";
@@ -52,27 +53,6 @@ function validateWebhookPayload(topic: string | null, payload: any): string | nu
   }
 
   return null;
-}
-
-// Helper function to send Inngest events with error handling
-async function sendInngestEvent(
-  event: Parameters<typeof inngest.send>[0],
-  requestId: string
-): Promise<boolean> {
-  try {
-    await inngest.send(event);
-    return true;
-  } catch (error) {
-    console.error(`[Webhook] [${requestId}] ⚠️  Failed to send Inngest event:`, error);
-    if (process.env.NODE_ENV === "development") {
-      console.warn(
-        `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
-      );
-    }
-    // Don't throw - allow webhook to return success even if Inngest is unavailable
-    // Events will be queued and processed when Inngest is available
-    return false;
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -256,31 +236,27 @@ export async function POST(request: NextRequest) {
     // Route to appropriate event based on topic
     // IMPORTANT: Each event includes an `id` for event-level idempotency
     // This prevents duplicate events from being stored (24-hour window)
+    //
+    // Events are collected here and published together (once, via the shared
+    // durable-inbox helper) after the switch below, so every branch's
+    // response reflects the same publish success/failure.
+    const eventsToSend: WebhookInboxEvent[] = [];
+
     switch (topic) {
       // Order creation - main flow
       case "orders/create":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.created`);
-        const sent1 = await sendInngestEvent(
-          {
-            id: `shopify-order-created-${payload.id}`, // Event-level idempotency key
-            name: "shopify/order.created",
-            data: {
-              shopifyOrderId: String(payload.id),
-              shopifyOrderName: payload.name,
-              shopifyStore: effectiveShopDomain,
-              orderJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/order.created`);
+        eventsToSend.push({
+          id: `shopify-order-created-${payload.id}`, // Event-level idempotency key
+          name: "shopify/order.created",
+          data: {
+            shopifyOrderId: String(payload.id),
+            shopifyOrderName: payload.name,
+            shopifyStore: effectiveShopDomain,
+            orderJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent1) {
-          console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.created for ${payload.name}`);
-        } else {
-          console.log(
-            `[Webhook] [${requestId}] ⚠️  Queued shopify/order.created for ${payload.name} (Inngest unavailable)`
-          );
-        }
+        });
         break;
 
       // Order paid - triggers order processing (alternative to orders/create)
@@ -297,88 +273,34 @@ export async function POST(request: NextRequest) {
           console.log(
             `[Webhook] [${requestId}] 🔄 Subscription renewal detected for ${payload.name} (Skio contract: ${subscriptionContractId || "unknown"})`
           );
-          console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/subscription.renewed`);
-          const sent = await sendInngestEvent(
-            {
-              id: `shopify-subscription-renewed-${payload.id}`,
-              name: "shopify/subscription.renewed",
-              data: {
-                shopifyOrderId: String(payload.id),
-                shopifyOrderName: payload.name,
-                shopifyStore: effectiveShopDomain,
-                subscriptionContractId,
-                orderJson: payload,
-                receivedAt: new Date().toISOString(),
-              },
+          console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/subscription.renewed`);
+          eventsToSend.push({
+            id: `shopify-subscription-renewed-${payload.id}`,
+            name: "shopify/subscription.renewed",
+            data: {
+              shopifyOrderId: String(payload.id),
+              shopifyOrderName: payload.name,
+              shopifyStore: effectiveShopDomain,
+              subscriptionContractId,
+              orderJson: payload,
+              receivedAt: new Date().toISOString(),
             },
-            requestId
-          );
-          if (sent) {
-            console.log(
-              `[Webhook] [${requestId}] ✅ Sent shopify/subscription.renewed for ${payload.name}`
-            );
-          }
+          });
         } else {
-          console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.paid`);
+          console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/order.paid`);
           const idempotencyKey = `shopify-order-paid-${payload.id}`;
-          try {
-            const sendResult = await inngest.send({
-              id: idempotencyKey,
-              name: "shopify/order.paid",
-              data: {
-                shopifyOrderId: String(payload.id),
-                shopifyOrderName: payload.name,
-                shopifyStore: effectiveShopDomain,
-                orderJson: payload,
-                receivedAt: new Date().toISOString(),
-                inngestIdempotencyKey: idempotencyKey,
-              },
-            });
-            const internalEventId = sendResult.ids?.[0];
-            console.log(`[Webhook] [${requestId}] ✅ Sent shopify/order.paid for ${payload.name}`);
-            console.log(
-              `[Webhook] [${requestId}] 📋 Internal Event ID: ${internalEventId}, Idempotency Key: ${idempotencyKey}`
-            );
-            logFlowEvent({
-              level: "info",
-              flow: "shopify_webhook",
-              step: "dispatch_inngest",
-              client: "inngest",
-              requestId,
+          eventsToSend.push({
+            id: idempotencyKey,
+            name: "shopify/order.paid",
+            data: {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
-              status: "completed",
-              payload: {
-                topic,
-                eventName: "shopify/order.paid",
-                internalEventId,
-                idempotencyKey,
-              },
-            });
-          } catch (error) {
-            console.error(`[Webhook] [${requestId}] ⚠️  Failed to send shopify/order.paid:`, error);
-            logFlowEvent({
-              level: "error",
-              flow: "shopify_webhook",
-              step: "dispatch_inngest",
-              client: "inngest",
-              requestId,
-              shopifyOrderId: String(payload.id),
-              shopifyOrderName: payload.name,
-              status: "failed",
-              errorType: "inngest_send_failed",
-              errorMessage: error instanceof Error ? error.message : String(error),
-              payload: {
-                topic,
-                eventName: "shopify/order.paid",
-              },
-            });
-            if (process.env.NODE_ENV === "development") {
-              console.warn(
-                `[Webhook] [${requestId}] Inngest not available - event queued but not sent. Start Inngest dev server: npm run dev:inngest`
-              );
-            }
-          }
+              shopifyStore: effectiveShopDomain,
+              orderJson: payload,
+              receivedAt: new Date().toISOString(),
+              inngestIdempotencyKey: idempotencyKey,
+            },
+          });
         }
         break;
       }
@@ -387,27 +309,19 @@ export async function POST(request: NextRequest) {
       case "orders/updated":
         // Only process if order is paid (avoid processing draft updates)
         if (payload.financial_status === "paid") {
-          console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.updated`);
-          const sent2 = await sendInngestEvent(
-            {
-              // Use updated_at to allow re-processing when order actually changes
-              id: `shopify-order-updated-${payload.id}-${payload.updated_at}`,
-              name: "shopify/order.updated", // Now routes to debounced handler
-              data: {
-                shopifyOrderId: String(payload.id),
-                shopifyOrderName: payload.name,
-                shopifyStore: effectiveShopDomain,
-                orderJson: payload,
-                receivedAt: new Date().toISOString(),
-              },
+          console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/order.updated`);
+          eventsToSend.push({
+            // Use updated_at to allow re-processing when order actually changes
+            id: `shopify-order-updated-${payload.id}-${payload.updated_at}`,
+            name: "shopify/order.updated", // Now routes to debounced handler
+            data: {
+              shopifyOrderId: String(payload.id),
+              shopifyOrderName: payload.name,
+              shopifyStore: effectiveShopDomain,
+              orderJson: payload,
+              receivedAt: new Date().toISOString(),
             },
-            requestId
-          );
-          if (sent2) {
-            console.log(
-              `[Webhook] [${requestId}] ✅ Sent shopify/order.updated for ${payload.name}`
-            );
-          }
+          });
         } else {
           console.log(
             `[Webhook] [${requestId}] ⏭️  Skipped orders/updated for ${payload.name} - status: ${payload.financial_status}`
@@ -417,54 +331,38 @@ export async function POST(request: NextRequest) {
 
       // Order cancelled - need to cancel in D365 and GPS
       case "orders/cancelled":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.cancelled`);
-        const sent3 = await sendInngestEvent(
-          {
-            id: `shopify-order-cancelled-${payload.id}`, // Event-level idempotency key
-            name: "shopify/order.cancelled",
-            data: {
-              shopifyOrderId: String(payload.id),
-              shopifyOrderName: payload.name,
-              shopifyStore: effectiveShopDomain,
-              orderJson: payload,
-              cancelledAt: payload.cancelled_at || new Date().toISOString(),
-              cancelReason: payload.cancel_reason || null,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/order.cancelled`);
+        eventsToSend.push({
+          id: `shopify-order-cancelled-${payload.id}`, // Event-level idempotency key
+          name: "shopify/order.cancelled",
+          data: {
+            shopifyOrderId: String(payload.id),
+            shopifyOrderName: payload.name,
+            shopifyStore: effectiveShopDomain,
+            orderJson: payload,
+            cancelledAt: payload.cancelled_at || new Date().toISOString(),
+            cancelReason: payload.cancel_reason || null,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent3) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/order.cancelled for ${payload.name}`
-          );
-        }
+        });
         break;
 
       // Order fulfilled - Shopify notifying us (Flow 7: Shopify Direct Fulfillment)
       // This happens when Shopify is the source of truth (manual, Stord, etc.)
       case "orders/fulfilled":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/order.fulfilled`);
-        const sent4 = await sendInngestEvent(
-          {
-            id: `shopify-order-fulfilled-${payload.id}-${payload.updated_at}`, // Event-level idempotency key
-            name: "shopify/order.fulfilled",
-            data: {
-              shopifyOrderId: String(payload.id),
-              shopifyOrderName: payload.name,
-              shopifyStore: effectiveShopDomain,
-              orderJson: payload,
-              fulfillments: payload.fulfillments || [],
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/order.fulfilled`);
+        eventsToSend.push({
+          id: `shopify-order-fulfilled-${payload.id}-${payload.updated_at}`, // Event-level idempotency key
+          name: "shopify/order.fulfilled",
+          data: {
+            shopifyOrderId: String(payload.id),
+            shopifyOrderName: payload.name,
+            shopifyStore: effectiveShopDomain,
+            orderJson: payload,
+            fulfillments: payload.fulfillments || [],
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent4) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/order.fulfilled for ${payload.name}`
-          );
-        }
+        });
         break;
 
       // Refund created - need to create credit note in D365
@@ -494,172 +392,116 @@ export async function POST(request: NextRequest) {
           break;
         }
 
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/refund.created`);
-        const sent5 = await sendInngestEvent(
-          {
-            id: `shopify-refund-created-${payload.id}`, // Event-level idempotency key
-            name: "shopify/refund.created",
-            data: {
-              shopifyOrderId: String(payload.order_id),
-              refundId: String(payload.id),
-              shopifyStore: effectiveShopDomain,
-              refundJson: payload,
-              receivedAt: new Date().toISOString(),
-              refundInitiator: "shopify_webhook",
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/refund.created`);
+        eventsToSend.push({
+          id: `shopify-refund-created-${payload.id}`, // Event-level idempotency key
+          name: "shopify/refund.created",
+          data: {
+            shopifyOrderId: String(payload.order_id),
+            refundId: String(payload.id),
+            shopifyStore: effectiveShopDomain,
+            refundJson: payload,
+            receivedAt: new Date().toISOString(),
+            refundInitiator: "shopify_webhook",
           },
-          requestId
-        );
-        if (sent5) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/refund.created for order ${payload.order_id}`
-          );
-        }
+        });
         break;
       }
 
       // Product created - sync to D365 & GPS
       case "products/create":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.created`);
-        const sent6 = await sendInngestEvent(
-          {
-            id: `shopify-product-created-${payload.id}`,
-            name: "shopify/product.created",
-            data: {
-              productId: String(payload.id),
-              productTitle: payload.title,
-              shopifyStore: effectiveShopDomain,
-              productJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/product.created`);
+        eventsToSend.push({
+          id: `shopify-product-created-${payload.id}`,
+          name: "shopify/product.created",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title,
+            shopifyStore: effectiveShopDomain,
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent6) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/product.created for ${payload.title}`
-          );
-        }
+        });
         break;
 
       // Product updated - sync changes to D365 & GPS
       case "products/update":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.updated`);
-        const sent7 = await sendInngestEvent(
-          {
-            id: `shopify-product-updated-${payload.id}-${payload.updated_at}`,
-            name: "shopify/product.updated",
-            data: {
-              productId: String(payload.id),
-              productTitle: payload.title,
-              shopifyStore: effectiveShopDomain,
-              productJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/product.updated`);
+        eventsToSend.push({
+          id: `shopify-product-updated-${payload.id}-${payload.updated_at}`,
+          name: "shopify/product.updated",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title,
+            shopifyStore: effectiveShopDomain,
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent7) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/product.updated for ${payload.title}`
-          );
-        }
+        });
         break;
 
       // Product deleted - sync deletion to D365 & GPS
       case "products/delete":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: shopify/product.deleted`);
-        const sent8 = await sendInngestEvent(
-          {
-            id: `shopify-product-deleted-${payload.id}`,
-            name: "shopify/product.deleted",
-            data: {
-              productId: String(payload.id),
-              productTitle: payload.title || "Unknown",
-              shopifyStore: effectiveShopDomain,
-              productJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: shopify/product.deleted`);
+        eventsToSend.push({
+          id: `shopify-product-deleted-${payload.id}`,
+          name: "shopify/product.deleted",
+          data: {
+            productId: String(payload.id),
+            productTitle: payload.title || "Unknown",
+            shopifyStore: effectiveShopDomain,
+            productJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent8) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/product.deleted for product ${payload.id}`
-          );
-        }
+        });
         break;
 
       // Location created - sync to Battle Hub
       case "locations/create":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.created`);
-        const sent9 = await sendInngestEvent(
-          {
-            id: `shopify-location-created-${payload.id}`,
-            name: "shopify/location.created",
-            data: {
-              locationId: String(payload.id),
-              locationName: payload.name,
-              shopifyStore: effectiveShopDomain,
-              locationJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: location.created`);
+        eventsToSend.push({
+          id: `shopify-location-created-${payload.id}`,
+          name: "shopify/location.created",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name,
+            shopifyStore: effectiveShopDomain,
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent9) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/location.created for location ${payload.name} (${payload.id})`
-          );
-        }
+        });
         break;
 
       // Location updated - sync to Battle Hub
       case "locations/update":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.updated`);
-        const sent10 = await sendInngestEvent(
-          {
-            id: `shopify-location-updated-${payload.id}-${payload.updated_at}`,
-            name: "shopify/location.updated",
-            data: {
-              locationId: String(payload.id),
-              locationName: payload.name,
-              shopifyStore: effectiveShopDomain,
-              locationJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: location.updated`);
+        eventsToSend.push({
+          id: `shopify-location-updated-${payload.id}-${payload.updated_at}`,
+          name: "shopify/location.updated",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name,
+            shopifyStore: effectiveShopDomain,
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent10) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/location.updated for location ${payload.name} (${payload.id})`
-          );
-        }
+        });
         break;
 
       // Location deleted - sync to Battle Hub
       case "locations/delete":
-        console.log(`[Webhook] [${requestId}] 📤 Sending event: location.deleted`);
-        const sent11 = await sendInngestEvent(
-          {
-            id: `shopify-location-deleted-${payload.id}`,
-            name: "shopify/location.deleted",
-            data: {
-              locationId: String(payload.id),
-              locationName: payload.name || "Unknown",
-              shopifyStore: effectiveShopDomain,
-              locationJson: payload,
-              receivedAt: new Date().toISOString(),
-            },
+        console.log(`[Webhook] [${requestId}] 📤 Queuing event: location.deleted`);
+        eventsToSend.push({
+          id: `shopify-location-deleted-${payload.id}`,
+          name: "shopify/location.deleted",
+          data: {
+            locationId: String(payload.id),
+            locationName: payload.name || "Unknown",
+            shopifyStore: effectiveShopDomain,
+            locationJson: payload,
+            receivedAt: new Date().toISOString(),
           },
-          requestId
-        );
-        if (sent11) {
-          console.log(
-            `[Webhook] [${requestId}] ✅ Sent shopify/location.deleted for location ${payload.name || payload.id}`
-          );
-        }
+        });
         break;
 
       // Inventory level updated - sync stock levels to D365 & GPS via mesh
@@ -669,63 +511,89 @@ export async function POST(request: NextRequest) {
             `[Webhook] [${requestId}] ⏭️  inventory_levels/update ignored (ENABLE_INVENTORY_SYNC=false)`
           );
         } else {
-          console.log(`[Webhook] [${requestId}] 📤 Sending event: inventory/sync (via mesh)`);
+          console.log(`[Webhook] [${requestId}] 📤 Queuing events: inventory/sync (via mesh)`);
           // Use the mesh API pattern - send to mesh which routes to destinations
-          const sentDynamics = await sendInngestEvent(
-            {
-              id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-              name: "inventory/sync",
-              data: {
+          eventsToSend.push({
+            id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+            name: "inventory/sync",
+            data: {
+              source: "shopify",
+              destination: "dynamics",
+              payload: {
+                inventoryItemId: String(payload.inventory_item_id),
+                locationId: String(payload.location_id),
+                available: payload.available,
+                quantity: payload.available,
+                action: "update",
                 source: "shopify",
-                destination: "dynamics",
-                payload: {
-                  inventoryItemId: String(payload.inventory_item_id),
-                  locationId: String(payload.location_id),
-                  available: payload.available,
-                  quantity: payload.available,
-                  action: "update",
-                  source: "shopify",
-                  timestamp: payload.updated_at || new Date().toISOString(),
-                },
+                timestamp: payload.updated_at || new Date().toISOString(),
               },
             },
-            requestId
-          );
+          });
           // Also sync to GPS warehouse
-          const sentGps = await sendInngestEvent(
-            {
-              id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-              name: "inventory/sync",
-              data: {
+          eventsToSend.push({
+            id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
+            name: "inventory/sync",
+            data: {
+              source: "shopify",
+              destination: "gps",
+              payload: {
+                inventoryItemId: String(payload.inventory_item_id),
+                locationId: String(payload.location_id),
+                available: payload.available,
+                quantity: payload.available,
+                action: "update",
                 source: "shopify",
-                destination: "gps",
-                payload: {
-                  inventoryItemId: String(payload.inventory_item_id),
-                  locationId: String(payload.location_id),
-                  available: payload.available,
-                  quantity: payload.available,
-                  action: "update",
-                  source: "shopify",
-                  timestamp: payload.updated_at || new Date().toISOString(),
-                },
+                timestamp: payload.updated_at || new Date().toISOString(),
               },
             },
-            requestId
-          );
-          if (sentDynamics && sentGps) {
-            console.log(
-              `[Webhook] [${requestId}] ✅ Sent inventory/sync events for item ${payload.inventory_item_id} at location ${payload.location_id}`
-            );
-          } else {
-            console.log(
-              `[Webhook] [${requestId}] ⚠️  Queued inventory/sync events (Inngest unavailable)`
-            );
-          }
+          });
         }
         break;
 
       default:
         console.log(`[Webhook] [${requestId}] ⚠️  Unhandled Shopify topic: ${topic}`);
+    }
+
+    // Durably record the webhook + attempt to publish the collected event(s)
+    // to Inngest in one shot. On failure, respond with a 5xx so Shopify's own
+    // webhook retry logic (non-2xx retried for up to 48h) kicks in — the
+    // `drain-webhook-inbox` cron is the backstop for anything that still
+    // never makes it through.
+    const publishResult = await publishWebhookEvents({
+      source: "shopify",
+      topic,
+      payload,
+      headers: Object.fromEntries(request.headers.entries()),
+      events: eventsToSend,
+    });
+
+    if (!publishResult.published) {
+      console.error(
+        `[Webhook] [${requestId}] ⚠️  Failed to publish ${eventsToSend.length} event(s) to Inngest:`,
+        publishResult.error
+      );
+      logFlowEvent({
+        level: "error",
+        flow: "shopify_webhook",
+        step: "dispatch_inngest",
+        client: "inngest",
+        requestId,
+        status: "failed",
+        errorType: "inngest_send_failed",
+        errorMessage: publishResult.error,
+        payload: { topic, eventCount: eventsToSend.length },
+      });
+      return NextResponse.json(
+        { received: false, error: "inngest_publication_failed", requestId },
+        { status: 502 }
+      );
+    }
+
+    if (eventsToSend.length > 0) {
+      console.log(
+        `[Webhook] [${requestId}] ✅ Published ${eventsToSend.length} event(s) to Inngest for topic ${topic}`
+      );
     }
 
     const duration = Date.now() - startTime;
@@ -742,18 +610,7 @@ export async function POST(request: NextRequest) {
     console.log(`[Webhook] [${requestId}] ✅ Completed in ${duration}ms`);
     console.log(`[Webhook] [${requestId}] ========================================`);
 
-    // Return success - webhook was received and processed
-    // Note: Events may be queued if Inngest is unavailable (in dev mode)
-    return NextResponse.json(
-      {
-        received: true,
-        requestId,
-        ...(process.env.NODE_ENV === "development" && {
-          note: "In development mode, if Inngest dev server is not running, events are queued but not processed. Start with: npm run dev:inngest",
-        }),
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({ received: true, requestId }, { status: 200 });
   } catch (error) {
     const duration = Date.now() - startTime;
     logFlowEvent({

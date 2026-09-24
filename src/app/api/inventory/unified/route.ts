@@ -19,6 +19,7 @@ import {
   getInventory as getD365Inventory,
   getAllInventory as getAllD365Inventory,
 } from "@/lib/clients/dynamics";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 type Source = "gps" | "d365";
 
@@ -46,6 +47,11 @@ interface UnifiedInventoryItem {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
 

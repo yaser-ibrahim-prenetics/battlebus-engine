@@ -93,7 +93,7 @@ const CUSTOMER_PRESETS = {
   },
 } as const;
 
-export const SUPPORTED_MARKET_CODES = Object.keys(CUSTOMER_PRESETS);
+const SUPPORTED_MARKET_CODES = Object.keys(CUSTOMER_PRESETS);
 
 // Currency per supported market
 const CURRENCY_BY_CC: Record<string, string> = {
@@ -108,8 +108,6 @@ const CURRENCY_BY_CC: Record<string, string> = {
 };
 
 const DEFAULT_ALLOWED_ORIGINS = [
-  "https://battle-hub-three.vercel.app",
-  "https://battle-hub.vercel.app",
   "http://localhost:3000",
   "http://localhost:5173",
 ];
@@ -118,8 +116,8 @@ const MASS_TEST_PROXY_SECRET =
   process.env.MASS_TEST_PROXY_SECRET || process.env.CONFIG_ENV_PROXY_SECRET || "";
 
 function getAllowedOrigins(): string[] {
-  const extraOrigins = (process.env.MASS_TEST_ALLOWED_ORIGINS || "")
-    .split(",")
+  const extraOrigins = [process.env.BATTLE_HUB_URL, ...(process.env.MASS_TEST_ALLOWED_ORIGINS || "").split(",")]
+    .filter((origin): origin is string => Boolean(origin))
     .map((origin) => origin.trim())
     .filter(Boolean);
 
@@ -563,7 +561,7 @@ export async function POST(req: NextRequest) {
     const locIds = Object.keys(weights);
     const total = Object.values(weights).reduce((s, w) => s + w, 0);
     const allocated: number[] = locIds.map((id) => Math.floor(count * (weights[id] / total)));
-    let remaining = count - allocated.reduce((s, n) => s + n, 0);
+    const remaining = count - allocated.reduce((s, n) => s + n, 0);
     const fracs = locIds.map((id, i) => ({ i, f: count * (weights[id] / total) - allocated[i] }));
     fracs.sort((a, b) => b.f - a.f);
     for (let k = 0; k < remaining; k++) allocated[fracs[k % fracs.length].i]++;

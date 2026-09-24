@@ -938,67 +938,97 @@ export const processShopifyOrder = inngest.createFunction(
 
       // MEGA-STEP: D365 create + prepayment + GPS payload + GPS send (single step to minimise checkpoint overhead)
       await publishStatus("create-d365-order", "running", "Syncing paid order to D365 and GPS");
-      const syncResult = await step.run("sync-order", async () => {
-        // Check for existing D365 order (idempotency check)
-        await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
+      // ────────────────────────────────────────────────────────────────────
+      // Order sync — split into separately checkpointed, idempotent steps.
+      // Each external write (D365 header, D365 lines, Supabase persist, D365
+      // confirm, D365 prepayment, Shopify FO split, GPS dispatch) is its own
+      // step.run so a failure downstream (e.g. GPS) never re-executes writes
+      // that already succeeded upstream (e.g. D365 header/lines) on retry —
+      // Inngest memoizes each step id independently, unlike a single mega-step.
+      // ────────────────────────────────────────────────────────────────────
+
+      // ── Step: check for existing D365 order (idempotency check) ─────────
+      await publishStatus("d365.check-existing", "running", "Checking for existing D365 order");
+      const existingCheck = await step.run("d365-check-existing", async () => {
         if (skipD365) {
           console.log("[D365] Dynamics sync disabled, skipping order lookup");
-        } else {
-          console.log(
-            `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
-          );
-          const existing = await dynamics.getSalesOrderByShopifyId(
-            shopifyOrderName,
-            dataAreaId,
-            undefined,
-            { shopifyNumericId: shopifyOrderId }
-          );
-          if (existing) {
-            await publishStatus(
-              "d365.check-existing",
-              "completed",
-              `Existing order found: ${existing.SalesOrderNumber}`,
-              { d365OrderNumber: existing.SalesOrderNumber }
-            );
-            return {
-              type: "already_exists" as const,
-              salesOrderNumber: existing.SalesOrderNumber,
-              lineItems: [] as any[],
-              d365InventoryLotsBySku: {} as Record<string, string>,
-              orderLinesSupabase: {
-                attempted: false,
-                skipReason: "d365_order_already_existed" as const,
-                note: "Reused existing D365 order — this run did not upsert Hub order_lines (lines may be missing until a full sync or backfill).",
-              } satisfies OrderLinesSupabaseSyncLog,
-            };
-          }
+          return { exists: false as const };
         }
+        console.log(
+          `[D365] Looking up existing order for Shopify Name: ${shopifyOrderName} in dataAreaId: ${dataAreaId}`
+        );
+        const existing = await dynamics.getSalesOrderByShopifyId(
+          shopifyOrderName,
+          dataAreaId,
+          undefined,
+          { shopifyNumericId: shopifyOrderId }
+        );
+        if (existing) {
+          return { exists: true as const, salesOrderNumber: existing.SalesOrderNumber };
+        }
+        return { exists: false as const };
+      });
+
+      let syncResult: {
+        type: "already_exists" | "sync_complete";
+        salesOrderNumber: string;
+        lineItems: any[];
+        d365InventoryLotsBySku: Record<string, string>;
+        orderLinesSupabase: OrderLinesSupabaseSyncLog;
+        gpsResult:
+          | { type: "real"; result: any; metafieldStored: boolean }
+          | { type: "out_of_stock"; error: string }
+          | { type: "failed"; error: string }
+          | { type: "skipped"; reason: string };
+      };
+
+      if (existingCheck.exists) {
+        await publishStatus(
+          "d365.check-existing",
+          "completed",
+          `Existing order found: ${existingCheck.salesOrderNumber}`,
+          { d365OrderNumber: existingCheck.salesOrderNumber }
+        );
+        syncResult = {
+          type: "already_exists" as const,
+          salesOrderNumber: existingCheck.salesOrderNumber!,
+          lineItems: [] as any[],
+          d365InventoryLotsBySku: {} as Record<string, string>,
+          orderLinesSupabase: {
+            attempted: false,
+            skipReason: "d365_order_already_existed" as const,
+            note: "Reused existing D365 order — this run did not upsert Hub order_lines (lines may be missing until a full sync or backfill).",
+          } satisfies OrderLinesSupabaseSyncLog,
+          gpsResult: { type: "skipped" as const, reason: "d365_order_already_existed" },
+        };
+      } else {
         await publishStatus("d365.check-existing", "completed", "No existing order found");
 
-        // Create D365 Header
+        // ── Step: create D365 header ───────────────────────────────────
         await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
-        const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
-        let d365Header;
-        if (skipD365) {
-          d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
-        } else {
-          d365Header = await retryWithBackoff(
-            () => dynamics.createSalesOrderHeaderV3(headerRequest),
-            {
-              label: `D365 header ${shopifyOrderName}`,
-            }
-          );
-        }
-
-        const salesOrderNo = d365Header.SalesOrderNumber;
-        if (!salesOrderNo) {
-          throw new Error(`[D365] Missing SalesOrderNumber for ${shopifyOrderName}`);
-        }
+        const headerResult = await step.run("d365-create-header", async () => {
+          const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+          let d365Header;
+          if (skipD365) {
+            d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
+          } else {
+            d365Header = await retryWithBackoff(
+              () => dynamics.createSalesOrderHeaderV3(headerRequest),
+              { label: `D365 header ${shopifyOrderName}` }
+            );
+          }
+          const salesOrderNo = d365Header.SalesOrderNumber;
+          if (!salesOrderNo) {
+            throw new Error(`[D365] Missing SalesOrderNumber for ${shopifyOrderName}`);
+          }
+          return { salesOrderNo };
+        });
+        const salesOrderNo = headerResult.salesOrderNo;
         await publishStatus("d365.create-header", "completed", `Header created: ${salesOrderNo}`, {
           d365OrderNumber: salesOrderNo,
         });
 
-        // Create D365 Lines - parallel creation
+        // ── Step: create D365 lines (parallel per-line creation) ────────
         const lineItems = toD365SalesOrderLines(
           order,
           salesOrderNo,
@@ -1016,17 +1046,17 @@ export const processShopifyOrder = inngest.createFunction(
           { totalLines: lineItems.length }
         );
 
-        let d365InventoryLotsBySku: Record<string, string> = {};
-        let orderLinesSupabase: OrderLinesSupabaseSyncLog;
+        const linesResult = await step.run("d365-create-lines", async () => {
+          const d365InventoryLotsBySku: Record<string, string> = {};
 
-        if (skipD365) {
-          orderLinesSupabase = {
-            attempted: false,
-            skipReason: "dynamics_sync_disabled",
-            d365LineCount: lineItems.length,
-            note: "ENABLE_DYNAMICS_SYNC off — order_lines upsert skipped",
-          };
-        } else {
+          if (skipD365) {
+            return {
+              d365InventoryLotsBySku,
+              skippedItemNumbers: [] as string[],
+              skippedServiceLines: [] as Array<{ itemNumber: string; error: string }>,
+            };
+          }
+
           const invalidLines = lineItems
             .map((line, index) => ({ line, index }))
             .filter(
@@ -1088,18 +1118,8 @@ export const processShopifyOrder = inngest.createFunction(
               })()
             )
           );
+
           const skippedServiceLines = lineResults.filter((r) => r.skipped);
-          if (skippedServiceLines.length > 0) {
-            await publishStatus(
-              "d365.create-lines",
-              "running",
-              `Skipped ${skippedServiceLines.length} missing service SKU lines`,
-              {
-                skippedServiceSkus: skippedServiceLines.map((s) => s.itemNumber),
-                skippedCount: skippedServiceLines.length,
-              }
-            );
-          }
           for (const r of lineResults) {
             if (r.skipped) continue;
             const sku = String(r.itemNumber || "")
@@ -1117,72 +1137,107 @@ export const processShopifyOrder = inngest.createFunction(
             );
           }
 
-          // Build set of D365 item numbers that were skipped (SKU not released in D365).
-          // Do NOT save those to order_lines — they can't be fulfilled.
-          const skippedItemNumbers = new Set(
-            lineResults.filter((r) => r.skipped).map((r) => r.itemNumber.toUpperCase())
-          );
-
-          // Persist all order lines (product + service) to Supabase so fulfillment
-          // can replay shipping/tax lines to Dynamics. Lot IDs come from D365's
-          // createSalesOrderLine response, captured above in d365InventoryLotsBySku.
-          const lineRecords: OrderLineRecord[] = toOrderLineRecords(
-            order,
-            salesOrderNo,
-            warehouseName,
-            dataAreaId
-          )
-            .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
-            .map((r) => ({
-              shopify_order_id: String(shopifyOrderId),
-              shopify_order_name: shopifyOrderName || order.name,
-              shopify_line_item_id: r.shopifyLineItemId,
-              shopify_sku: r.shopifySku,
-              d365_item_number: r.d365ItemNumber,
-              d365_sales_order_number: salesOrderNo,
-              data_area_id: dataAreaId,
-              quantity: r.quantity,
-              price: r.price,
-              // Lot ID from D365 createSalesOrderLine response — used at fulfillment time
-              dynamics_inventory_lot_id:
-                d365InventoryLotsBySku[r.d365ItemNumber.toUpperCase()] ?? null,
-              is_service_line: r.isServiceLine,
-            }));
-          const saveResult = await saveOrderLines(lineRecords);
-          orderLinesSupabase = {
-            attempted: true,
-            d365LineCount: lineItems.length,
-            recordsPrepared: lineRecords.length,
-            skippedD365ServiceLines: skippedItemNumbers.size,
-            save: saveResult,
-            preview: lineRecords.slice(0, 12).map((r) => ({
-              shopify_line_item_id: r.shopify_line_item_id,
-              d365_item_number: r.d365_item_number,
-              hasLotId: !!r.dynamics_inventory_lot_id,
+          return {
+            d365InventoryLotsBySku,
+            skippedItemNumbers: lineResults.filter((r) => r.skipped).map((r) => r.itemNumber.toUpperCase()),
+            skippedServiceLines: skippedServiceLines.map((s) => ({
+              itemNumber: s.itemNumber,
+              error: "error" in s ? s.error : "",
             })),
           };
+        });
 
-          const flowStatus: "completed" | "failed" | "skipped" = saveResult.ok
-            ? "completed"
-            : saveResult.reason === "supabase_error"
-              ? "failed"
-              : "skipped";
-          const flowMessage = saveResult.ok
-            ? `Upserted ${saveResult.upsertedRowCount} row(s) to public.order_lines`
-            : saveResult.reason === "no_supabase_client"
-              ? "Skipped: Supabase not configured (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Battle Bus)"
-              : saveResult.reason === "empty_input"
-                ? "Skipped: toOrderLineRecords returned 0 rows (nothing to persist)"
-                : `Supabase upsert failed: ${saveResult.message}`;
+        const d365InventoryLotsBySku = linesResult.d365InventoryLotsBySku;
+        const skippedItemNumbers = new Set(linesResult.skippedItemNumbers);
 
-          await publishStatus("supabase.order-lines", flowStatus, flowMessage, {
-            saveResult,
-            recordsPrepared: lineRecords.length,
-            d365LinesCreated: lineItems.length,
-            shopifyOrderId: String(shopifyOrderId),
-            shopifyOrderName,
-            salesOrderNumber: salesOrderNo,
-            preview: orderLinesSupabase.preview,
+        if (linesResult.skippedServiceLines.length > 0) {
+          await publishStatus(
+            "d365.create-lines",
+            "running",
+            `Skipped ${linesResult.skippedServiceLines.length} missing service SKU lines`,
+            {
+              skippedServiceSkus: linesResult.skippedServiceLines.map(
+                (s: { itemNumber: string }) => s.itemNumber
+              ),
+              skippedCount: linesResult.skippedServiceLines.length,
+            }
+          );
+        }
+
+        // ── Step: persist order lines to Supabase ────────────────────────
+        let orderLinesSupabase: OrderLinesSupabaseSyncLog;
+        if (skipD365) {
+          orderLinesSupabase = {
+            attempted: false,
+            skipReason: "dynamics_sync_disabled",
+            d365LineCount: lineItems.length,
+            note: "ENABLE_DYNAMICS_SYNC off — order_lines upsert skipped",
+          };
+        } else {
+          orderLinesSupabase = await step.run("supabase-persist-order-lines", async () => {
+            // Persist all order lines (product + service) to Supabase so fulfillment
+            // can replay shipping/tax lines to Dynamics. Lot IDs come from D365's
+            // createSalesOrderLine response, captured in the previous step.
+            const lineRecords: OrderLineRecord[] = toOrderLineRecords(
+              order,
+              salesOrderNo,
+              warehouseName,
+              dataAreaId
+            )
+              .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
+              .map((r) => ({
+                shopify_order_id: String(shopifyOrderId),
+                shopify_order_name: shopifyOrderName || order.name,
+                shopify_line_item_id: r.shopifyLineItemId,
+                shopify_sku: r.shopifySku,
+                d365_item_number: r.d365ItemNumber,
+                d365_sales_order_number: salesOrderNo,
+                data_area_id: dataAreaId,
+                quantity: r.quantity,
+                price: r.price,
+                // Lot ID from D365 createSalesOrderLine response — used at fulfillment time
+                dynamics_inventory_lot_id:
+                  d365InventoryLotsBySku[r.d365ItemNumber.toUpperCase()] ?? null,
+                is_service_line: r.isServiceLine,
+              }));
+            const saveResult = await saveOrderLines(lineRecords);
+            const result: OrderLinesSupabaseSyncLog = {
+              attempted: true,
+              d365LineCount: lineItems.length,
+              recordsPrepared: lineRecords.length,
+              skippedD365ServiceLines: skippedItemNumbers.size,
+              save: saveResult,
+              preview: lineRecords.slice(0, 12).map((r) => ({
+                shopify_line_item_id: r.shopify_line_item_id,
+                d365_item_number: r.d365_item_number,
+                hasLotId: !!r.dynamics_inventory_lot_id,
+              })),
+            };
+
+            const flowStatus: "completed" | "failed" | "skipped" = saveResult.ok
+              ? "completed"
+              : saveResult.reason === "supabase_error"
+                ? "failed"
+                : "skipped";
+            const flowMessage = saveResult.ok
+              ? `Upserted ${saveResult.upsertedRowCount} row(s) to public.order_lines`
+              : saveResult.reason === "no_supabase_client"
+                ? "Skipped: Supabase not configured (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Battle Bus)"
+                : saveResult.reason === "empty_input"
+                  ? "Skipped: toOrderLineRecords returned 0 rows (nothing to persist)"
+                  : `Supabase upsert failed: ${saveResult.message}`;
+
+            await publishStatus("supabase.order-lines", flowStatus, flowMessage, {
+              saveResult,
+              recordsPrepared: lineRecords.length,
+              d365LinesCreated: lineItems.length,
+              shopifyOrderId: String(shopifyOrderId),
+              shopifyOrderName,
+              salesOrderNumber: salesOrderNo,
+              preview: result.preview,
+            });
+
+            return result;
           });
         }
 
@@ -1193,40 +1248,42 @@ export const processShopifyOrder = inngest.createFunction(
           { totalLines: lineItems.length }
         );
 
-        // Confirm D365 Order with exponential backoff
+        // ── Step: confirm D365 order (with exponential backoff) ──────────
         await publishStatus("d365.confirm-order", "running", "Confirming D365 sales order");
         if (!skipD365) {
-          const backoffMs = [500, 1000, 2000];
+          await step.run("d365-confirm-order", async () => {
+            const backoffMs = [500, 1000, 2000];
 
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              await dynamics.confirmSalesOrder(salesOrderNo, dataAreaId);
-              if (attempt > 1) {
-                await publishStatus(
-                  "d365.confirm-order",
-                  "running",
-                  `Confirmed on attempt ${attempt}`,
-                  { attempt }
-                );
-              }
-              break;
-            } catch (error) {
-              const isNotFoundError =
-                error instanceof Error && error.message.includes("does not exist");
-              if (isNotFoundError && attempt < 3) {
-                const waitMs = backoffMs[attempt - 1];
-                await publishStatus(
-                  "d365.confirm-order",
-                  "running",
-                  `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`,
-                  { attempt, maxAttempts: 3, waitMs }
-                );
-                await new Promise((resolve) => setTimeout(resolve, waitMs));
-              } else {
-                throw error;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await dynamics.confirmSalesOrder(salesOrderNo, dataAreaId);
+                if (attempt > 1) {
+                  await publishStatus(
+                    "d365.confirm-order",
+                    "running",
+                    `Confirmed on attempt ${attempt}`,
+                    { attempt }
+                  );
+                }
+                break;
+              } catch (error) {
+                const isNotFoundError =
+                  error instanceof Error && error.message.includes("does not exist");
+                if (isNotFoundError && attempt < 3) {
+                  const waitMs = backoffMs[attempt - 1];
+                  await publishStatus(
+                    "d365.confirm-order",
+                    "running",
+                    `Waiting ${waitMs}ms for D365 propagation (attempt ${attempt}/3)`,
+                    { attempt, maxAttempts: 3, waitMs }
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, waitMs));
+                } else {
+                  throw error;
+                }
               }
             }
-          }
+          });
         }
         await publishStatus("d365.confirm-order", "completed", "D365 order confirmed");
 
@@ -1237,7 +1294,7 @@ export const processShopifyOrder = inngest.createFunction(
           { d365OrderNumber: salesOrderNo }
         );
 
-        // --- Prepayment (spock-store: after confirm, if line cost > 0) ---
+        // ── Step: prepayment (spock-store: after confirm, if line cost > 0) ─
         const prepaymentAmount = calculateOrderCost(
           lineItems.map((line) => ({
             price: line.price,
@@ -1245,10 +1302,6 @@ export const processShopifyOrder = inngest.createFunction(
             quantity: line.quantity,
           }))
         );
-        let prepaymentResult: { success: boolean; amount: number; error?: string } = {
-          success: true,
-          amount: prepaymentAmount,
-        };
 
         if (!skipD365 && prepaymentAmount > 0) {
           await publishStatus(
@@ -1258,15 +1311,13 @@ export const processShopifyOrder = inngest.createFunction(
             { amount: prepaymentAmount }
           );
           try {
-            await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNo, dataAreaId), {
-              label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
-              maxAttempts: 3,
+            const depositCheck = await step.run("d365-create-prepayment", async () => {
+              await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNo, dataAreaId), {
+                label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
+                maxAttempts: 3,
+              });
+              return dynamics.verifyDepositFulfillmentApplied(salesOrderNo, dataAreaId);
             });
-
-            const depositCheck = await dynamics.verifyDepositFulfillmentApplied(
-              salesOrderNo,
-              dataAreaId
-            );
             await publishStatus(
               "d365.create-prepayment",
               "completed",
@@ -1304,19 +1355,13 @@ export const processShopifyOrder = inngest.createFunction(
                 : `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
             );
 
-            prepaymentResult = {
-              success: false,
-              amount: prepaymentAmount,
-              error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
-            };
-
             throw new Error(
               `[D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
             );
           }
         }
 
-        // --- Build GPS payload ---
+        // --- Build GPS payload (pure transform, no external write) ---
         await publishStatus("gps.build-payload", "running", "Transforming order to GPS format");
         const shouldSendToRealGps =
           shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
@@ -1341,211 +1386,197 @@ export const processShopifyOrder = inngest.createFunction(
           await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
         }
 
-        // --- Fulfillment order splitting (optional, non-blocking) ---
+        // ── Step: Shopify fulfillment order split (optional, non-blocking) ─
         await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
-        try {
-          const orderTotal = parseFloat(order.total_price || "0");
-          const countryCode = country_code || "US";
-          const domestic = isDomesticOrder(countryCode);
-          const splitDecision = shouldSplitFulfillmentOrder(orderTotal, countryCode, domestic);
+        await step.run("shopify-fulfillment-order-split", async () => {
+          try {
+            const orderTotal = parseFloat(order.total_price || "0");
+            const countryCode = country_code || "US";
+            const domestic = isDomesticOrder(countryCode);
+            const splitDecision = shouldSplitFulfillmentOrder(orderTotal, countryCode, domestic);
 
-          console.log(
-            `[Fulfillment Split] ${shopifyOrderName}: ${splitDecision.reason} ` +
-              `(total=${orderTotal}, threshold=${splitDecision.threshold}, country=${countryCode})`
-          );
-
-          if (splitDecision.shouldSplit) {
-            const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-            const openFO = fulfillmentOrders?.find(
-              (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+            console.log(
+              `[Fulfillment Split] ${shopifyOrderName}: ${splitDecision.reason} ` +
+                `(total=${orderTotal}, threshold=${splitDecision.threshold}, country=${countryCode})`
             );
 
-            if (!openFO) {
-              console.warn(
-                `[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`
+            if (splitDecision.shouldSplit) {
+              const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+              const openFO = fulfillmentOrders?.find(
+                (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
               );
-            } else {
-              const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
-              const foLineItems = (openFO as any).line_items || [];
 
-              if (foLineItems.length < 2) {
-                console.log(
-                  `[Fulfillment Split] Only ${foLineItems.length} line item(s), cannot split`
+              if (!openFO) {
+                console.warn(
+                  `[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`
                 );
               } else {
-                const midpoint = Math.ceil(foLineItems.length / 2);
-                const splitLineItems = foLineItems.slice(midpoint).map((li: any) => ({
-                  fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
-                  quantity: li.quantity || li.fulfillable_quantity || 1,
-                }));
+                const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
+                const foLineItems = (openFO as any).line_items || [];
 
-                const mutation = `
-                  mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
-                    fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
-                      fulfillmentOrders { id }
-                      userErrors { field message }
-                    }
-                  }
-                `;
-
-                const graphqlResult = await shopifyAdminGraphql<{
-                  data?: {
-                    fulfillmentOrderSplit?: {
-                      fulfillmentOrders?: Array<{ id: string }>;
-                      userErrors?: Array<{ field?: string[]; message: string }>;
-                    };
-                  };
-                }>(mutation, {
-                  fulfillmentOrderId: fulfillmentOrderGid,
-                  fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
-                });
-                const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
-
-                if (userErrors && userErrors.length > 0) {
-                  const errorMsg = userErrors.map((e: any) => e.message).join(", ");
-                  console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
-                  await slack.sendWarningMessage(
-                    SlackChannelEnum.SHOPIFY,
-                    `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
+                if (foLineItems.length < 2) {
+                  console.log(
+                    `[Fulfillment Split] Only ${foLineItems.length} line item(s), cannot split`
                   );
                 } else {
-                  const newFOs =
-                    graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
-                  console.log(
-                    `[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`
-                  );
+                  const midpoint = Math.ceil(foLineItems.length / 2);
+                  const splitLineItems = foLineItems.slice(midpoint).map((li: any) => ({
+                    fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
+                    quantity: li.quantity || li.fulfillable_quantity || 1,
+                  }));
 
-                  await slack.sendOrderMessage(
-                    SlackChannelEnum.SHOPIFY,
-                    `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
-                      `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
-                  );
+                  const mutation = `
+                    mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
+                      fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
+                        fulfillmentOrders { id }
+                        userErrors { field message }
+                      }
+                    }
+                  `;
+
+                  const graphqlResult = await shopifyAdminGraphql<{
+                    data?: {
+                      fulfillmentOrderSplit?: {
+                        fulfillmentOrders?: Array<{ id: string }>;
+                        userErrors?: Array<{ field?: string[]; message: string }>;
+                      };
+                    };
+                  }>(mutation, {
+                    fulfillmentOrderId: fulfillmentOrderGid,
+                    fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
+                  });
+                  const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
+
+                  if (userErrors && userErrors.length > 0) {
+                    const errorMsg = userErrors.map((e: any) => e.message).join(", ");
+                    console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
+                    await slack.sendWarningMessage(
+                      SlackChannelEnum.SHOPIFY,
+                      `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
+                    );
+                  } else {
+                    const newFOs =
+                      graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
+                    console.log(
+                      `[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`
+                    );
+
+                    await slack.sendOrderMessage(
+                      SlackChannelEnum.SHOPIFY,
+                      `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
+                        `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
+                    );
+                  }
                 }
               }
             }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
+            await slack.sendWarningMessage(
+              SlackChannelEnum.SHOPIFY,
+              `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
+            );
           }
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
-          await slack.sendWarningMessage(
-            SlackChannelEnum.SHOPIFY,
-            `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
-          );
-        }
+        });
 
-        // --- Send to GPS + store metafield ---
+        // ── Step: send to GPS + store metafield ───────────────────────────
+        let gpsResult:
+          | { type: "real"; result: any; metafieldStored: boolean }
+          | { type: "out_of_stock"; error: string }
+          | { type: "failed"; error: string }
+          | { type: "skipped"; reason: string };
+
         if (shouldSendToRealGps && gpsOrderPayload) {
+          const payloadForStep = gpsOrderPayload;
           await publishStatus("gps.send-order", "running", `Sending order to ${warehouseName}`, {
             warehouse: warehouseName,
           });
-          try {
-            const result = await gps.createOutboundOrder(
-              gpsOrderPayload,
-              warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
-            );
-
-            const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
-            if (gpsOrderNo) {
-              await setGpsOrderMetafield(shopifyOrderId, {
-                gpsOrderId: gpsOrderNo,
-                warehouse: warehouseName,
-                d365OrderNumber: salesOrderNo,
-                createdAt: new Date().toISOString(),
-              });
-              console.log(
-                `[Shopify] Stored GPS metafield for order ${shopifyOrderName}: ${gpsOrderNo}`
+          gpsResult = await step.run("gps-dispatch", async () => {
+            try {
+              const result = await gps.createOutboundOrder(
+                payloadForStep,
+                warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
               );
+
+              const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
+              if (gpsOrderNo) {
+                await setGpsOrderMetafield(shopifyOrderId, {
+                  gpsOrderId: gpsOrderNo,
+                  warehouse: warehouseName,
+                  d365OrderNumber: salesOrderNo,
+                  createdAt: new Date().toISOString(),
+                });
+                console.log(
+                  `[Shopify] Stored GPS metafield for order ${shopifyOrderName}: ${gpsOrderNo}`
+                );
+              }
+
+              return { type: "real" as const, result, metafieldStored: !!gpsOrderNo };
+            } catch (error) {
+              if (error instanceof OutOfStockError) {
+                console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
+                return { type: "out_of_stock" as const, error: error.message };
+              }
+
+              const errorMessage = error instanceof Error ? error.message : String(error);
+
+              if (isGpsInventoryError(errorMessage)) {
+                console.log(`[GPS] ⚠️ Out of stock (message): ${errorMessage}`);
+                return { type: "out_of_stock" as const, error: errorMessage };
+              }
+
+              await slack.sendWarningMessage(
+                SlackChannelEnum.SHOPIFY,
+                `⚠️ [GPS] Failed to create outbound order\n` +
+                  `Order: ${shopifyOrderName} (${salesOrderNo})\n` +
+                  `Warehouse: ${warehouseName}\n` +
+                  `Error: ${errorMessage}\n` +
+                  `D365 order created successfully, but GPS sync failed.`
+              );
+
+              return { type: "failed" as const, error: errorMessage };
             }
+          });
 
-            return {
-              type: "sync_complete" as const,
-              salesOrderNumber: salesOrderNo,
-              lineItems,
-              d365InventoryLotsBySku,
-              orderLinesSupabase,
-              gpsResult: { type: "real" as const, result, metafieldStored: !!gpsOrderNo },
-            };
-          } catch (error) {
-            if (error instanceof OutOfStockError) {
-              console.log(`[GPS] ⚠️ Out of stock: ${error.message}`);
-              return {
-                type: "sync_complete" as const,
-                salesOrderNumber: salesOrderNo,
-                lineItems,
-                d365InventoryLotsBySku,
-                orderLinesSupabase,
-                gpsResult: { type: "out_of_stock" as const, error: error.message },
-              };
-            }
-
-            const errorMessage = error instanceof Error ? error.message : String(error);
-
-            if (isGpsInventoryError(errorMessage)) {
-              console.log(`[GPS] ⚠️ Out of stock (message): ${errorMessage}`);
-              return {
-                type: "sync_complete" as const,
-                salesOrderNumber: salesOrderNo,
-                lineItems,
-                d365InventoryLotsBySku,
-                orderLinesSupabase,
-                gpsResult: { type: "out_of_stock" as const, error: errorMessage },
-              };
-            }
-
+          if (gpsResult.type === "failed") {
             await publishStatus(
               "gps.send-order",
               "failed",
-              `GPS order creation failed: ${errorMessage}. Order will continue without GPS sync.`,
+              `GPS order creation failed: ${gpsResult.error}. Order will continue without GPS sync.`,
               {
-                error: errorMessage,
+                error: gpsResult.error,
                 warehouse: warehouseName,
                 salesOrderNumber: salesOrderNo,
               }
             );
-
-            await slack.sendWarningMessage(
-              SlackChannelEnum.SHOPIFY,
-              `⚠️ [GPS] Failed to create outbound order\n` +
-                `Order: ${shopifyOrderName} (${salesOrderNo})\n` +
-                `Warehouse: ${warehouseName}\n` +
-                `Error: ${errorMessage}\n` +
-                `D365 order created successfully, but GPS sync failed.`
-            );
-
-            return {
-              type: "sync_complete" as const,
-              salesOrderNumber: salesOrderNo,
-              lineItems,
-              d365InventoryLotsBySku,
-              orderLinesSupabase,
-              gpsResult: { type: "failed" as const, error: errorMessage },
-            };
           }
+        } else {
+          if (!shouldSendToRealGps) {
+            await publishStatus(
+              "gps.send-order",
+              "skipped",
+              `GPS sync not required - ${warehouseName} uses Shopify app`,
+              { warehouse: warehouseName }
+            );
+          }
+          gpsResult = {
+            type: "skipped" as const,
+            reason: !shouldSendToRealGps
+              ? `GPS sync not required - ${warehouseName} uses Shopify app`
+              : "GPS sync disabled or no payload",
+          };
         }
 
-        if (!shouldSendToRealGps) {
-          await publishStatus(
-            "gps.send-order",
-            "skipped",
-            `GPS sync not required - ${warehouseName} uses Shopify app`,
-            { warehouse: warehouseName }
-          );
-        }
-
-        return {
+        syncResult = {
           type: "sync_complete" as const,
           salesOrderNumber: salesOrderNo,
           lineItems,
           d365InventoryLotsBySku,
           orderLinesSupabase,
-          gpsResult: {
-            type: "skipped" as const,
-            reason: !shouldSendToRealGps
-              ? `GPS sync not required - ${warehouseName} uses Shopify app`
-              : "GPS sync disabled or no payload",
-          },
+          gpsResult,
         };
-      });
+      }
 
       // Handle existing order early return
       if (syncResult.type === "already_exists") {

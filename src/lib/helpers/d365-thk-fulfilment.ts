@@ -70,13 +70,13 @@ export function getThkFulfilmentBlockingIssue(
   if (!normalized || BENIGN_THK_MESSAGES.has(normalized)) {
     return null;
   }
-  if (isThkFulfilmentInformationalWarning(normalized)) {
-    return null;
-  }
   for (const hint of THK_FULFILMENT_BLOCKING_MESSAGE_HINTS) {
     if (normalized.includes(hint)) {
       return hint;
     }
+  }
+  if (isThkFulfilmentInformationalWarning(normalized)) {
+    return null;
   }
   return null;
 }

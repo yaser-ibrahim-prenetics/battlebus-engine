@@ -351,7 +351,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
       // Build a stable map from Shopify order line_item.id -> normalized SKU used in D365.
       // This protects fulfillment when webhook/item SKU labels drift after order creation.
-      let orderLineSkuById: Record<string, string> = {};
+      const orderLineSkuById: Record<string, string> = {};
       const orderPayload = order as ShopifyOrderPayload | null;
       if (Array.isArray(orderPayload?.line_items) && orderPayload.line_items.length > 0) {
         for (const li of orderPayload.line_items as Array<any>) {

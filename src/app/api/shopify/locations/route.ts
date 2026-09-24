@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 interface ShopifyLocation {
   id: number;
@@ -34,6 +35,11 @@ interface LocationResponse {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const shopDomain = config.shopify.im8.shopDomain;
     const accessToken = config.shopify.im8.accessToken;

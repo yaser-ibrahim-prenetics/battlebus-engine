@@ -10,8 +10,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import * as shopify from "@/lib/clients/shopify";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const body = await request.json();
     const { orderName, orderId, shopDomain } = body ?? {};

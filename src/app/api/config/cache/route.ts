@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getLocationCacheStatus, refreshLocationMappings } from "@/lib/services/location-routing";
-
-const CONFIG_ENV_PROXY_SECRET = process.env.CONFIG_ENV_PROXY_SECRET || "";
-
-function isProxyAuthorized(request: NextRequest): boolean {
-  if (!CONFIG_ENV_PROXY_SECRET) return true;
-  const received = request.headers.get("x-config-env-proxy-secret") || "";
-  return received === CONFIG_ENV_PROXY_SECRET;
-}
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 export async function GET(request: NextRequest) {
-  if (!isProxyAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized proxy request" }, { status: 401 });
+  const auth = requireServiceAuth(request, { envVars: ["CONFIG_ENV_PROXY_SECRET"] });
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
   }
 
   return NextResponse.json({
@@ -22,8 +16,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!isProxyAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized proxy request" }, { status: 401 });
+  const auth = requireServiceAuth(request, { envVars: ["CONFIG_ENV_PROXY_SECRET"] });
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
   }
 
   const body = await request.json().catch(() => ({}));

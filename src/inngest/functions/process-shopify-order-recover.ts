@@ -125,7 +125,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
     const data = (event.data || {}) as RecoverInput;
     const source = data.source === "reconciliation" ? "reconciliation" : "manual";
     let requestedIds = normalizeTokens(data.shopifyOrderIds);
-    let requestedNames = normalizeTokens(data.shopifyOrderNames);
+    const requestedNames = normalizeTokens(data.shopifyOrderNames);
     const force = Boolean(data.force);
     const shopDomainHint = String(data.shopifyStore || "").trim() || null;
 

@@ -20,7 +20,7 @@ export interface HarnessResult {
 export function createInngestHarness() {
   const steps: StepRecord[] = [];
   const events: EmittedEvent[] = [];
-  let waitEventResponses: Map<string, any> = new Map();
+  const waitEventResponses: Map<string, any> = new Map();
 
   function setWaitEventResponse(stepName: string, response: any) {
     waitEventResponses.set(stepName, response);

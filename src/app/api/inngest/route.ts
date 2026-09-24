@@ -7,8 +7,8 @@ import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import { functions } from "@/inngest/functions";
 
-// Increase Vercel function timeout for Inngest (Pro plan: max 300s)
-// D365 API calls can take 60-90s, so we need more than the default 60s
+// Keep the framework limit aligned with Cloud Run's 300-second request timeout.
+// D365 API calls can take 60-90s, so the full window is required.
 export const maxDuration = 300;
 
 // Create and export the Inngest serve handler

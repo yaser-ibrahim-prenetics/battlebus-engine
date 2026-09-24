@@ -104,7 +104,7 @@ export const processInventoryFullSync = inngest.createFunction(
     }
 
     const results: StepResult[] = [];
-    let inventory: Map<string, { sku: string; gpsQty: number }> = new Map();
+    const inventory: Map<string, { sku: string; gpsQty: number }> = new Map();
 
     // ========================================================================
     // STEP 1: GPS Warehouse Sync

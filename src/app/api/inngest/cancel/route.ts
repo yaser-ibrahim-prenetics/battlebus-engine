@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 const INNGEST_API_URL = "https://api.inngest.com";
 const INNGEST_SIGNING_KEY = process.env.INNGEST_SIGNING_KEY || "";
 const INNGEST_APP_ID = process.env.INNGEST_APP_ID || "";
 
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     if (!INNGEST_SIGNING_KEY) {
       return NextResponse.json({ error: "INNGEST_SIGNING_KEY not configured" }, { status: 500 });

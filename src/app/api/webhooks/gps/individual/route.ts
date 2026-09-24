@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 
 import { errorResponse, successResponse } from "@/lib/utils/response";
 import { isValidGpsWarehouse } from "@/lib/helpers/warehouse";
 import { GpsWarehouseNameEnum, IGpsManualProcessRequest } from "@/lib/types/gps";
 import { IResponse } from "@/lib/types";
 import * as gps from "@/lib/clients/gps";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 
 /**
  * POST - Process GPS orders by batch and process it individually
@@ -46,16 +46,28 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
     // Process orders in batches
     console.log(`[GPS Individual] Starting processing with ${validOrderIds.length} GPS order IDs`);
     const batchId = `GPSB${Date.now()}`;
-    await inngest.send({
-      id: batchId,
-      name: "gps/batch.process",
-      data: {
-        gpsOrderIds: validOrderIds,
-        warehouse: warehouse as GpsWarehouseNameEnum,
-        batchId,
-        receivedAt: new Date().toISOString(),
-      },
+    const result = await publishWebhookEvents({
+      source: "gps_individual",
+      topic: "gps/batch.process",
+      payload,
+      headers: Object.fromEntries(request.headers.entries()),
+      events: [
+        {
+          id: batchId,
+          name: "gps/batch.process",
+          data: {
+            gpsOrderIds: validOrderIds,
+            warehouse: warehouse as GpsWarehouseNameEnum,
+            batchId,
+            receivedAt: new Date().toISOString(),
+          },
+        },
+      ],
     });
+
+    if (!result.published) {
+      return errorResponse("Failed to publish gps/batch.process event to Inngest", 502);
+    }
 
     console.log("[GPS Individual] Processing GPS orders by batch");
     return successResponse("Procesing GPS orders batch", {

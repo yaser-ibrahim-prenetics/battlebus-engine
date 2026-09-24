@@ -294,11 +294,11 @@ export async function getOrder(
     const error = await response.text();
     const hint401 =
       response.status === 401
-        ? " Shopify returned 401: the Admin API access token is not accepted for this shop (revoked, wrong app, typo in Vercel, or using test token as prod). Regenerate the token in Shopify Admin → Settings → Apps → [your custom app] → API credentials, then update SHOPIFY_PROD_ACCESS_TOKEN / SHOPIFY_TEST_* to match that shop. If credentials are correct, ensure event.data.shopifyStore is set on Inngest replays."
+        ? " Shopify returned 401: the Admin API access token is not accepted for this shop (revoked, wrong app, incorrect Secret Manager value, or using a test token as production). Regenerate the token in Shopify Admin → Settings → Apps → [your custom app] → API credentials, then update SHOPIFY_PROD_ACCESS_TOKEN / SHOPIFY_TEST_* to match that shop. If credentials are correct, ensure event.data.shopifyStore is set on Inngest replays."
         : "";
     const hint403 =
       response.status === 403 && /read_orders|merchant approval|scope/i.test(error)
-        ? " Add Admin API scope read_orders (and related order scopes you need) on the custom app: Settings → Apps and sales channels → Develop apps → [app] → Configuration → Admin API scopes → enable read_orders → Save → Install app / update install so the merchant approves new scopes → Reveal Admin API access token again if Shopify prompts, then update SHOPIFY_*_ACCESS_TOKEN in Vercel."
+        ? " Add Admin API scope read_orders (and related order scopes you need) on the custom app: Settings → Apps and sales channels → Develop apps → [app] → Configuration → Admin API scopes → enable read_orders → Save → Install app / update install so the merchant approves new scopes → Reveal Admin API access token again if Shopify prompts, then update SHOPIFY_*_ACCESS_TOKEN in Secret Manager and deploy a new revision."
         : "";
     console.error(`[Shopify] getOrder failed ${orderId}:`, {
       ...requestDebug,

@@ -9,6 +9,7 @@ import {
   assertDepositShipmentThkInvoiced,
   assertThkFulfilmentSucceeded,
   buildThkFulfilmentRequestBody,
+  getThkFulfilmentBlockingIssue,
   getThkFulfilmentWarningMessage,
   isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
@@ -1355,17 +1356,11 @@ export async function assertDepositShipmentInvoicingComplete(
   const warehouseDimensionWarning = isThkWarehouseOrSiteDimensionWarning(thkMessage);
   const check = await verifyDepositShipmentInvoicingComplete(salesOrderNumber, dataAreaId);
   if (!check.ok) {
-    if (warehouseDimensionWarning) {
-      console.warn(
-        `[D365] Deposit shipment header not fully invoiced for ${salesOrderNumber} (${dataAreaId}) after warehouse/site dimension THK warning: ` +
-          `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"} — fulfilment continues`
-      );
-      return { verified: false, processingStatus: check.processingStatus };
-    }
     throw new Error(
       `[D365] Deposit shipment missing Standard invoice for ${salesOrderNumber} (${dataAreaId}): ` +
         `SalesOrderProcessingStatus=${check.processingStatus ?? "n/a"}. ` +
-        `Expected Prepayment + Standard (header fully invoiced after shipment).`
+        `Expected Prepayment + Standard (header fully invoiced after shipment).` +
+        (warehouseDimensionWarning ? ` THK also returned a warehouse/site dimension warning.` : "")
     );
   }
   return { verified: true, processingStatus: check.processingStatus };
@@ -1596,7 +1591,10 @@ export async function createFulfilment(
     }
 
     const errorMessage = result.Message || "";
-    if (isThkWarehouseOrSiteDimensionWarning(errorMessage)) {
+    if (
+      isThkWarehouseOrSiteDimensionWarning(errorMessage) &&
+      !getThkFulfilmentBlockingIssue(errorMessage)
+    ) {
       const thkWarning = getThkFulfilmentWarningMessage(errorMessage) || errorMessage.trim();
       console.warn(
         `[D365] THK fulfilment treated as success despite status=${result.status} for ${salesOrderNumber}: ${thkWarning}`

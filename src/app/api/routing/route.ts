@@ -10,8 +10,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveRoutingTable, resolveCountryRouting } from "@/lib/helpers/warehouse";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   const country = request.nextUrl.searchParams.get("country");
 
   if (country) {
@@ -37,6 +43,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   // Batch-resolve multiple country codes for testing
   let body: { countries?: string[] };
   try {

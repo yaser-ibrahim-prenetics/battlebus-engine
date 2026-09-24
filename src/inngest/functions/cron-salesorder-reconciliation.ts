@@ -26,7 +26,7 @@
 // Cron: 00:00 UTC daily, reconciles previous closed UTC calendar day.
 //
 // Logging:
-//   • Every run emits one-line JSON on stdout with tag "reconciliation" (grep in Vercel / Inngest logs).
+//   • Every run emits one-line JSON on stdout with tag "reconciliation" (query Cloud Logging / Inngest logs).
 //   • Set RECONCILIATION_VERBOSE_LOG=1 on Battle Bus to also write flow_logs with flow=reconciliation_trace
 //     (per-Shopify page + per-Supabase batch detail).
 // ============================================================================
@@ -524,12 +524,12 @@ async function runOneRecon(params: {
   let unsyncedOrderIds: string[] = [];
   let salesorderMissingDbNames: string[] = [];
   /** GPS recons: DB row exists, warehouse matches, but GPS sync incomplete. */
-  let gpsUnsyncedNames: string[] = [];
+  const gpsUnsyncedNames: string[] = [];
   /** Fulfillment recon: fulfilled in Shopify, not fulfilled in DB (or row missing). */
-  let missingDbFulfillments: string[] = [];
-  let missingDbFulfillmentIds: string[] = [];
+  const missingDbFulfillments: string[] = [];
+  const missingDbFulfillmentIds: string[] = [];
   /** Fulfillment recon: fulfilled in DB, not fulfilled in Shopify. */
-  let missingShopifyFulfillments: string[] = [];
+  const missingShopifyFulfillments: string[] = [];
 
   if (type === "salesorder") {
     salesorderMissingDbNames = shopifyNames.filter((n) => !dbByName.has(n));
@@ -741,7 +741,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     const results: ReconResult[] = [];
     for (const type of types) {
       // Keep deterministic per-check order in run result payload and modal rendering.
-      // eslint-disable-next-line no-await-in-loop
+
       const item = await runOneRecon({
         supabase,
         type,

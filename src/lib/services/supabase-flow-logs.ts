@@ -134,9 +134,9 @@ function eventToRow(event: FlowLogEvent): Record<string, unknown> {
 // Buffer + flush
 // ============================================================================
 
-let _buffer: Record<string, unknown>[] = [];
+const _buffer: Record<string, unknown>[] = [];
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
-let _flushPromise: Promise<void> | null = null;
+const _flushPromise: Promise<void> | null = null;
 
 function scheduleFlush(): void {
   if (_flushTimer) return;

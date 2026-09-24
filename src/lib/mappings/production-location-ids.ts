@@ -1,7 +1,7 @@
 // ============================================================================
 // PRODUCTION SHOPIFY LOCATION ID MAPPINGS
 // ============================================================================
-// Hardcoded-shape location mappings whose IDs come from Vercel environment
+// Hardcoded-shape location mappings whose IDs come from the Cloud Run environment.
 // variables — no values are hardcoded in this file.
 //
 // In location-routing.ts these rows are:

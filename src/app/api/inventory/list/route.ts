@@ -19,10 +19,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getInventory, getAllInventory, type GpsInventoryItem } from "@/lib/clients/gps";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -145,6 +151,11 @@ export async function GET(request: NextRequest) {
 
 // POST endpoint with same functionality (for clients that prefer POST)
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const body = await request.json();
 

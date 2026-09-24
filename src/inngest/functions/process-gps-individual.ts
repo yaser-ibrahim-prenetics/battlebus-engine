@@ -259,7 +259,7 @@ export const processGpsIndividual = inngest.createFunction(
         });
 
       let lines = buildLines();
-      let missingLotIdSkus = lines
+      const missingLotIdSkus = lines
         .filter((line) => !String(line.lotId || "").trim())
         .map((line) => line.itemNumber);
       if (missingLotIdSkus.length > 0) {

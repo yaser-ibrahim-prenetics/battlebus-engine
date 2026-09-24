@@ -4,9 +4,9 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 import {
   buildSyntheticShopifyRefundFromLoopReturn,
   isLoopReturnClosedPayload,
@@ -26,16 +26,6 @@ function activeIm8ShopDomainForEvents(): string {
     config.shopify.production.shopDomain ||
     ""
   );
-}
-
-async function sendRefundEvent(ev: RefundCreatedIngressEvent, requestId: string): Promise<boolean> {
-  try {
-    await inngest.send(ev);
-    return true;
-  } catch (error) {
-    console.error(`[LoopWebhook] [${requestId}] Failed to send Inngest event`, error);
-    return false;
-  }
 }
 
 /** Safe readiness / config summary (no secrets). */
@@ -157,15 +147,20 @@ export async function POST(request: NextRequest) {
     },
   };
 
-  const sent = await sendRefundEvent(
-    {
-      id: `loop-return-refund-${body.id}-${body.trigger}`,
-      ...event,
-    },
-    requestId
-  );
+  const result = await publishWebhookEvents({
+    source: "loop",
+    topic: body.trigger || "return.closed",
+    payload: body,
+    headers: Object.fromEntries(request.headers.entries()),
+    events: [
+      {
+        id: `loop-return-refund-${body.id}-${body.trigger}`,
+        ...event,
+      } as RefundCreatedIngressEvent,
+    ],
+  });
 
-  if (!sent) {
+  if (!result.published) {
     logFlowEvent({
       level: "error",
       flow: "loop_webhook",

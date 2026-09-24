@@ -22,7 +22,7 @@ env:
   CLOUD_RUN_SERVICE: battle-bus
   RUNTIME_SERVICE_ACCOUNT: battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com
   DEPLOY_SERVICE_ACCOUNT: battle-bus-deployer@battle-bus-509406.iam.gserviceaccount.com
-  WORKLOAD_IDENTITY_PROVIDER: projects/1057846333023/locations/global/workloadIdentityPools/github-actions/providers/battle-bus-main
+  WORKLOAD_IDENTITY_PROVIDER: projects/1057846333023/locations/global/workloadIdentityPools/github-actions/providers/battle-platform-main
   HUSKY: "0"
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
       - name: Lint
         id: lint
         continue-on-error: true
-        run: npm run lint
+        run: npm run lint:ci
 
       - name: Test
         id: test
@@ -86,7 +86,7 @@ jobs:
   deploy:
     name: Build image and deploy
     needs: verify
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && vars.ENABLE_GCP_DEPLOY == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: gcp-production

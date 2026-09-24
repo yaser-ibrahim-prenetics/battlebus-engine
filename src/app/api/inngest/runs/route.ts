@@ -11,11 +11,17 @@
 // the internal event_id (e.g., "01KGWYGF2KP7NBD9F7M2A51J65")
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 const INNGEST_API_URL = "https://api.inngest.com";
 const INNGEST_SIGNING_KEY = process.env.INNGEST_SIGNING_KEY || "";
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const runId = searchParams.get("runId");

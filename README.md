@@ -196,16 +196,16 @@ const d365Lines = await step.run("create-d365-lines", ...);
 | Component         | Technology          | Purpose                 |
 | ----------------- | ------------------- | ----------------------- |
 | **Battle Hub**    | Next.js + Shadcn/ui | Operations dashboard    |
-| **Battle Bus**    | Inngest + Vercel    | Event processing engine |
+| **Battle Bus**    | Inngest + Cloud Run | Event processing engine |
 | **Auth**          | Firebase            | User management         |
 | **Database**      | PostgreSQL          | Order state & lifecycle |
 | **Notifications** | Slack API           | Proactive alerts        |
 
-### Why Vercel + Inngest?
+### Why Cloud Run + Inngest?
 
 Used by industry leaders:
 
-- **Vercel**: The Washington Post, eBay, GitHub, Notion
+- **Cloud Run**: container-based autoscaling with scale-to-zero on GCP
 - **Inngest**: SoundCloud, Resend, Clerk
 
 ---
@@ -262,16 +262,16 @@ Used by industry leaders:
 
 ### Prerequisites
 
-- Node.js 18+
-- Vercel account
+- Node.js 22+
+- Access to the `battle-bus-509406` Google Cloud project
 - Inngest account
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone git@github.com:Prenetics/battle-bus.git
-cd battle-bus
+git clone git@github.com:yaser-ibrahim-prenetics/battlebus-engine.git
+cd battlebus-engine
 
 # Install dependencies
 npm install

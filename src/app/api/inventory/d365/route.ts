@@ -12,8 +12,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getInventory, getAllInventory, type D365InventoryItem } from "@/lib/clients/dynamics";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
 
@@ -118,6 +124,11 @@ export async function GET(request: NextRequest) {
 
 // POST endpoint with same functionality
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const body = await request.json();
 

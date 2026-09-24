@@ -1,6 +1,6 @@
 /**
  * Structured D365 OData read logs (refund resolution, etc.).
- * Vercel / Inngest: filter by `D365ODataTrace` or `RefundTraceLifecycle`.
+ * Cloud Logging / Inngest: filter by `D365ODataTrace` or `RefundTraceLifecycle`.
  */
 export type D365ODataTraceContext = {
   refundId?: string;

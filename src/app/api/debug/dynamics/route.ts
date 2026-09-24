@@ -1,11 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 /**
  * Lightweight runtime diagnostics for why D365 may be skipped.
  * Safe to expose: includes only non-sensitive flags/metadata.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   const rawEnableDynamicsSync = process.env.ENABLE_DYNAMICS_SYNC ?? null;
   const rawDryRunMode = process.env.DRY_RUN_MODE ?? null;
 

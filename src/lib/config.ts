@@ -24,7 +24,7 @@ function clampInt(value: number, min: number, max: number): number {
 // D365 service SKUs (tax/shipping/refund) also follow this mode: test → UAT, production → PROD.
 //
 // Resolution: SHOPIFY_STORE_MODE → else NODE_ENV (production vs test).
-// On Vercel Preview, set SHOPIFY_STORE_MODE=test explicitly (NODE_ENV is often production).
+// On non-production Cloud Run revisions, set SHOPIFY_STORE_MODE=test explicitly.
 // ---------------------------------------------------------------------------
 const shopifyStoreMode: "production" | "test" =
   process.env.SHOPIFY_STORE_MODE === "production"
@@ -265,6 +265,16 @@ export const config = {
     // 1-59 minutes (default 10). This powers the cron schedule for drain-pending-actions.
     drainIntervalMinutes: clampInt(
       safeParseInt(process.env.PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES, 10),
+      1,
+      59
+    ),
+  },
+
+  // Webhook inbox drain sweep (safety net for inngest.send() failures)
+  webhookInbox: {
+    // 1-59 minutes (default 5). This powers the cron schedule for drain-webhook-inbox.
+    drainIntervalMinutes: clampInt(
+      safeParseInt(process.env.WEBHOOK_INBOX_DRAIN_INTERVAL_MINUTES, 5),
       1,
       59
     ),

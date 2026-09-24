@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { searchOrdersByName } from "@/lib/clients/shopify";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 const INNGEST_API_URL = process.env.INNGEST_API_URL || "https://api.inngest.com";
 
@@ -139,6 +140,11 @@ function applyReplayDataMutations(
 }
 
 export async function POST(request: NextRequest) {
+  const auth = requireServiceAuth(request);
+  if (!auth.ok) {
+    return NextResponse.json(auth.body, { status: auth.status });
+  }
+
   try {
     const body = await request.json();
     const { runId, eventId, eventName, eventData, orderName } = body;

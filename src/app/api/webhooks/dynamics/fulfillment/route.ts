@@ -7,8 +7,8 @@
 
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { inngest } from "@/inngest/client";
 import type { DynamicsFulfilmentNotificationPayload } from "@/lib/types/dynamics-fulfilment";
+import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 
 function timingSafeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -131,17 +131,37 @@ export async function POST(request: NextRequest) {
 
   const lineKey = crypto.createHash("sha256").update(JSON.stringify(payload.lines)).digest("hex").slice(0, 24);
   const id = `dynamics-fulfill-${payload.salesOrderNumber}-${lineKey}`;
+  const requestId = id;
 
-  await inngest.send({
-    id,
-    name: "dynamics/fulfillment.notify",
-    data: {
-      ...payload,
-      receivedAt: new Date().toISOString(),
-    },
+  const result = await publishWebhookEvents({
+    source: "dynamics_fulfillment",
+    topic: "dynamics/fulfillment.notify",
+    payload,
+    headers: Object.fromEntries(request.headers.entries()),
+    events: [
+      {
+        id,
+        name: "dynamics/fulfillment.notify",
+        data: {
+          ...payload,
+          receivedAt: new Date().toISOString(),
+        },
+      },
+    ],
   });
 
-  return NextResponse.json({ received: true }, { status: 202 });
+  if (!result.published) {
+    console.error(
+      `[Webhook] [${requestId}] Failed to publish dynamics/fulfillment.notify event to Inngest:`,
+      result.error
+    );
+    return NextResponse.json(
+      { received: false, error: "inngest_publication_failed", requestId },
+      { status: 502 }
+    );
+  }
+
+  return NextResponse.json({ received: true, requestId }, { status: 202 });
 }
 
 export async function GET() {
