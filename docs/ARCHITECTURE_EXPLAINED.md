@@ -57,7 +57,7 @@ This document explains the complete architecture of the IM8 backend system.
 │  │  • 📝 Durable execution (checkpoint every step)                      │  │
 │  │  • 🔒 Idempotent (no duplicate processing)                           │  │
 │  │                                                                       │  │
-│  │  Stack: Vercel Serverless + Inngest                                  │  │
+│  │  Stack: Google Cloud Run + Inngest                                   │  │
 │  │                                                                       │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                    │                                        │

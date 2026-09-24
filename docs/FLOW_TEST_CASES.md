@@ -572,48 +572,51 @@ Verify that the location config cache refreshes hourly via cron, can be manually
 
 ---
 
-## Flow 9: Config Env Sync & Auto-Redeploy
+## Flow 9: Secret Manager Configuration & Controlled Deployment
 
 ### Goal
 
-Verify that environment variable upserts via the Config API correctly sync to Vercel and trigger automatic redeployment when deploy hooks are configured.
+Verify that runtime secrets come from Google Secret Manager, deployments are
+performed only by the gated GitHub Actions workflow, and missing configuration
+fails closed.
 
 ### Preconditions
 
-- `CONFIG_ENV_PROXY_SECRET` set
-- Vercel API token configured
-- Deploy hook URLs optionally configured (`VERCEL_HUB_DEPLOY_HOOK_URL`, `VERCEL_INNGEST_DEPLOY_HOOK_URL`)
+- GitHub `gcp-production` environment is configured.
+- Workload Identity Federation is bound to the repository-specific deployer account.
+- Required secrets exist in Google Secret Manager and the runtime account has least-privilege access.
 
 ### Constraints
 
-- Redeploy is only triggered when at least one variable is successfully upserted.
-- If deploy hook is not configured, sync still succeeds but response indicates manual redeploy required.
+- No long-lived Google service-account key is stored in GitHub.
+- Production deployment remains disabled unless `ENABLE_GCP_DEPLOY=true`.
+- Secret values must not be printed in build or deployment logs.
 
 ### Test cases
 
-#### TC-ENV-001: Upsert env var with deploy hook
+#### TC-ENV-001: Deploy with federated identity
 
-| Field           | Value                                                                                                                |
-| --------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Upsert a variable for a project that has a deploy hook configured                                                    |
-| **Steps**       | 1. Change a non-sensitive variable via Hub Config. 2. Click sync to Vercel. 3. Check toast message and API response. |
-| **Expected**    | Variable synced. `redeploy.triggered=true`. Toast shows "Redeploy triggered".                                        |
+| Field           | Value                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Deploy a passing `main` commit through GitHub Actions                                                                         |
+| **Steps**       | 1. Enable the protected deployment environment. 2. Push an approved commit. 3. Inspect the Cloud Run revision and audit logs. |
+| **Expected**    | GitHub exchanges OIDC for a short-lived credential, builds the image, verifies a no-traffic candidate, and promotes it.       |
 
-#### TC-ENV-002: Upsert env var without deploy hook
+#### TC-ENV-002: Deployment gate disabled
 
-| Field           | Value                                                                                                     |
-| --------------- | --------------------------------------------------------------------------------------------------------- |
-| **Description** | Upsert a variable for a project without deploy hook                                                       |
-| **Steps**       | 1. Remove deploy hook env var. 2. Sync a variable. 3. Check response.                                     |
-| **Expected**    | Variable synced. `redeploy.required=true`, `redeploy.triggered=false`. Toast warns about manual redeploy. |
+| Field           | Value                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------- |
+| **Description** | Push to `main` while `ENABLE_GCP_DEPLOY` is absent or false                           |
+| **Steps**       | 1. Keep the gate disabled. 2. Push a commit. 3. Inspect the workflow and Cloud Run.   |
+| **Expected**    | Quality gates run successfully; the deploy job is skipped and no revision is created. |
 
-#### TC-ENV-003: Upsert fails for some variables
+#### TC-ENV-003: Required secret missing
 
-| Field           | Value                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------- |
-| **Description** | Batch upsert where some variables fail                                                                |
-| **Steps**       | 1. Attempt to sync variables including an invalid one.                                                |
-| **Expected**    | Partial success. `succeeded` and `failed` counts accurate. Redeploy still triggered if any succeeded. |
+| Field           | Value                                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Description** | Start a candidate revision without one required Secret Manager binding                                      |
+| **Steps**       | 1. Remove the candidate's binding to a test-only required secret. 2. Run the deployment health check.       |
+| **Expected**    | The candidate fails health verification, receives no production traffic, and the previous revision remains. |
 
 ### Results
 

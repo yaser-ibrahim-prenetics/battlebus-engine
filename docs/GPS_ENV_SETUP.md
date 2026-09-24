@@ -35,11 +35,16 @@ Spock has **two** `authentication` blocks. They may contain the **same** `appKey
 
 3. Set `ENABLE_GPS_SYNC=true` when you want real GPS calls (never commit `.env.local`).
 
-## Vercel / production
+## Google Cloud / production
 
-Set the same variables in the **Battle Bus** project: **Settings → Environment Variables** (Production + Preview as needed). See also `hub/docs/VERCEL_ENV_SETUP.md`.
+Store sensitive values in Google Secret Manager, grant the Battle Bus runtime
+service account access to only the required secrets, and mount them into the
+Cloud Run service. Keep non-sensitive operational flags in the Cloud Run
+service configuration. See `docs/GCP_DEPLOYMENT.md`.
 
-**Hub (optional):** If you use `hub/api/gps/proxy.ts`, set `GPS_BASE_URL`, `GPS_API_KEY`, `GPS_API_SECRET` on the Hub project too; UK proxy reads `GPS_UK_*` with fallback to US.
+**Hub (optional):** If the Hub GPS proxy is enabled, mount `GPS_BASE_URL`,
+`GPS_API_KEY`, and `GPS_API_SECRET` into its Cloud Run service too; the UK proxy
+reads `GPS_UK_*` with fallback to US.
 
 ## Validation
 

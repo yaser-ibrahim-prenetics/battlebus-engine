@@ -59,7 +59,7 @@
 ### Key Technologies
 
 - **Inngest**: Durable function execution with automatic retries
-- **Vercel**: Serverless hosting for Next.js API routes
+- **Google Cloud Run**: Autoscaled container hosting for Next.js API routes
 - **Supabase**: PostgreSQL database for order state
 - **Inngest Realtime**: Real-time status updates to Battle Hub
 

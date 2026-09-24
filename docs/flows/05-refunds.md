@@ -75,12 +75,12 @@ Service SKUs (tax/shipping/refund) are a **hard-coded constant map** in code —
 
 **Profile:** `SHOPIFY_STORE_MODE=test` → UAT · `SHOPIFY_STORE_MODE=production` → PROD (falls back to `NODE_ENV` when unset).
 
-| Profile | tax | refund | shipping |
-| ------- | --- | ------ | -------- |
-| UAT (U001 & H007) | `IM8-SER-000004` (U001) / `IM8-SER-000001` (H007) | **`IM8-SER-000005`** | `IM8-SER-000003` |
-| PROD (U001 & H007) | `IM8-SER-000001` | **`IM8-SER-000003`** | `IM8-SER-000002` |
+| Profile            | tax                                               | refund               | shipping         |
+| ------------------ | ------------------------------------------------- | -------------------- | ---------------- |
+| UAT (U001 & H007)  | `IM8-SER-000004` (U001) / `IM8-SER-000001` (H007) | **`IM8-SER-000005`** | `IM8-SER-000003` |
+| PROD (U001 & H007) | `IM8-SER-000001`                                  | **`IM8-SER-000003`** | `IM8-SER-000002` |
 
-In UAT, `IM8-SER-000003` is the **shipping** item — never the refund item. Because SKUs are code, a wrong value can't be introduced via a Vercel env paste.
+In UAT, `IM8-SER-000003` is the **shipping** item — never the refund item. Because SKUs are code, a wrong value can't be introduced through a runtime environment edit.
 
 Return sites still come from `warehouse-config.json` for the fulfillment warehouse profile.
 

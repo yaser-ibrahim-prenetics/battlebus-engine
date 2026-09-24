@@ -2,7 +2,7 @@
 
 ## Overview
 
-Battle Bus is an event-driven replacement for spock-store, handling the Shopify → D365 → GPS/STORD integration using Vercel + Inngest for durable execution.
+Battle Bus is an event-driven replacement for spock-store, handling the Shopify → D365 → GPS/STORD integration using Google Cloud Run + Inngest for durable execution.
 
 **Status: READY FOR TESTING**
 
@@ -139,7 +139,7 @@ ENABLE_DYNAMICS_SYNC=false  # Test GPS in isolation
 
 **Setup:**
 
-1. Deploy to Vercel preview branch
+1. Deploy a no-traffic candidate revision to Cloud Run
 2. Add Battle Bus as second webhook in production Shopify
 3. Set `DRY_RUN_MODE=true`
 

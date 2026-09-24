@@ -258,4 +258,4 @@ This document is the simple version. For full technical specs, see:
 
 ---
 
-_Built with Vercel + Inngest + Shadcn/ui. Designed to eliminate operational pain points forever._
+_Built with Google Cloud Run + Inngest + Shadcn/ui. Designed to eliminate operational pain points forever._

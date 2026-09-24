@@ -43,7 +43,7 @@ The mesh acts as the "brain" that:
 
 **Base URL**:
 
-- Production: `https://battle-bus.vercel.app`
+- Production: the deployed Cloud Run URL in `BATTLE_BUS_URL`
 - Local: `http://localhost:7000`
 
 **Query Parameters**:
@@ -162,7 +162,7 @@ When Inngest is not available (e.g., in local dev without dev server):
 
 ```bash
 # Example 1: Sync from Shopify to Dynamics and GPS
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=dynamics,gps" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
   -d '{
     "sku": "PROD-123",
@@ -175,7 +175,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=d
   }'
 
 # Example 2: Sync from warehouse to Shopify
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=warehouse&to=shopify" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=warehouse&to=shopify" \
   -H "Content-Type: application/json" \
   -d '{
     "sku": "PROD-123",
@@ -187,7 +187,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=warehouse&to
   }'
 
 # Example 3: Sync from Dynamics to all platforms (default behavior)
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=dynamics" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=dynamics" \
   -H "Content-Type: application/json" \
   -d '{
     "sku": "PROD-456",
@@ -197,7 +197,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=dynamics" \
   }'
 
 # Example 4: Product deletion sync
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=dynamics,gps" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
   -d '{
     "productId": "999888777",
@@ -207,7 +207,7 @@ curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=d
   }'
 
 # Example 5: Using body for source/destination (alternative to query params)
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync" \
   -H "Content-Type: application/json" \
   -d '{
     "sku": "PROD-789",
@@ -286,7 +286,7 @@ The system automatically handles Shopify webhooks for product and inventory chan
 
 **Base URL**:
 
-- Production: `https://battle-bus.vercel.app/api/webhooks/shopify`
+- Production: `${BATTLE_BUS_URL}/api/webhooks/shopify`
 - Local: `http://localhost:7000/api/webhooks/shopify`
 
 **Required Headers** (from Shopify):
@@ -780,7 +780,7 @@ curl -X POST "http://localhost:7000/api/inventory/sync?from=warehouse&to=shopify
 
 ```bash
 # Test against production
-curl -X POST "https://battle-bus.vercel.app/api/inventory/sync?from=shopify&to=dynamics" \
+curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics" \
   -H "Content-Type: application/json" \
   -d '{
     "sku": "PROD-123",
