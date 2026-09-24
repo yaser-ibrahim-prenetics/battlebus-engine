@@ -6,6 +6,7 @@ import { InngestApiRateLimitTerminalMiddleware } from "./middleware/inngest-api-
 export const inngest = new Inngest({
   id: "im8-battle-bus",
   name: "IM8 Battle Bus",
+  appVersion: process.env.BATTLE_BUS_VERSION || process.env.K_REVISION,
   checkpointing: {
     maxRuntime: "240s",
   },

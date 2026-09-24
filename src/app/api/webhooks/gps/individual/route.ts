@@ -16,14 +16,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
     const signature = request.headers.get("x-signature");
     const timestamp = request.headers.get("x-timestamp");
 
-    // Parse payload
-    const payload: IGpsManualProcessRequest = JSON.parse(body);
-    const { gpsOrderIds, warehouse } = payload;
-
-    // Verify webhook signature
-    if (signature && timestamp && !gps.verifyWebhookSignature(body, signature, timestamp)) {
+    // Fail closed: this route queues warehouse work and must never accept an
+    // unsigned request when Cloud Run is reachable from external systems.
+    if (!signature || !timestamp) {
+      return errorResponse("Missing signature headers", 401);
+    }
+    if (!gps.verifyWebhookSignature(body, signature, timestamp)) {
       return errorResponse("Invalid signature", 401);
     }
+
+    // Parse only after authenticating the raw bytes used for the HMAC.
+    const payload: IGpsManualProcessRequest = JSON.parse(body);
+    const { gpsOrderIds, warehouse } = payload;
 
     // Validate gps order IDs
     if (!gpsOrderIds || !Array.isArray(gpsOrderIds) || gpsOrderIds.length === 0) {

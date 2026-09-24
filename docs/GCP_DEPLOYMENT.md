@@ -1,6 +1,11 @@
 # GCP deployment
 
-Battle Bus is deployed as a private Cloud Run service in `battle-bus-509406`.
+Battle Bus is deployed as an internet-reachable Cloud Run service in
+`battle-bus-509406`. Public reachability is required for Shopify, warehouse
+webhooks, and Inngest's `serve()` callback model. Authentication is enforced by
+the application: Inngest requests use its signing key, provider webhooks use
+their provider signatures/secrets, and internal/operator endpoints use
+`BATTLE_BUS_API_KEY`.
 GitHub Actions uses Workload Identity Federation (OIDC); the repository must not
 contain a Google Cloud service-account key.
 
@@ -34,17 +39,30 @@ account access to only the secrets it needs. Do not move `VERCEL_*` variables,
 Vercel deploy hooks, local `.env` files, or service-account JSON keys into
 GitHub.
 
+Before deployment is enabled, the existing Cloud Run service must expose these
+Secret Manager-backed environment names:
+
+- `INNGEST_SIGNING_KEY`
+- `INNGEST_EVENT_KEY`
+- `BATTLE_BUS_API_KEY`
+- `SHOPIFY_TEST_WEBHOOK_SECRET` while the deployment remains in test/dry-run mode
+
 The deployment workflow currently sets safe operational feature flags. Add
 Secret Manager bindings to the `gcloud run deploy` command only after the
 secret names and least-privilege IAM bindings have been reviewed.
 
 ## Inngest
 
-Inngest remains the durable workflow control plane. Configure its production
-app URL to the Cloud Run `/api/inngest` endpoint. Because the Cloud Run service
-is private, use a supported authenticated ingress design before switching
-production traffic; do not make the whole service public just to connect
-Inngest.
+Inngest remains the durable workflow control plane. Each successful deployment
+sets `INNGEST_SERVE_ORIGIN` to the stable Cloud Run service URL, verifies that
+the SDK sees both production keys, and sends a `PUT` to `/api/inngest` to sync
+the deployed function definitions. Inngest signs invocation requests and the
+SDK rejects invalid or replayed signatures.
+
+Cloud Run IAM cannot grant anonymous access by URL path, so the service is
+public at the transport layer. Every mutation, debug, configuration, and test
+route must remain fail-closed behind application authentication. Adding a new
+public route therefore requires an authentication test before deployment.
 
 ## Vercel retirement
 

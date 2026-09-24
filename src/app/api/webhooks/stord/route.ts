@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stordWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
+import { timingSafeEqual } from "@/lib/auth/timing-safe-equal";
 
 export async function POST(request: NextRequest) {
   const requestId = `stord-webhook-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -18,7 +19,8 @@ export async function POST(request: NextRequest) {
       console.error("[Webhook] STORD_WEBHOOK_SECRET not configured — rejecting request");
       return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
     }
-    if (authHeader !== `Bearer ${expectedToken}`) {
+    const suppliedToken = authHeader?.replace(/^Bearer\s+/i, "") || "";
+    if (!suppliedToken || !timingSafeEqual(suppliedToken, expectedToken)) {
       console.error("[Webhook] Invalid STORD authorization");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

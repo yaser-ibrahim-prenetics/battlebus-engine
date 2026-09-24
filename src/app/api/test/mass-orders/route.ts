@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
+import { timingSafeEqual } from "@/lib/auth/timing-safe-equal";
 
 // ─── Supported markets ────────────────────────────────────────────────────────
 // Only generate data for countries where IM8 actively sells.
@@ -150,7 +151,7 @@ function jsonWithCors(body: unknown, init: ResponseInit = {}, origin: string | n
 function isAuthorized(request: NextRequest): boolean {
   if (!MASS_TEST_PROXY_SECRET) return false;
   const secret = request.headers.get("x-mass-test-proxy-secret") || "";
-  return secret === MASS_TEST_PROXY_SECRET;
+  return Boolean(secret) && timingSafeEqual(secret, MASS_TEST_PROXY_SECRET);
 }
 
 // ─── Shopify helpers ──────────────────────────────────────────────────────────

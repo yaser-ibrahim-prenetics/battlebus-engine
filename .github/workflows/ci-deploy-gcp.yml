@@ -111,18 +111,29 @@ jobs:
       - name: Configure Artifact Registry authentication
         run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
-      - name: Verify the service is private
+      - name: Verify required runtime configuration
         run: |
-          public_member="$(gcloud run services get-iam-policy "${CLOUD_RUN_SERVICE}" \
+          service_json="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
             --region="${GCP_REGION}" \
             --project="${GCP_PROJECT_ID}" \
-            --flatten='bindings[].members' \
-            --filter='bindings.members:allUsers' \
-            --format='value(bindings.members)')"
-          if [ -n "${public_member}" ]; then
-            echo "Refusing deployment because the Cloud Run service allows anonymous invocation."
+            --format=json)"
+
+          env_names="$(jq -r '.spec.template.spec.containers[0].env[]?.name' <<<"${service_json}")"
+          for required_name in INNGEST_SIGNING_KEY INNGEST_EVENT_KEY BATTLE_BUS_API_KEY SHOPIFY_TEST_WEBHOOK_SECRET; do
+            if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
+              echo "Cloud Run is missing required runtime configuration: ${required_name}"
+              exit 1
+            fi
+          done
+
+          previous_revision="$(jq -r '.status.latestReadyRevisionName // empty' <<<"${service_json}")"
+          service_url="$(jq -r '.status.url // empty' <<<"${service_json}")"
+          if [ -z "${previous_revision}" ] || [ -z "${service_url}" ]; then
+            echo "Cloud Run did not report a ready revision and service URL."
             exit 1
           fi
+          echo "PREVIOUS_REVISION=${previous_revision}" >> "${GITHUB_ENV}"
+          echo "CLOUD_RUN_URL=${service_url}" >> "${GITHUB_ENV}"
 
       - name: Build container image
         env:
@@ -148,7 +159,7 @@ jobs:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: docker push "${IMAGE_URI}"
 
-      - name: Deploy private dry-run candidate without traffic
+      - name: Deploy signed-webhook dry-run candidate without traffic
         env:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: |
@@ -166,9 +177,10 @@ jobs:
             --min-instances=0 \
             --max-instances=10 \
             --ingress=all \
+            --allow-unauthenticated \
             --no-traffic \
             --tag="${candidate_tag}" \
-            --update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false \
+            --update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,DISABLE_LOOP_WEBHOOK_VERIFICATION=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false,INNGEST_DEV=0,INNGEST_SERVE_ORIGIN=${CLOUD_RUN_URL},INNGEST_SERVE_PATH=/api/inngest,BATTLE_BUS_VERSION=${GITHUB_SHA} \
             --quiet
 
       - name: Verify candidate revision and promote
@@ -195,3 +207,45 @@ jobs:
             --to-revisions="${candidate_revision}=100" \
             --quiet
           echo "Promoted ${candidate_revision}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Verify public signed endpoints and sync Inngest
+        run: |
+          rollback() {
+            echo "Post-deployment verification failed; rolling traffic back to ${PREVIOUS_REVISION}."
+            gcloud run services update-traffic "${CLOUD_RUN_SERVICE}" \
+              --region="${GCP_REGION}" \
+              --project="${GCP_PROJECT_ID}" \
+              --to-revisions="${PREVIOUS_REVISION}=100" \
+              --quiet
+          }
+          trap rollback ERR
+
+          public_member="$(gcloud run services get-iam-policy "${CLOUD_RUN_SERVICE}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --flatten='bindings[].members' \
+            --filter='bindings.members:allUsers' \
+            --format='value(bindings.members)')"
+          if [ -z "${public_member}" ]; then
+            echo "Cloud Run must allow public transport so Inngest and webhook providers can reach signed application endpoints."
+            false
+          fi
+
+          curl --fail --show-error --silent \
+            --retry 10 --retry-delay 2 --retry-all-errors \
+            "${CLOUD_RUN_URL}/api/health" \
+            | jq --exit-status '.ok == true and .service == "battle-bus"'
+
+          curl --fail --show-error --silent \
+            --retry 10 --retry-delay 2 --retry-all-errors \
+            "${CLOUD_RUN_URL}/api/inngest" \
+            | jq --exit-status '.function_count > 0 and .has_signing_key == true and .has_event_key == true'
+
+          sync_response="$(curl --fail --show-error --silent \
+            --request PUT \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            "${CLOUD_RUN_URL}/api/inngest?deployId=${GITHUB_SHA}")"
+          jq --exit-status 'has("modified") and (.message | type == "string")' <<<"${sync_response}"
+
+          trap - ERR
+          echo "Inngest synced to ${CLOUD_RUN_URL}/api/inngest" | tee -a "${GITHUB_STEP_SUMMARY}"

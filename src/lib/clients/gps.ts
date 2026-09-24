@@ -713,6 +713,7 @@ export function verifyWebhookSignature(
   signature: string,
   timestamp: string
 ): boolean {
+  if (!config.gps.apiSecret) return false;
   const expectedSignature = sha256Hmac(`${timestamp}${payload}`, config.gps.apiSecret);
   try {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));

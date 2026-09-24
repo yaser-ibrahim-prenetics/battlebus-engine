@@ -11,16 +11,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
-
-const EVENT_SEND_SECRET =
-  process.env.EVENT_SEND_SECRET || process.env.CS_PLATFORM_WEBHOOK_SECRET || "";
+import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("authorization") || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "");
-    if (!EVENT_SEND_SECRET || token !== EVENT_SEND_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = requireServiceAuth(request, {
+      envVars: ["EVENT_SEND_SECRET", "CS_PLATFORM_WEBHOOK_SECRET", "BATTLE_BUS_API_KEY"],
+    });
+    if (!auth.ok) {
+      return NextResponse.json(auth.body, { status: auth.status });
     }
 
     const body = await request.json();

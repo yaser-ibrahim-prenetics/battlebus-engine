@@ -109,8 +109,10 @@ export async function POST(request: NextRequest) {
     // Secret for HMAC: matches x-shopify-shop-domain to SHOPIFY_PROD_* vs SHOPIFY_TEST_*
     const webhookSecretForShop = resolveShopifyWebhookSecret(secretShopDomain);
     if (!webhookSecretForShop) {
-      console.log(
-        `[Webhook] [${requestId}] ⚠️  Webhook secret not configured - skipping signature verification`
+      console.error(`[Webhook] [${requestId}] Webhook secret not configured - rejecting request`);
+      return NextResponse.json(
+        { error: "Webhook secret not configured", requestId },
+        { status: 500 }
       );
     } else if (hmacHeader) {
       // In development, allow a special "test" value to bypass real HMAC validation
