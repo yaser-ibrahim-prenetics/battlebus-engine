@@ -405,6 +405,9 @@ src/
 | [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md)             | Detailed performance comparison    |
 | [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md)                       | Demo presentation script           |
 | [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)                         | Development progress               |
+| [Database migrations](db/README.md)                                 | Shared schema and rollout workflow |
+| [Release 1 database brief](docs/RELEASE_1_DATABASE_FOUNDATION.md)   | Delivered work and verification    |
+| [Secret management](docs/SECRET_MANAGEMENT.md)                     | GCP storage, rotation, and CI safeguards |
 
 ---
 

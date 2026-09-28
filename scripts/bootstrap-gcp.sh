@@ -4,8 +4,10 @@ set -euo pipefail
 project_id="${GCP_PROJECT_ID:-battle-bus-509406}"
 region="${GCP_REGION:-asia-east1}"
 repository="${ARTIFACT_REPOSITORY:-battle-bus}"
+database_url_secret="${DATABASE_URL_SECRET:-battle-platform-database-url}"
 pool_id="github-actions"
-provider_id="battle-platform-main"
+bus_provider_id="battle-platform-main"
+hub_provider_id="battle-hub-main"
 bus_repo="yaser-ibrahim-prenetics/battlebus-engine"
 hub_repo="yaser-ibrahim-prenetics/battlehub-console"
 
@@ -52,39 +54,63 @@ if ! gcloud iam workload-identity-pools describe "${pool_id}" \
     --project="${project_id}"
 fi
 
-condition="assertion.repository == '${bus_repo}' || assertion.repository == '${hub_repo}'"
-provider_args=(
-  "${provider_id}"
-  "--location=global"
-  "--workload-identity-pool=${pool_id}"
-  "--issuer-uri=https://token.actions.githubusercontent.com"
-  "--attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref"
-  "--attribute-condition=${condition}"
-  "--project=${project_id}"
-)
+ensure_oidc_provider() {
+  local provider_id="$1"
+  local github_repository="$2"
+  local condition="assertion.repository == '${github_repository}' && assertion.ref == 'refs/heads/main'"
+  local provider_args=(
+    "${provider_id}"
+    "--location=global"
+    "--workload-identity-pool=${pool_id}"
+    "--issuer-uri=https://token.actions.githubusercontent.com"
+    "--attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref"
+    "--attribute-condition=${condition}"
+    "--project=${project_id}"
+  )
 
-if gcloud iam workload-identity-pools providers describe "${provider_id}" \
-  --location=global --workload-identity-pool="${pool_id}" \
-  --project="${project_id}" >/dev/null 2>&1; then
-  gcloud iam workload-identity-pools providers update-oidc "${provider_args[@]}"
-else
-  gcloud iam workload-identity-pools providers create-oidc "${provider_args[@]}"
-fi
+  if gcloud iam workload-identity-pools providers describe "${provider_id}" \
+    --location=global --workload-identity-pool="${pool_id}" \
+    --project="${project_id}" >/dev/null 2>&1; then
+    gcloud iam workload-identity-pools providers update-oidc "${provider_args[@]}"
+  else
+    gcloud iam workload-identity-pools providers create-oidc "${provider_args[@]}"
+  fi
+}
 
-grant_project_role() {
+ensure_oidc_provider "${bus_provider_id}" "${bus_repo}"
+ensure_oidc_provider "${hub_provider_id}" "${hub_repo}"
+
+grant_repository_writer() {
   local service_account="$1"
-  local role="$2"
-  gcloud projects add-iam-policy-binding "${project_id}" \
+  gcloud artifacts repositories add-iam-policy-binding "${repository}" \
+    --location="${region}" \
     --member="serviceAccount:${service_account}@${project_id}.iam.gserviceaccount.com" \
-    --role="${role}" \
-    --condition=None \
+    --role=roles/artifactregistry.writer \
+    --project="${project_id}" \
     --quiet >/dev/null
 }
 
-for deployer in battle-bus-deployer battle-hub-deployer; do
-  grant_project_role "${deployer}" roles/artifactregistry.writer
-  grant_project_role "${deployer}" roles/run.admin
-done
+grant_service_admin() {
+  local service_account="$1"
+  local service_name="$2"
+  if ! gcloud run services describe "${service_name}" \
+    --region="${region}" --project="${project_id}" >/dev/null 2>&1; then
+    printf 'Cloud Run service %s does not exist; skipping its resource-scoped deployer binding.\n' \
+      "${service_name}" >&2
+    return
+  fi
+  gcloud run services add-iam-policy-binding "${service_name}" \
+    --region="${region}" \
+    --member="serviceAccount:${service_account}@${project_id}.iam.gserviceaccount.com" \
+    --role=roles/run.admin \
+    --project="${project_id}" \
+    --quiet >/dev/null
+}
+
+grant_repository_writer battle-bus-deployer
+grant_repository_writer battle-hub-deployer
+grant_service_admin battle-bus-deployer battle-bus
+grant_service_admin battle-hub-deployer battle-hub
 
 project_number="$(gcloud projects describe "${project_id}" --format='value(projectNumber)')"
 
@@ -115,6 +141,21 @@ bind_repository battle-hub-deployer "${hub_repo}"
 allow_runtime_identity battle-bus-deployer battle-bus-runtime
 allow_runtime_identity battle-hub-deployer battle-hub-runtime
 
-provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${provider_id}"
-printf 'GCP bootstrap complete.\nWorkload Identity Provider: %s\n' "${provider_name}"
+if ! gcloud secrets describe "${database_url_secret}" \
+  --project="${project_id}" >/dev/null 2>&1; then
+  gcloud secrets create "${database_url_secret}" \
+    --replication-policy=automatic \
+    --project="${project_id}"
+fi
+
+gcloud secrets add-iam-policy-binding "${database_url_secret}" \
+  --member="serviceAccount:battle-bus-deployer@${project_id}.iam.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor \
+  --project="${project_id}" \
+  --quiet >/dev/null
+
+bus_provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${bus_provider_id}"
+hub_provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${hub_provider_id}"
+printf 'GCP bootstrap complete.\nBattle Bus Workload Identity Provider: %s\n' "${bus_provider_name}"
+printf 'Battle Hub Workload Identity Provider: %s\n' "${hub_provider_name}"
 printf 'Deployment remains disabled until the repository Actions variable ENABLE_GCP_DEPLOY=true is set.\n'

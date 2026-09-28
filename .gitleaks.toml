@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated Next.js output is not source and may contain compiled fixture identifiers"
+paths = [
+  '''^\.next/''',
+]
+
+[[allowlists]]
+description = "Synthetic Shopify order fixtures contain credential-shaped IDs, not credentials"
+paths = [
+  '''^src/lib/mocks/shopify/orders\.json$''',
+]

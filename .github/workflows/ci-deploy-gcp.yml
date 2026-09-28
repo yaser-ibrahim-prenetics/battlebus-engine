@@ -20,6 +20,7 @@ env:
   GCP_REGION: asia-east1
   ARTIFACT_REPOSITORY: battle-bus
   CLOUD_RUN_SERVICE: battle-bus
+  DATABASE_URL_SECRET: battle-platform-database-url
   RUNTIME_SERVICE_ACCOUNT: battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com
   DEPLOY_SERVICE_ACCOUNT: battle-bus-deployer@battle-bus-509406.iam.gserviceaccount.com
   WORKLOAD_IDENTITY_PROVIDER: projects/1057846333023/locations/global/workloadIdentityPools/github-actions/providers/battle-platform-main
@@ -30,10 +31,26 @@ jobs:
     name: Lint, test, audit, and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: battle_platform_migrations
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d battle_platform_migrations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -41,8 +58,32 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Set up Go for golang-migrate
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: false
+
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Scan proposed changes for secrets
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate Secret Manager inventory
+        run: npm run security:validate-secrets
+
+      - name: Validate and test database migrations
+        id: migrations
+        continue-on-error: true
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
+        run: |
+          go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+          npm run db:validate
+          npm run db:test
 
       - name: Lint
         id: lint
@@ -71,9 +112,10 @@ jobs:
           TEST_RESULT: ${{ steps.test.outcome }}
           AUDIT_RESULT: ${{ steps.audit.outcome }}
           BUILD_RESULT: ${{ steps.build.outcome }}
+          MIGRATIONS_RESULT: ${{ steps.migrations.outcome }}
         run: |
           failed=0
-          for gate in LINT TEST AUDIT BUILD; do
+          for gate in LINT TEST AUDIT BUILD MIGRATIONS; do
             result_variable="${gate}_RESULT"
             result="${!result_variable}"
             echo "${gate}: ${result}"
@@ -112,6 +154,8 @@ jobs:
         run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
       - name: Verify required runtime configuration
+        env:
+          DATABASE_MIGRATIONS_ENABLED: ${{ vars.ENABLE_DATABASE_MIGRATIONS }}
         run: |
           service_json="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
             --region="${GCP_REGION}" \
@@ -120,11 +164,41 @@ jobs:
 
           env_names="$(jq -r '.spec.template.spec.containers[0].env[]?.name' <<<"${service_json}")"
           for required_name in INNGEST_SIGNING_KEY INNGEST_EVENT_KEY BATTLE_BUS_API_KEY SHOPIFY_TEST_WEBHOOK_SECRET; do
-            if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
-              echo "Cloud Run is missing required runtime configuration: ${required_name}"
+            if ! jq --exit-status --arg name "${required_name}" '
+              any(.spec.template.spec.containers[0].env[]?;
+                .name == $name and .valueFrom.secretKeyRef? != null)
+            ' <<<"${service_json}" >/dev/null; then
+              echo "Cloud Run is missing required Secret Manager configuration: ${required_name}"
               exit 1
             fi
           done
+
+          while IFS= read -r secret_name; do
+            [[ -z "${secret_name}" || "${secret_name}" == \#* ]] && continue
+            if jq --exit-status --arg name "${secret_name}" '
+              any(.spec.template.spec.containers[0].env[]?;
+                .name == $name and (. | has("value")))
+            ' <<<"${service_json}" >/dev/null; then
+              echo "Cloud Run secret must not be stored as plaintext: ${secret_name}"
+              exit 1
+            fi
+          done < config/gcp-secret-env-names.txt
+
+          if [ "${DATABASE_MIGRATIONS_ENABLED}" = "true" ]; then
+            for required_name in SUPABASE_URL; do
+              if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
+                echo "Cloud Run is missing required database runtime configuration: ${required_name}"
+                exit 1
+              fi
+            done
+            if ! jq --exit-status '
+              any(.spec.template.spec.containers[0].env[]?;
+                .name == "SUPABASE_SERVICE_ROLE_KEY" and .valueFrom.secretKeyRef? != null)
+            ' <<<"${service_json}" >/dev/null; then
+              echo "Cloud Run is missing Secret Manager-backed SUPABASE_SERVICE_ROLE_KEY."
+              exit 1
+            fi
+          fi
 
           previous_revision="$(jq -r '.status.latestReadyRevisionName // empty' <<<"${service_json}")"
           service_url="$(jq -r '.status.url // empty' <<<"${service_json}")"
@@ -158,6 +232,27 @@ jobs:
         env:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: docker push "${IMAGE_URI}"
+
+      - name: Set up Go for production migrations
+        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: false
+
+      - name: Apply additive database migrations
+        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
+        run: |
+          go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+          database_url="$(gcloud secrets versions access latest \
+            --secret="${DATABASE_URL_SECRET}" \
+            --project="${GCP_PROJECT_ID}")"
+          if [ -z "${database_url}" ]; then
+            echo "${DATABASE_URL_SECRET} has no usable secret version."
+            exit 1
+          fi
+          echo "::add-mask::${database_url}"
+          migrate -path db/migrations -database "${database_url}" up
 
       - name: Deploy signed-webhook dry-run candidate without traffic
         env:

@@ -64,4 +64,6 @@ scripts/test-api-connections.ts
 
 # Test scripts
 scripts/test-*.sh
+!scripts/test-migrations.sh
+!scripts/db-bootstrap-admin.sh
 scripts/seed-*.ts

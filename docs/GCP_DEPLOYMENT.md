@@ -27,14 +27,22 @@ Until then, pushes run all quality gates but skip deployment.
 
 Run `scripts/bootstrap-gcp.sh` from an authenticated operator workstation to
 create or reconcile the Artifact Registry repository, four service accounts,
-the repository-restricted GitHub OIDC provider, and deployer IAM bindings. The
-script does not create secrets or enable deployment.
+the repository-restricted GitHub OIDC provider, deployer IAM bindings, and the
+empty `battle-platform-database-url` Secret Manager secret. The script never
+adds a database credential value or enables deployment.
 
 Every pull request runs lint, tests, the high-severity production dependency
-audit, and the production build. A push to `main` deploys only after all four
-gates pass. Production-changing feature flags are initially forced off.
+audit, database migration validation/integration tests, and the production
+build. A push to `main` deploys only after all five gates pass.
 
 ## Secrets
+
+The canonical credential inventory is
+`config/gcp-secret-env-names.txt`. Run
+`./scripts/migrate-cloud-run-secrets.sh` from an authenticated operator
+workstation to convert existing plaintext Cloud Run credentials into Secret
+Manager references through a verified no-traffic revision. See
+`docs/SECRET_MANAGEMENT.md` for rotation and history-remediation guidance.
 
 Store server credentials in Secret Manager and grant the runtime service
 account access to only the secrets it needs. Do not move `VERCEL_*` variables,
@@ -49,9 +57,25 @@ Secret Manager-backed environment names:
 - `BATTLE_BUS_API_KEY`
 - `SHOPIFY_TEST_WEBHOOK_SECRET` while the deployment remains in test/dry-run mode
 
+Release 1 database activation additionally requires:
+
+- `SUPABASE_URL` on the Cloud Run service.
+- `SUPABASE_SERVICE_ROLE_KEY` on the Cloud Run service, backed by Secret Manager.
+- A privileged direct or session-mode PostgreSQL URL stored as the latest
+  version of `battle-platform-database-url`. This secret is readable by the
+  deployment identity, not by the browser.
+- GitHub repository variable `ENABLE_DATABASE_MIGRATIONS=true` after staging
+  validation. Until enabled, the workflow tests migrations but does not touch a
+  remote database.
+
+When enabled, the workflow applies only `up` migrations after the candidate
+image has passed its local smoke test and before a new Cloud Run revision is
+created. It never runs an automatic database rollback. See `db/README.md` for
+the expand/deploy/contract policy and first-administrator bootstrap requirement.
+
 The deployment workflow currently sets safe operational feature flags. Add
-Secret Manager bindings to the `gcloud run deploy` command only after the
-secret names and least-privilege IAM bindings have been reviewed.
+new secret names to the canonical inventory and run the migration script before
+enabling code paths that consume them.
 
 ## Inngest
 
