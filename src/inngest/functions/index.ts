@@ -36,6 +36,7 @@ export { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiate
 export { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 export { processShopifyOrderRecover } from "./process-shopify-order-recover";
 export { recoverGpsFulfilment } from "./recover-gps-fulfillment";
+export { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-fulfilment";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -71,6 +72,7 @@ import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiate
 import { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 import { processShopifyOrderRecover } from "./process-shopify-order-recover";
 import { recoverGpsFulfilment } from "./recover-gps-fulfillment";
+import { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-fulfilment";
 
 const inventoryFunctions = config.features.enableInventoryRuns
   ? [
@@ -120,4 +122,6 @@ export const functions = [
   // Manual Shopify pull/recover (Hub-triggered)
   processShopifyOrderRecover,
   recoverGpsFulfilment,
+  // Real-time GPS/STORD warehouse push notifications -> canonical fulfillment flow
+  processWarehouseWebhookFulfilment,
 ];

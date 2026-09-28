@@ -248,13 +248,12 @@ Used by industry leaders:
 
 ## Inngest Functions
 
-| Function                   | Trigger                     | Description                         |
-| -------------------------- | --------------------------- | ----------------------------------- |
-| `process-shopify-order`    | `shopify/order.created`     | Creates D365 SO, sends to warehouse |
-| `process-refund`           | `shopify/refund.created`    | Creates D365 credit note            |
-| `process-gps-fulfilment`   | `gps/fulfilment.received`   | Updates Shopify + D365              |
-| `process-stord-fulfilment` | `stord/fulfilment.received` | Updates Shopify + D365              |
-| `process-cancellation`     | `shopify/order.cancelled`   | Cancels in GPS + D365               |
+| Function                               | Trigger                        | Description                                                |
+| -------------------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| `process-shopify-order`                | `shopify/order.created`        | Creates D365 SO, sends to warehouse                        |
+| `process-refund`                       | `shopify/refund.created`       | Creates D365 credit note                                   |
+| `process-warehouse-webhook-fulfilment` | GPS + STORD fulfillment events | Normalizes warehouse tracking, then updates Shopify + D365 |
+| `process-cancellation`                 | `shopify/order.cancelled`      | Cancels in GPS + D365                                      |
 
 ---
 
@@ -377,8 +376,8 @@ src/
 │   └── functions/                     # Processing functions
 │       ├── process-shopify-order.ts
 │       ├── process-refund.ts
-│       ├── process-gps-fulfilment.ts
-│       └── process-stord-fulfilment.ts
+│       ├── process-warehouse-webhook-fulfilment.ts
+│       └── process-shopify-fulfillment.ts
 └── lib/
     ├── clients/                       # API clients
     │   ├── dynamics.ts
@@ -397,17 +396,17 @@ src/
 
 ## Documentation
 
-| Document                                                            | Description                        |
-| ------------------------------------------------------------------- | ---------------------------------- |
-| [ARCHITECTURE_EXPLAINED.md](docs/ARCHITECTURE_EXPLAINED.md)         | Deep dive into system architecture |
-| [BATTLE_HUB_POC_ROADMAP.md](docs/BATTLE_HUB_POC_ROADMAP.md)         | Complete feature specifications    |
-| [BATTLE_HUB_SIMPLE_OVERVIEW.md](docs/BATTLE_HUB_SIMPLE_OVERVIEW.md) | Non-technical overview             |
-| [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md)             | Detailed performance comparison    |
-| [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md)                       | Demo presentation script           |
-| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)                         | Development progress               |
-| [Database migrations](db/README.md)                                 | Shared schema and rollout workflow |
-| [Release 1 database brief](docs/RELEASE_1_DATABASE_FOUNDATION.md)   | Delivered work and verification    |
-| [Secret management](docs/SECRET_MANAGEMENT.md)                     | GCP storage, rotation, and CI safeguards |
+| Document                                                            | Description                              |
+| ------------------------------------------------------------------- | ---------------------------------------- |
+| [ARCHITECTURE_EXPLAINED.md](docs/ARCHITECTURE_EXPLAINED.md)         | Deep dive into system architecture       |
+| [BATTLE_HUB_POC_ROADMAP.md](docs/BATTLE_HUB_POC_ROADMAP.md)         | Complete feature specifications          |
+| [BATTLE_HUB_SIMPLE_OVERVIEW.md](docs/BATTLE_HUB_SIMPLE_OVERVIEW.md) | Non-technical overview                   |
+| [PERFORMANCE_ANALYSIS.md](docs/PERFORMANCE_ANALYSIS.md)             | Detailed performance comparison          |
+| [POC_DEMO_SCRIPT.md](docs/POC_DEMO_SCRIPT.md)                       | Demo presentation script                 |
+| [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)                         | Development progress                     |
+| [Database migrations](db/README.md)                                 | Shared schema and rollout workflow       |
+| [Release 1 database brief](docs/RELEASE_1_DATABASE_FOUNDATION.md)   | Delivered work and verification          |
+| [Secret management](docs/SECRET_MANAGEMENT.md)                      | GCP storage, rotation, and CI safeguards |
 
 ---
 

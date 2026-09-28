@@ -95,6 +95,11 @@ export type ShopifyOrderFulfilledEvent = {
     /** Battle Hub user who triggered a replay or manual fulfillment pipeline. */
     triggeredByUserId?: string;
     triggeredByUserEmail?: string;
+    /** Warehouse push adapter marker; avoids treating normalized payloads as raw Shopify echoes. */
+    fromWarehouseWebhook?: boolean;
+    warehouseWebhookSource?: "gps" | "stord";
+    /** GPS polling/webhook paths set this so Hub source attribution remains accurate. */
+    fromGpsSync?: boolean;
   };
 };
 
