@@ -5,6 +5,7 @@ project_id="${GCP_PROJECT_ID:-battle-bus-509406}"
 region="${GCP_REGION:-asia-east1}"
 repository="${ARTIFACT_REPOSITORY:-battle-bus}"
 database_url_secret="${DATABASE_URL_SECRET:-battle-platform-database-url}"
+migration_job="${MIGRATION_JOB:-battle-bus-migrate}"
 pool_id="github-actions"
 bus_provider_id="battle-platform-main"
 hub_provider_id="battle-hub-main"
@@ -43,6 +44,7 @@ ensure_service_account() {
 
 ensure_service_account "battle-bus-runtime" "Battle Bus Cloud Run runtime"
 ensure_service_account "battle-bus-deployer" "Battle Bus GitHub deployer"
+ensure_service_account "battle-bus-migrator" "Battle Bus database migration job"
 ensure_service_account "battle-hub-runtime" "Battle Hub Cloud Run runtime"
 ensure_service_account "battle-hub-deployer" "Battle Hub GitHub deployer"
 
@@ -139,6 +141,7 @@ allow_runtime_identity() {
 bind_repository battle-bus-deployer "${bus_repo}"
 bind_repository battle-hub-deployer "${hub_repo}"
 allow_runtime_identity battle-bus-deployer battle-bus-runtime
+allow_runtime_identity battle-bus-deployer battle-bus-migrator
 allow_runtime_identity battle-hub-deployer battle-hub-runtime
 
 if ! gcloud secrets describe "${database_url_secret}" \
@@ -149,13 +152,23 @@ if ! gcloud secrets describe "${database_url_secret}" \
 fi
 
 gcloud secrets add-iam-policy-binding "${database_url_secret}" \
-  --member="serviceAccount:battle-bus-deployer@${project_id}.iam.gserviceaccount.com" \
+  --member="serviceAccount:battle-bus-migrator@${project_id}.iam.gserviceaccount.com" \
   --role=roles/secretmanager.secretAccessor \
   --project="${project_id}" \
   --quiet >/dev/null
+
+# The deployer configures only a secret reference on the migration job. It does
+# not need to read the privileged database URL itself.
+gcloud secrets remove-iam-policy-binding "${database_url_secret}" \
+  --member="serviceAccount:battle-bus-deployer@${project_id}.iam.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor \
+  --project="${project_id}" \
+  --quiet >/dev/null 2>&1 || true
 
 bus_provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${bus_provider_id}"
 hub_provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${hub_provider_id}"
 printf 'GCP bootstrap complete.\nBattle Bus Workload Identity Provider: %s\n' "${bus_provider_name}"
 printf 'Battle Hub Workload Identity Provider: %s\n' "${hub_provider_name}"
+printf 'Migration identity: battle-bus-migrator@%s.iam.gserviceaccount.com\n' "${project_id}"
+printf 'After pushing a migration image and creating a numeric database secret version, bootstrap %s with scripts/bootstrap-migration-job.sh.\n' "${migration_job}"
 printf 'Deployment remains disabled until the repository Actions variable ENABLE_GCP_DEPLOY=true is set.\n'

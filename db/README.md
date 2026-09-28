@@ -4,6 +4,13 @@ Battle Bus owns the shared PostgreSQL schema used by Battle Bus and Battle Hub.
 Migrations use [golang-migrate](https://github.com/golang-migrate/migrate) and
 are the only supported way to change a deployed database schema.
 
+Each database schema has exactly one owning repository. Future services keep
+their own migrations beside their application code. Shared pipeline tooling may
+execute those migrations, but it must not own or copy service-specific SQL. If
+multiple independently released services eventually need to change this shared
+schema, move schema ownership to a dedicated Battle Platform schema repository
+rather than a generic deployment repository.
+
 ## Release 1 scope
 
 Release 1 establishes an additive schema. It creates the current operational,
@@ -34,6 +41,28 @@ npm run db:create -- reason_for_change
 Never edit a migration after it has been applied to a shared environment.
 Create a new migration instead.
 
+## Removing obsolete schema
+
+Use expand/deploy/contract sequencing. A table, column, constraint, view,
+function, trigger, policy, index, or other schema object may be removed only
+after it is proven unused by every active and rollback-capable application
+revision, Battle Hub and other consumers, reports, scheduled jobs, integrations,
+and database dependencies.
+
+Every destructive up migration must:
+
+1. Include `-- migrate:contract`.
+2. Include a checked evidence file at
+   `db/contracts/000001_reason_for_change.md`.
+3. Record the query-telemetry observation window, rollback-window end, schema
+   owner, approval date, dependency check, and backup/PITR confirmation.
+4. Be delivered separately from the application change that stops using the
+   schema object.
+
+`npm run db:validate` fails closed when the marker or evidence is incomplete.
+See `db/contracts/README.md` for the required template. Production automation
+never runs destructive down migrations.
+
 ## Prerequisites
 
 - PostgreSQL 15 or newer, or a current Supabase PostgreSQL project.
@@ -50,6 +79,7 @@ the browser or stored in a committed environment file.
 
 ```bash
 npm run db:validate
+npm run db:validate:test
 DATABASE_URL='postgresql://...' npm run db:version
 DATABASE_URL='postgresql://...' npm run db:up
 DATABASE_URL='postgresql://...' npm run db:down
@@ -71,14 +101,23 @@ Production migration execution is guarded by the GitHub repository variable
 
 1. Create a development or staging Supabase project in the nearest supported
    region to the Cloud Run deployment.
-2. Add its privileged session/direct connection string as the latest version
-   of the GCP Secret Manager secret `battle-platform-database-url`.
-3. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Battle Bus Cloud
+2. Add its privileged session/direct connection string as a new version of the
+   GCP Secret Manager secret `battle-platform-database-url`.
+3. Set `DATABASE_URL_SECRET_VERSION` to that numeric enabled version; production
+   migration jobs never bind `latest`.
+4. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Battle Bus Cloud
    Run and the matching Supabase variables on Battle Hub.
-4. Pre-register the initial Battle Hub superadmin with `db:bootstrap-admin`
+5. Run `scripts/bootstrap-gcp.sh`, then bootstrap the pre-pushed immutable
+   migration image with `scripts/bootstrap-migration-job.sh`.
+6. Run the pipeline to apply the migrations in staging.
+7. Pre-register the initial Battle Hub superadmin with `db:bootstrap-admin`
    from a trusted operator environment.
-5. Run the pipeline in staging and verify order, location, flow-log, and webhook
+8. Verify order, location, flow-log, and webhook
    inbox reads/writes before enabling the production gate.
 
 Application rollback and schema rollback are intentionally separate. All
-production schema changes must follow expand/deploy/contract sequencing.
+production schema changes must follow expand/deploy/contract sequencing. The
+workflow builds a migration image from the same commit as the application and
+runs it as the single-task `battle-bus-migrate` Cloud Run Job before deploying
+the new application revision. The job identity, rather than the GitHub deployer,
+has access to the privileged database URL.

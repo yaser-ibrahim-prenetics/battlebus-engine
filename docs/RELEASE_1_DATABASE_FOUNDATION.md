@@ -30,6 +30,11 @@ migration execution remains disabled until the explicit
 - CI `up -> assertions -> down-all -> up -> assertions` verification on
   PostgreSQL 16.
 - Optional, guarded GCP migration execution through Secret Manager.
+- Isolated `battle-bus-migrate` Cloud Run Job using a dedicated identity,
+  immutable migration image, and pinned numeric database-secret version.
+- Contract-migration evidence validation that blocks obsolete schema removal
+  until usage, dependencies, rollback revisions, observability, and recovery
+  readiness have been confirmed.
 - Retirement notice for the old `supabase/migrations` location so there is only
   one migration history.
 
@@ -52,11 +57,14 @@ No cloud database was created or modified by this release. Before activation:
 1. Create or select the non-production Supabase project and region.
 2. Add its migration connection URL to the GCP secret
    `battle-platform-database-url`.
-3. Configure Battle Bus and Battle Hub Supabase runtime credentials.
-4. Pre-register the initial Battle Hub superadmin and workspace membership.
-5. Apply and validate the migrations in staging.
-6. Enable `ENABLE_DATABASE_MIGRATIONS=true` only after staging acceptance.
+3. Set `DATABASE_URL_SECRET_VERSION` to the numeric enabled secret version.
+4. Configure Battle Bus and Battle Hub Supabase runtime credentials.
+5. Bootstrap the dedicated Cloud Run migration job with an immutable image.
+6. Apply and validate the migrations in staging.
+7. Pre-register the initial Battle Hub superadmin and workspace membership.
+8. Enable `ENABLE_DATABASE_MIGRATIONS=true` only after staging acceptance.
 
 Production database rollback remains manual. Subsequent changes must use
 expand/deploy/contract sequencing, and applied migration files must never be
-edited in place.
+edited in place. Obsolete schema removal additionally requires the checked
+evidence record described in `db/contracts/README.md`.

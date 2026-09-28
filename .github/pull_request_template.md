@@ -4,6 +4,7 @@
 - [ ] New Feature
 - [ ] API Contract Change
 - [ ] Database Schema Change
+- [ ] Contract Schema Removal
 - [ ] Config Change
 - [ ] Secret Change
 
@@ -29,3 +30,5 @@
 - [ ] New and existing unit tests pass locally with my changes
 - [ ] Any dependent changes have been merged and published in downstream modules
 - [ ] I have provided a feature toggle
+- [ ] Database changes follow expand/deploy/contract sequencing
+- [ ] Any obsolete schema removal includes the completed `db/contracts` evidence record

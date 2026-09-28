@@ -1,0 +1,13 @@
+FROM migrate/migrate:v4.20.1@sha256:76cc2074cb6642631f34a898ced71e6aeaa6b1a4d78c4daa743275a22e0c5be7
+
+WORKDIR /migration
+
+COPY db/migrations /migrations
+COPY scripts/cloud-run-migrate.sh /usr/local/bin/cloud-run-migrate
+
+RUN chmod 0555 /usr/local/bin/cloud-run-migrate \
+    && find /migrations -type f -exec chmod 0444 {} \;
+
+USER 65534:65534
+
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/cloud-run-migrate"]

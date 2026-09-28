@@ -12,7 +12,9 @@ permissions:
 
 concurrency:
   group: battle-bus-${{ github.ref }}
-  cancel-in-progress: true
+  # A cancelled migration can continue in Cloud Run after the GitHub runner
+  # exits. Serialize main releases so a second deployment cannot overtake it.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   NODE_VERSION: "22"
@@ -20,8 +22,10 @@ env:
   GCP_REGION: asia-east1
   ARTIFACT_REPOSITORY: battle-bus
   CLOUD_RUN_SERVICE: battle-bus
+  MIGRATION_JOB: battle-bus-migrate
   DATABASE_URL_SECRET: battle-platform-database-url
   RUNTIME_SERVICE_ACCOUNT: battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com
+  MIGRATION_SERVICE_ACCOUNT: battle-bus-migrator@battle-bus-509406.iam.gserviceaccount.com
   DEPLOY_SERVICE_ACCOUNT: battle-bus-deployer@battle-bus-509406.iam.gserviceaccount.com
   WORKLOAD_IDENTITY_PROVIDER: projects/1057846333023/locations/global/workloadIdentityPools/github-actions/providers/battle-platform-main
   HUSKY: "0"
@@ -83,6 +87,7 @@ jobs:
         run: |
           go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
           npm run db:validate
+          npm run db:validate:test
           npm run db:test
 
       - name: Lint
@@ -130,7 +135,7 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/main' && vars.ENABLE_GCP_DEPLOY == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: gcp-production
     permissions:
       contents: read
@@ -156,6 +161,7 @@ jobs:
       - name: Verify required runtime configuration
         env:
           DATABASE_MIGRATIONS_ENABLED: ${{ vars.ENABLE_DATABASE_MIGRATIONS }}
+          DATABASE_URL_SECRET_VERSION: ${{ vars.DATABASE_URL_SECRET_VERSION }}
         run: |
           service_json="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
             --region="${GCP_REGION}" \
@@ -185,6 +191,23 @@ jobs:
           done < config/gcp-secret-env-names.txt
 
           if [ "${DATABASE_MIGRATIONS_ENABLED}" = "true" ]; then
+            if [[ ! "${DATABASE_URL_SECRET_VERSION}" =~ ^[0-9]+$ ]]; then
+              echo "DATABASE_URL_SECRET_VERSION must be a pinned numeric Secret Manager version."
+              exit 1
+            fi
+            secret_state="$(gcloud secrets versions describe "${DATABASE_URL_SECRET_VERSION}" \
+              --secret="${DATABASE_URL_SECRET}" \
+              --project="${GCP_PROJECT_ID}" \
+              --format='value(state)')"
+            if [ "${secret_state}" != "ENABLED" ]; then
+              echo "${DATABASE_URL_SECRET} version ${DATABASE_URL_SECRET_VERSION} is not enabled."
+              exit 1
+            fi
+            if ! gcloud iam service-accounts describe "${MIGRATION_SERVICE_ACCOUNT}" \
+              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "Missing migration service account: ${MIGRATION_SERVICE_ACCOUNT}"
+              exit 1
+            fi
             for required_name in SUPABASE_URL; do
               if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
                 echo "Cloud Run is missing required database runtime configuration: ${required_name}"
@@ -233,26 +256,71 @@ jobs:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ github.sha }}
         run: docker push "${IMAGE_URI}"
 
-      - name: Set up Go for production migrations
-        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.x"
-          cache: false
+      - name: Build isolated migration image
+        env:
+          MIGRATION_IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}-migrations:${{ github.sha }}
+        run: docker build --file Dockerfile.migrations --tag "${MIGRATION_IMAGE_URI}" .
 
-      - name: Apply additive database migrations
-        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
+      - name: Verify isolated migration image contents
+        env:
+          MIGRATION_IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}-migrations:${{ github.sha }}
         run: |
-          go install -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
-          database_url="$(gcloud secrets versions access latest \
-            --secret="${DATABASE_URL_SECRET}" \
-            --project="${GCP_PROJECT_ID}")"
-          if [ -z "${database_url}" ]; then
-            echo "${DATABASE_URL_SECRET} has no usable secret version."
+          docker run --rm --entrypoint /bin/sh "${MIGRATION_IMAGE_URI}" -c '
+            test -x /usr/local/bin/cloud-run-migrate
+            test "$(find /migrations -type f -name "*.up.sql" | wc -l)" -gt 0
+            test "$(find /migrations -type f -name "*.down.sql" | wc -l)" -gt 0
+          '
+
+      - name: Push isolated migration image
+        env:
+          MIGRATION_IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}-migrations:${{ github.sha }}
+        run: docker push "${MIGRATION_IMAGE_URI}"
+
+      - name: Update isolated migration job
+        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
+        env:
+          DATABASE_URL_SECRET_VERSION: ${{ vars.DATABASE_URL_SECRET_VERSION }}
+          MIGRATION_IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}-migrations:${{ github.sha }}
+        run: |
+          if ! gcloud run jobs describe "${MIGRATION_JOB}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            {
+              echo "### Migration job bootstrap required"
+              echo
+              echo "The immutable migration image was pushed, but ${MIGRATION_JOB} does not exist."
+              echo "Run scripts/bootstrap-migration-job.sh as a GCP administrator, then rerun this workflow."
+              echo
+              echo "Image: \`${MIGRATION_IMAGE_URI}\`"
+              echo "Release: \`${GITHUB_SHA}\`"
+              echo "Secret version: \`${DATABASE_URL_SECRET_VERSION}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
             exit 1
           fi
-          echo "::add-mask::${database_url}"
-          migrate -path db/migrations -database "${database_url}" up
+
+          gcloud run jobs deploy "${MIGRATION_JOB}" \
+            --image="${MIGRATION_IMAGE_URI}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --service-account="${MIGRATION_SERVICE_ACCOUNT}" \
+            --set-secrets="DATABASE_URL=${DATABASE_URL_SECRET}:${DATABASE_URL_SECRET_VERSION}" \
+            --set-env-vars="MIGRATION_RELEASE_SHA=${GITHUB_SHA},DATABASE_URL_SECRET_VERSION=${DATABASE_URL_SECRET_VERSION}" \
+            --tasks=1 \
+            --parallelism=1 \
+            --max-retries=0 \
+            --task-timeout=900s \
+            --cpu=1 \
+            --memory=512Mi \
+            --quiet
+
+      - name: Apply additive migrations in Cloud Run Job
+        if: vars.ENABLE_DATABASE_MIGRATIONS == 'true'
+        run: |
+          gcloud run jobs execute "${MIGRATION_JOB}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --wait
+          echo "Migration job ${MIGRATION_JOB} completed for ${GITHUB_SHA}." | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Deploy signed-webhook dry-run candidate without traffic
         env:
@@ -275,7 +343,7 @@ jobs:
             --allow-unauthenticated \
             --no-traffic \
             --tag="${candidate_tag}" \
-            --update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,DISABLE_LOOP_WEBHOOK_VERIFICATION=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false,INNGEST_DEV=0,INNGEST_SERVE_ORIGIN=${CLOUD_RUN_URL},INNGEST_SERVE_PATH=/api/inngest,BATTLE_BUS_VERSION=${GITHUB_SHA} \
+            "--update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,DISABLE_LOOP_WEBHOOK_VERIFICATION=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false,INNGEST_DEV=0,INNGEST_SERVE_ORIGIN=${CLOUD_RUN_URL},INNGEST_SERVE_PATH=/api/inngest,BATTLE_BUS_VERSION=${GITHUB_SHA}" \
             --quiet
 
       - name: Verify candidate revision and promote

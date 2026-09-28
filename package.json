@@ -6,6 +6,7 @@
     "db:create": "node scripts/create-migration.mjs",
     "db:bootstrap-admin": "bash scripts/db-bootstrap-admin.sh",
     "db:validate": "node scripts/validate-migrations.mjs",
+    "db:validate:test": "node scripts/test-migration-validation.mjs",
     "db:up": "bash scripts/db-migrate.sh up",
     "db:down": "bash scripts/db-migrate.sh down 1",
     "db:version": "bash scripts/db-migrate.sh version",
