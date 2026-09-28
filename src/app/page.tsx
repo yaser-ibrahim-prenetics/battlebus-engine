@@ -238,8 +238,10 @@ export default function Home() {
           <div className="space-y-2">
             <FunctionRow name="process-shopify-order" trigger="shopify/order.created" />
             <FunctionRow name="process-shopify-refund" trigger="shopify/refund.created" />
-            <FunctionRow name="process-gps-fulfilment" trigger="gps/fulfilment.received" />
-            <FunctionRow name="process-stord-fulfilment" trigger="stord/fulfilment.received" />
+            <FunctionRow
+              name="process-warehouse-webhook-fulfilment"
+              trigger="gps + stord/fulfilment.received"
+            />
           </div>
         </div>
 

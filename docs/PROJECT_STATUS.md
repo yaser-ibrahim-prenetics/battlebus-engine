@@ -28,8 +28,7 @@ Battle Bus is an event-driven replacement for spock-store, handling the Shopify 
 
 - [x] `process-shopify-order` - Full order flow with OOS retry
 - [x] `process-refund` - Refund/credit note handling
-- [x] `process-gps-fulfilment` - GPS → Shopify → D365 fulfilment
-- [x] `process-stord-fulfilment` - STORD → Shopify → D365 fulfilment
+- [x] `process-warehouse-webhook-fulfilment` - GPS/STORD → Shopify → D365 fulfilment
 - [x] `process-order-cancellation` - Order cancellation flow
 
 ### API Clients
@@ -293,8 +292,8 @@ src/
 │       ├── index.ts               # Function registry
 │       ├── process-shopify-order.ts
 │       ├── process-refund.ts
-│       ├── process-gps-fulfilment.ts
-│       ├── process-stord-fulfilment.ts
+│       ├── process-warehouse-webhook-fulfilment.ts
+│       ├── process-shopify-fulfillment.ts
 │       └── process-order-cancellation.ts
 └── lib/
     ├── config.ts                  # Environment config

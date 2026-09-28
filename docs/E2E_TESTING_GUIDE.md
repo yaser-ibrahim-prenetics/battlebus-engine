@@ -223,7 +223,8 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
 
 2. **Verify Inngest Event**
    - Check for `gps/fulfilment.received` event
-   - Verify function `process-gps-individual` is triggered
+   - Verify `process-warehouse-webhook-fulfilment` is triggered
+   - Verify it emits one canonical `shopify/order.fulfilled` event
 
 3. **Verify Shopify Fulfillment**
    - Check Shopify order for fulfillment

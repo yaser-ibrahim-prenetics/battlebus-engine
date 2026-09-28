@@ -33,11 +33,6 @@
  * contract test can start enforcing going forward without blocking on an
  * unrelated fix; remove an entry here once its consumer is wired up (or the
  * emit site is removed).
- *   - "gps/fulfilment.received"   (src/app/api/webhooks/gps/route.ts)   — real-time GPS
- *     push notification; no function consumes it today (order status appears to be
- *     synced only via the separate `cron-gps-sync` polling function instead).
- *   - "stord/fulfilment.received" (src/app/api/webhooks/stord/route.ts) — same gap
- *     for the Stord warehouse push webhook.
  *   - "backorder/resolved"        (src/inngest/functions/process-backorder.ts) —
  *     emitted as a terminal/notification event; no function subscribes to it.
  */
@@ -60,11 +55,7 @@ const SEND_ANCHORS = ["inngest.send(", "step.sendEvent(", "publishWebhookEvents(
  * PRE-EXISTING GAPS block in the file header comment above for why each of
  * these is here instead of having a registered consumer.
  */
-const ALLOWLISTED_UNREGISTERED_EVENTS = new Set<string>([
-  "gps/fulfilment.received",
-  "stord/fulfilment.received",
-  "backorder/resolved",
-]);
+const ALLOWLISTED_UNREGISTERED_EVENTS = new Set<string>(["backorder/resolved"]);
 
 function isCheckableSourceFile(path: string): boolean {
   if (!path.endsWith(".ts") && !path.endsWith(".tsx")) return false;
@@ -127,7 +118,10 @@ function identifiersInArrayLiteral(body: string): string[] {
 // 1. Build the set of REGISTERED event names.
 // ---------------------------------------------------------------------------
 
-function extractEventsFromTriggerLikeBlocks(content: string, keyName: "triggers" | "cancelOn"): string[] {
+function extractEventsFromTriggerLikeBlocks(
+  content: string,
+  keyName: "triggers" | "cancelOn"
+): string[] {
   const events: string[] = [];
   const keyRe = new RegExp(`${keyName}\\s*:\\s*\\[`, "g");
   let m: RegExpExecArray | null;
@@ -144,7 +138,10 @@ function extractEventsFromTriggerLikeBlocks(content: string, keyName: "triggers"
   return events;
 }
 
-function buildRegisteredEvents(): { registeredEvents: Set<string>; registeredFunctionFiles: Set<string> } {
+function buildRegisteredEvents(): {
+  registeredEvents: Set<string>;
+  registeredFunctionFiles: Set<string>;
+} {
   const indexContent = readFileSync(INDEX_FILE, "utf8");
 
   // Map identifier -> relative file path, from either
@@ -171,7 +168,10 @@ function buildRegisteredEvents(): { registeredEvents: Set<string>; registeredFun
 
   // `export const functions = [ ... ];` — top-level registered identifiers/spreads.
   const functionsDeclIdx = indexContent.indexOf("export const functions");
-  expect(functionsDeclIdx, "Could not find `export const functions = [...]` in index.ts").toBeGreaterThan(-1);
+  expect(
+    functionsDeclIdx,
+    "Could not find `export const functions = [...]` in index.ts"
+  ).toBeGreaterThan(-1);
   const functionsOpenBracket = indexContent.indexOf("[", functionsDeclIdx);
   const functionsBody = extractBalancedBracket(indexContent, functionsOpenBracket);
   expect(functionsBody, "Could not parse the `functions` array literal in index.ts").not.toBeNull();
@@ -213,7 +213,9 @@ function buildRegisteredEvents(): { registeredEvents: Set<string>; registeredFun
   for (const ident of allIdents) {
     const file = identifierToFile.get(ident);
     if (file) {
-      registeredFunctionFiles.add(join(SRC_ROOT, "inngest/functions", file.replace(/^\.\//, "") + ".ts"));
+      registeredFunctionFiles.add(
+        join(SRC_ROOT, "inngest/functions", file.replace(/^\.\//, "") + ".ts")
+      );
     }
   }
 
