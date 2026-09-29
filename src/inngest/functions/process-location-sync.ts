@@ -69,7 +69,7 @@ export const processLocationSync = inngest.createFunction(
     // DELETION
     // =========================================================================
     if (isDelete) {
-      await step.run("deactivate-in-supabase", async () => {
+      await step.run("deactivate-in-postgres", async () => {
         await deactivateLocation(String(locationId));
       });
 
@@ -110,9 +110,9 @@ export const processLocationSync = inngest.createFunction(
     );
 
     // =========================================================================
-    // UPSERT INTO SUPABASE
+    // UPSERT INTO POSTGRESQL
     // =========================================================================
-    await step.run("upsert-supabase", async () => {
+    await step.run("upsert-postgres", async () => {
       await upsertLocation({
         shopifyLocationId: String(locationId),
         name: locationName,

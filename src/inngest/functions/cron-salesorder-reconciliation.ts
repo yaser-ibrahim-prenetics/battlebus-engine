@@ -20,7 +20,7 @@
 // `createdAt`: keep only orders in `[UTC midnight dateFrom, UTC midnight dayAfterTo)` so the
 // search bar cannot pull in the next/previous civil day (e.g. Apr 30 orders when reconciling Apr 29).
 //
-// We never filter the DB by `created_at` for matching — Supabase `created_at` is row insert time.
+// We never filter the DB by `created_at` for matching — it is row insert time.
 // Manual trigger: `event = "reconciliation/run"` with
 //   `data: { type, dateFrom, dateTo }` (YYYY-MM-DD in UTC calendar days).
 // Cron: 00:00 UTC daily, reconciles previous closed UTC calendar day.
@@ -28,12 +28,12 @@
 // Logging:
 //   • Every run emits one-line JSON on stdout with tag "reconciliation" (query Cloud Logging / Inngest logs).
 //   • Set RECONCILIATION_VERBOSE_LOG=1 on Battle Bus to also write flow_logs with flow=reconciliation_trace
-//     (per-Shopify page + per-Supabase batch detail).
+//     (per-Shopify page + per-PostgreSQL batch detail).
 // ============================================================================
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
@@ -343,21 +343,11 @@ async function fetchShopifyWindowOrders(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Supabase helpers
+// PostgreSQL helpers
 // ---------------------------------------------------------------------------
-
-function getSupabaseClient(): SupabaseClient | null {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!supabaseUrl || !supabaseKey) return null;
-  return createClient(supabaseUrl, supabaseKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
 
 /** Look up rows by `shopify_order_name`. Batched to keep `IN (…)` short. */
 async function fetchOrderRowsByName(
-  supabase: SupabaseClient,
   names: string[],
   trace?: { runId: string; type: ReconType }
 ): Promise<{ rows: OrderRow[]; error: { message: string } | null }> {
@@ -370,21 +360,31 @@ async function fetchOrderRowsByName(
   for (let i = 0; i < names.length; i += BATCH) {
     batchIdx += 1;
     const batchNames = names.slice(i, i + BATCH);
-    const { data, error } = await supabase
-      .from("orders")
-      .select(
-        "shopify_order_name, d365_order_number, d365_sync_status, gps_order_no, gps_uk_order_no, gps_sync_status, shopify_financial_status, shopify_cancelled_at, shopify_fulfillment_status, warehouse"
-      )
-      .in("shopify_order_name", batchNames);
-    if (trace && !error && config.reconciliation.verboseLog) {
-      reconTrace(trace.runId, trace.type, "supabase_orders_in_batch", {
+    let rows: OrderRow[];
+    try {
+      const result = await queryDatabase<OrderRow>(
+        `SELECT shopify_order_name, d365_order_number, d365_sync_status, gps_order_no,
+                gps_uk_order_no, gps_sync_status, shopify_financial_status,
+                shopify_cancelled_at, shopify_fulfillment_status, warehouse
+         FROM public.orders
+         WHERE shopify_order_name = ANY($1::text[])`,
+        [batchNames]
+      );
+      rows = result.rows;
+    } catch (error) {
+      return {
+        rows: out,
+        error: { message: error instanceof Error ? error.message : String(error) },
+      };
+    }
+    if (trace && config.reconciliation.verboseLog) {
+      reconTrace(trace.runId, trace.type, "database_orders_in_batch", {
         batch: batchIdx,
         namesInBatch: batchNames.length,
-        rowsReturned: (data || []).length,
+        rowsReturned: rows.length,
       });
     }
-    if (error) return { rows: out, error };
-    for (const r of (data || []) as OrderRow[]) {
+    for (const r of rows) {
       const key = String(r.shopify_order_name || "").trim();
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -392,7 +392,7 @@ async function fetchOrderRowsByName(
     }
   }
   if (trace) {
-    reconTrace(trace.runId, trace.type, "supabase_orders_done", {
+    reconTrace(trace.runId, trace.type, "database_orders_done", {
       namesRequested: names.length,
       uniqueRows: out.length,
       batches: batchIdx,
@@ -433,7 +433,6 @@ function extractShopifyOrderId(orderId: string): string | null {
 // ---------------------------------------------------------------------------
 
 async function runOneRecon(params: {
-  supabase: SupabaseClient;
   type: ReconType;
   dateFromIso: string;
   /** Exclusive end instant (UTC) for the Shopify window. */
@@ -443,7 +442,7 @@ async function runOneRecon(params: {
   storeCode: string;
   runId: string;
 }): Promise<ReconResult> {
-  const { supabase, type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
+  const { type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
   const checkId = crypto.randomUUID();
   const trace = runId ? { runId, type } : undefined;
 
@@ -478,7 +477,7 @@ async function runOneRecon(params: {
   }
 
   // Step 2 — Look those names up in DB by name. No `created_at` filter.
-  const { rows, error } = await fetchOrderRowsByName(supabase, shopifyNames, trace);
+  const { rows, error } = await fetchOrderRowsByName(shopifyNames, trace);
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
@@ -496,7 +495,7 @@ async function runOneRecon(params: {
     if (trace) {
       reconTrace(trace.runId, trace.type, "recon_failed", {
         checkId,
-        stage: "supabase_orders",
+        stage: "database_orders",
         error: error.message,
       });
     }
@@ -678,7 +677,6 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     concurrency: { limit: 1 },
   },
   async ({ event, runId }: { event?: any; runId?: string }) => {
-    const supabase = getSupabaseClient();
     const storeCode = toStoreCode();
     const eventType = String(event?.name || "");
     const requestedType = String(event?.data?.type || "all") as
@@ -712,8 +710,8 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       })
     );
 
-    if (!supabase) {
-      const message = `SalesOrder Reconciliation: Error for store ${storeCode} from ${fromDate} to ${toDate}:\n Supabase is not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing).`;
+    if (!isDatabaseConfigured()) {
+      const message = `SalesOrder Reconciliation: Error for store ${storeCode} from ${fromDate} to ${toDate}:\n PostgreSQL is not configured.`;
       await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message);
       logFlowEvent({
         level: "error",
@@ -721,7 +719,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
         step: "daily",
         status: "failed",
         runId: safeRunId || undefined,
-        errorType: "reconciliation_supabase_not_configured",
+        errorType: "reconciliation_database_not_configured",
         errorMessage: message,
         payload: {
           type: "salesorder",
@@ -731,7 +729,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
         },
       });
       await flushFlowLogs();
-      return { status: "failed", reason: "supabase_not_configured" };
+      return { status: "failed", reason: "database_not_configured" };
     }
 
     const types: ReconType[] =
@@ -743,7 +741,6 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       // Keep deterministic per-check order in run result payload and modal rendering.
 
       const item = await runOneRecon({
-        supabase,
         type,
         dateFromIso: fromIso,
         dateEndExclusiveIso,

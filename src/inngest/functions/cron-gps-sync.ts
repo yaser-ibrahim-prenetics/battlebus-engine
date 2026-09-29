@@ -5,7 +5,7 @@
 // Serverless-friendly: splits processing into small batches
 //
 // Flow:
-// 1. Get GPS order IDs from Supabase (fast) — falls back to Shopify metafields
+// 1. Get GPS order IDs from Cloud SQL (fast) — falls back to Shopify metafields
 // 2. Query GPS API in batches for all orders
 // 3. Filter for status 3 (fulfilled) within configured hours
 // 4. For each fulfilled order, create Shopify fulfillment and trigger D365 sync
@@ -19,7 +19,7 @@ import { BACKORDER_CONFIGS, THROTTLE_CONFIGS } from "@/lib/utils/constants";
 import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
-import { createClient } from "@supabase/supabase-js";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
 
 /** GPS status 5 = 异常 (Exception). Any inventory-related exceptionDesc is routed to backorder. */
@@ -267,7 +267,7 @@ type GpsSyncResult = {
   exceptionOrders: GpsExceptionOrder[];
 };
 
-// Get GPS order data from Supabase (instead of Shopify metafields), query GPS API, filter for status 3
+// Get GPS order data from PostgreSQL (instead of Shopify metafields), query GPS API, filter for status 3
 async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   const gpsOrderData: Array<{
     gpsOrderId: string;
@@ -275,16 +275,6 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
     shopifyOrderName: string;
     shopifyOrderId: string;
   }> = [];
-
-  // Try Supabase first — much faster than N+1 Shopify metafield calls
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  const supabase =
-    supabaseUrl && supabaseKey
-      ? createClient(supabaseUrl, supabaseKey, {
-          auth: { autoRefreshToken: false, persistSession: false },
-        })
-      : null;
 
   const daysBack = config.gps.fulfillmentPollDaysBack;
   const pollCutoff = new Date();
@@ -294,22 +284,26 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
     `[GPS Sync] Fulfillment poll window: last ${daysBack} day(s), created_at >= ${pollCutoffIso}`
   );
 
-  if (supabase) {
+  if (isDatabaseConfigured()) {
     // Single query: recent unfulfilled GPS orders with gps_order_no (created within poll window)
-    const { data: rows, error } = await supabase
-      .from("orders")
-      .select("id, shopify_order_id, shopify_order_name, gps_order_no, warehouse")
-      .not("gps_order_no", "is", null)
-      .in("warehouse", ["GPS Warehouse", "GPS UK Warehouse"])
-      .or("shopify_fulfillment_status.is.null,shopify_fulfillment_status.neq.fulfilled")
-      .gte("created_at", pollCutoffIso)
-      .limit(500);
-
-    if (error) {
-      console.warn(
-        `[GPS Sync] Supabase query failed, falling back to Shopify metafields: ${error.message}`
+    try {
+      const result = await queryDatabase<{
+        id: string;
+        shopify_order_id: string | null;
+        shopify_order_name: string | null;
+        gps_order_no: string | null;
+        warehouse: string | null;
+      }>(
+        `SELECT id, shopify_order_id, shopify_order_name, gps_order_no, warehouse
+         FROM public.orders
+         WHERE gps_order_no IS NOT NULL
+           AND warehouse = ANY($1::text[])
+           AND (shopify_fulfillment_status IS NULL OR shopify_fulfillment_status <> 'fulfilled')
+           AND created_at >= $2
+         LIMIT 500`,
+        [["GPS Warehouse", "GPS UK Warehouse"], pollCutoffIso]
       );
-    } else if (rows && rows.length > 0) {
+      const rows = result.rows;
       for (const row of rows) {
         if (row.gps_order_no && row.warehouse) {
           gpsOrderData.push({
@@ -320,13 +314,20 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
           });
         }
       }
-      console.log(
-        `[GPS Sync] Found ${gpsOrderData.length} GPS orders from Supabase (no Shopify calls needed)`
+      if (rows.length > 0) {
+        console.log(
+          `[GPS Sync] Found ${gpsOrderData.length} GPS orders from PostgreSQL (no Shopify calls needed)`
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[GPS Sync] PostgreSQL query failed, falling back to Shopify metafields: ${message}`
       );
     }
   }
 
-  // Fallback to Shopify metafields if Supabase returned nothing
+  // Fallback to Shopify metafields if PostgreSQL returned nothing
   if (gpsOrderData.length === 0) {
     console.log(`[GPS Sync] Falling back to Shopify metafield lookup...`);
     const orders = await shopify.getUnfulfilledOrders(250, daysBack);
