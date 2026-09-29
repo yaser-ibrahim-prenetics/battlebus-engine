@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import {
   claimRefundRecoveries,
+  completeRefundOperation,
   deferRefundUntilOrder,
   loadRefundRecoveryDispatches,
+  markRefundLineCreated,
   reserveRefundOperation,
 } from "../refund-operations";
 
@@ -178,5 +180,51 @@ describe("refund operations", () => {
         attempts: 3,
       },
     ]);
+  });
+
+  it("records the D365 line while retaining exclusive ownership", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "UPDATE",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [{ refund_id: "refund-42" }],
+    });
+
+    await markRefundLineCreated({
+      refundId: "refund-42",
+      claimToken: "00000000-0000-0000-0000-000000000099",
+      d365OrderNumber: "SO-42",
+      inventoryLotId: "LOT-42",
+    });
+
+    expect(queryDatabase).toHaveBeenCalledWith(expect.stringContaining("state = 'line_created'"), [
+      "refund-42",
+      "00000000-0000-0000-0000-000000000099",
+      "SO-42",
+      "LOT-42",
+    ]);
+  });
+
+  it("completes the owned operation and scrubs its recovery payload", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "UPDATE",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [{ refund_id: "refund-42" }],
+    });
+
+    await completeRefundOperation({
+      refundId: "refund-42",
+      claimToken: "00000000-0000-0000-0000-000000000099",
+      d365OrderNumber: "SO-42",
+      inventoryLotId: "LOT-42",
+    });
+
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("event_data = '{}'::jsonb"),
+      ["refund-42", "00000000-0000-0000-0000-000000000099", "SO-42", "LOT-42"]
+    );
   });
 });

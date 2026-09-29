@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS public.refund_operations (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT refund_operations_state_valid
     CHECK (state IN ('awaiting_order', 'dispatching', 'processing', 'line_created', 'completed')),
+  CONSTRAINT refund_operations_event_name_valid
+    CHECK (event_name = 'shopify/refund.created'),
   CONSTRAINT refund_operations_attempts_positive CHECK (attempts > 0),
   CONSTRAINT refund_operations_event_data_object CHECK (jsonb_typeof(event_data) = 'object'),
   CONSTRAINT refund_operations_claim_consistent
