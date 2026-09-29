@@ -22,10 +22,12 @@ to the values in migration `000008`. The bootstrap script rejects conflicting
 identity overrides so it cannot provision one principal while the migration
 grants another.
 
-Migration `000009` creates the private `refund_operations` ledger. Its
-`refund_id` primary key is the database authority for refund deduplication, and
-its leased `awaiting_order` workflow recovers refunds that arrive before their
-D365 sales order. Battle Hub has no access to this table.
+Migrations `000009` through `000012` create the private `refund_operations`
+ledger in purpose-specific stages: core schema, recovery indexes, lifecycle
+triggers, and access controls. Its `refund_id` primary key is the database
+authority for refund deduplication, and its leased `awaiting_order` workflow
+recovers refunds that arrive before their D365 sales order. Battle Hub has no
+access to this table.
 
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may

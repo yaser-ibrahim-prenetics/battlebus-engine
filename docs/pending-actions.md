@@ -96,8 +96,8 @@ durability and replay ownership in Battle Bus.
 ## Deployment order
 
 1. Run `scripts/bootstrap-hub-database.sh`.
-2. Apply migrations `000006`, `000007`, `000008`, and `000009` through the isolated
-   migration job.
+2. Apply migrations `000006` through `000012` through the isolated migration
+   job.
 3. Deploy Battle Bus so all new actions use Cloud SQL directly.
 4. Deploy Battle Hub and verify `/api/health/database` on its no-traffic
    candidate before promotion.

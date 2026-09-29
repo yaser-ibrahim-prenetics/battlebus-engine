@@ -113,8 +113,10 @@ Release 1 database activation additionally requires:
   validation. Until enabled, the workflow tests migrations but does not touch a
   remote database.
 
-Migration `000009` is required before deploying the refund recovery revision;
-the runtime fails closed when it cannot reserve a refund operation in Cloud SQL.
+Migrations `000009` through `000012` are required before deploying the refund
+recovery revision. They install the ledger schema, recovery indexes, lifecycle
+triggers, and access controls; the runtime fails closed when it cannot reserve a
+refund operation in Cloud SQL.
 
 Every main deployment builds and pushes a small immutable migration image from
 the same commit as the application. Before enabling migrations for the first
