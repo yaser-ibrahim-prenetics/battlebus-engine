@@ -17,6 +17,11 @@ its minimal active-action view; migration `000008` binds the Hub IAM database
 user to that role. The role cannot read the private queue table or event
 payloads.
 
+The Hub project, runtime service account, and IAM database username are pinned
+to the values in migration `000008`. The bootstrap script rejects conflicting
+identity overrides so it cannot provision one principal while the migration
+grants another.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If

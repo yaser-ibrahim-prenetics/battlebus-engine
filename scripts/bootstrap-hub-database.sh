@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_id="${GCP_PROJECT_ID:-battle-bus-509406}"
+project_id="battle-bus-509406"
 region="${GCP_REGION:-asia-east1}"
 instance="${CLOUD_SQL_INSTANCE_NAME:-battle-platform-staging-pg16}"
-runtime_service_account="${HUB_RUNTIME_SERVICE_ACCOUNT:-battle-hub-runtime@${project_id}.iam.gserviceaccount.com}"
-runtime_database_user="${HUB_DB_USER:-${runtime_service_account%.gserviceaccount.com}}"
+runtime_service_account="battle-hub-runtime@battle-bus-509406.iam.gserviceaccount.com"
+runtime_database_user="battle-hub-runtime@battle-bus-509406.iam"
 
-if [[ "${runtime_service_account}" != *@"${project_id}".iam.gserviceaccount.com ]]; then
-  echo "HUB_RUNTIME_SERVICE_ACCOUNT must belong to ${project_id}." >&2
-  exit 1
-fi
+assert_pinned_identity() {
+  local variable_name="$1"
+  local configured_value="$2"
+  local expected_value="$3"
+
+  if [[ -n "${configured_value}" && "${configured_value}" != "${expected_value}" ]]; then
+    echo "${variable_name} is pinned to ${expected_value}; update migration 000008 before changing it." >&2
+    exit 1
+  fi
+}
+
+assert_pinned_identity "GCP_PROJECT_ID" "${GCP_PROJECT_ID:-}" "${project_id}"
+assert_pinned_identity \
+  "HUB_RUNTIME_SERVICE_ACCOUNT" \
+  "${HUB_RUNTIME_SERVICE_ACCOUNT:-}" \
+  "${runtime_service_account}"
+assert_pinned_identity "HUB_DB_USER" "${HUB_DB_USER:-}" "${runtime_database_user}"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "jq is required." >&2

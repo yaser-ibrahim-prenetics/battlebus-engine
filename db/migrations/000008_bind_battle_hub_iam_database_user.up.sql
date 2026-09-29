@@ -1,5 +1,8 @@
 BEGIN;
 
+-- This principal is intentionally pinned to the identity provisioned by
+-- scripts/bootstrap-hub-database.sh. Changing it requires a new migration and
+-- a coordinated runtime configuration update.
 DO $$
 BEGIN
   IF EXISTS (
