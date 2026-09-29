@@ -203,6 +203,33 @@ BEGIN
 END
 $$;
 
+INSERT INTO public.refund_operations (
+  refund_id,
+  shopify_order_id,
+  event_data,
+  state,
+  dead_lettered_at
+)
+VALUES (
+  'migration-refund-dead-letter',
+  'migration-order',
+  '{"private":"dead-letter-payload"}',
+  'dead_letter',
+  now()
+);
+
+DO $$
+BEGIN
+  IF (
+    SELECT event_data
+    FROM public.refund_operations
+    WHERE refund_id = 'migration-refund-dead-letter'
+  ) <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'Dead-lettered refund operation payload was not scrubbed';
+  END IF;
+END
+$$;
+
 INSERT INTO public.pending_lifecycle_actions (
   shopify_order_id,
   action,

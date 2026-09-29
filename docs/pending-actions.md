@@ -76,7 +76,9 @@ order is marked `superseded`; cancellation has priority.
 Fulfillment and cancellation handlers refuse to enqueue again when `fromDrain`
 is present. Refund recovery is intentionally separate: the database ledger
 returns missing-order refunds to `awaiting_order` with bounded backoff instead
-of treating the first replay as terminal.
+of treating the first replay as terminal. Refund recovery uses single-use
+dispatch leases and a 12-attempt budget; exhausted operations become terminal
+dead letters and have their retained payloads scrubbed.
 
 ## Battle Hub visibility
 

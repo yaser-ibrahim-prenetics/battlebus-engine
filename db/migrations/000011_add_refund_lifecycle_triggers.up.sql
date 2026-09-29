@@ -6,7 +6,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-  IF NEW.state = 'completed' THEN
+  IF NEW.state IN ('completed', 'dead_letter') THEN
     NEW.event_data := '{}'::jsonb;
   END IF;
   RETURN NEW;

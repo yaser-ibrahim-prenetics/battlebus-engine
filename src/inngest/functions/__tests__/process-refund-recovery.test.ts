@@ -99,6 +99,9 @@ describe("processRefund database recovery", () => {
       claimed: true,
       state: "processing",
       claimToken: "00000000-0000-0000-0000-000000000099",
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
     });
 
     const result = await handler({
@@ -122,6 +125,9 @@ describe("processRefund database recovery", () => {
       claimed: true,
       state: "processing",
       claimToken: "00000000-0000-0000-0000-000000000088",
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
     });
 
     await handler({
@@ -145,6 +151,9 @@ describe("processRefund database recovery", () => {
       claimed: false,
       state: "completed",
       claimToken: null,
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
     });
 
     const result = await handler({

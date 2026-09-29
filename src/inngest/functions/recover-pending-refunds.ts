@@ -16,12 +16,26 @@ export async function runRecoverPendingRefunds({ step, event }: { step: any; eve
 
   const claim = await step.run("claim-refund-recoveries", async () => {
     const claimToken = randomUUID();
-    const claimedCount = await claimRefundRecoveries({ claimToken });
-    return { claimToken, claimedCount };
+    const result = await claimRefundRecoveries({ claimToken });
+    return { claimToken, ...result };
   });
 
   if (claim.claimedCount === 0) {
-    return { status: "idle", dispatched: 0 };
+    if (claim.deadLetteredCount > 0) {
+      logFlowEvent({
+        flow: "refund_recovery",
+        step: "dead_letter",
+        status: "failed",
+        runId,
+        durationMs: Date.now() - flowStart,
+        payload: { deadLettered: claim.deadLetteredCount },
+      });
+    }
+    return {
+      status: "idle",
+      dispatched: 0,
+      deadLettered: claim.deadLetteredCount,
+    };
   }
 
   const dispatch = await step.run("dispatch-refund-recoveries", async () => {
@@ -54,6 +68,7 @@ export async function runRecoverPendingRefunds({ step, event }: { step: any; eve
     durationMs: Date.now() - flowStart,
     payload: {
       claimed: claim.claimedCount,
+      deadLettered: claim.deadLetteredCount,
       dispatched: dispatch.dispatched,
       refundIds: dispatch.refundIds,
     },

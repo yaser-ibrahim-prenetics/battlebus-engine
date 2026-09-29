@@ -6,13 +6,18 @@ export type RefundOperationState =
   | "awaiting_order"
   | "dispatching"
   | "processing"
+  | "creating_line"
   | "line_created"
-  | "completed";
+  | "completed"
+  | "dead_letter";
 
 export interface RefundOperationClaim {
   claimed: boolean;
   state: RefundOperationState;
   claimToken: string | null;
+  d365OrderNumber: string | null;
+  inventoryLotId: string | null;
+  externalIdempotencyKey: string | null;
 }
 
 export interface RefundRecoveryDispatch {
@@ -23,10 +28,18 @@ export interface RefundRecoveryDispatch {
   attempts: number;
 }
 
+export interface RefundRecoveryClaimResult {
+  claimedCount: number;
+  deadLetteredCount: number;
+}
+
 interface RefundOperationClaimRow extends QueryResultRow {
   claimed: boolean;
   state: RefundOperationState;
   claim_token: string | null;
+  d365_order_number: string | null;
+  inventory_lot_id: string | null;
+  external_idempotency_key: string | null;
 }
 
 interface RefundRecoveryDispatchRow extends QueryResultRow {
@@ -35,6 +48,11 @@ interface RefundRecoveryDispatchRow extends QueryResultRow {
   event_name: string;
   event_data: Record<string, unknown>;
   attempts: number;
+}
+
+interface RefundRecoveryClaimRow extends QueryResultRow {
+  claimed_count: number;
+  dead_lettered_count: number;
 }
 
 function requireDatabase(): void {
@@ -48,6 +66,9 @@ function mapClaim(row: RefundOperationClaimRow): RefundOperationClaim {
     claimed: row.claimed,
     state: row.state,
     claimToken: row.claim_token,
+    d365OrderNumber: row.d365_order_number ?? null,
+    inventoryLotId: row.inventory_lot_id ?? null,
+    externalIdempotencyKey: row.external_idempotency_key ?? null,
   };
 }
 
@@ -91,11 +112,14 @@ export async function reserveRefundOperation({
            last_error = NULL
        WHERE refund_operations.state = 'awaiting_order'
          AND refund_operations.available_at <= now()
-       RETURNING true AS claimed, state, claim_token
+       RETURNING true AS claimed, state, claim_token,
+         d365_order_number, inventory_lot_id, external_idempotency_key
      )
-     SELECT claimed, state, claim_token FROM claimed
+     SELECT claimed, state, claim_token, d365_order_number, inventory_lot_id,
+       external_idempotency_key FROM claimed
      UNION ALL
-     SELECT false AS claimed, state, claim_token
+     SELECT false AS claimed, state, claim_token, d365_order_number,
+       inventory_lot_id, external_idempotency_key
      FROM public.refund_operations
      WHERE refund_id = $1
        AND NOT EXISTS (SELECT 1 FROM claimed)
@@ -121,17 +145,21 @@ export async function acceptRefundRecovery({
   const result = await queryDatabase<RefundOperationClaimRow>(
     `WITH accepted AS (
        UPDATE public.refund_operations
-       SET state = 'processing',
+       SET state = resume_state,
+           resume_state = NULL,
            lease_expires_at = now() + ($3 * interval '1 second'),
            last_error = NULL
        WHERE refund_id = $1
          AND claim_token = $2::uuid
-         AND state IN ('dispatching', 'processing')
-       RETURNING true AS claimed, state, claim_token
+         AND state = 'dispatching'
+       RETURNING true AS claimed, state, claim_token,
+         d365_order_number, inventory_lot_id, external_idempotency_key
      )
-     SELECT claimed, state, claim_token FROM accepted
+     SELECT claimed, state, claim_token, d365_order_number, inventory_lot_id,
+       external_idempotency_key FROM accepted
      UNION ALL
-     SELECT false AS claimed, state, claim_token
+     SELECT false AS claimed, state, claim_token, d365_order_number,
+       inventory_lot_id, external_idempotency_key
      FROM public.refund_operations
      WHERE refund_id = $1
        AND NOT EXISTS (SELECT 1 FROM accepted)
@@ -246,35 +274,75 @@ export async function claimRefundRecoveries({
   claimToken,
   batchSize = 50,
   leaseSeconds = 300,
+  maxAttempts = 12,
 }: {
   claimToken: string;
   batchSize?: number;
   leaseSeconds?: number;
-}): Promise<number> {
+  maxAttempts?: number;
+}): Promise<RefundRecoveryClaimResult> {
   requireDatabase();
   const safeBatchSize = Math.max(1, Math.min(batchSize, 100));
   const safeLeaseSeconds = Math.max(60, Math.min(leaseSeconds, 900));
-  const result = await queryDatabase<{ refund_id: string }>(
-    `WITH candidates AS (
+  const safeMaxAttempts = Math.max(2, Math.min(maxAttempts, 100));
+  const result = await queryDatabase<RefundRecoveryClaimRow>(
+    `WITH dead_lettered AS (
+       UPDATE public.refund_operations
+       SET state = 'dead_letter',
+           event_data = '{}'::jsonb,
+           claim_token = NULL,
+           lease_expires_at = NULL,
+           resume_state = NULL,
+           dead_lettered_at = now(),
+           last_error = concat_ws('; ', NULLIF(last_error, ''), 'Recovery attempt limit reached')
+       WHERE attempts >= $4
+         AND (
+           (state = 'awaiting_order' AND available_at <= now())
+           OR (
+             state IN ('dispatching', 'processing', 'creating_line', 'line_created')
+             AND lease_expires_at <= now()
+           )
+         )
+       RETURNING refund_id
+     ), candidates AS (
        SELECT refund_id
        FROM public.refund_operations
-       WHERE (state = 'awaiting_order' AND available_at <= now())
-          OR (state = 'dispatching' AND lease_expires_at <= now())
+       WHERE attempts < $4
+         AND (
+           (state = 'awaiting_order' AND available_at <= now())
+           OR (
+             state IN ('dispatching', 'processing', 'creating_line', 'line_created')
+             AND lease_expires_at <= now()
+           )
+         )
        ORDER BY available_at, created_at, refund_id
        FOR UPDATE SKIP LOCKED
        LIMIT $1
+     ), claimed AS (
+       UPDATE public.refund_operations AS operation
+       SET state = 'dispatching',
+           resume_state = CASE
+             WHEN operation.state = 'awaiting_order' THEN 'processing'
+             WHEN operation.state = 'dispatching' THEN operation.resume_state
+             ELSE operation.state
+           END,
+           claim_token = $2::uuid,
+           lease_expires_at = now() + ($3 * interval '1 second'),
+           attempts = operation.attempts + 1
+       FROM candidates
+       WHERE operation.refund_id = candidates.refund_id
+       RETURNING operation.refund_id
      )
-     UPDATE public.refund_operations AS operation
-     SET state = 'dispatching',
-         claim_token = $2::uuid,
-         lease_expires_at = now() + ($3 * interval '1 second'),
-         attempts = operation.attempts + 1
-     FROM candidates
-     WHERE operation.refund_id = candidates.refund_id
-     RETURNING operation.refund_id`,
-    [safeBatchSize, claimToken, safeLeaseSeconds]
+     SELECT
+       (SELECT count(*) FROM claimed)::integer AS claimed_count,
+       (SELECT count(*) FROM dead_lettered)::integer AS dead_lettered_count`,
+    [safeBatchSize, claimToken, safeLeaseSeconds, safeMaxAttempts]
   );
-  return result.rowCount ?? result.rows.length;
+  const row = result.rows[0];
+  return {
+    claimedCount: row?.claimed_count ?? 0,
+    deadLetteredCount: row?.dead_lettered_count ?? 0,
+  };
 }
 
 export async function loadRefundRecoveryDispatches({

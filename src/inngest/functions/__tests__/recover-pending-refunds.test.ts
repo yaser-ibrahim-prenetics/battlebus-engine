@@ -6,7 +6,10 @@ import {
 } from "@/lib/services/refund-operations";
 import { runRecoverPendingRefunds } from "../recover-pending-refunds";
 
-const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
+const { logFlowEventMock, sendMock } = vi.hoisted(() => ({
+  logFlowEventMock: vi.fn(),
+  sendMock: vi.fn(),
+}));
 
 vi.mock("@/lib/services/refund-operations", () => ({
   claimRefundRecoveries: vi.fn(),
@@ -14,7 +17,7 @@ vi.mock("@/lib/services/refund-operations", () => ({
 }));
 
 vi.mock("@/lib/services/flow-logs", () => ({
-  logFlowEvent: vi.fn(),
+  logFlowEvent: logFlowEventMock,
 }));
 
 vi.mock("../../client", () => ({
@@ -31,7 +34,10 @@ describe("runRecoverPendingRefunds", () => {
   });
 
   it("returns idle without loading payloads when nothing is due", async () => {
-    vi.mocked(claimRefundRecoveries).mockResolvedValue(0);
+    vi.mocked(claimRefundRecoveries).mockResolvedValue({
+      claimedCount: 0,
+      deadLetteredCount: 0,
+    });
     const step = { run: vi.fn(async (_name: string, callback: () => unknown) => callback()) };
 
     const result = await runRecoverPendingRefunds({
@@ -39,13 +45,16 @@ describe("runRecoverPendingRefunds", () => {
       event: { id: "recovery-run" },
     });
 
-    expect(result).toEqual({ status: "idle", dispatched: 0 });
+    expect(result).toEqual({ status: "idle", dispatched: 0, deadLettered: 0 });
     expect(loadRefundRecoveryDispatches).not.toHaveBeenCalled();
     expect(sendMock).not.toHaveBeenCalled();
   });
 
   it("dispatches leased refunds with stable database-attempt event IDs", async () => {
-    vi.mocked(claimRefundRecoveries).mockResolvedValue(1);
+    vi.mocked(claimRefundRecoveries).mockResolvedValue({
+      claimedCount: 1,
+      deadLetteredCount: 0,
+    });
     vi.mocked(loadRefundRecoveryDispatches).mockResolvedValue([
       {
         refundId: "refund-42",
@@ -90,5 +99,29 @@ describe("runRecoverPendingRefunds", () => {
       dispatched: 1,
       refundIds: ["refund-42"],
     });
+  });
+
+  it("reports terminal dead letters without loading scrubbed payloads", async () => {
+    vi.mocked(claimRefundRecoveries).mockResolvedValue({
+      claimedCount: 0,
+      deadLetteredCount: 2,
+    });
+    const step = { run: vi.fn(async (_name: string, callback: () => unknown) => callback()) };
+
+    const result = await runRecoverPendingRefunds({
+      step,
+      event: { id: "recovery-run" },
+    });
+
+    expect(result).toEqual({ status: "idle", dispatched: 0, deadLettered: 2 });
+    expect(loadRefundRecoveryDispatches).not.toHaveBeenCalled();
+    expect(logFlowEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flow: "refund_recovery",
+        step: "dead_letter",
+        status: "failed",
+        payload: { deadLettered: 2 },
+      })
+    );
   });
 });

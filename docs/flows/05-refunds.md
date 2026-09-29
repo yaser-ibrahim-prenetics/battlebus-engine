@@ -156,8 +156,11 @@ If the D365 order is not yet created when the refund arrives:
 - **Order visible**: The leased recovery run performs the D365 refund and marks
   the operation `completed`; the database scrubs the retained event payload.
 
-Expired dispatch leases are recoverable. Once processing has begun, the claim
-is not handed to another event, preventing concurrent D365 refund-line writes.
+Dispatch leases are single-use: accepting a lease atomically moves the row out
+of `dispatching`, so replaying the same token cannot start another worker.
+Expired active states are recoverable. After 12 database recovery attempts, the
+row moves to `dead_letter`, its retained event payload is scrubbed, and its
+minimal error and timing metadata remain available for operator intervention.
 
 ## Currency Handling
 
@@ -188,4 +191,5 @@ existing flow log:
    cannot process the refund.
 3. Recovery dispatches use stable IDs derived from the refund ID and database
    attempt number.
-4. Completion scrubs `event_data` while retaining operational audit metadata.
+4. Completion and dead-lettering scrub `event_data` while retaining operational
+   audit metadata.

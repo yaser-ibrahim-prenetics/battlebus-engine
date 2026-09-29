@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import {
+  acceptRefundRecovery,
   claimRefundRecoveries,
   completeRefundOperation,
   deferRefundUntilOrder,
@@ -49,6 +50,9 @@ describe("refund operations", () => {
       claimed: true,
       state: "processing",
       claimToken: "00000000-0000-0000-0000-000000000099",
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
     });
     expect(queryDatabase).toHaveBeenCalledWith(
       expect.stringContaining("ON CONFLICT (refund_id) DO UPDATE"),
@@ -80,7 +84,14 @@ describe("refund operations", () => {
       claimToken: "00000000-0000-0000-0000-000000000099",
     });
 
-    expect(result).toEqual({ claimed: false, state: "completed", claimToken: null });
+    expect(result).toEqual({
+      claimed: false,
+      state: "completed",
+      claimToken: null,
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
+    });
   });
 
   it("fails closed when PostgreSQL is unavailable", async () => {
@@ -96,6 +107,36 @@ describe("refund operations", () => {
       })
     ).rejects.toThrow("Cloud SQL is required");
     expect(queryDatabase).not.toHaveBeenCalled();
+  });
+
+  it("accepts a recovery lease only through an atomic dispatch transition", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "SELECT",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [
+        {
+          claimed: true,
+          state: "processing",
+          claim_token: "00000000-0000-0000-0000-000000000099",
+        },
+      ],
+    });
+
+    const result = await acceptRefundRecovery({
+      refundId: "refund-42",
+      claimToken: "00000000-0000-0000-0000-000000000099",
+    });
+
+    expect(result.claimed).toBe(true);
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("AND state = 'dispatching'"),
+      ["refund-42", "00000000-0000-0000-0000-000000000099", 900]
+    );
+    expect(vi.mocked(queryDatabase).mock.calls[0]?.[0]).not.toContain(
+      "state IN ('dispatching', 'processing')"
+    );
   });
 
   it("defers an owned refund with bounded exponential backoff", async () => {
@@ -129,11 +170,11 @@ describe("refund operations", () => {
 
   it("claims due and expired recovery dispatches with bounded inputs", async () => {
     vi.mocked(queryDatabase).mockResolvedValueOnce({
-      command: "UPDATE",
-      rowCount: 2,
+      command: "SELECT",
+      rowCount: 1,
       oid: 0,
       fields: [],
-      rows: [{ refund_id: "refund-1" }, { refund_id: "refund-2" }],
+      rows: [{ claimed_count: 2, dead_lettered_count: 1 }],
     });
 
     const count = await claimRefundRecoveries({
@@ -142,12 +183,17 @@ describe("refund operations", () => {
       leaseSeconds: 5,
     });
 
-    expect(count).toBe(2);
+    expect(count).toEqual({ claimedCount: 2, deadLetteredCount: 1 });
     expect(queryDatabase).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE SKIP LOCKED"), [
       100,
       "00000000-0000-0000-0000-000000000099",
       60,
+      12,
     ]);
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("state = 'dead_letter'"),
+      expect.any(Array)
+    );
   });
 
   it("loads recovery payloads only after a leased dispatch claim", async () => {

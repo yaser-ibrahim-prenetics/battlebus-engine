@@ -211,9 +211,11 @@ export const processRefund = inngest.createFunction(
       const status =
         operation.state === "completed"
           ? "already_processed"
-          : operation.state === "awaiting_order"
-            ? "deferred"
-            : "in_progress";
+          : operation.state === "dead_letter"
+            ? "failed"
+            : operation.state === "awaiting_order"
+              ? "deferred"
+              : "in_progress";
       console.log(`[Refund ${refundId}] Skipped — database operation is ${operation.state}`);
       logRefundTraceLifecycle({
         ...refundTrace,
