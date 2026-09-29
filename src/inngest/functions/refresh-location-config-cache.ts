@@ -1,7 +1,7 @@
 import { inngest } from "../client";
 import { THROTTLE_CONFIGS } from "@/lib/utils/constants";
 import { refreshLocationMappings } from "@/lib/services/location-routing";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export const refreshLocationConfigCache = inngest.createFunction(
   {

@@ -5,7 +5,7 @@
 
 import { config } from "@/lib/config";
 import crypto from "crypto";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 interface OrderEvent {
   event: string;

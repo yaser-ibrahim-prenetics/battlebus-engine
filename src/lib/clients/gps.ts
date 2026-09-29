@@ -9,7 +9,7 @@ import { config, GPS_STATUS } from "../config";
 import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
-import { logFlowEvent } from "../services/supabase-flow-logs";
+import { logFlowEvent } from "../services/flow-logs";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
 const OMS_MIN_INTERVAL_MS = Math.max(

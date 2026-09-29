@@ -1,13 +1,13 @@
 // ============================================================================
-// LOCATION SEED — pulls all Shopify locations and upserts into Supabase
+// LOCATION SEED — pulls all Shopify locations and upserts into PostgreSQL
 // ============================================================================
 // POST /api/locations/seed
-//   Seeds (or refreshes) the Supabase `locations` table from the Shopify API.
+//   Seeds (or refreshes) the PostgreSQL `locations` table from the Shopify API.
 //   Run this once after deployment, or any time locations are out of sync.
 //   Safe to call repeatedly — existing routing config is never overwritten.
 //
 // GET /api/locations/seed
-//   Returns the current locations from Supabase (for inspection).
+//   Returns the current locations from PostgreSQL (for inspection).
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAllLocations } from "@/lib/clients/shopify";
@@ -19,7 +19,7 @@ import {
 import { requireServiceAuth } from "@/lib/auth/service-auth";
 
 // ============================================================================
-// GET — inspect current locations in Supabase
+// GET — inspect current locations in PostgreSQL
 // ============================================================================
 
 export async function GET() {
@@ -43,7 +43,7 @@ export async function GET() {
 }
 
 // ============================================================================
-// POST — fetch from Shopify, upsert into Supabase
+// POST — fetch from Shopify, upsert into PostgreSQL
 // ============================================================================
 
 export async function POST(req: NextRequest) {

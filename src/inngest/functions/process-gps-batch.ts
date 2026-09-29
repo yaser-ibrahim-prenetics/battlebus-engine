@@ -10,7 +10,7 @@ import { THROTTLE_CONFIGS, CONCURRENCY_CONFIGS, RETRY_CONFIGS } from "@/lib/util
 
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 const processGpsBatchConfig = Object.freeze({
   id: "process-gps-batch",

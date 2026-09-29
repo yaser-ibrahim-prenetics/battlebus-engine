@@ -18,6 +18,7 @@ gcloud services enable \
   iamcredentials.googleapis.com \
   run.googleapis.com \
   secretmanager.googleapis.com \
+  sqladmin.googleapis.com \
   sts.googleapis.com \
   --project="${project_id}"
 

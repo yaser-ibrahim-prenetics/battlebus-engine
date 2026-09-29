@@ -16,7 +16,7 @@ import * as shopify from "@/lib/clients/shopify";
 import { mapShopifySkuToDynamicsForOrderLine } from "@/lib/transformers/sku";
 import { getTrackingUrl, mapGpsCarrierToShopify } from "@/lib/helpers/tracking";
 import { CONCURRENCY_CONFIGS, THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import type {
   DynamicsFulfilmentLine,
   DynamicsFulfilmentNotificationPayload,

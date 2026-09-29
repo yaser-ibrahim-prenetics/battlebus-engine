@@ -37,15 +37,15 @@ import {
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
-import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
+import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/order-lookup";
 import {
   fetchOrderLines,
   buildLotIdMapFromOrderLines,
   getLotFromSavedOrderLineByShopifyLineItemId,
   filterUnfulfilledServiceLines,
   markServiceLinesFulfilled,
-} from "@/lib/services/supabase-order-lines";
-import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
+} from "@/lib/services/order-lines";
+import { logFlowEvent, logFlowEventSync } from "@/lib/services/flow-logs";
 import {
   getThkFulfilmentWarningMessage,
   isDepositFulfillmentOrder,

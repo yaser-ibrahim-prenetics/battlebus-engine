@@ -35,6 +35,23 @@ empty `battle-platform-database-url` Secret Manager secret. The script never
 adds a database credential value or enables deployment. The deployer can act as
 the migration identity but cannot read the privileged database URL.
 
+Battle Bus application revisions connect with passwordless Cloud SQL IAM
+database authentication. The runtime does not receive the privileged migration
+URL or any database password. Before applying migration `000005`, enable the
+`cloudsql.iam_authentication=on` database flag without removing existing flags,
+then run:
+
+```bash
+./scripts/bootstrap-runtime-database.sh
+```
+
+The script creates the Cloud SQL IAM database user for
+`battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com` and grants the
+runtime identity instance-scoped `roles/cloudsql.client` and
+`roles/cloudsql.instanceUser`. Migration `000005` then grants that database
+user membership in the NOLOGIN `battle_bus_runtime` group role. The group
+inherits the existing `service_role` grants and RLS policy coverage.
+
 Every pull request runs lint, tests, the high-severity production dependency
 audit, database migration validation/integration tests, and the production
 build. A push to `main` deploys only after all five gates pass.
@@ -68,6 +85,8 @@ Release 1 database activation additionally requires:
   version of `battle-platform-database-url`. Only the migration job identity can
   read this secret.
 - `roles/cloudsql.client` on the dedicated migration identity.
+- Cloud SQL IAM database authentication enabled and
+  `scripts/bootstrap-runtime-database.sh` completed for the runtime identity.
 - GitHub repository variable `DATABASE_URL_SECRET_VERSION` set to that numeric
   Secret Manager version. Do not use `latest` for production migrations.
 - GitHub repository variable `ENABLE_DATABASE_MIGRATIONS=true` after staging
@@ -101,6 +120,17 @@ obsolete-schema evidence gate, and first-administrator bootstrap requirement.
 The deployment workflow currently sets safe operational feature flags. Add
 new secret names to the canonical inventory and run the migration script before
 enabling code paths that consume them.
+
+Application revisions receive only these non-secret database settings:
+
+- `CLOUD_SQL_INSTANCE_CONNECTION_NAME=battle-bus-509406:asia-east1:battle-platform-staging-pg16`
+- `DB_NAME=battle_platform`
+- `DB_USER=battle-bus-runtime@battle-bus-509406.iam`
+- `DB_MAX_CONNECTIONS=5`
+
+The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
+Cloud Run service account. `DATABASE_URL` remains reserved for local tooling
+and the isolated migration job.
 
 ## Inngest
 

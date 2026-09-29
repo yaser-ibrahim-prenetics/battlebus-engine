@@ -8,7 +8,7 @@
 import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { CONCURRENCY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 /**
  * Process Cancel Action
