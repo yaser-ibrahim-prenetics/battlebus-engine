@@ -4,6 +4,12 @@ Battle Bus owns the shared PostgreSQL schema used by Battle Bus and Battle Hub.
 Migrations use [golang-migrate](https://github.com/golang-migrate/migrate) and
 are the only supported way to change a deployed database schema.
 
+Battle Bus runtime access is passwordless. Provision the Cloud SQL IAM database
+user with `scripts/bootstrap-runtime-database.sh` before applying migration
+`000005`; that migration binds the IAM user to the NOLOGIN
+`battle_bus_runtime` group role. The application never uses the privileged
+`DATABASE_URL` migration secret.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If
