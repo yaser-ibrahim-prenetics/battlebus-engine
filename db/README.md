@@ -12,9 +12,9 @@ user with `scripts/bootstrap-runtime-database.sh` before applying migration
 
 Battle Hub also uses passwordless IAM authentication for server-side reads.
 Provision it with `scripts/bootstrap-hub-database.sh` before applying migration
-`000007`; that migration binds the Hub IAM database user to the NOLOGIN
-`battle_hub_runtime` role. The role is limited to the durable lifecycle-action
-queue in this release.
+`000008`. Migration `000007` creates the NOLOGIN `battle_hub_runtime` role and
+its read policy; migration `000008` binds the Hub IAM database user to that
+role. The role is limited to the durable lifecycle-action queue in this release.
 
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may

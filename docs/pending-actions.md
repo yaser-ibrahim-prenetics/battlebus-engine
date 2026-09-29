@@ -35,10 +35,12 @@ Migration `000006_create_durable_pending_lifecycle_actions` creates
 - attempt counters and timestamps for auditability;
 - indexes for ready work, expired leases, order lookup, and Hub reporting.
 
-Battle Bus inherits write access through `service_role`. Battle Hub's
-`battle_hub_runtime` role and read policy are added separately by migration
-`000007_add_battle_hub_runtime_access`. The role has `SELECT` only. Browser
-clients and the generic `authenticated` role have no direct access to the queue.
+Battle Bus inherits write access through `service_role`. Migration
+`000007_create_battle_hub_runtime_role` adds Battle Hub's
+`battle_hub_runtime` role and read policy. Migration
+`000008_bind_battle_hub_iam_database_user` binds the Cloud SQL IAM database
+user to that role. The role has `SELECT` only. Browser clients and the generic
+`authenticated` role have no direct access to the queue.
 
 The legacy `orders.pending_actions` column remains during the expand/deploy
 window for rollback compatibility. New Battle Bus revisions do not read or
@@ -81,7 +83,8 @@ durability and replay ownership in Battle Bus.
 ## Deployment order
 
 1. Run `scripts/bootstrap-hub-database.sh`.
-2. Apply migrations `000006` and `000007` through the isolated migration job.
+2. Apply migrations `000006`, `000007`, and `000008` through the isolated
+   migration job.
 3. Deploy Battle Bus so all new actions use Cloud SQL directly.
 4. Deploy Battle Hub and verify `/api/health/database` on its no-traffic
    candidate before promotion.
