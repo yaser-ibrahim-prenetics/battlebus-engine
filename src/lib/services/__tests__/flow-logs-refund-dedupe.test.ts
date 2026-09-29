@@ -36,19 +36,19 @@ describe("hasCompletedRefundFlowLog", () => {
 
   it("returns false when PostgreSQL is not configured", async () => {
     databaseState.configured = false;
-    const { hasCompletedRefundFlowLog } = await import("../supabase-flow-logs");
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("refund-1")).toBe(false);
   });
 
   it("returns false for an empty refundId", async () => {
-    const { hasCompletedRefundFlowLog } = await import("../supabase-flow-logs");
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("")).toBe(false);
     expect(databaseState.query).not.toHaveBeenCalled();
   });
 
   it("returns true when a completed refund log row is found", async () => {
     databaseState.rows = [{ exists: 1 }];
-    const { hasCompletedRefundFlowLog } = await import("../supabase-flow-logs");
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("refund-42")).toBe(true);
     expect(databaseState.query).toHaveBeenCalledOnce();
     expect(databaseState.query.mock.calls[0][0]).toContain("payload->>'refundId' = $2");
@@ -59,13 +59,13 @@ describe("hasCompletedRefundFlowLog", () => {
   });
 
   it("returns false when no rows match", async () => {
-    const { hasCompletedRefundFlowLog } = await import("../supabase-flow-logs");
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("refund-nope")).toBe(false);
   });
 
   it("returns false when PostgreSQL responds with an error (fail open)", async () => {
     databaseState.error = new Error("boom");
-    const { hasCompletedRefundFlowLog } = await import("../supabase-flow-logs");
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("refund-err")).toBe(false);
   });
 });

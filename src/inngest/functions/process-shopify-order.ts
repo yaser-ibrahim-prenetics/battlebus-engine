@@ -32,7 +32,7 @@ import {
   updateOrderLineLotId,
   type OrderLineRecord,
   type SaveOrderLinesResult,
-} from "@/lib/services/supabase-order-lines";
+} from "@/lib/services/order-lines";
 
 /** Shown on `sync-order` step output + supabase.order-lines flow log */
 type OrderLinesSupabaseSyncLog = {
@@ -75,7 +75,7 @@ import { CancelReasonEnum, type ShopifyOrderPayload } from "../events";
 import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
-import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(

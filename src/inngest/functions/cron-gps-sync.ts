@@ -20,7 +20,7 @@ import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 /** GPS status 5 = 异常 (Exception). Any inventory-related exceptionDesc is routed to backorder. */
 const GPS_EXCEPTION_STATUS = 5;

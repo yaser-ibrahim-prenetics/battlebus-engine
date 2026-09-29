@@ -7,7 +7,7 @@
 import crypto from "crypto";
 import { config } from "../config";
 import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
-import { logFlowEvent } from "../services/supabase-flow-logs";
+import { logFlowEvent } from "../services/flow-logs";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 

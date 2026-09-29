@@ -8,7 +8,7 @@
  * runs), the row stays `received`/`failed` and is retried by the
  * `drain-webhook-inbox` cron (see src/inngest/functions/drain-webhook-inbox.ts).
  *
- * Mirrors the defensive style of supabase-flow-logs.ts: every call is
+ * Mirrors the defensive style of flow-logs.ts: every call is
  * wrapped in try/catch and never throws to the caller. When PostgreSQL is
  * unconfigured, reads return empty results and writes are silently skipped
  * (logged via console.warn) — the webhook route still gets to decide

@@ -5,7 +5,7 @@
 // Pushes tracking numbers to PayPal for seller protection
 
 import { config } from "../config";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 // ============================================================================
 // TYPES

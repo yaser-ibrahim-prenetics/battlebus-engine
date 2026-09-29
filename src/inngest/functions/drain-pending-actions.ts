@@ -20,7 +20,7 @@ import {
 } from "@/lib/services/pending-actions";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export async function runDrainPendingActions({ step, event }: { step: any; event: any }) {
   if (!config.csPlatform.enabled) {

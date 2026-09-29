@@ -6,10 +6,11 @@
  *   SHOPIFY_IM8_SHOP_DOMAIN, SHOPIFY_IM8_ACCESS_TOKEN
  *   D365_BASE_URL, D365_CLIENT_ID, D365_CLIENT_SECRET, D365_TENANT_ID
  *   GPS_API_KEY, GPS_API_SECRET
- *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ *   DATABASE_URL, or CLOUD_SQL_INSTANCE_CONNECTION_NAME + DB_NAME + DB_USER
  */
 
 import { config } from "@/lib/config";
+import { queryDatabase } from "@/lib/db/database";
 
 // ─── Token cache for D365 ───────────────────────────────────────────────────
 let d365Token: { accessToken: string; expiresAt: number } | null = null;
@@ -283,26 +284,15 @@ export const gpsE2e = {
   },
 };
 
-// ─── Supabase ───────────────────────────────────────────────────────────────
+// ─── PostgreSQL ─────────────────────────────────────────────────────────────
 
-export const supabaseE2e = {
+export const databaseE2e = {
   async getOrder(shopifyOrderId: string): Promise<any | null> {
-    const url = process.env.SUPABASE_URL!;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-    const res = await fetch(
-      `${url}/rest/v1/orders?shopify_order_id=eq.${shopifyOrderId}&select=*`,
-      {
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-        },
-      }
+    const result = await queryDatabase<Record<string, unknown>>(
+      `SELECT * FROM public.orders WHERE shopify_order_id = $1 LIMIT 1`,
+      [shopifyOrderId]
     );
-
-    if (!res.ok) return null;
-    const orders = await res.json();
-    return orders?.[0] || null;
+    return result.rows[0] || null;
   },
 
   async pollForStatus(

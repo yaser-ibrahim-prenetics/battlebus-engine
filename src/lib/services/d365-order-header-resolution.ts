@@ -11,7 +11,7 @@ import * as warehouseHelper from "@/lib/helpers/warehouse";
 import { config } from "@/lib/config";
 import type { D365ODataTraceContext } from "@/lib/utils/d365-odata-trace";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
-import { fetchD365HintByShopifyOrderId } from "./supabase-order-lookup";
+import { fetchD365HintByShopifyOrderId } from "./order-lookup";
 
 const MAX_THK_REF_AUDIT_ROWS = 25;
 

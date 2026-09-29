@@ -36,7 +36,7 @@ import { config } from "@/lib/config";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
-import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 import { shopifyAdminGraphql } from "@/lib/clients/shopify";
 
 type ReconType = "salesorder" | "gps_us" | "gps_uk" | "fulfillment";

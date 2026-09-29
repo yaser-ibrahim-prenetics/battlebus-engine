@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   validateE2eEnv,
   createTestShopifyOrder,
-  pollSupabaseForOrder,
+  pollDatabaseForOrder,
   cancelTestShopifyOrder,
   closeTestShopifyOrder,
 } from "./setup";
@@ -15,7 +15,7 @@ import {
  *
  * Flow:
  *   1. Create a real Shopify order (tagged "testing")
- *   2. Poll Supabase until the order appears with expected status
+ *   2. Poll PostgreSQL until the order appears with expected status
  *   3. Verify D365 order exists
  *   4. Cancel the order and verify cancellation propagates
  *   5. Clean up test data
@@ -56,10 +56,10 @@ describe("Full Order Lifecycle (E2E)", () => {
     console.log(`E2E: Created test order ${testOrderName} (${testOrderId})`);
   }, 30000);
 
-  it("order appears in Supabase with processing/completed status", async () => {
+  it("order appears in PostgreSQL with processing/completed status", async () => {
     if (!testOrderId) return;
 
-    const order = await pollSupabaseForOrder(testOrderId, "completed", 90000);
+    const order = await pollDatabaseForOrder(testOrderId, "completed", 90000);
 
     expect(order).toBeDefined();
     expect(order.shopify_order_id).toBe(testOrderId);
@@ -73,11 +73,11 @@ describe("Full Order Lifecycle (E2E)", () => {
 
     // Poll for cancellation status
     try {
-      const cancelledOrder = await pollSupabaseForOrder(testOrderId, "cancelled", 60000);
+      const cancelledOrder = await pollDatabaseForOrder(testOrderId, "cancelled", 60000);
       expect(cancelledOrder.status).toBe("cancelled");
       console.log(`E2E: Order ${testOrderName} cancelled successfully`);
     } catch {
-      console.warn(`E2E: Cancellation status not reflected in Supabase within timeout`);
+      console.warn(`E2E: Cancellation status not reflected in PostgreSQL within timeout`);
     }
   }, 90000);
 });

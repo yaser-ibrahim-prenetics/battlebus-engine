@@ -11,8 +11,8 @@ import { config } from "@/lib/config";
 import { getOutboundOrdersDetails } from "@/lib/clients/gps";
 import { isGpsUkWarehouse, isValidGpsWarehouse } from "@/lib/helpers/warehouse";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { fetchGpsRecoveryContextByShopifyOrderName } from "@/lib/services/supabase-order-lookup";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { fetchGpsRecoveryContextByShopifyOrderName } from "@/lib/services/order-lookup";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import type { IGpsIndividualFulfilment, IGpsIndividualOrderData } from "@/lib/types/gps";
 
 type GpsWarehouseName = "GPS Warehouse" | "GPS UK Warehouse";

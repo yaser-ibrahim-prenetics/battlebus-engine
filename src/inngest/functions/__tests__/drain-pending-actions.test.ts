@@ -9,7 +9,7 @@ vi.mock("@/lib/services/pending-actions", () => ({
   clearPendingActionsBatch: vi.fn(),
 }));
 
-vi.mock("@/lib/services/supabase-flow-logs", () => ({
+vi.mock("@/lib/services/flow-logs", () => ({
   logFlowEvent: vi.fn(),
 }));
 

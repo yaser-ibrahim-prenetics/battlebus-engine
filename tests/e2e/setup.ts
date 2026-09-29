@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { queryDatabase } from "@/lib/db/database";
 
 const REQUIRED_ENV_VARS = [
   "SHOPIFY_IM8_SHOP_DOMAIN",
@@ -7,12 +8,17 @@ const REQUIRED_ENV_VARS = [
   "D365_CLIENT_ID",
   "D365_CLIENT_SECRET",
   "D365_TENANT_ID",
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
 ];
 
 export function validateE2eEnv(): { valid: boolean; missing: string[] } {
   const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+  const hasDatabase = !!(
+    process.env.DATABASE_URL ||
+    (process.env.CLOUD_SQL_INSTANCE_CONNECTION_NAME && process.env.DB_NAME && process.env.DB_USER)
+  );
+  if (!hasDatabase) {
+    missing.push("DATABASE_URL or CLOUD_SQL_INSTANCE_CONNECTION_NAME+DB_NAME+DB_USER");
+  }
   return { valid: missing.length === 0, missing };
 }
 
@@ -53,37 +59,23 @@ export async function createTestShopifyOrder(overrides?: {
   };
 }
 
-export async function pollSupabaseForOrder(
+export async function pollDatabaseForOrder(
   shopifyOrderId: string,
   expectedStatus: string,
   timeoutMs = 60000,
   pollIntervalMs = 3000
 ): Promise<any> {
-  const supabaseUrl = process.env.SUPABASE_URL!;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
     try {
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/orders?shopify_order_id=eq.${shopifyOrderId}&select=*`,
-        {
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-          },
-        }
+      const result = await queryDatabase<Record<string, unknown>>(
+        `SELECT * FROM public.orders WHERE shopify_order_id = $1 LIMIT 1`,
+        [shopifyOrderId]
       );
-
-      if (response.ok) {
-        const orders = await response.json();
-        if (orders.length > 0) {
-          const order = orders[0];
-          if (order.status === expectedStatus) {
-            return order;
-          }
-        }
+      const order = result.rows[0];
+      if (order?.status === expectedStatus) {
+        return order;
       }
     } catch {
       // continue polling

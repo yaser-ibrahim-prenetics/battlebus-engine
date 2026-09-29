@@ -13,7 +13,7 @@
 
 import crypto from "crypto";
 import { config } from "../config";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);

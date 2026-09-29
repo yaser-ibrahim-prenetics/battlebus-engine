@@ -13,10 +13,10 @@ import {
   getUnpublishedInboxEntries,
   markInboxPublished,
   markInboxFailed,
-} from "@/lib/services/supabase-webhook-inbox";
+} from "@/lib/services/webhook-inbox";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export const drainWebhookInbox = inngest.createFunction(
   {

@@ -12,7 +12,7 @@ function databaseAvailable(): boolean {
   return available;
 }
 
-export type SupabaseOrderD365Hint = {
+export type DatabaseOrderD365Hint = {
   d365OrderNumber: string;
   warehouse: string | null;
 };
@@ -27,7 +27,7 @@ export type GpsRecoveryOrderContext = {
   d365OrderNumber: string | null;
 };
 
-function rowToHint(data: Record<string, unknown> | null | undefined): SupabaseOrderD365Hint | null {
+function rowToHint(data: Record<string, unknown> | null | undefined): DatabaseOrderD365Hint | null {
   if (!data?.d365_order_number || typeof data.d365_order_number !== "string") {
     return null;
   }
@@ -57,7 +57,7 @@ function shopifyNameLookupVariants(name: string | null | undefined): string[] {
 export async function fetchD365HintByShopifyOrderId(
   shopifyOrderId: string,
   shopifyOrderName?: string | null
-): Promise<SupabaseOrderD365Hint | null> {
+): Promise<DatabaseOrderD365Hint | null> {
   if (!databaseAvailable()) return null;
 
   const variants = shopifyNameLookupVariants(shopifyOrderName);

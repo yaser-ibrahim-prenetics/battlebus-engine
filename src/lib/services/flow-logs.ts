@@ -1,5 +1,5 @@
 /**
- * Supabase Flow Logs Drain — Buffered & Non-Blocking
+ * PostgreSQL Flow Logs Drain — Buffered & Non-Blocking
  *
  * Writes structured flow/step/client log events to the `flow_logs` table.
  * Read by Battle Hub UI (Flow Logs page + per-order detail).

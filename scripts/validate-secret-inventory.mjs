@@ -24,7 +24,6 @@ const isCredentialName = (name) =>
     "INNGEST_EVENT_KEY",
     "INNGEST_SIGNING_KEY",
     "LOOP_WEBHOOK_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
   ].includes(name);
 
 const discovered = new Set();

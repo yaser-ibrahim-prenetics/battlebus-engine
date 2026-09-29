@@ -11,10 +11,10 @@ import {
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
-import type { WebhookInboxEvent } from "@/lib/services/supabase-webhook-inbox";
+import type { WebhookInboxEvent } from "@/lib/services/webhook-inbox";
 
 function validateWebhookPayload(topic: string | null, payload: any): string | null {
   if (!topic) return "Missing x-shopify-topic header";

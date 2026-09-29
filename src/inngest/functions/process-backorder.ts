@@ -27,7 +27,7 @@ import { toGpsOutboundOrder, shouldSendToGps } from "@/lib/transformers/order";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
 import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import { advanceRunSequence } from "@/lib/services/run-sequence";
 
 export const processBackorder = inngest.createFunction(

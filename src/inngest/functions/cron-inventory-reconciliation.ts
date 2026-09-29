@@ -20,7 +20,7 @@ import * as inventorySync from "@/lib/services/inventory-sync";
 import type { InventoryDiff } from "@/lib/services/inventory-sync";
 import * as slack from "@/lib/clients/slack";
 import { THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 // ============================================================================
 // CONFIGURATION

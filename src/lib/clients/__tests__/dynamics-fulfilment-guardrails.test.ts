@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../services/supabase-flow-logs", () => ({
+vi.mock("../../services/flow-logs", () => ({
   logFlowEvent: vi.fn(),
 }));
 

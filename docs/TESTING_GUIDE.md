@@ -14,8 +14,8 @@ For full test cases across all flows (goals, preconditions, constraints, expecte
    ```
 
 2. **Environment variables** (in `.env.local`):
-   - `SUPABASE_URL` - Supabase project URL
-   - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+   - `DATABASE_URL` - local PostgreSQL URL; alternatively use the Cloud SQL IAM tuple
+     `CLOUD_SQL_INSTANCE_CONNECTION_NAME`, `DB_NAME`, and `DB_USER`
    - `SHOPIFY_IM8_WEBHOOK_SECRET` - Shopify webhook secret
    - `BATTLE_BUS_URL` - Battle Bus URL (default: http://localhost:7000)
 
@@ -97,11 +97,11 @@ npm run test:product-hub
 
 ## Location Routing Testing
 
-The location routing service now fetches directly from Supabase:
+The location routing service now fetches directly from PostgreSQL:
 
-1. **Verify Supabase connection:**
-   - Check `.env.local` has `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-   - Location routing will fallback to config if Supabase unavailable
+1. **Verify PostgreSQL connection:**
+   - Check `.env.local` has `DATABASE_URL` for local development
+   - Location routing will fall back to the Hub API and config if PostgreSQL is unavailable
 
 2. **Test location mapping:**
    - Location routing caches mappings for 5 minutes
