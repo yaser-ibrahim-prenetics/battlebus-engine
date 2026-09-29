@@ -7,7 +7,7 @@ PostgreSQL schema. It introduces a deterministic, paired `golang-migrate`
 workflow while keeping the application rollout additive: no legacy order
 columns or business data are removed.
 
-The release is safe to merge before a Supabase project is connected. CI tests
+The release is safe to merge before a Cloud SQL instance is connected. CI tests
 the complete migration lifecycle on disposable PostgreSQL, while remote
 migration execution remains disabled until the explicit
 `ENABLE_DATABASE_MIGRATIONS=true` repository gate is enabled.
@@ -54,12 +54,14 @@ migration execution remains disabled until the explicit
 
 No cloud database was created or modified by this release. Before activation:
 
-1. Create or select the non-production Supabase project and region.
-2. Add its migration connection URL to the GCP secret
+1. Create a non-production Cloud SQL for PostgreSQL 16 instance in the same
+   region as Battle Bus.
+2. Add its privileged Unix-socket migration connection URL to the GCP secret
    `battle-platform-database-url`.
 3. Set `DATABASE_URL_SECRET_VERSION` to the numeric enabled secret version.
-4. Configure Battle Bus and Battle Hub Supabase runtime credentials.
-5. Bootstrap the dedicated Cloud Run migration job with an immutable image.
+4. Grant the migration identity `roles/cloudsql.client`.
+5. Bootstrap the dedicated Cloud Run migration job with an immutable image and
+   the Cloud SQL instance attachment.
 6. Apply and validate the migrations in staging.
 7. Pre-register the initial Battle Hub superadmin and workspace membership.
 8. Enable `ENABLE_DATABASE_MIGRATIONS=true` only after staging acceptance.

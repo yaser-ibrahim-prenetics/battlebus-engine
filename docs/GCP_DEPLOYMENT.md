@@ -14,6 +14,7 @@ contain a Google Cloud service-account key.
 - GitHub repository: `yaser-ibrahim-prenetics/battlebus-engine`
 - Cloud Run service: `battle-bus`
 - Cloud Run migration job: `battle-bus-migrate`
+- Cloud SQL PostgreSQL 16 instance: `battle-platform-staging-pg16`
 - Region: `asia-east1`
 - Artifact Registry repository: `battle-bus`
 - Runtime identity: `battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com`
@@ -62,11 +63,11 @@ Secret Manager-backed environment names:
 
 Release 1 database activation additionally requires:
 
-- `SUPABASE_URL` on the Cloud Run service.
-- `SUPABASE_SERVICE_ROLE_KEY` on the Cloud Run service, backed by Secret Manager.
-- A privileged direct or session-mode PostgreSQL URL stored as an enabled
+- A Cloud SQL for PostgreSQL 16 instance in `asia-east1`.
+- A privileged Cloud SQL Unix-socket PostgreSQL URL stored as an enabled
   version of `battle-platform-database-url`. Only the migration job identity can
   read this secret.
+- `roles/cloudsql.client` on the dedicated migration identity.
 - GitHub repository variable `DATABASE_URL_SECRET_VERSION` set to that numeric
   Secret Manager version. Do not use `latest` for production migrations.
 - GitHub repository variable `ENABLE_DATABASE_MIGRATIONS=true` after staging
@@ -81,13 +82,15 @@ time, bootstrap the job with an already-pushed image:
 MIGRATION_IMAGE_URI="asia-east1-docker.pkg.dev/battle-bus-509406/battle-bus/battle-bus-migrations:FULL_GIT_SHA" \
 MIGRATION_RELEASE_SHA="FULL_GIT_SHA" \
 DATABASE_URL_SECRET_VERSION="1" \
+CLOUD_SQL_INSTANCE="battle-bus-509406:asia-east1:battle-platform-staging-pg16" \
 ./scripts/bootstrap-migration-job.sh
 ```
 
-The bootstrap configures one task, no automatic retries, a 15-minute timeout,
-the dedicated migration identity, and a numeric Secret Manager version. It does
-not execute the job. The deployment workflow updates and executes the job only
-when `ENABLE_DATABASE_MIGRATIONS=true`, waits for success, and creates the new
+The bootstrap attaches the Cloud SQL instance and configures one task, no
+automatic retries, a 15-minute timeout, the dedicated migration identity, and a
+numeric Secret Manager version. It does not execute the job. The deployment
+workflow updates and executes the job only when
+`ENABLE_DATABASE_MIGRATIONS=true`, waits for success, and creates the new
 application revision only afterward. Main deployments are serialized because a
 Cloud Run Job can continue even if its GitHub runner disconnects.
 

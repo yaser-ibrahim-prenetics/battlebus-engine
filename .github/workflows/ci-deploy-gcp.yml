@@ -23,6 +23,7 @@ env:
   ARTIFACT_REPOSITORY: battle-bus
   CLOUD_RUN_SERVICE: battle-bus
   MIGRATION_JOB: battle-bus-migrate
+  CLOUD_SQL_INSTANCE: battle-bus-509406:asia-east1:battle-platform-staging-pg16
   DATABASE_URL_SECRET: battle-platform-database-url
   RUNTIME_SERVICE_ACCOUNT: battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com
   MIGRATION_SERVICE_ACCOUNT: battle-bus-migrator@battle-bus-509406.iam.gserviceaccount.com
@@ -208,17 +209,9 @@ jobs:
               echo "Missing migration service account: ${MIGRATION_SERVICE_ACCOUNT}"
               exit 1
             fi
-            for required_name in SUPABASE_URL; do
-              if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
-                echo "Cloud Run is missing required database runtime configuration: ${required_name}"
-                exit 1
-              fi
-            done
-            if ! jq --exit-status '
-              any(.spec.template.spec.containers[0].env[]?;
-                .name == "SUPABASE_SERVICE_ROLE_KEY" and .valueFrom.secretKeyRef? != null)
-            ' <<<"${service_json}" >/dev/null; then
-              echo "Cloud Run is missing Secret Manager-backed SUPABASE_SERVICE_ROLE_KEY."
+            if ! gcloud sql instances describe "${CLOUD_SQL_INSTANCE##*:}" \
+              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "Missing Cloud SQL instance: ${CLOUD_SQL_INSTANCE}"
               exit 1
             fi
           fi
@@ -303,6 +296,7 @@ jobs:
             --region="${GCP_REGION}" \
             --project="${GCP_PROJECT_ID}" \
             --service-account="${MIGRATION_SERVICE_ACCOUNT}" \
+            --set-cloudsql-instances="${CLOUD_SQL_INSTANCE}" \
             --set-secrets="DATABASE_URL=${DATABASE_URL_SECRET}:${DATABASE_URL_SECRET_VERSION}" \
             --set-env-vars="MIGRATION_RELEASE_SHA=${GITHUB_SHA},DATABASE_URL_SECRET_VERSION=${DATABASE_URL_SECRET_VERSION}" \
             --tasks=1 \

@@ -5,6 +5,7 @@ project_id="${GCP_PROJECT_ID:-battle-bus-509406}"
 region="${GCP_REGION:-asia-east1}"
 migration_job="${MIGRATION_JOB:-battle-bus-migrate}"
 database_url_secret="${DATABASE_URL_SECRET:-battle-platform-database-url}"
+cloud_sql_instance="${CLOUD_SQL_INSTANCE:-${project_id}:${region}:battle-platform-staging-pg16}"
 migration_service_account="${MIGRATION_SERVICE_ACCOUNT:-battle-bus-migrator@${project_id}.iam.gserviceaccount.com}"
 deployer_service_account="${DEPLOY_SERVICE_ACCOUNT:-battle-bus-deployer@${project_id}.iam.gserviceaccount.com}"
 migration_image_uri="${MIGRATION_IMAGE_URI:-}"
@@ -23,6 +24,11 @@ fi
 
 if [[ ! "${migration_release_sha}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "MIGRATION_RELEASE_SHA must be the full 40-character Git commit SHA." >&2
+  exit 1
+fi
+
+if [[ "${cloud_sql_instance}" != "${project_id}:${region}:"* ]]; then
+  echo "CLOUD_SQL_INSTANCE must identify an instance in ${project_id}/${region}." >&2
   exit 1
 fi
 
@@ -59,6 +65,12 @@ gcloud secrets add-iam-policy-binding "${database_url_secret}" \
   --project="${project_id}" \
   --quiet >/dev/null
 
+gcloud projects add-iam-policy-binding "${project_id}" \
+  --member="serviceAccount:${migration_service_account}" \
+  --role=roles/cloudsql.client \
+  --condition="expression=resource.name == 'projects/${project_id}/instances/${cloud_sql_instance##*:}' && resource.service == 'sqladmin.googleapis.com',title=BattleBusMigrationInstanceOnly,description=Connect only to the Battle Platform migration instance" \
+  --quiet >/dev/null
+
 gcloud iam service-accounts add-iam-policy-binding "${migration_service_account}" \
   --member="serviceAccount:${deployer_service_account}" \
   --role=roles/iam.serviceAccountUser \
@@ -70,6 +82,7 @@ gcloud run jobs deploy "${migration_job}" \
   --region="${region}" \
   --project="${project_id}" \
   --service-account="${migration_service_account}" \
+  --set-cloudsql-instances="${cloud_sql_instance}" \
   --set-secrets="DATABASE_URL=${database_url_secret}:${database_url_secret_version}" \
   --set-env-vars="MIGRATION_RELEASE_SHA=${migration_release_sha},DATABASE_URL_SECRET_VERSION=${database_url_secret_version}" \
   --tasks=1 \

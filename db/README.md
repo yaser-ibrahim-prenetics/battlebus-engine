@@ -19,9 +19,12 @@ columns. Cleanup and column removal must be delivered later as explicit
 contract migrations after all application revisions have stopped using them.
 
 The migrations also replace legacy anonymous-write policies with policies for
-registered, authenticated users. Battle Bus writes with the Supabase service
-role. A first Battle Hub administrator must be pre-registered through a
-service-role-controlled process before interactive sign-in can succeed.
+registered, authenticated users. On Cloud SQL the `anon`, `authenticated`, and
+`service_role` names are NOLOGIN PostgreSQL group roles retained for schema and
+RLS compatibility. Concrete Cloud Run identities receive only the group-role
+membership they need. A first Battle Hub administrator must be pre-registered
+through a service-role-controlled process before interactive sign-in can
+succeed.
 
 ## File convention
 
@@ -65,15 +68,16 @@ never runs destructive down migrations.
 
 ## Prerequisites
 
-- PostgreSQL 15 or newer, or a current Supabase PostgreSQL project.
+- PostgreSQL 15 or newer. Cloud deployments use Cloud SQL PostgreSQL 16.
 - `golang-migrate` v4.20.1.
 - `psql` for local migration integration tests.
 - A direct or session-mode PostgreSQL connection string with TLS. Do not use a
   transaction-mode pooler for DDL migrations.
 
-The application uses `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Migrations
-use a separate privileged `DATABASE_URL`; the latter must never be exposed to
-the browser or stored in a committed environment file.
+Migrations use a separate privileged `DATABASE_URL`; it must never be exposed
+to the browser or stored in a committed environment file. On Cloud Run it uses
+the instance's Unix socket and is injected from Secret Manager only into the
+dedicated migration job.
 
 ## Commands
 
@@ -99,14 +103,14 @@ up -> assertions` against disposable PostgreSQL.
 Production migration execution is guarded by the GitHub repository variable
 `ENABLE_DATABASE_MIGRATIONS=true`. Before enabling it:
 
-1. Create a development or staging Supabase project in the nearest supported
-   region to the Cloud Run deployment.
-2. Add its privileged session/direct connection string as a new version of the
-   GCP Secret Manager secret `battle-platform-database-url`.
+1. Create a development or staging Cloud SQL PostgreSQL 16 instance in the same
+   region as the Cloud Run deployment.
+2. Add its privileged Unix-socket connection string as a new version of the GCP
+   Secret Manager secret `battle-platform-database-url`.
 3. Set `DATABASE_URL_SECRET_VERSION` to that numeric enabled version; production
    migration jobs never bind `latest`.
-4. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Battle Bus Cloud
-   Run and the matching Supabase variables on Battle Hub.
+4. Grant the dedicated migration identity `roles/cloudsql.client` and attach
+   the instance to the migration job.
 5. Run `scripts/bootstrap-gcp.sh`, then bootstrap the pre-pushed immutable
    migration image with `scripts/bootstrap-migration-job.sh`.
 6. Run the pipeline to apply the migrations in staging.
