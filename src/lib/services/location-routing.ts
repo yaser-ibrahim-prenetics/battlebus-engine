@@ -3,7 +3,7 @@
 // ============================================================================
 // Provides warehouse + DataAreaId routing for orders and inventory sync.
 //
-// Data model (Supabase `locations` table columns used here):
+// Data model (Cloud SQL `locations` table columns used here):
 //   shopify_location_id       — Shopify numeric location ID
 //   warehouse_name            — e.g. "GPS Warehouse", "GPS UK Warehouse"
 //   dynamics_data_area_id     — default dataAreaId for this location
@@ -23,8 +23,8 @@
 //   2. Location-level default           (dynamics_data_area_id)
 //   3. Country-level routing table      (warehouse-config.json countryRouting)
 
-import { createClient } from "@supabase/supabase-js";
 import { config } from "@/lib/config";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import warehouseConfig from "../mappings/warehouse-config.json";
@@ -66,18 +66,10 @@ interface LocationCacheSnapshot {
 }
 
 // ============================================================================
-// Supabase client
+// Database configuration
 // ============================================================================
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
-const supabase =
-  supabaseUrl && supabaseServiceKey
-    ? createClient(supabaseUrl, supabaseServiceKey, {
-        auth: { autoRefreshToken: false, persistSession: false },
-      })
-    : null;
+const databaseAvailable = () => isDatabaseConfigured();
 
 // ============================================================================
 // Cache
@@ -147,8 +139,8 @@ function rowToMapping(row: any): LocationMapping {
 }
 
 // Location source-of-truth priority:
-//   1. Supabase `locations` table  (live — preferred)
-//   2. Battle Hub /api/locations/mappings  (fallback when Supabase is unavailable)
+//   1. Cloud SQL `locations` table  (live — preferred)
+//   2. Battle Hub /api/locations/mappings  (fallback when PostgreSQL is unavailable)
 //   3. Persisted file-based cache snapshot  (fallback when both APIs are down)
 //   4. Hardcoded production IDs  (last-resort for production deployments)
 // After (1)–(3), we **merge** ACTIVE_SHOPIFY_LOCATION_MAPPINGS (SHOPIFY_PROD_* or
@@ -157,7 +149,7 @@ function rowToMapping(row: any): LocationMapping {
 // determineWarehouse(), which is used when no location ID can be resolved at all.
 
 /**
- * Adds env location rows for the active store mode (prod vs test) when Hub/Supabase omits that ID.
+ * Adds env location rows for the active store mode (prod vs test) when Hub/PostgreSQL omits that ID.
  */
 function mergeStaticProductionLocationOverrides(dynamic: LocationMapping[]): LocationMapping[] {
   if (!ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length) return dynamic;
@@ -228,35 +220,25 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
     }
   }
 
-  if (!supabase) {
-    console.warn("[LocationRouting] Supabase not configured — trying Hub API fallback");
-    return fetchFromHubApi("supabase_not_configured");
+  if (!databaseAvailable()) {
+    console.warn("[LocationRouting] PostgreSQL not configured — trying Hub API fallback");
+    return fetchFromHubApi("database_not_configured");
   }
 
   try {
-    const { data, error } = await supabase
-      .from("locations" as any)
-      .select("*")
-      .eq("active", true)
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error("[LocationRouting] Supabase fetch error:", error);
-      return fetchFromHubApi("supabase_error");
-    }
-
-    const mappings = (data || []).map(rowToMapping);
+    const result = await queryDatabase(
+      `SELECT * FROM public.locations WHERE active = true ORDER BY name ASC`
+    );
+    const mappings = result.rows.map(rowToMapping);
     if (mappings.length === 0) {
-      console.warn(
-        "[LocationRouting] Supabase returned 0 active locations — trying Hub API fallback"
-      );
-      return fetchFromHubApi("supabase_empty");
+      console.warn("[LocationRouting] PostgreSQL returned 0 active locations — trying Hub API fallback");
+      return fetchFromHubApi("database_empty");
     }
-    console.log(`[LocationRouting] ✅ Fetched ${mappings.length} location mappings from Supabase`);
+    console.log(`[LocationRouting] ✅ Fetched ${mappings.length} location mappings from PostgreSQL`);
     return mappings;
   } catch (err) {
     console.error("[LocationRouting] Unexpected error fetching mappings:", err);
-    return fetchFromHubApi("supabase_exception");
+    return fetchFromHubApi("database_exception");
   }
 }
 
@@ -302,7 +284,7 @@ export async function getLocationMappings(forceRefresh = false): Promise<Locatio
   if (isProductionEnvironment() && ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length > 0) {
     console.warn(
       `[LocationRouting] ⚠️ All dynamic sources exhausted — falling back to ${ACTIVE_SHOPIFY_LOCATION_MAPPINGS.length} env location mappings (active store mode). ` +
-        `Check Supabase connectivity and Battle Hub availability.`
+        `Check PostgreSQL connectivity and Battle Hub availability.`
     );
     locationCache = {
       mappings: ACTIVE_SHOPIFY_LOCATION_MAPPINGS,
@@ -393,7 +375,7 @@ export async function getLocationRoutingDebugContext(
 // ============================================================================
 
 /**
- * Upsert a location into Supabase.
+ * Upsert a location into Cloud SQL.
  *
  * For warehouse_name, dynamics_data_area_id and country_data_area_mapping:
  * - On CREATE  → write the auto-detected values as defaults.
@@ -421,76 +403,71 @@ export async function upsertLocation(params: {
   defaultDataAreaId?: string | null;
   isCreate: boolean;
 }): Promise<void> {
-  if (!supabase) {
-    console.warn("[LocationRouting] Supabase not configured — skipping upsert");
+  if (!databaseAvailable()) {
+    console.warn("[LocationRouting] PostgreSQL not configured — skipping upsert");
     return;
   }
 
   try {
     // Check if row already exists
-    const { data: existing } = await supabase
-      .from("locations" as any)
-      .select("id, warehouse_name, dynamics_data_area_id, country_data_area_mapping")
-      .eq("shopify_location_id", params.shopifyLocationId)
-      .maybeSingle();
-
-    const now = new Date().toISOString();
+    const existingResult = await queryDatabase<{ id: string }>(
+      `SELECT id FROM public.locations WHERE shopify_location_id = $1 LIMIT 1`,
+      [params.shopifyLocationId]
+    );
+    const existing = existingResult.rows[0];
 
     if (existing) {
       // UPDATE — only touch address fields + active/name; preserve routing config
-      const { error } = await supabase
-        .from("locations" as any)
-        .update({
-          name: params.name,
-          address_line1: params.addressLine1 ?? null,
-          address_line2: params.addressLine2 ?? null,
-          city: params.city ?? null,
-          province: params.province ?? null,
-          country: params.country ?? null,
-          zip: params.zip ?? null,
-          phone: params.phone ?? null,
-          active: params.active,
-          fulfillment_service_id: params.fulfillmentServiceId ?? null,
-          updated_at: now,
-        } as any)
-        .eq("shopify_location_id", params.shopifyLocationId);
-
-      if (error) {
-        console.error("[LocationRouting] Error updating location:", error);
-      } else {
-        console.log(
-          `[LocationRouting] ✅ Updated location ${params.shopifyLocationId} (preserved routing config)`
-        );
-      }
+      await queryDatabase(
+        `UPDATE public.locations
+         SET name = $2, address_line1 = $3, address_line2 = $4, city = $5,
+             province = $6, country = $7, zip = $8, phone = $9, active = $10,
+             fulfillment_service_id = $11, updated_at = now()
+         WHERE shopify_location_id = $1`,
+        [
+          params.shopifyLocationId,
+          params.name,
+          params.addressLine1 ?? null,
+          params.addressLine2 ?? null,
+          params.city ?? null,
+          params.province ?? null,
+          params.country ?? null,
+          params.zip ?? null,
+          params.phone ?? null,
+          params.active,
+          params.fulfillmentServiceId ?? null,
+        ]
+      );
+      console.log(
+        `[LocationRouting] ✅ Updated location ${params.shopifyLocationId} (preserved routing config)`
+      );
     } else {
       // INSERT — write everything including default routing values
-      const { error } = await supabase.from("locations" as any).insert({
-        id: params.shopifyLocationId,
-        shopify_location_id: params.shopifyLocationId,
-        name: params.name,
-        warehouse_name: params.defaultWarehouseName ?? null,
-        dynamics_data_area_id: params.defaultDataAreaId ?? null,
-        country_data_area_mapping: [] as any,
-        address_line1: params.addressLine1 ?? null,
-        address_line2: params.addressLine2 ?? null,
-        city: params.city ?? null,
-        province: params.province ?? null,
-        country: params.country ?? null,
-        zip: params.zip ?? null,
-        phone: params.phone ?? null,
-        active: params.active,
-        fulfillment_service_id: params.fulfillmentServiceId ?? null,
-        created_at: now,
-        updated_at: now,
-      } as any);
-
-      if (error) {
-        console.error("[LocationRouting] Error inserting location:", error);
-      } else {
-        console.log(
-          `[LocationRouting] ✅ Created location ${params.shopifyLocationId} with default routing: ${params.defaultWarehouseName} / ${params.defaultDataAreaId}`
-        );
-      }
+      await queryDatabase(
+        `INSERT INTO public.locations (
+           id, shopify_location_id, name, warehouse_name, dynamics_data_area_id,
+           country_data_area_mapping, address_line1, address_line2, city, province,
+           country, zip, phone, active, fulfillment_service_id
+         ) VALUES ($1, $1, $2, $3, $4, '[]'::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          params.shopifyLocationId,
+          params.name,
+          params.defaultWarehouseName ?? null,
+          params.defaultDataAreaId ?? null,
+          params.addressLine1 ?? null,
+          params.addressLine2 ?? null,
+          params.city ?? null,
+          params.province ?? null,
+          params.country ?? null,
+          params.zip ?? null,
+          params.phone ?? null,
+          params.active,
+          params.fulfillmentServiceId ?? null,
+        ]
+      );
+      console.log(
+        `[LocationRouting] ✅ Created location ${params.shopifyLocationId} with default routing: ${params.defaultWarehouseName} / ${params.defaultDataAreaId}`
+      );
     }
 
     // Invalidate cache so the next order lookup gets fresh data
@@ -501,22 +478,17 @@ export async function upsertLocation(params: {
 }
 
 /**
- * Soft-delete a location in Supabase.
+ * Soft-delete a location in Cloud SQL.
  */
 export async function deactivateLocation(shopifyLocationId: string): Promise<void> {
-  if (!supabase) return;
+  if (!databaseAvailable()) return;
   try {
-    const { error } = await supabase
-      .from("locations" as any)
-      .update({ active: false, updated_at: new Date().toISOString() } as any)
-      .eq("shopify_location_id", shopifyLocationId);
-
-    if (error) {
-      console.error("[LocationRouting] Error deactivating location:", error);
-    } else {
-      console.log(`[LocationRouting] ✅ Deactivated location ${shopifyLocationId}`);
-      clearLocationCache();
-    }
+    await queryDatabase(
+      `UPDATE public.locations SET active = false, updated_at = now() WHERE shopify_location_id = $1`,
+      [shopifyLocationId]
+    );
+    console.log(`[LocationRouting] ✅ Deactivated location ${shopifyLocationId}`);
+    clearLocationCache();
   } catch (err) {
     console.error("[LocationRouting] Unexpected error in deactivateLocation:", err);
   }

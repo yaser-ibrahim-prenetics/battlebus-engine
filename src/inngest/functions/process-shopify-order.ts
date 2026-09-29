@@ -1216,13 +1216,13 @@ export const processShopifyOrder = inngest.createFunction(
 
             const flowStatus: "completed" | "failed" | "skipped" = saveResult.ok
               ? "completed"
-              : saveResult.reason === "supabase_error"
+              : saveResult.reason === "database_error"
                 ? "failed"
                 : "skipped";
             const flowMessage = saveResult.ok
               ? `Upserted ${saveResult.upsertedRowCount} row(s) to public.order_lines`
-              : saveResult.reason === "no_supabase_client"
-                ? "Skipped: Supabase not configured (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Battle Bus)"
+              : saveResult.reason === "no_database_client"
+                ? "Skipped: PostgreSQL not configured on Battle Bus"
                 : saveResult.reason === "empty_input"
                   ? "Skipped: toOrderLineRecords returned 0 rows (nothing to persist)"
                   : `Supabase upsert failed: ${saveResult.message}`;

@@ -1,7 +1,7 @@
 // ============================================================================
-// SUPABASE ORDER LINES SERVICE
+// POSTGRESQL ORDER LINES SERVICE
 // ============================================================================
-// Persists D365 sales order lines (product + service) to Supabase so that
+// Persists D365 sales order lines (product + service) to Cloud SQL so that
 // fulfillment can replay shipping/tax lines to Dynamics without reconstructing
 // them from Shopify data at fulfillment time.
 //
@@ -11,7 +11,11 @@
 //   'tax'      → combined tax + duty line
 //   any other  → real Shopify line_item.id
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  isDatabaseConfigured,
+  queryDatabase,
+  quoteIdentifier,
+} from "@/lib/db/database";
 
 export const SHOPIFY_SHIPPING_LINE_ITEM_ID = "shipping";
 export const SHOPIFY_TAX_LINE_ITEM_ID = "tax";
@@ -54,30 +58,41 @@ export interface SavedOrderLine extends OrderLineRecord {
 /** Result of `saveOrderLines` — use in Inngest step output / flow logs. */
 export type SaveOrderLinesResult =
   | { ok: true; upsertedRowCount: number }
-  | { ok: false; reason: "no_supabase_client" }
+  | { ok: false; reason: "no_database_client" }
   | { ok: false; reason: "empty_input" }
-  | { ok: false; reason: "supabase_error"; message: string; attemptedRowCount: number };
+  | { ok: false; reason: "database_error"; message: string; attemptedRowCount: number };
 
 // ============================================================================
-// Client
+// Database helpers
 // ============================================================================
 
-let _client: SupabaseClient | null | undefined;
-
-function getClient(): SupabaseClient | null {
-  if (_client !== undefined) return _client;
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  _client =
-    url && key
-      ? createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
-      : null;
-  if (!_client) {
-    console.warn(
-      "[OrderLines] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — order line persistence disabled"
-    );
+function databaseAvailable(): boolean {
+  const available = isDatabaseConfigured();
+  if (!available) {
+    console.warn("[OrderLines] PostgreSQL is not configured — order line persistence disabled");
   }
-  return _client;
+  return available;
+}
+
+async function upsertRows(rows: Record<string, unknown>[]): Promise<void> {
+  if (rows.length === 0) return;
+  const columns = Object.keys(rows[0]);
+  const values = rows.flatMap((row) => columns.map((column) => row[column]));
+  const tuples = rows.map((_, rowIndex) => {
+    const offset = rowIndex * columns.length;
+    return `(${columns.map((__, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
+  });
+  const updates = columns
+    .filter((column) => !["shopify_order_id", "shopify_line_item_id"].includes(column))
+    .map((column) => `${quoteIdentifier(column)} = EXCLUDED.${quoteIdentifier(column)}`)
+    .join(", ");
+  await queryDatabase(
+    `INSERT INTO public.order_lines (${columns.map(quoteIdentifier).join(", ")})
+     VALUES ${tuples.join(", ")}
+     ON CONFLICT (shopify_order_id, shopify_line_item_id)
+     DO UPDATE SET ${updates}`,
+    values
+  );
 }
 
 // ============================================================================
@@ -89,39 +104,38 @@ function getClient(): SupabaseClient | null {
  * Upserts on (shopify_order_id, shopify_line_item_id) so re-runs are idempotent.
  */
 export async function saveOrderLines(lines: OrderLineRecord[]): Promise<SaveOrderLinesResult> {
-  const supabase = getClient();
-  if (!supabase) {
-    return { ok: false, reason: "no_supabase_client" };
+  if (!databaseAvailable()) {
+    return { ok: false, reason: "no_database_client" };
   }
   if (lines.length === 0) {
     return { ok: false, reason: "empty_input" };
   }
 
-  const { error } = await supabase.from("order_lines" as any).upsert(
-    lines.map((l) => ({
-      shopify_order_id: l.shopify_order_id,
-      shopify_order_name: l.shopify_order_name ?? null,
-      shopify_line_item_id: l.shopify_line_item_id,
-      shopify_sku: l.shopify_sku ?? null,
-      d365_item_number: l.d365_item_number,
-      d365_sales_order_number: l.d365_sales_order_number ?? null,
-      data_area_id: l.data_area_id ?? null,
-      quantity: l.quantity,
-      price: l.price ?? null,
-      dynamics_inventory_lot_id: l.dynamics_inventory_lot_id ?? null,
-      is_service_line: l.is_service_line,
-    })),
-    { onConflict: "shopify_order_id,shopify_line_item_id", ignoreDuplicates: false }
-  );
-
-  if (error) {
+  try {
+    await upsertRows(
+      lines.map((l) => ({
+        shopify_order_id: l.shopify_order_id,
+        shopify_order_name: l.shopify_order_name ?? null,
+        shopify_line_item_id: l.shopify_line_item_id,
+        shopify_sku: l.shopify_sku ?? null,
+        d365_item_number: l.d365_item_number,
+        d365_sales_order_number: l.d365_sales_order_number ?? null,
+        data_area_id: l.data_area_id ?? null,
+        quantity: l.quantity,
+        price: l.price ?? null,
+        dynamics_inventory_lot_id: l.dynamics_inventory_lot_id ?? null,
+        is_service_line: l.is_service_line,
+      }))
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[OrderLines] Failed to save ${lines.length} lines for order ${lines[0]?.shopify_order_name ?? lines[0]?.shopify_order_id}: ${error.message}`
+      `[OrderLines] Failed to save ${lines.length} lines for order ${lines[0]?.shopify_order_name ?? lines[0]?.shopify_order_id}: ${message}`
     );
     return {
       ok: false,
-      reason: "supabase_error",
-      message: error.message,
+      reason: "database_error",
+      message,
       attemptedRowCount: lines.length,
     };
   }
@@ -140,19 +154,19 @@ export async function updateOrderLineLotId(
   shopifyLineItemId: string,
   lotId: string
 ): Promise<void> {
-  const supabase = getClient();
-  if (!supabase) return;
+  if (!databaseAvailable()) return;
   if (!lotId) return;
 
-  const { error } = await supabase
-    .from("order_lines" as any)
-    .update({ dynamics_inventory_lot_id: lotId })
-    .eq("shopify_order_id", shopifyOrderId)
-    .eq("shopify_line_item_id", shopifyLineItemId);
-
-  if (error) {
+  try {
+    await queryDatabase(
+      `UPDATE public.order_lines SET dynamics_inventory_lot_id = $3
+       WHERE shopify_order_id = $1 AND shopify_line_item_id = $2`,
+      [shopifyOrderId, shopifyLineItemId, lotId]
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[OrderLines] Failed to update lot ID for ${shopifyOrderId}/${shopifyLineItemId}: ${error.message}`
+      `[OrderLines] Failed to update lot ID for ${shopifyOrderId}/${shopifyLineItemId}: ${message}`
     );
   }
 }
@@ -184,8 +198,8 @@ export interface RefundOrderLineRecord {
 
 export type SaveRefundOrderLineResult =
   | { ok: true; degraded?: boolean }
-  | { ok: false; reason: "no_supabase_client" }
-  | { ok: false; reason: "supabase_error"; message: string };
+  | { ok: false; reason: "no_database_client" }
+  | { ok: false; reason: "database_error"; message: string };
 
 /**
  * Persist a single D365 refund line to `order_lines` so the Hub can render it
@@ -196,21 +210,20 @@ export type SaveRefundOrderLineResult =
  * the same refundId).
  *
  * Best-effort: if the hub has not yet run migration 019 the extended columns
- * won't exist and Supabase will 400. In that case we retry with only the base
+ * won't exist and PostgreSQL will report an undefined column. In that case we retry with only the base
  * (pre-019) columns so refunds still show up in the UI, just without the
  * extra metadata.
  */
 export async function saveRefundOrderLine(
   record: RefundOrderLineRecord
 ): Promise<SaveRefundOrderLineResult> {
-  const supabase = getClient();
-  if (!supabase) return { ok: false, reason: "no_supabase_client" };
+  if (!databaseAvailable()) return { ok: false, reason: "no_database_client" };
 
   const refundId = String(record.refund_id || "").trim();
   if (!refundId) {
     return {
       ok: false,
-      reason: "supabase_error",
+      reason: "database_error",
       message: "saveRefundOrderLine: missing refund_id",
     };
   }
@@ -243,35 +256,32 @@ export async function saveRefundOrderLine(
     source_currency: record.source_currency ?? null,
   } as const;
 
-  const doUpsert = async (row: Record<string, unknown>) =>
-    supabase.from("order_lines" as any).upsert(row, {
-      onConflict: "shopify_order_id,shopify_line_item_id",
-      ignoreDuplicates: false,
-    });
-
-  const { error } = await doUpsert(extendedRow);
-
-  if (error && /column .* does not exist/i.test(error.message)) {
+  try {
+    await upsertRows([extendedRow]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = typeof error === "object" && error && "code" in error ? error.code : null;
+    if (code !== "42703" && !/column .* does not exist/i.test(message)) {
+      console.warn(`[OrderLines] Failed to save refund line ${refundId}: ${message}`);
+      return { ok: false, reason: "database_error", message };
+    }
     console.warn(
       `[OrderLines] Refund line extended columns missing (hub migration 019 not applied?). ` +
-        `Retrying with base columns only for refund ${refundId}: ${error.message}`
+        `Retrying with base columns only for refund ${refundId}: ${message}`
     );
-    const retry = await doUpsert(baseRow);
-    if (retry.error) {
+    try {
+      await upsertRows([baseRow]);
+    } catch (retryError) {
+      const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
       console.warn(
-        `[OrderLines] Failed to save refund line ${refundId} (base-only retry): ${retry.error.message}`
+        `[OrderLines] Failed to save refund line ${refundId} (base-only retry): ${retryMessage}`
       );
-      return { ok: false, reason: "supabase_error", message: retry.error.message };
+      return { ok: false, reason: "database_error", message: retryMessage };
     }
     console.log(
       `[OrderLines] Saved refund line ${refundId} (base columns only — run hub migration 019 to persist FX + credit note)`
     );
     return { ok: true, degraded: true };
-  }
-
-  if (error) {
-    console.warn(`[OrderLines] Failed to save refund line ${refundId}: ${error.message}`);
-    return { ok: false, reason: "supabase_error", message: error.message };
   }
 
   console.log(
@@ -292,8 +302,7 @@ export async function fetchOrderLines(
   shopifyOrderId: string,
   shopifyOrderName?: string | null
 ): Promise<SavedOrderLine[]> {
-  const supabase = getClient();
-  if (!supabase) return [];
+  if (!databaseAvailable()) return [];
 
   const nameVariants = shopifyOrderName
     ? [...new Set([shopifyOrderName.trim(), shopifyOrderName.trim().replace(/^#/, "")])]
@@ -301,24 +310,25 @@ export async function fetchOrderLines(
 
   // Try by order name first (faster, more reliable)
   if (nameVariants.length > 0) {
-    const { data, error } = await supabase
-      .from("order_lines" as any)
-      .select("*")
-      .in("shopify_order_name", nameVariants);
-    if (!error && data && data.length > 0) return data as SavedOrderLine[];
+    const byName = await queryDatabase<SavedOrderLine>(
+      `SELECT * FROM public.order_lines WHERE shopify_order_name = ANY($1::text[])`,
+      [nameVariants]
+    );
+    if (byName.rows.length > 0) return byName.rows;
   }
 
   // Fall back to numeric order id
-  const { data, error } = await supabase
-    .from("order_lines" as any)
-    .select("*")
-    .eq("shopify_order_id", String(shopifyOrderId));
-
-  if (error) {
-    console.warn(`[OrderLines] fetchOrderLines failed for ${shopifyOrderId}: ${error.message}`);
+  try {
+    const result = await queryDatabase<SavedOrderLine>(
+      `SELECT * FROM public.order_lines WHERE shopify_order_id = $1`,
+      [String(shopifyOrderId)]
+    );
+    return result.rows;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[OrderLines] fetchOrderLines failed for ${shopifyOrderId}: ${message}`);
     return [];
   }
-  return (data ?? []) as SavedOrderLine[];
 }
 
 /** IM8-SER-* / PRE-SER-* SKU prefixes — mirrors spock-store SERVICE_SKU_PREFIX */
@@ -399,22 +409,22 @@ export async function markServiceLinesFulfilled(
   shopifyOrderId: string,
   shopifyLineItemIds: string[]
 ): Promise<void> {
-  const supabase = getClient();
-  if (!supabase || shopifyLineItemIds.length === 0) return;
-
-  const { error } = await supabase
-    .from("order_lines" as any)
-    .update({ is_fulfilled_to_dynamics: true, fulfilled_at: new Date().toISOString() })
-    .eq("shopify_order_id", shopifyOrderId)
-    .in("shopify_line_item_id", shopifyLineItemIds);
-
-  if (error) {
+  if (!databaseAvailable() || shopifyLineItemIds.length === 0) return;
+  try {
+    await queryDatabase(
+      `UPDATE public.order_lines
+       SET is_fulfilled_to_dynamics = true, fulfilled_at = now()
+       WHERE shopify_order_id = $1 AND shopify_line_item_id = ANY($2::text[])`,
+      [shopifyOrderId, shopifyLineItemIds]
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[OrderLines] Failed to mark service lines fulfilled for ${shopifyOrderId}: ${error.message}`
+      `[OrderLines] Failed to mark service lines fulfilled for ${shopifyOrderId}: ${message}`
     );
-  } else {
-    console.log(
-      `[OrderLines] Marked ${shopifyLineItemIds.length} service lines fulfilled for ${shopifyOrderId}: ${shopifyLineItemIds.join(", ")}`
-    );
+    return;
   }
+  console.log(
+    `[OrderLines] Marked ${shopifyLineItemIds.length} service lines fulfilled for ${shopifyOrderId}: ${shopifyLineItemIds.join(", ")}`
+  );
 }
