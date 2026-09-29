@@ -11,6 +11,7 @@ BEGIN
   FROM unnest(ARRAY[
     'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
+    'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'
@@ -24,6 +25,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
+    'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'
@@ -87,6 +89,7 @@ BEGIN
   IF has_table_privilege('authenticated', 'public.webhook_inbox', 'SELECT')
     OR has_table_privilege('authenticated', 'public.audit_log', 'SELECT')
     OR has_table_privilege('authenticated', 'public.pending_lifecycle_actions', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.refund_operations', 'SELECT')
     OR has_table_privilege('authenticated', 'public.battle_hub_pending_lifecycle_actions', 'SELECT')
   THEN
     RAISE EXCEPTION 'Sensitive backend tables are exposed to authenticated clients';
@@ -142,6 +145,60 @@ BEGIN
       AND w.slug = 'battle-hub'
   ) THEN
     RAISE EXCEPTION 'Superadmin bootstrap did not create an active workspace member';
+  END IF;
+END
+$$;
+
+INSERT INTO public.refund_operations (
+  refund_id,
+  shopify_order_id,
+  event_data,
+  state,
+  claim_token,
+  lease_expires_at
+)
+VALUES (
+  'migration-refund-dedupe',
+  'migration-order',
+  '{"private":"payload"}',
+  'processing',
+  '00000000-0000-0000-0000-000000000099',
+  now() + interval '5 minutes'
+)
+ON CONFLICT (refund_id) DO NOTHING;
+
+INSERT INTO public.refund_operations (
+  refund_id,
+  shopify_order_id,
+  event_data,
+  state,
+  claim_token,
+  lease_expires_at
+)
+VALUES (
+  'migration-refund-dedupe',
+  'migration-order',
+  '{"private":"duplicate"}',
+  'processing',
+  '00000000-0000-0000-0000-000000000098',
+  now() + interval '5 minutes'
+)
+ON CONFLICT (refund_id) DO NOTHING;
+
+UPDATE public.refund_operations
+SET state = 'completed',
+    claim_token = NULL,
+    lease_expires_at = NULL
+WHERE refund_id = 'migration-refund-dedupe';
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.refund_operations WHERE refund_id = 'migration-refund-dedupe') <> 1 THEN
+    RAISE EXCEPTION 'Refund operation primary key did not prevent a duplicate refund';
+  END IF;
+
+  IF (SELECT event_data FROM public.refund_operations WHERE refund_id = 'migration-refund-dedupe') <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'Completed refund operation payload was not scrubbed';
   END IF;
 END
 $$;
