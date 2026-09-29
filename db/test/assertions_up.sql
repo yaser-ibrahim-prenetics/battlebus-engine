@@ -87,6 +87,7 @@ BEGIN
   IF has_table_privilege('authenticated', 'public.webhook_inbox', 'SELECT')
     OR has_table_privilege('authenticated', 'public.audit_log', 'SELECT')
     OR has_table_privilege('authenticated', 'public.pending_lifecycle_actions', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.battle_hub_pending_lifecycle_actions', 'SELECT')
   THEN
     RAISE EXCEPTION 'Sensitive backend tables are exposed to authenticated clients';
   END IF;
@@ -99,8 +100,16 @@ BEGIN
     RAISE EXCEPTION 'get_order_directory_stats RPC is missing';
   END IF;
 
-  IF NOT has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'SELECT') THEN
-    RAISE EXCEPTION 'Battle Hub runtime cannot read pending lifecycle actions';
+  IF has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'SELECT') THEN
+    RAISE EXCEPTION 'Battle Hub runtime can read the private lifecycle action table';
+  END IF;
+
+  IF NOT has_table_privilege(
+    'battle_hub_runtime',
+    'public.battle_hub_pending_lifecycle_actions',
+    'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub runtime cannot read the safe pending-action view';
   END IF;
 
   IF has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'INSERT')
@@ -108,6 +117,16 @@ BEGIN
     OR has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'DELETE')
   THEN
     RAISE EXCEPTION 'Battle Hub runtime unexpectedly has write access to pending lifecycle actions';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'battle_hub_pending_lifecycle_actions'
+      AND column_name = 'event_data'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub pending-action view exposes event_data';
   END IF;
 
   IF NOT EXISTS (
@@ -123,6 +142,42 @@ BEGIN
       AND w.slug = 'battle-hub'
   ) THEN
     RAISE EXCEPTION 'Superadmin bootstrap did not create an active workspace member';
+  END IF;
+END
+$$;
+
+INSERT INTO public.pending_lifecycle_actions (
+  shopify_order_id,
+  action,
+  event_name,
+  event_data,
+  idempotency_key,
+  status
+)
+VALUES
+  ('migration-active', 'refund', 'shopify/order.refunded', '{"private":"active"}', 'migration-active', 'pending'),
+  ('migration-terminal', 'cancel', 'shopify/order.cancelled', '{"private":"terminal"}', 'migration-terminal', 'published');
+
+DO $$
+BEGIN
+  IF (SELECT event_data FROM public.pending_lifecycle_actions WHERE idempotency_key = 'migration-terminal') <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'Terminal lifecycle payload was not scrubbed';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.battle_hub_pending_lifecycle_actions
+    WHERE shopify_order_id = 'migration-terminal'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub view exposes terminal lifecycle actions';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.battle_hub_pending_lifecycle_actions
+    WHERE shopify_order_id = 'migration-active'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub view does not expose active lifecycle actions';
   END IF;
 END
 $$;

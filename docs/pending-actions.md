@@ -35,12 +35,19 @@ Migration `000006_create_durable_pending_lifecycle_actions` creates
 - attempt counters and timestamps for auditability;
 - indexes for ready work, expired leases, order lookup, and Hub reporting.
 
+Lifecycle event payloads are retained only while an action is active. A
+database trigger scrubs `event_data` when a row becomes `published` or
+`superseded`, while the stable idempotency key and operational timestamps remain
+available for audit and deduplication.
+
 Battle Bus inherits write access through `service_role`. Migration
 `000007_create_battle_hub_runtime_role` adds Battle Hub's
-`battle_hub_runtime` role and read policy. Migration
+`battle_hub_runtime` role and a security-barrier view containing only active
+operational metadata. Migration
 `000008_bind_battle_hub_iam_database_user` binds the Cloud SQL IAM database
-user to that role. The role has `SELECT` only. Browser clients and the generic
-`authenticated` role have no direct access to the queue.
+user to that role. The Hub role cannot select the private queue table,
+`event_data`, or terminal rows. Browser clients and the generic `authenticated`
+role have no direct access to the queue.
 
 The legacy `orders.pending_actions` column remains during the expand/deploy
 window for rollback compatibility. New Battle Bus revisions do not read or
@@ -52,9 +59,12 @@ revisions and external consumers have been verified.
 The drain runs every configured interval and uses three durable Inngest steps:
 
 1. Atomically claim ready rows with `FOR UPDATE SKIP LOCKED` and a five-minute
-   lease. Expired leases are eligible for recovery.
-2. Emit each action with `pending-action-<queue UUID>` as the Inngest event ID.
-3. Mark only the claimed row IDs as published or superseded.
+   lease, returning only the claim token and count from the Inngest step.
+2. Load payloads transiently inside the emit step, consult durable cancellation
+   state, and emit each action with `pending-action-<queue UUID>` as the event
+   ID.
+3. Mark only the claimed row IDs as published or superseded and scrub their
+   payloads before the step completes.
 
 If a worker stops after emission but before completion, the lease eventually
 expires. The next replay uses the same event ID, allowing Inngest to deduplicate

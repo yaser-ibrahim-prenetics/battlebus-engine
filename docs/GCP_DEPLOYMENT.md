@@ -62,9 +62,9 @@ visibility. Before applying migration `000008`, run:
 The script creates the Cloud SQL IAM database user for
 `battle-hub-runtime@battle-bus-509406.iam.gserviceaccount.com` and grants only
 instance-scoped connection roles. Migration `000007` creates the NOLOGIN
-`battle_hub_runtime` role and its read policy. Migration `000008` binds the IAM
-identity to that role, which can select the durable pending-action queue but
-cannot mutate it.
+`battle_hub_runtime` role and grants it access only to a minimal active-action
+view. Migration `000008` binds the IAM identity to that role. The identity
+cannot read the private queue table, lifecycle event payloads, or terminal rows.
 
 Every pull request runs lint, tests, the high-severity production dependency
 audit, database migration validation/integration tests, and the production

@@ -4,6 +4,7 @@ import { queryDatabase } from "@/lib/db/database";
 import {
   buildPendingActionIdempotencyKey,
   claimPendingActions,
+  completePendingActions,
   loadClaimedPendingActions,
   storePendingAction,
 } from "../pending-actions";
@@ -124,4 +125,24 @@ describe("pending actions persistence", () => {
     });
   });
 
+  it("scrubs terminal payloads when completing a claim", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "UPDATE",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [{ id: "00000000-0000-0000-0000-000000000001" }],
+    });
+
+    await completePendingActions({
+      claimToken: "00000000-0000-0000-0000-000000000099",
+      publishedIds: ["00000000-0000-0000-0000-000000000001"],
+      supersededIds: [],
+    });
+
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("event_data = '{}'::jsonb"),
+      expect.any(Array)
+    );
+  });
 });

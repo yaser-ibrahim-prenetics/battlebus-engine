@@ -45,6 +45,28 @@ CREATE INDEX IF NOT EXISTS idx_pending_lifecycle_actions_order
   ON public.pending_lifecycle_actions (shopify_order_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pending_lifecycle_actions_status_created
   ON public.pending_lifecycle_actions (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pending_lifecycle_actions_cancellation_order
+  ON public.pending_lifecycle_actions (shopify_order_id)
+  WHERE action = 'cancel' AND status IN ('pending', 'processing', 'published');
+
+CREATE OR REPLACE FUNCTION public.battle_platform_scrub_pending_action_payload()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF NEW.status IN ('published', 'superseded') THEN
+    NEW.event_data := '{}'::jsonb;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS battle_platform_scrub_pending_action_payload
+  ON public.pending_lifecycle_actions;
+CREATE TRIGGER battle_platform_scrub_pending_action_payload
+  BEFORE INSERT OR UPDATE ON public.pending_lifecycle_actions
+  FOR EACH ROW EXECUTE FUNCTION public.battle_platform_scrub_pending_action_payload();
 
 DROP TRIGGER IF EXISTS battle_platform_pending_lifecycle_actions_updated_at
   ON public.pending_lifecycle_actions;
@@ -68,5 +90,7 @@ COMMENT ON COLUMN public.pending_lifecycle_actions.idempotency_key IS
   'Stable digest of the source order, event name, action type, and event payload.';
 COMMENT ON COLUMN public.pending_lifecycle_actions.lease_expires_at IS
   'Expired processing leases can be reclaimed safely because replayed Inngest events use stable IDs.';
+COMMENT ON FUNCTION public.battle_platform_scrub_pending_action_payload() IS
+  'Removes lifecycle event payloads as soon as queue rows reach a terminal state.';
 
 COMMIT;

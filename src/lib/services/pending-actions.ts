@@ -215,6 +215,7 @@ export async function completePendingActions({
            WHEN id = ANY($2::uuid[]) THEN 'published'
            ELSE 'superseded'
          END,
+         event_data = '{}'::jsonb,
          published_at = CASE WHEN id = ANY($2::uuid[]) THEN now() ELSE published_at END,
          superseded_at = CASE WHEN id = ANY($3::uuid[]) THEN now() ELSE superseded_at END,
          last_error = CASE
