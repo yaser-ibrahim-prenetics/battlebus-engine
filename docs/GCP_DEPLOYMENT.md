@@ -113,6 +113,9 @@ Release 1 database activation additionally requires:
   validation. Until enabled, the workflow tests migrations but does not touch a
   remote database.
 
+Migration `000009` is required before deploying the refund recovery revision;
+the runtime fails closed when it cannot reserve a refund operation in Cloud SQL.
+
 Every main deployment builds and pushes a small immutable migration image from
 the same commit as the application. Before enabling migrations for the first
 time, bootstrap the job with an already-pushed image:
