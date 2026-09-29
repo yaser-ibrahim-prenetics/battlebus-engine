@@ -1,3 +1,24 @@
+-- Supabase creates these group roles automatically. Cloud SQL is plain
+-- PostgreSQL, so bootstrap the same least-privilege role names before the
+-- schema grants and RLS policies below are installed. They are NOLOGIN roles;
+-- concrete application identities are granted membership separately.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN;
+  END IF;
+END
+$$;
+
+GRANT anon, authenticated, service_role TO CURRENT_USER;
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
 BEGIN;
 
 -- Release 1 is intentionally additive. It creates the shared operational

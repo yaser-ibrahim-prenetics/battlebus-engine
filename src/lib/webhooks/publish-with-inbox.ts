@@ -23,7 +23,7 @@ import {
   markInboxPublished,
   markInboxFailed,
   type WebhookInboxEvent,
-} from "@/lib/services/supabase-webhook-inbox";
+} from "@/lib/services/webhook-inbox";
 
 /** Header names whose values must never be persisted verbatim. */
 const SENSITIVE_HEADER_NAMES = new Set([

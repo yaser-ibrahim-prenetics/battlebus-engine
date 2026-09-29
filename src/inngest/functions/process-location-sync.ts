@@ -6,14 +6,14 @@
 // On create/update:
 //   1. Auto-detect warehouse + dataAreaId from the location *name* string and
 //      *country code* in the Shopify payload.  No hardcoded location IDs.
-//   2. Upsert into Supabase `locations` table:
+//   2. Upsert into PostgreSQL `locations` table:
 //      - CREATE: writes auto-detected warehouse/dataAreaId as defaults
 //      - UPDATE: preserves existing routing config (never overwrites manual edits)
 //   3. Notify Battle Hub via CS Platform event
 //   4. Invalidate routing cache
 //
 // On delete:
-//   1. Soft-delete in Supabase (active = false)
+//   1. Soft-delete in PostgreSQL (active = false)
 //   2. Notify Battle Hub
 //
 // SEEDING: Use GET /api/locations/seed to pull all Shopify locations at once.
@@ -22,7 +22,7 @@ import { inngest } from "../client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { upsertLocation, deactivateLocation } from "@/lib/services/location-routing";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 // Location name from Shopify is the warehouse (no separate warehouse field).
 // Data area must be configured explicitly in Battle Hub. Do not infer defaults here.
@@ -69,7 +69,7 @@ export const processLocationSync = inngest.createFunction(
     // DELETION
     // =========================================================================
     if (isDelete) {
-      await step.run("deactivate-in-supabase", async () => {
+      await step.run("deactivate-in-postgres", async () => {
         await deactivateLocation(String(locationId));
       });
 
@@ -110,9 +110,9 @@ export const processLocationSync = inngest.createFunction(
     );
 
     // =========================================================================
-    // UPSERT INTO SUPABASE
+    // UPSERT INTO POSTGRESQL
     // =========================================================================
-    await step.run("upsert-supabase", async () => {
+    await step.run("upsert-postgres", async () => {
       await upsertLocation({
         shopifyLocationId: String(locationId),
         name: locationName,

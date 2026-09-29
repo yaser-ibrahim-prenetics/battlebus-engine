@@ -13,7 +13,7 @@ import {
 import { ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { storePendingAction } from "@/lib/services/pending-actions";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export const processOrderCancellation = inngest.createFunction(
   {

@@ -17,7 +17,7 @@ import * as gpsInventory from "@/lib/clients/gps-inventory";
 import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 // Types for sync progress
 interface StepResult {

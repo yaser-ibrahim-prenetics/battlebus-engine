@@ -23,6 +23,9 @@ env:
   ARTIFACT_REPOSITORY: battle-bus
   CLOUD_RUN_SERVICE: battle-bus
   MIGRATION_JOB: battle-bus-migrate
+  CLOUD_SQL_INSTANCE: battle-bus-509406:asia-east1:battle-platform-staging-pg16
+  DB_NAME: battle_platform
+  DB_USER: battle-bus-runtime@battle-bus-509406.iam
   DATABASE_URL_SECRET: battle-platform-database-url
   RUNTIME_SERVICE_ACCOUNT: battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com
   MIGRATION_SERVICE_ACCOUNT: battle-bus-migrator@battle-bus-509406.iam.gserviceaccount.com
@@ -208,17 +211,9 @@ jobs:
               echo "Missing migration service account: ${MIGRATION_SERVICE_ACCOUNT}"
               exit 1
             fi
-            for required_name in SUPABASE_URL; do
-              if ! grep --fixed-strings --line-regexp --quiet "${required_name}" <<<"${env_names}"; then
-                echo "Cloud Run is missing required database runtime configuration: ${required_name}"
-                exit 1
-              fi
-            done
-            if ! jq --exit-status '
-              any(.spec.template.spec.containers[0].env[]?;
-                .name == "SUPABASE_SERVICE_ROLE_KEY" and .valueFrom.secretKeyRef? != null)
-            ' <<<"${service_json}" >/dev/null; then
-              echo "Cloud Run is missing Secret Manager-backed SUPABASE_SERVICE_ROLE_KEY."
+            if ! gcloud sql instances describe "${CLOUD_SQL_INSTANCE##*:}" \
+              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+              echo "Missing Cloud SQL instance: ${CLOUD_SQL_INSTANCE}"
               exit 1
             fi
           fi
@@ -231,6 +226,12 @@ jobs:
           fi
           echo "PREVIOUS_REVISION=${previous_revision}" >> "${GITHUB_ENV}"
           echo "CLOUD_RUN_URL=${service_url}" >> "${GITHUB_ENV}"
+
+          if ! gcloud iam service-accounts describe "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Missing runtime service account: ${RUNTIME_SERVICE_ACCOUNT}"
+            exit 1
+          fi
 
       - name: Build container image
         env:
@@ -303,6 +304,7 @@ jobs:
             --region="${GCP_REGION}" \
             --project="${GCP_PROJECT_ID}" \
             --service-account="${MIGRATION_SERVICE_ACCOUNT}" \
+            --set-cloudsql-instances="${CLOUD_SQL_INSTANCE}" \
             --set-secrets="DATABASE_URL=${DATABASE_URL_SECRET}:${DATABASE_URL_SECRET_VERSION}" \
             --set-env-vars="MIGRATION_RELEASE_SHA=${GITHUB_SHA},DATABASE_URL_SECRET_VERSION=${DATABASE_URL_SECRET_VERSION}" \
             --tasks=1 \
@@ -343,7 +345,7 @@ jobs:
             --allow-unauthenticated \
             --no-traffic \
             --tag="${candidate_tag}" \
-            "--update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,DISABLE_LOOP_WEBHOOK_VERIFICATION=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false,INNGEST_DEV=0,INNGEST_SERVE_ORIGIN=${CLOUD_RUN_URL},INNGEST_SERVE_PATH=/api/inngest,BATTLE_BUS_VERSION=${GITHUB_SHA}" \
+            "--update-env-vars=DRY_RUN_MODE=true,SHOPIFY_STORE_MODE=test,ENABLE_DYNAMICS_SYNC=false,ENABLE_GPS_SYNC=false,ENABLE_STORD_SYNC=false,ENABLE_INVENTORY_RUNS=false,ENABLE_INVENTORY_SYNC=false,ENABLE_PRODUCT_INVENTORY_SYNC_CRON=false,ENABLE_RETURN_INVOICE_POSTING=false,ENABLE_SHOPIFY_FULFILLMENT_WRITEBACK=false,ENABLE_GPS_FULFILLMENT_SIMULATION=false,ENABLE_LOOP_RETURNS=false,DISABLE_LOOP_WEBHOOK_VERIFICATION=false,ENABLE_SLACK_RISK_CHECK=false,CS_PLATFORM_ENABLED=false,INNGEST_DEV=0,INNGEST_SERVE_ORIGIN=${CLOUD_RUN_URL},INNGEST_SERVE_PATH=/api/inngest,BATTLE_BUS_VERSION=${GITHUB_SHA},CLOUD_SQL_INSTANCE_CONNECTION_NAME=${CLOUD_SQL_INSTANCE},DB_NAME=${DB_NAME},DB_USER=${DB_USER},DB_MAX_CONNECTIONS=5" \
             --quiet
 
       - name: Verify candidate revision and promote

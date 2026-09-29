@@ -28,8 +28,8 @@ import * as shopify from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
-import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/supabase-order-lookup";
-import { logFlowEvent, logFlowEventSync } from "@/lib/services/supabase-flow-logs";
+import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/order-lookup";
+import { logFlowEvent, logFlowEventSync } from "@/lib/services/flow-logs";
 import { isDepositFulfillmentOrder } from "@/lib/helpers/d365-thk-fulfilment";
 
 // Event configuration

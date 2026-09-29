@@ -4,7 +4,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import type { ShopifyOrderPayload } from "../events";
 import { THROTTLE_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export const processOrderUpdate = inngest.createFunction(
   {

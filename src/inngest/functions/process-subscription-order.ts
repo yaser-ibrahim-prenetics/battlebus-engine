@@ -30,7 +30,7 @@ import {
   saveOrderLines,
   type OrderLineRecord,
   type SaveOrderLinesResult,
-} from "@/lib/services/supabase-order-lines";
+} from "@/lib/services/order-lines";
 import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
@@ -55,7 +55,7 @@ import {
 import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
-import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(

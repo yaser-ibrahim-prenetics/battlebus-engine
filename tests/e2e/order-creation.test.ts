@@ -13,7 +13,7 @@
 
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { validateE2eEnv } from "./setup";
-import { d365E2e, shopifyE2e, gpsE2e, supabaseE2e } from "./clients";
+import { d365E2e, shopifyE2e, gpsE2e } from "./clients";
 import {
   toD365SalesOrderHeaderV3,
   toD365SalesOrderLines,

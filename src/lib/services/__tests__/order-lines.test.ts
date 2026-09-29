@@ -7,9 +7,9 @@ import {
   getLotFromSavedOrderLineByShopifyLineItemId,
   filterUnfulfilledServiceLines,
   type SavedOrderLine,
-} from "../supabase-order-lines";
+} from "../order-lines";
 
-describe("supabase-order-lines (unit)", () => {
+describe("order-lines (unit)", () => {
   const baseProductLine: SavedOrderLine = {
     id: "pid1",
     shopify_order_id: "1001",

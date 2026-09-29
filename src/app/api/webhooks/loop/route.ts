@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { logFlowEvent } from "@/lib/services/supabase-flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
 import {
   buildSyntheticShopifyRefundFromLoopReturn,

@@ -19,8 +19,8 @@ import {
 } from "@/lib/utils/constants";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
-import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/supabase-flow-logs";
-import { saveRefundOrderLine } from "@/lib/services/supabase-order-lines";
+import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/flow-logs";
+import { saveRefundOrderLine } from "@/lib/services/order-lines";
 import { shopifyRefundCreatedByLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 import { normalizeShopifyOrderIdFromLoopProvider } from "@/lib/helpers/loop-return-refund";
 

@@ -26,7 +26,7 @@ import {
   parseDuplicateShopifyReferenceSalesOrderNumber,
   shopifyReferenceLookupCandidates,
 } from "../utils/d365-shopify-reference";
-import { logFlowEvent } from "../services/supabase-flow-logs";
+import { logFlowEvent } from "../services/flow-logs";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,

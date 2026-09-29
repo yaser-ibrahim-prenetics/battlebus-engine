@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as dynamics from "@/lib/clients/dynamics";
-import * as supabaseLookup from "@/lib/services/supabase-order-lookup";
+import * as databaseLookup from "@/lib/services/order-lookup";
 
 vi.mock("@/lib/clients/dynamics", async () => {
   const actual = await vi.importActual<typeof dynamics>("@/lib/clients/dynamics");
@@ -11,9 +11,9 @@ vi.mock("@/lib/clients/dynamics", async () => {
   };
 });
 
-vi.mock("@/lib/services/supabase-order-lookup", async () => {
-  const actual = await vi.importActual<typeof supabaseLookup>(
-    "@/lib/services/supabase-order-lookup"
+vi.mock("@/lib/services/order-lookup", async () => {
+  const actual = await vi.importActual<typeof databaseLookup>(
+    "@/lib/services/order-lookup"
   );
   return {
     ...actual,
@@ -21,14 +21,14 @@ vi.mock("@/lib/services/supabase-order-lookup", async () => {
   };
 });
 
-describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
+describe("resolveD365OrderHeaderForRefund (PostgreSQL fallback)", () => {
   beforeEach(() => {
     vi.mocked(dynamics.getSalesOrderByShopifyId).mockReset();
     vi.mocked(dynamics.getSalesOrderByNumber).mockReset();
-    vi.mocked(supabaseLookup.fetchD365HintByShopifyOrderId).mockReset();
+    vi.mocked(databaseLookup.fetchD365HintByShopifyOrderId).mockReset();
     vi.mocked(dynamics.getSalesOrderByShopifyId).mockResolvedValue(null);
     vi.mocked(dynamics.getSalesOrderByNumber).mockResolvedValue(null);
-    vi.mocked(supabaseLookup.fetchD365HintByShopifyOrderId).mockResolvedValue(null);
+    vi.mocked(databaseLookup.fetchD365HintByShopifyOrderId).mockResolvedValue(null);
   });
 
   it("returns order from Shopify reference when D365 finds THK_ShopifyReference", async () => {
@@ -45,11 +45,11 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
     });
 
     expect(result?.SalesOrderNumber).toBe("U001-SO-1");
-    expect(supabaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith("999", "#IM8-100");
+    expect(databaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith("999", "#IM8-100");
   });
 
-  it("falls back to Supabase d365_order_number + getSalesOrderByNumber when ref lookup misses", async () => {
-    vi.mocked(supabaseLookup.fetchD365HintByShopifyOrderId).mockResolvedValue({
+  it("falls back to PostgreSQL d365_order_number + getSalesOrderByNumber when ref lookup misses", async () => {
+    vi.mocked(databaseLookup.fetchD365HintByShopifyOrderId).mockResolvedValue({
       d365OrderNumber: "U001-SO-999",
       warehouse: "GPS Warehouse",
     });
@@ -70,14 +70,14 @@ describe("resolveD365OrderHeaderForRefund (Supabase fallback)", () => {
     });
 
     expect(result?.SalesOrderNumber).toBe("U001-SO-999");
-    expect(supabaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith(
+    expect(databaseLookup.fetchD365HintByShopifyOrderId).toHaveBeenCalledWith(
       "6993154474216",
       "#IM8-19171"
     );
     expect(dynamics.getSalesOrderByNumber).toHaveBeenCalled();
   });
 
-  it("returns null when both ref lookup and Supabase SO number lookup miss", async () => {
+  it("returns null when both ref lookup and PostgreSQL SO number lookup miss", async () => {
     const { resolveD365OrderHeaderForRefund } =
       await import("@/lib/services/d365-refund-order-resolution");
 

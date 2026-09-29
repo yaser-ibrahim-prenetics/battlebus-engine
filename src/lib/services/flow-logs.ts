@@ -1,5 +1,5 @@
 /**
- * Supabase Flow Logs Drain — Buffered & Non-Blocking
+ * PostgreSQL Flow Logs Drain — Buffered & Non-Blocking
  *
  * Writes structured flow/step/client log events to the `flow_logs` table.
  * Read by Battle Hub UI (Flow Logs page + per-order detail).
@@ -16,10 +16,14 @@
  *   FLOW_LOG_RETENTION_DAYS  – auto-prune rows older than N days (default: 30)
  *   FLOW_LOG_BATCH_SIZE      – max rows per flush (default: 25)
  *   FLOW_LOG_FLUSH_MS        – max ms before auto-flush (default: 2000)
- *   SUPABASE_URL             – Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY – service-role key for writes
+ *   CLOUD_SQL_INSTANCE_CONNECTION_NAME / DB_NAME / DB_USER – Cloud SQL IAM connection
+ *   DATABASE_URL             – local development fallback
  */
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  isDatabaseConfigured,
+  queryDatabase,
+  quoteIdentifier,
+} from "@/lib/db/database";
 
 type FlowLogLevel = "info" | "warn" | "error";
 type FlowLogStatus = "started" | "running" | "completed" | "failed" | "skipped";
@@ -47,12 +51,11 @@ export type FlowLogEvent = {
   payload?: Record<string, unknown>;
 };
 
-let _client: SupabaseClient | null | undefined;
 let _warnedMissingConfig = false;
 let _lastPruneAt = 0;
 
 const ENABLED = process.env.FLOW_LOGS_ENABLED !== "false";
-const TABLE = process.env.FLOW_LOGS_TABLE || "flow_logs";
+const TABLE = quoteIdentifier(process.env.FLOW_LOGS_TABLE || "flow_logs");
 const RETENTION_DAYS = Math.max(
   1,
   Number.isFinite(Number(process.env.FLOW_LOG_RETENTION_DAYS))
@@ -66,43 +69,32 @@ const BATCH_SIZE = Math.max(1, Number.isNaN(_batchSizeParsed) ? 25 : _batchSizeP
 const _flushMsParsed = parseInt(process.env.FLOW_LOG_FLUSH_MS || "2000", 10);
 const FLUSH_INTERVAL_MS = Math.max(200, Number.isNaN(_flushMsParsed) ? 2000 : _flushMsParsed);
 
-function getClient(): SupabaseClient | null {
-  if (!ENABLED) return null;
-  if (_client !== undefined) return _client;
-
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
-  _client =
-    url && key
-      ? createClient(url, key, {
-          auth: { autoRefreshToken: false, persistSession: false },
-        })
-      : null;
-
-  if (!_client && !_warnedMissingConfig) {
+function databaseAvailable(): boolean {
+  const available = ENABLED && isDatabaseConfigured();
+  if (!available && ENABLED && !_warnedMissingConfig) {
     _warnedMissingConfig = true;
     console.warn(
-      "[FlowLogs] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing - flow logs drain disabled"
+      "[FlowLogs] PostgreSQL is not configured - flow logs drain disabled"
     );
   }
-
-  return _client;
+  return available;
 }
 
 // ============================================================================
 // Retention (decoupled from insert path)
 // ============================================================================
 
-async function pruneOldLogsIfDue(client: SupabaseClient): Promise<void> {
+async function pruneOldLogsIfDue(): Promise<void> {
   const now = Date.now();
   if (now - _lastPruneAt < PRUNE_COOLDOWN_MS) return;
   _lastPruneAt = now;
 
   const cutoffIso = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { error } = await client.from(TABLE).delete().lt("ts", cutoffIso);
-  if (error) {
-    console.warn(`[FlowLogs] Retention prune skipped: ${error.message}`);
+  try {
+    await queryDatabase(`DELETE FROM ${TABLE} WHERE ts < $1`, [cutoffIso]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[FlowLogs] Retention prune skipped: ${message}`);
   }
 }
 
@@ -151,24 +143,45 @@ function scheduleFlush(): void {
 }
 
 async function drainBuffer(): Promise<void> {
-  const client = getClient();
-  if (!client || _buffer.length === 0) return;
+  if (!databaseAvailable() || _buffer.length === 0) return;
 
   const batch = _buffer.splice(0, BATCH_SIZE);
   if (batch.length === 0) return;
 
   try {
-    const { error } = await client.from(TABLE).insert(batch);
-    if (error) {
-      console.warn(`[FlowLogs] Batch insert (${batch.length} rows) failed: ${error.message}`);
-    }
+    const columns = [
+      "ts",
+      "level",
+      "flow",
+      "step",
+      "client",
+      "run_id",
+      "request_id",
+      "shopify_order_id",
+      "shopify_order_name",
+      "d365_order_number",
+      "status",
+      "duration_ms",
+      "error_type",
+      "error_message",
+      "payload",
+    ];
+    const values = batch.flatMap((row) => columns.map((column) => row[column]));
+    const tuples = batch.map((_, rowIndex) => {
+      const offset = rowIndex * columns.length;
+      return `(${columns.map((__, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
+    });
+    await queryDatabase(
+      `INSERT INTO ${TABLE} (${columns.map(quoteIdentifier).join(", ")}) VALUES ${tuples.join(", ")}`,
+      values
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[FlowLogs] Unexpected batch error: ${msg}`);
   }
 
   // Trigger prune check (non-blocking, separate from insert)
-  void pruneOldLogsIfDue(client);
+  void pruneOldLogsIfDue();
 
   // Continue draining if there are more rows
   if (_buffer.length > 0) {
@@ -212,13 +225,13 @@ export async function logFlowEventSync(event: FlowLogEvent): Promise<void> {
   await flushAll();
 
   try {
-    const client = getClient();
-    if (!client) return;
-
-    const { error } = await client.from(TABLE).insert(eventToRow(event));
-    if (error) {
-      console.warn(`[FlowLogs] Sync insert failed: ${error.message}`);
-    }
+    if (!databaseAvailable()) return;
+    const row = eventToRow(event);
+    const columns = Object.keys(row);
+    await queryDatabase(
+      `INSERT INTO ${TABLE} (${columns.map(quoteIdentifier).join(", ")}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")})`,
+      columns.map((column) => row[column])
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[FlowLogs] Unexpected sync error: ${msg}`);
@@ -257,7 +270,7 @@ export async function flushAll(): Promise<void> {
  *   - status = "completed"
  *   - payload->>refundId = <refundId>
  *
- * Returns `false` when Supabase is not configured (best-effort guard).
+ * Returns `false` when PostgreSQL is not configured (best-effort guard).
  */
 export async function hasCompletedRefundFlowLog(refundId: string): Promise<boolean> {
   if (!ENABLED) return false;
@@ -266,24 +279,19 @@ export async function hasCompletedRefundFlowLog(refundId: string): Promise<boole
   // Make sure any buffered rows from the current runtime are visible to the query.
   await flushAll();
 
-  const client = getClient();
-  if (!client) return false;
+  if (!databaseAvailable()) return false;
 
   try {
-    const { data, error } = await client
-      .from(TABLE)
-      .select("id, step, status, payload")
-      .eq("flow", "refund")
-      .in("step", ["refund_line_created", "done"])
-      .eq("status", "completed")
-      .filter("payload->>refundId", "eq", String(refundId))
-      .limit(1);
-
-    if (error) {
-      console.warn(`[FlowLogs] Refund dedupe lookup failed: ${error.message}`);
-      return false;
-    }
-    return Array.isArray(data) && data.length > 0;
+    const result = await queryDatabase(
+      `SELECT 1 FROM ${TABLE}
+       WHERE flow = 'refund'
+         AND step = ANY($1::text[])
+         AND status = 'completed'
+         AND payload->>'refundId' = $2
+       LIMIT 1`,
+      [["refund_line_created", "done"], String(refundId)]
+    );
+    return result.rowCount === 1;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[FlowLogs] Refund dedupe lookup error: ${msg}`);

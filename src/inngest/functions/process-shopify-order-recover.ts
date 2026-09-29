@@ -1,7 +1,7 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { getOrder, searchOrdersByName, type ShopifyOrder } from "@/lib/clients/shopify";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 
 type RecoverInput = {
   shopifyOrderIds?: string[];
@@ -60,41 +60,31 @@ async function getOrderByShopifyName(
   return null;
 }
 
-function getSupabaseClient(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!url || !key) return null;
-  return createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
-
 async function fetchExistingHubOrderKeys(params: {
-  supabase: SupabaseClient;
   shopifyOrderIds: string[];
   shopifyOrderNames: string[];
 }): Promise<{ idKeys: string[]; nameKeys: string[] }> {
   const idKeys = new Set<string>();
   const nameKeys = new Set<string>();
-  const { supabase, shopifyOrderIds, shopifyOrderNames } = params;
+  const { shopifyOrderIds, shopifyOrderNames } = params;
 
   if (shopifyOrderIds.length > 0) {
-    const { data } = await supabase
-      .from("orders")
-      .select("shopify_order_id")
-      .in("shopify_order_id", shopifyOrderIds);
-    for (const row of (data || []) as Array<{ shopify_order_id?: string | null }>) {
+    const result = await queryDatabase<{ shopify_order_id: string | null }>(
+      `SELECT shopify_order_id FROM public.orders WHERE shopify_order_id = ANY($1::text[])`,
+      [shopifyOrderIds]
+    );
+    for (const row of result.rows) {
       const id = String(row.shopify_order_id || "").trim();
       if (id) idKeys.add(id);
     }
   }
 
   if (shopifyOrderNames.length > 0) {
-    const { data } = await supabase
-      .from("orders")
-      .select("shopify_order_name")
-      .in("shopify_order_name", shopifyOrderNames);
-    for (const row of (data || []) as Array<{ shopify_order_name?: string | null }>) {
+    const result = await queryDatabase<{ shopify_order_name: string | null }>(
+      `SELECT shopify_order_name FROM public.orders WHERE shopify_order_name = ANY($1::text[])`,
+      [shopifyOrderNames]
+    );
+    for (const row of result.rows) {
       const n = String(row.shopify_order_name || "").trim();
       if (n) nameKeys.add(n);
     }
@@ -190,12 +180,10 @@ export const processShopifyOrderRecover = inngest.createFunction(
       };
     }
 
-    const supabase = getSupabaseClient();
     const existingRaw: { idKeys: string[]; nameKeys: string[] } =
-      !force && supabase
+      !force && isDatabaseConfigured()
         ? await step.run("lookup-existing-hub-orders", async () =>
             fetchExistingHubOrderKeys({
-              supabase,
               shopifyOrderIds: orders.map((o) => String(o.id)),
               shopifyOrderNames: orders.map((o) => String(o.name || "")).filter(Boolean),
             })
