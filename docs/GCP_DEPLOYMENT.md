@@ -52,6 +52,24 @@ runtime identity instance-scoped `roles/cloudsql.client` and
 user membership in the NOLOGIN `battle_bus_runtime` group role. The group
 inherits the existing `service_role` grants and RLS policy coverage.
 
+Battle Hub has a separate, read-only IAM database identity for operational
+visibility. Before applying migration `000008`, run:
+
+```bash
+./scripts/bootstrap-hub-database.sh
+```
+
+The script creates the Cloud SQL IAM database user for
+`battle-hub-runtime@battle-bus-509406.iam.gserviceaccount.com` and grants only
+instance-scoped connection roles. Migration `000007` creates the NOLOGIN
+`battle_hub_runtime` role and grants it access only to a minimal active-action
+view. Migration `000008` binds the IAM identity to that role. The identity
+cannot read the private queue table, lifecycle event payloads, or terminal rows.
+The project, service account, and database username are deliberately pinned in
+both the bootstrap and migration. Changing that identity requires a new
+migration and coordinated Battle Hub runtime configuration; mismatched identity
+overrides fail closed.
+
 Every pull request runs lint, tests, the high-severity production dependency
 audit, database migration validation/integration tests, and the production
 build. A push to `main` deploys only after all five gates pass.
@@ -87,6 +105,8 @@ Release 1 database activation additionally requires:
 - `roles/cloudsql.client` on the dedicated migration identity.
 - Cloud SQL IAM database authentication enabled and
   `scripts/bootstrap-runtime-database.sh` completed for the runtime identity.
+- `scripts/bootstrap-hub-database.sh` completed before migration `000008` so
+  Battle Hub's IAM database user can receive its read-only database role.
 - GitHub repository variable `DATABASE_URL_SECRET_VERSION` set to that numeric
   Secret Manager version. Do not use `latest` for production migrations.
 - GitHub repository variable `ENABLE_DATABASE_MIGRATIONS=true` after staging

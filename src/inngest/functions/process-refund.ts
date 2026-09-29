@@ -23,6 +23,7 @@ import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/flow-log
 import { saveRefundOrderLine } from "@/lib/services/order-lines";
 import { shopifyRefundCreatedByLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 import { normalizeShopifyOrderIdFromLoopProvider } from "@/lib/helpers/loop-return-refund";
+import { storePendingAction } from "@/lib/services/pending-actions";
 
 export const processRefund = inngest.createFunction(
   {
@@ -253,38 +254,35 @@ export const processRefund = inngest.createFunction(
           message: "D365 order not found after drain — refund permanently skipped",
         };
       }
-      const ignoredRefund = await step.run("ignore-refund-no-processed-order", async () => {
-        const payload = {
-          ok: false,
-          step: "ignore-refund-no-processed-order",
+      const queuedRefund = await step.run("store-pending-refund", async () => {
+        await storePendingAction(String(shopifyOrderId), {
+          action: "refund",
+          eventName: "shopify/refund.created",
+          eventData: event.data,
+          createdAt: new Date().toISOString(),
+        });
+        return {
+          ok: true,
+          step: "store-pending-refund",
           refundId: String(refundId),
           shopifyOrderId: String(shopifyOrderId),
         } as const;
-        console.log(
-          JSON.stringify({
-            msg: "[Refund] ignored_no_processed_order",
-            ...refundTrace,
-            ...payload,
-          })
-        );
-        return payload;
       });
       logRefundTraceLifecycle({
         ...refundTrace,
-        phase: "process_refund_ignored_no_processed_order",
-        queuedRefundStepOutput: ignoredRefund,
+        phase: "process_refund_deferred_no_processed_order",
+        queuedRefundStepOutput: queuedRefund,
       });
       console.log(
-        `[Refund ${refundId}] Ignored for shopifyOrderId=${shopifyOrderId} — ` +
-          `D365 header not resolved (order likely cancelled before processing)`
+        `[Refund ${refundId}] Deferred for shopifyOrderId=${shopifyOrderId} — ` +
+          `D365 header is not visible yet`
       );
       return {
-        status: "ignored",
+        status: "deferred",
         refundId,
         shopifyOrderId,
-        queuedRefund: undefined,
-        reason:
-          "Could not resolve D365 sales order. Refund ignored because order was not processed yet.",
+        queuedRefund,
+        reason: "D365 sales order is not visible yet; refund queued for durable replay.",
       };
     }
 
@@ -417,7 +415,9 @@ export const processRefund = inngest.createFunction(
       refundLineItemsCount: Array.isArray(refund.refund_line_items)
         ? refund.refund_line_items.length
         : 0,
-      adjustmentsCount: Array.isArray(refund.order_adjustments) ? refund.order_adjustments.length : 0,
+      adjustmentsCount: Array.isArray(refund.order_adjustments)
+        ? refund.order_adjustments.length
+        : 0,
     });
 
     if (refundAmountUsd <= 0) {

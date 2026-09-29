@@ -10,6 +10,18 @@ user with `scripts/bootstrap-runtime-database.sh` before applying migration
 `battle_bus_runtime` group role. The application never uses the privileged
 `DATABASE_URL` migration secret.
 
+Battle Hub also uses passwordless IAM authentication for server-side reads.
+Provision it with `scripts/bootstrap-hub-database.sh` before applying migration
+`000008`. Migration `000007` creates the NOLOGIN `battle_hub_runtime` role and
+its minimal active-action view; migration `000008` binds the Hub IAM database
+user to that role. The role cannot read the private queue table or event
+payloads.
+
+The Hub project, runtime service account, and IAM database username are pinned
+to the values in migration `000008`. The bootstrap script rejects conflicting
+identity overrides so it cannot provision one principal while the migration
+grants another.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If

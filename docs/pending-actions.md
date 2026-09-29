@@ -1,116 +1,104 @@
-# Pending Actions (Stacked Order Lifecycle)
+# Durable pending lifecycle actions
 
-## Problem
+Shopify can deliver fulfillment, cancellation, or refund events before the
+corresponding D365 or GPS record is visible. Battle Bus persists those events in
+Cloud SQL and replays them after the downstream order is ready.
 
-Shopify can fire lifecycle events (`orders/fulfilled`, `orders/cancelled`, `refunds/create`) before Battle Bus has finished creating the D365 and GPS records for an order. When this happens, the downstream Inngest functions previously returned silently (e.g. `no_d365_order`) and the action was lost — leaving D365/GPS permanently out of sync.
+## Ownership and flow
 
-## Solution
+Battle Bus is the only writer and replay owner. Battle Hub receives read-only
+access for operator visibility.
 
-A **pending actions queue** stores these out-of-order events in the Supabase `orders.pending_actions` JSONB column. When the order creation flow completes, it emits an `order/lifecycle.ready` event that triggers the `drain-pending-actions` function. This function reads the stored actions, re-emits the original events (with a `fromDrain: true` flag), and clears the queue.
-
-## Architecture
-
-```
-Shopify Webhook            Inngest Functions                 Supabase
-─────────────────          ──────────────────                ────────
-orders/fulfilled  ──────>  process-shopify-fulfillment
-                             │
-                             ├─ D365 exists? ──> process normally
-                             │
-                             └─ D365 missing? ──> store in ──> orders.pending_actions
-                                                               [{ action: "fulfill", ... }]
-
-orders/created    ──────>  process-shopify-order
-                             │
-                             └─ on success ──> emit order/lifecycle.ready
-                                                   │
-                                                   └──> drain-pending-actions
-                                                          │
-                                                          ├─ read pending_actions
-                                                          ├─ re-emit events (fromDrain: true)
-                                                          └─ clear pending_actions
+```text
+Shopify or Battle Hub action
+  -> Battle Bus lifecycle function
+  -> downstream record missing
+  -> INSERT pending_lifecycle_actions (deduplicated)
+  -> drain-pending-actions claims a leased batch
+  -> Inngest events emitted with stable event IDs
+  -> each claimed row marked published or superseded
+  -> Battle Hub reads active rows through its server API
 ```
 
-## Event: `order/lifecycle.ready`
+The queue does not depend on Battle Hub availability. It also does not clear an
+entire order-wide JSON array after sending. Each action has its own status and
+completion timestamp, so actions that arrive during a drain cannot be erased.
 
-Emitted by:
+## Database model
 
-- `process-shopify-order` — after successful D365 + GPS creation
-- `process-backorder` — after successful GPS retry (manual or auto)
+Migration `000006_create_durable_pending_lifecycle_actions` creates
+`public.pending_lifecycle_actions` with:
 
-Data:
+- a stable SHA-256 `idempotency_key` for conflict-safe insertion;
+- `pending`, `processing`, `published`, and `superseded` states;
+- claim tokens and bounded leases for crash recovery;
+- attempt counters and timestamps for auditability;
+- indexes for ready work, expired leases, order lookup, and Hub reporting.
 
-```typescript
-{
-  shopifyOrderId: string;
-  shopifyOrderName: string;
-  shopifyStore: string;
-  d365OrderNumber: string;
-  warehouseName: string;
-  dataAreaId: string;
-}
+Lifecycle event payloads are retained only while an action is active. A
+database trigger scrubs `event_data` when a row becomes `published` or
+`superseded`, while the stable idempotency key and operational timestamps remain
+available for audit and deduplication.
+
+Battle Bus inherits write access through `service_role`. Migration
+`000007_create_battle_hub_runtime_role` adds Battle Hub's
+`battle_hub_runtime` role and a security-barrier view containing only active
+operational metadata. Migration
+`000008_bind_battle_hub_iam_database_user` binds the Cloud SQL IAM database
+user to that role. The Hub role cannot select the private queue table,
+`event_data`, or terminal rows. Browser clients and the generic `authenticated`
+role have no direct access to the queue.
+
+The legacy `orders.pending_actions` column remains during the expand/deploy
+window for rollback compatibility. New Battle Bus revisions do not read or
+write it. Removing it requires a later contract migration after all rollback
+revisions and external consumers have been verified.
+
+## Replay guarantees
+
+The drain runs every configured interval and uses three durable Inngest steps:
+
+1. Atomically claim ready rows with `FOR UPDATE SKIP LOCKED` and a five-minute
+   lease, returning only the claim token and count from the Inngest step.
+2. Load payloads transiently inside the emit step, consult durable cancellation
+   state, and emit each action with `pending-action-<queue UUID>` as the event
+   ID.
+3. Mark only the claimed row IDs as published or superseded and scrub their
+   payloads before the step completes.
+
+If a worker stops after emission but before completion, the lease eventually
+expires. The next replay uses the same event ID, allowing Inngest to deduplicate
+the publication. A fulfillment claimed alongside a cancellation for the same
+order is marked `superseded`; cancellation has priority.
+
+Lifecycle handlers refuse to enqueue again when `fromDrain` is present. If the
+downstream record is still unavailable, the replay returns a failed outcome
+instead of creating an infinite queue loop.
+
+## Battle Hub visibility
+
+Battle Hub connects with its Cloud Run service account through the Cloud SQL
+Node.js connector and IAM database authentication. Its
+`GET /api/orders/pending-actions` route accepts either an authenticated Hub user
+or the internal service secret and returns active rows. The order detail dialog
+uses the single-order form:
+
+```text
+GET /api/orders/pending-actions?shopifyOrderId=<numeric-id>
 ```
 
-## Pending Action Shape
+Queue mutation through the Hub API is intentionally rejected. This keeps
+durability and replay ownership in Battle Bus.
 
-Stored in `orders.pending_actions` (JSONB array):
+## Deployment order
 
-```typescript
-{
-  action: "fulfill" | "cancel" | "refund";
-  eventName: string; // Original Inngest event name
-  eventData: object; // Original event.data payload
-  createdAt: string; // ISO timestamp when deferred
-}
-```
+1. Run `scripts/bootstrap-hub-database.sh`.
+2. Apply migrations `000006`, `000007`, and `000008` through the isolated
+   migration job.
+3. Deploy Battle Bus so all new actions use Cloud SQL directly.
+4. Deploy Battle Hub and verify `/api/health/database` on its no-traffic
+   candidate before promotion.
 
-## Edge Cases
-
-| Scenario                              | Behavior                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Order creation fails permanently      | Actions stay queued. Manual rerun of order creation drains on success.                                |
-| Multiple fulfillments/refunds stacked | Each is a separate array entry; drain emits all.                                                      |
-| Cancel + fulfill both pending         | Cancel takes priority; drain skips fulfillment events.                                                |
-| Action already processed              | Idempotency keys on re-emitted events prevent double-processing.                                      |
-| Drain fires but D365 still missing    | Functions detect `fromDrain: true` and return `failed` instead of deferring again (no infinite loop). |
-| Backorder resolves                    | `process-backorder` emits `order/lifecycle.ready`, triggering drain.                                  |
-
-## Battle Hub Visibility
-
-Pending actions are visible to operators in Battle Hub:
-
-- `OrderDetailDialog` shows a pending-actions indicator when `orders.pending_actions` is non-empty.
-- The indicator summarizes queued action counts (fulfill/cancel/refund) and explains they are drained after order creation succeeds.
-- Order details also show live step progress from `order-events-store` so operators can see when drain processing is running/completed.
-
-This prevents "silent queue" behavior and gives clear operational visibility while the order is waiting for D365/GPS creation.
-
-## Hub API
-
-`/api/orders/pending-actions` — service-secret protected
-
-- `GET ?shopifyOrderId=X` — returns `{ actions: PendingAction[] }`
-- `PATCH { shopifyOrderId, operation: "append", action }` — adds an action
-- `PATCH { shopifyOrderId, operation: "clear" }` — clears all actions
-
-## Database
-
-```sql
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_actions JSONB DEFAULT '[]'::jsonb;
-```
-
-## Files
-
-| File                                                           | Role                                                             |
-| -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `inngest/src/inngest/events.ts`                                | `OrderLifecycleReadyEvent` type definition                       |
-| `inngest/src/lib/services/pending-actions.ts`                  | `storePendingAction`, `getPendingActions`, `clearPendingActions` |
-| `inngest/src/inngest/functions/drain-pending-actions.ts`       | Drains queued actions on `order/lifecycle.ready`                 |
-| `inngest/src/inngest/functions/process-shopify-fulfillment.ts` | Defers fulfillment when D365 missing                             |
-| `inngest/src/inngest/functions/process-order-cancellation.ts`  | Defers cancellation when D365+GPS both missing                   |
-| `inngest/src/inngest/functions/process-refund.ts`              | Defers refund when D365 missing                                  |
-| `inngest/src/inngest/functions/process-shopify-order.ts`       | Emits `order/lifecycle.ready` on success                         |
-| `inngest/src/inngest/functions/process-backorder.ts`           | Emits `order/lifecycle.ready` on GPS success                     |
-| `hub/api/orders/pending-actions.ts`                            | Hub API for reading/writing pending actions                      |
-| `hub/supabase/migrations/002_add_pending_actions.sql`          | Schema migration                                                 |
-| `hub/src/features/orders/components/order-detail-dialog.tsx`   | UI indicator for queued pending actions                          |
+Deploying Battle Bus before the new Hub revision preserves rollback safety: the
+old Hub endpoint remains available until no active Battle Bus revision depends
+on it.

@@ -1,154 +1,108 @@
-// ============================================================================
-// DRAIN PENDING ACTIONS — CRON SWEEP
-// ============================================================================
-// Single scheduled sweep (every 2 minutes) that fetches ALL orders with
-// pending lifecycle actions in one Hub API call, emits all events in one
-// batch inngest.send(), and bulk-clears them in one update.
-//
-// Replaces the previous per-order event-triggered approach which spawned one
-// Inngest function run per order and N steps per action — wasteful when
-// processing hundreds of orders simultaneously.
-//
-// Priority:   cancel > refund > fulfill  (cancel beats everything)
-// Durability: 2 steps total (sweep + clear), regardless of order count.
+import { randomUUID } from "crypto";
+
+import { config } from "@/lib/config";
+import { logFlowEvent } from "@/lib/services/flow-logs";
+import {
+  claimPendingActions,
+  completePendingActions,
+  loadClaimedPendingActions,
+} from "@/lib/services/pending-actions";
+import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
 import { inngest } from "../client";
-import {
-  getAllPendingActionOrders,
-  clearPendingActionsBatch,
-  type PendingAction,
-} from "@/lib/services/pending-actions";
-import { config } from "@/lib/config";
-import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export async function runDrainPendingActions({ step, event }: { step: any; event: any }) {
-  if (!config.csPlatform.enabled) {
-    console.info("[PendingActions] Drain skipped because CS Platform is disabled");
-    return { status: "disabled", reason: "cs-platform-disabled", processed: 0 };
-  }
-
-  const _flowStart = Date.now();
-  const _runId = (event as any).id;
+  const flowStart = Date.now();
+  const runId = (event as any).id;
 
   logFlowEvent({
     flow: "pending_actions_drain",
     step: "start",
     status: "started",
-    runId: _runId,
-    shopifyOrderId: event.data?.shopifyOrderId,
-    shopifyOrderName: event.data?.shopifyOrderName,
+    runId,
     payload: { intervalMinutes: config.pendingActions.drainIntervalMinutes },
   });
 
-  // ── Step 1: Fetch all orders with pending actions + emit all events ───
-  const drainResult = await step.run("sweep-and-emit", async () => {
-    const orders = await getAllPendingActionOrders();
-
-    if (orders.length === 0) {
-      return { count: 0, emitted: [], cleared: [] };
-    }
-
-    console.log(`[PendingActions] Drain sweep: ${orders.length} order(s) have pending actions`);
-
-    const eventsToSend: Array<{ name: string; data: Record<string, unknown> }> = [];
-    const clearedOrderIds: string[] = [];
-
-    for (const order of orders) {
-      const actions: PendingAction[] = order.pending_actions || [];
-      if (actions.length === 0) continue;
-
-      const hasCancelAction = actions.some((a) => a.action === "cancel");
-
-      let emittedForOrder = 0;
-      for (const action of actions) {
-        // Cancel takes priority — skip fulfillment if cancel is also pending
-        if (action.action === "fulfill" && hasCancelAction) {
-          console.log(
-            `[PendingActions] Skipping stacked fulfillment for ${order.shopify_order_name} — cancellation pending`
-          );
-          continue;
-        }
-
-        eventsToSend.push({
-          name: action.eventName as string,
-          data: {
-            ...action.eventData,
-            fromDrain: true,
-          },
-        });
-        emittedForOrder++;
-      }
-
-      if (emittedForOrder > 0 || hasCancelAction) {
-        const clearKey =
-          (order.shopify_order_id && String(order.shopify_order_id).trim()) ||
-          (order.platform_order_id && String(order.platform_order_id).trim()) ||
-          "";
-        if (clearKey) {
-          clearedOrderIds.push(clearKey);
-        } else {
-          console.warn(
-            `[PendingActions] Skip bulk-clear key for order name=${order.shopify_order_name} — no shopify_order_id or platform_order_id`
-          );
-        }
-      }
-    }
-
-    if (eventsToSend.length > 0) {
-      // Single batch send — one network call for all events across all orders
-      await inngest.send(eventsToSend as any);
-      console.log(
-        `[PendingActions] Batch-sent ${eventsToSend.length} event(s) for ${clearedOrderIds.length} order(s)`
-      );
-    }
-
-    return {
-      count: orders.length,
-      emitted: eventsToSend.map((e) => e.name),
-      cleared: clearedOrderIds,
-    };
+  const claim = await step.run("claim-pending-actions", async () => {
+    const claimToken = randomUUID();
+    const claimedCount = await claimPendingActions({ claimToken });
+    return { claimToken, claimedCount };
   });
 
-  if (drainResult.cleared.length === 0) {
+  if (claim.claimedCount === 0) {
     logFlowEvent({
       flow: "pending_actions_drain",
       step: "done",
       status: "completed",
-      runId: _runId,
-      durationMs: Date.now() - _flowStart,
-      shopifyOrderId: event.data?.shopifyOrderId,
-      shopifyOrderName: event.data?.shopifyOrderName,
+      runId,
+      durationMs: Date.now() - flowStart,
       payload: { status: "idle", processed: 0 },
     });
     return { status: "idle", processed: 0 };
   }
 
-  // ── Step 2: Bulk-clear all processed orders in one update ─────────────
-  await step.run("bulk-clear", async () => {
-    await clearPendingActionsBatch(drainResult.cleared);
+  const emitResult = await step.run("emit-claimed-actions", async () => {
+    const actions = await loadClaimedPendingActions({ claimToken: claim.claimToken });
+    const published = actions.filter(
+      (action) => action.action !== "fulfill" || !action.blockedByCancellation
+    );
+    const superseded = actions.filter(
+      (action) => action.action === "fulfill" && action.blockedByCancellation
+    );
+
+    if (published.length > 0) {
+      await inngest.send(
+        published.map((action) => ({
+          id: `pending-action-${action.id}`,
+          name: action.eventName as any,
+          data: {
+            ...action.eventData,
+            fromDrain: true,
+            pendingActionId: action.id,
+          },
+        }))
+      );
+    }
+
+    for (const action of superseded) {
+      console.log(
+        `[PendingActions] Superseding fulfillment ${action.id} for ${action.shopifyOrderName || action.shopifyOrderId} because cancellation is pending`
+      );
+    }
+
+    console.log(
+      `[PendingActions] Published ${published.length} durable event(s); superseded ${superseded.length}`
+    );
+
+    const completed = await completePendingActions({
+      claimToken: claim.claimToken,
+      publishedIds: published.map((action) => action.id),
+      supersededIds: superseded.map((action) => action.id),
+    });
+
+    return {
+      processed: completed,
+      eventsEmitted: published.length,
+      superseded: superseded.length,
+    };
   });
 
   logFlowEvent({
     flow: "pending_actions_drain",
     step: "done",
     status: "completed",
-    runId: _runId,
-    durationMs: Date.now() - _flowStart,
-    shopifyOrderId: event.data?.shopifyOrderId,
-    shopifyOrderName: event.data?.shopifyOrderName,
+    runId,
+    durationMs: Date.now() - flowStart,
     payload: {
-      processed: drainResult.count,
-      eventsEmitted: drainResult.emitted.length,
-      ordersCleared: drainResult.cleared.length,
+      processed: emitResult.processed,
+      eventsEmitted: emitResult.eventsEmitted,
+      superseded: emitResult.superseded,
     },
   });
 
   return {
     status: "drained",
-    processed: drainResult.count,
-    eventsEmitted: drainResult.emitted.length,
-    ordersCleared: drainResult.cleared.length,
+    ...emitResult,
   };
 }
 
@@ -157,8 +111,6 @@ export const drainPendingActions = inngest.createFunction(
     id: "drain-pending-actions",
     name: "Drain Pending Lifecycle Actions",
     retries: RETRY_CONFIGS.LOW_PRIORITY,
-    // Only one sweep at a time — prevents overlapping cron runs from
-    // double-emitting the same pending actions.
     concurrency: { limit: 1 },
     triggers: [{ cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` }],
   },
