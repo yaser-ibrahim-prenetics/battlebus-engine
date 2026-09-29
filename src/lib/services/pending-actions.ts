@@ -19,6 +19,7 @@ export interface ClaimedPendingAction extends PendingAction {
   shopifyOrderName: string | null;
   idempotencyKey: string;
   attempts: number;
+  blockedByCancellation: boolean;
 }
 
 interface PendingActionRow extends QueryResultRow {
@@ -30,6 +31,7 @@ interface PendingActionRow extends QueryResultRow {
   event_data: Record<string, unknown>;
   idempotency_key: string;
   attempts: number;
+  blocked_by_cancellation: boolean;
   created_at: Date | string;
 }
 
@@ -72,6 +74,7 @@ function mapRow(row: PendingActionRow): ClaimedPendingAction {
     eventData: row.event_data,
     idempotencyKey: row.idempotency_key,
     attempts: row.attempts,
+    blockedByCancellation: row.blocked_by_cancellation,
     createdAt:
       row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   };
@@ -129,10 +132,10 @@ export async function claimPendingActions({
   claimToken: string;
   batchSize?: number;
   leaseSeconds?: number;
-}): Promise<ClaimedPendingAction[]> {
+}): Promise<number> {
   const safeBatchSize = Math.max(1, Math.min(batchSize, 500));
   const safeLeaseSeconds = Math.max(30, Math.min(leaseSeconds, 900));
-  const result = await queryDatabase<PendingActionRow>(
+  const result = await queryDatabase<{ id: string }>(
     `WITH candidates AS (
        SELECT id
        FROM public.pending_lifecycle_actions
@@ -154,7 +157,19 @@ export async function claimPendingActions({
          last_error = NULL
      FROM candidates
      WHERE pending.id = candidates.id
-     RETURNING
+     RETURNING pending.id`,
+    [safeBatchSize, claimToken, safeLeaseSeconds]
+  );
+  return result.rowCount ?? result.rows.length;
+}
+
+export async function loadClaimedPendingActions({
+  claimToken,
+}: {
+  claimToken: string;
+}): Promise<ClaimedPendingAction[]> {
+  const result = await queryDatabase<PendingActionRow>(
+    `SELECT
        pending.id,
        pending.shopify_order_id,
        pending.shopify_order_name,
@@ -163,8 +178,22 @@ export async function claimPendingActions({
        pending.event_data,
        pending.idempotency_key,
        pending.attempts,
-       pending.created_at`,
-    [safeBatchSize, claimToken, safeLeaseSeconds]
+       pending.created_at,
+       EXISTS (
+         SELECT 1
+         FROM public.pending_lifecycle_actions AS cancellation
+         WHERE cancellation.shopify_order_id = pending.shopify_order_id
+           AND cancellation.action = 'cancel'
+           AND cancellation.status IN ('pending', 'processing', 'published')
+       ) AS blocked_by_cancellation
+     FROM public.pending_lifecycle_actions AS pending
+     WHERE pending.status = 'processing'
+       AND pending.claim_token = $1::uuid
+     ORDER BY
+       CASE pending.action WHEN 'cancel' THEN 0 WHEN 'refund' THEN 1 ELSE 2 END,
+       pending.created_at,
+       pending.id`,
+    [claimToken]
   );
   return result.rows.map(mapRow);
 }

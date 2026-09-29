@@ -5,7 +5,7 @@ import { logFlowEvent } from "@/lib/services/flow-logs";
 import {
   claimPendingActions,
   completePendingActions,
-  type ClaimedPendingAction,
+  loadClaimedPendingActions,
 } from "@/lib/services/pending-actions";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 
@@ -25,11 +25,11 @@ export async function runDrainPendingActions({ step, event }: { step: any; event
 
   const claim = await step.run("claim-pending-actions", async () => {
     const claimToken = randomUUID();
-    const actions = await claimPendingActions({ claimToken });
-    return { claimToken, actions };
+    const claimedCount = await claimPendingActions({ claimToken });
+    return { claimToken, claimedCount };
   });
 
-  if (claim.actions.length === 0) {
+  if (claim.claimedCount === 0) {
     logFlowEvent({
       flow: "pending_actions_drain",
       step: "done",
@@ -42,17 +42,12 @@ export async function runDrainPendingActions({ step, event }: { step: any; event
   }
 
   const emitResult = await step.run("emit-claimed-actions", async () => {
-    const actions = claim.actions as ClaimedPendingAction[];
-    const ordersWithCancellation = new Set(
-      actions.filter((action) => action.action === "cancel").map((action) => action.shopifyOrderId)
-    );
+    const actions = await loadClaimedPendingActions({ claimToken: claim.claimToken });
     const published = actions.filter(
-      (action) =>
-        action.action !== "fulfill" || !ordersWithCancellation.has(action.shopifyOrderId)
+      (action) => action.action !== "fulfill" || !action.blockedByCancellation
     );
     const superseded = actions.filter(
-      (action) =>
-        action.action === "fulfill" && ordersWithCancellation.has(action.shopifyOrderId)
+      (action) => action.action === "fulfill" && action.blockedByCancellation
     );
 
     if (published.length > 0) {
@@ -78,19 +73,18 @@ export async function runDrainPendingActions({ step, event }: { step: any; event
     console.log(
       `[PendingActions] Published ${published.length} durable event(s); superseded ${superseded.length}`
     );
-    return {
+
+    const completed = await completePendingActions({
+      claimToken: claim.claimToken,
       publishedIds: published.map((action) => action.id),
       supersededIds: superseded.map((action) => action.id),
-      eventNames: published.map((action) => action.eventName),
-    };
-  });
-
-  const completed = await step.run("complete-claimed-actions", async () => {
-    return completePendingActions({
-      claimToken: claim.claimToken,
-      publishedIds: emitResult.publishedIds,
-      supersededIds: emitResult.supersededIds,
     });
+
+    return {
+      processed: completed,
+      eventsEmitted: published.length,
+      superseded: superseded.length,
+    };
   });
 
   logFlowEvent({
@@ -100,17 +94,15 @@ export async function runDrainPendingActions({ step, event }: { step: any; event
     runId,
     durationMs: Date.now() - flowStart,
     payload: {
-      processed: completed,
-      eventsEmitted: emitResult.publishedIds.length,
-      superseded: emitResult.supersededIds.length,
+      processed: emitResult.processed,
+      eventsEmitted: emitResult.eventsEmitted,
+      superseded: emitResult.superseded,
     },
   });
 
   return {
     status: "drained",
-    processed: completed,
-    eventsEmitted: emitResult.publishedIds.length,
-    superseded: emitResult.supersededIds.length,
+    ...emitResult,
   };
 }
 

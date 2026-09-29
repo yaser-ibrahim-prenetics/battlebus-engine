@@ -4,6 +4,7 @@ import { queryDatabase } from "@/lib/db/database";
 import {
   buildPendingActionIdempotencyKey,
   claimPendingActions,
+  loadClaimedPendingActions,
   storePendingAction,
 } from "../pending-actions";
 
@@ -72,7 +73,7 @@ describe("pending actions persistence", () => {
       ],
     });
 
-    const result = await claimPendingActions({
+    const claimedCount = await claimPendingActions({
       claimToken: "00000000-0000-0000-0000-000000000099",
       batchSize: 1000,
       leaseSeconds: 5,
@@ -83,10 +84,44 @@ describe("pending actions persistence", () => {
       "00000000-0000-0000-0000-000000000099",
       30,
     ]);
+    expect(claimedCount).toBe(1);
+  });
+
+  it("loads claimed payloads with durable cancellation precedence", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "SELECT",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [
+        {
+          id: "00000000-0000-0000-0000-000000000001",
+          shopify_order_id: "1001",
+          shopify_order_name: "#IM8-1001",
+          action: "fulfill",
+          event_name: "shopify/order.fulfilled",
+          event_data: { shopifyOrderId: "1001" },
+          idempotency_key: "key",
+          attempts: 2,
+          blocked_by_cancellation: true,
+          created_at: "2026-09-29T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const result = await loadClaimedPendingActions({
+      claimToken: "00000000-0000-0000-0000-000000000099",
+    });
+
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("cancellation.status IN ('pending', 'processing', 'published')"),
+      ["00000000-0000-0000-0000-000000000099"]
+    );
     expect(result[0]).toMatchObject({
       shopifyOrderId: "1001",
-      action: "cancel",
-      attempts: 2,
+      action: "fulfill",
+      blockedByCancellation: true,
     });
   });
+
 });
