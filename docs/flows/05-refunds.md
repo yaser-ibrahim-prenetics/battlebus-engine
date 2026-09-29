@@ -177,9 +177,10 @@ Refund amounts are converted to USD before creating the D365 line using the prio
 
 ## Idempotency and ownership
 
-The refund migration series (`000009` through `000012`) makes PostgreSQL
+The refund migration series (`000009` through `000013`) makes PostgreSQL
 authoritative. It separates the ledger schema, recovery indexes, lifecycle
-triggers, and access controls:
+triggers, and access controls, then backfills completed refund IDs from the
+existing flow log:
 
 1. `refund_id` is the table primary key, so concurrent event paths contend on
    one row rather than racing a diagnostic log lookup.

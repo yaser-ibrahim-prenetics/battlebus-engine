@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.refund_operations (
   last_error text,
   line_created_at timestamptz,
   completed_at timestamptz,
+  backfilled_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT refund_operations_state_valid
