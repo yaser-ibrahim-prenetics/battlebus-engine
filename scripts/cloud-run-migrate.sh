@@ -20,7 +20,7 @@ esac
 
 echo "Applying Battle Bus migrations for release ${MIGRATION_RELEASE_SHA} with database secret version ${DATABASE_URL_SECRET_VERSION}."
 /usr/local/bin/migrate \
-  -path file:///migrations \
+  -path /migrations \
   -database "${DATABASE_URL}" \
   up
 echo "Battle Bus migrations completed for release ${MIGRATION_RELEASE_SHA}."
