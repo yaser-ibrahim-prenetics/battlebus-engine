@@ -87,6 +87,7 @@ export interface D365SalesOrderLineRequest {
   currency?: string;
   countryCode?: string;
   discountCode?: string[];
+  lineDescription?: string;
 }
 
 export interface D365SalesOrderLineForReturn {
