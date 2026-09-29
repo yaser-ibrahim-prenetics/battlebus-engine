@@ -43,8 +43,8 @@ This document explains the complete architecture of the IM8 backend system.
 │  │  ┌─────────────────────────────────────────────────────────────────┐ │  │
 │  │  │                    INNGEST FUNCTIONS                            │ │  │
 │  │  │                                                                 │ │  │
-│  │  │  • process-shopify-order    • process-gps-fulfilment           │ │  │
-│  │  │  • process-refund           • process-stord-fulfilment         │ │  │
+│  │  │  • process-shopify-order    • process-warehouse-webhook-       │ │  │
+│  │  │  • process-refund             fulfilment (GPS + STORD)         │ │  │
 │  │  │  • process-cancellation     • inventory-sync                   │ │  │
 │  │  │  • oos-retry                • alert-notifications              │ │  │
 │  │  │                                                                 │ │  │
@@ -305,7 +305,7 @@ if (error instanceof OutOfStockError) {
 
 2. EVENT TRIGGERED
    ┌─────────────┐
-   │   Inngest   │──── gps/fulfilment.received ────▶ processGpsFulfilment
+   │   Inngest   │──── GPS/STORD fulfilment events ─▶ processWarehouseWebhookFulfilment
    └─────────────┘
 
 3. PROCESSING STEPS
@@ -428,8 +428,8 @@ battle-bus/
 │   │       ├── index.ts                  # Function exports
 │   │       ├── process-shopify-order.ts  # Main order processing
 │   │       ├── process-refund.ts         # Refund handling
-│   │       ├── process-gps-fulfilment.ts # GPS fulfillment
-│   │       ├── process-stord-fulfilment.ts # STORD fulfillment
+│   │       ├── process-warehouse-webhook-fulfilment.ts # GPS/STORD adapter
+│   │       ├── process-shopify-fulfillment.ts # Canonical D365 fulfillment
 │   │       └── process-order-cancellation.ts # Cancellation
 │   │
 │   ├── lib/
