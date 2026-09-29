@@ -6,7 +6,7 @@ BEGIN
   INTO remaining_tables
   FROM unnest(ARRAY[
     'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
-    'mission_runs', 'order_lines', 'orders', 'permissions', 'products',
+    'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'
