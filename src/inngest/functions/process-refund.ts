@@ -29,9 +29,9 @@ import {
   acceptRefundRecovery,
   completeRefundOperation,
   deferRefundUntilOrder,
-  markRefundLineCreated,
   reserveRefundOperation,
 } from "@/lib/services/refund-operations";
+import { ensureRefundLineCreated } from "@/lib/services/refund-line-creation";
 
 export const processRefund = inngest.createFunction(
   {
@@ -499,21 +499,18 @@ export const processRefund = inngest.createFunction(
         })
       );
 
-      const result = await dynamics.createSalesOrderLine(d365LinePayload);
-      await markRefundLineCreated({
+      return ensureRefundLineCreated({
         refundId: String(refundId),
         claimToken: refundClaimToken,
-        d365OrderNumber: d365Order.SalesOrderNumber!,
-        inventoryLotId: result.InventoryLotId,
+        operation,
+        request: d365LinePayload,
       });
-
-      return { ...result, status: "created", request: d365LinePayload };
     });
 
-    // Emit the dedupe anchor immediately after the negative line is created so that
-    // any duplicate `refundId` event landing later can short-circuit in step 0,
-    // even if the current run fails before the `done` log is written.
-    if (refundLine.status === "created") {
+    // Keep the flow-log anchor for rollout backfill and operations. PostgreSQL
+    // remains authoritative; reconciled writes are logged after D365 confirms
+    // the deterministic line marker.
+    if (refundLine.status === "created" || refundLine.status === "reconciled") {
       emitRefundConfirmation("d365_refund_line_created", "completed", {
         d365OrderNumber: d365Order?.SalesOrderNumber || null,
         refundSku: warehouseInfo.refundSku,

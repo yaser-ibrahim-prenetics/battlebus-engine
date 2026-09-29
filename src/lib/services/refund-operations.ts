@@ -207,6 +207,50 @@ export async function deferRefundUntilOrder({
   }
 }
 
+export async function beginRefundLineCreation({
+  refundId,
+  claimToken,
+  externalIdempotencyKey,
+  leaseSeconds = 900,
+}: {
+  refundId: string;
+  claimToken: string;
+  externalIdempotencyKey: string;
+  leaseSeconds?: number;
+}): Promise<RefundOperationClaim> {
+  requireDatabase();
+  const safeLeaseSeconds = Math.max(60, Math.min(leaseSeconds, 3600));
+  const result = await queryDatabase<RefundOperationClaimRow>(
+    `WITH started AS (
+       UPDATE public.refund_operations
+       SET state = 'creating_line',
+           external_idempotency_key = $3,
+           lease_expires_at = now() + ($4 * interval '1 second'),
+           last_error = NULL
+       WHERE refund_id = $1
+         AND claim_token = $2::uuid
+         AND state = 'processing'
+         AND (external_idempotency_key IS NULL OR external_idempotency_key = $3)
+       RETURNING true AS claimed, state, claim_token,
+         d365_order_number, inventory_lot_id, external_idempotency_key
+     )
+     SELECT claimed, state, claim_token, d365_order_number, inventory_lot_id,
+       external_idempotency_key FROM started
+     UNION ALL
+     SELECT false AS claimed, state, claim_token, d365_order_number,
+       inventory_lot_id, external_idempotency_key
+     FROM public.refund_operations
+     WHERE refund_id = $1
+       AND claim_token = $2::uuid
+       AND NOT EXISTS (SELECT 1 FROM started)
+     LIMIT 1`,
+    [refundId, claimToken, externalIdempotencyKey, safeLeaseSeconds]
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error(`Refund operation ${refundId} lost ownership before line creation`);
+  return mapClaim(row);
+}
+
 export async function markRefundLineCreated({
   refundId,
   claimToken,
@@ -228,7 +272,7 @@ export async function markRefundLineCreated({
          last_error = NULL
      WHERE refund_id = $1
        AND claim_token = $2::uuid
-       AND state = 'processing'
+       AND state = 'creating_line'
      RETURNING refund_id`,
     [refundId, claimToken, d365OrderNumber, inventoryLotId]
   );

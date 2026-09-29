@@ -114,8 +114,12 @@ Calls `dynamics.createSalesOrderLine` with:
 - `itemNumber: refundSku` (data-area-specific refund item)
 
 Returns `InventoryLotId` for the return fulfilment and records the operation as
-`line_created` while retaining the same database claim. Other events carrying
-the same refund ID cannot create another negative line.
+`line_created` while retaining the same database claim. Before the POST, the
+operation moves to `creating_line` and the line receives a deterministic,
+hashed `LineDescription` marker. If the POST succeeds but its database
+acknowledgement fails, retries search D365 for that marker and reconcile the lot
+ID instead of issuing another POST. Other events carrying the same refund ID
+cannot create another negative line.
 
 ### Step 6: Post Return Fulfilment
 
@@ -158,9 +162,11 @@ If the D365 order is not yet created when the refund arrives:
 
 Dispatch leases are single-use: accepting a lease atomically moves the row out
 of `dispatching`, so replaying the same token cannot start another worker.
-Expired active states are recoverable. After 12 database recovery attempts, the
-row moves to `dead_letter`, its retained event payload is scrubbed, and its
-minimal error and timing metadata remain available for operator intervention.
+Expired active states are recoverable. A `creating_line` recovery only performs
+D365 marker reconciliation and never blindly repeats an ambiguous POST. After
+12 database recovery attempts, the row moves to `dead_letter`, its retained
+event payload is scrubbed, and its minimal error and timing metadata remain
+available for operator intervention.
 
 ## Currency Handling
 
@@ -191,5 +197,7 @@ existing flow log:
    cannot process the refund.
 3. Recovery dispatches use stable IDs derived from the refund ID and database
    attempt number.
-4. Completion and dead-lettering scrub `event_data` while retaining operational
+4. D365 line creation uses a hashed per-refund marker and a pre-write database
+   checkpoint, closing the external-write acknowledgement window.
+5. Completion and dead-lettering scrub `event_data` while retaining operational
    audit metadata.

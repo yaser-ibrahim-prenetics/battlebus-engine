@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import {
   acceptRefundRecovery,
+  beginRefundLineCreation,
   claimRefundRecoveries,
   completeRefundOperation,
   deferRefundUntilOrder,
@@ -250,6 +251,40 @@ describe("refund operations", () => {
       "SO-42",
       "LOT-42",
     ]);
+    expect(vi.mocked(queryDatabase).mock.calls[0]?.[0]).toContain("AND state = 'creating_line'");
+  });
+
+  it("checkpoints line creation with a stable external idempotency key", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "SELECT",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [
+        {
+          claimed: true,
+          state: "creating_line",
+          claim_token: "00000000-0000-0000-0000-000000000099",
+          external_idempotency_key: "SHOPIFY-REFUND-abc",
+        },
+      ],
+    });
+
+    const result = await beginRefundLineCreation({
+      refundId: "refund-42",
+      claimToken: "00000000-0000-0000-0000-000000000099",
+      externalIdempotencyKey: "SHOPIFY-REFUND-abc",
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      state: "creating_line",
+      externalIdempotencyKey: "SHOPIFY-REFUND-abc",
+    });
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("SET state = 'creating_line'"),
+      ["refund-42", "00000000-0000-0000-0000-000000000099", "SHOPIFY-REFUND-abc", 900]
+    );
   });
 
   it("completes the owned operation and scrubs its recovery payload", async () => {

@@ -61,8 +61,10 @@ CREATE TABLE IF NOT EXISTS public.refund_operations (
 COMMENT ON TABLE public.refund_operations IS
   'Database-enforced refund deduplication and recovery ledger keyed by Shopify refund ID.';
 COMMENT ON COLUMN public.refund_operations.event_data IS
-  'Retained only while a refund is active and scrubbed when processing completes.';
+  'Retained only while a refund is active and scrubbed when processing completes or dead-letters.';
 COMMENT ON COLUMN public.refund_operations.state IS
   'Recoverable refund state machine. completed and dead_letter are terminal and carry no event payload.';
+COMMENT ON COLUMN public.refund_operations.external_idempotency_key IS
+  'Stable non-sensitive marker written to the D365 refund line for reconciliation after ambiguous writes.';
 
 COMMIT;
