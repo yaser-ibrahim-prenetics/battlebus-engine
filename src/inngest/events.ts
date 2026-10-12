@@ -629,6 +629,8 @@ export interface ShopifyRefundPayload {
   id: number;
   order_id: number;
   created_at: string;
+  /** Shopify's effective refund timestamp; Spock Store prefers this over created_at for holds. */
+  processed_at?: string;
   refund_line_items: ShopifyRefundLineItem[];
   transactions: ShopifyTransaction[];
   order_adjustments?: Array<{

@@ -240,6 +240,7 @@ export const config = {
   delays: {
     orderSyncDelayMinutes: safeParseInt(process.env.ORDER_SYNC_DELAY_MINUTES, 5),
     outOfStockRetryHours: safeParseInt(process.env.OOS_RETRY_HOURS, 4),
+    refundHoldHours: clampInt(safeParseInt(process.env.IM8_REFUND_HOLD_HOURS, 24), 0, 168),
   },
 
   /** Daily/manual reconciliation windows use UTC calendar days. */
