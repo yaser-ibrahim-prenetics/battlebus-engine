@@ -1,8 +1,10 @@
 # Durable pending lifecycle actions
 
-Shopify can deliver fulfillment, cancellation, or refund events before the
-corresponding D365 or GPS record is visible. Battle Bus persists those events in
-Cloud SQL and replays them after the downstream order is ready.
+Shopify can deliver fulfillment or cancellation events before the corresponding
+D365 or GPS record is visible. Battle Bus persists those events in Cloud SQL and
+replays them after the downstream order is ready. Refunds use the dedicated
+`refund_operations` ledger documented in [Flow 5](./flows/05-refunds.md), which
+combines database deduplication with repeated order-availability recovery.
 
 ## Ownership and flow
 
@@ -71,9 +73,12 @@ expires. The next replay uses the same event ID, allowing Inngest to deduplicate
 the publication. A fulfillment claimed alongside a cancellation for the same
 order is marked `superseded`; cancellation has priority.
 
-Lifecycle handlers refuse to enqueue again when `fromDrain` is present. If the
-downstream record is still unavailable, the replay returns a failed outcome
-instead of creating an infinite queue loop.
+Fulfillment and cancellation handlers refuse to enqueue again when `fromDrain`
+is present. Refund recovery is intentionally separate: the database ledger
+returns missing-order refunds to `awaiting_order` with bounded backoff instead
+of treating the first replay as terminal. Refund recovery uses single-use
+dispatch leases and a 12-attempt budget; exhausted operations become terminal
+dead letters and have their retained payloads scrubbed.
 
 ## Battle Hub visibility
 
@@ -93,8 +98,8 @@ durability and replay ownership in Battle Bus.
 ## Deployment order
 
 1. Run `scripts/bootstrap-hub-database.sh`.
-2. Apply migrations `000006`, `000007`, and `000008` through the isolated
-   migration job.
+2. Apply migrations `000006` through `000013` through the isolated migration
+   job.
 3. Deploy Battle Bus so all new actions use Cloud SQL directly.
 4. Deploy Battle Hub and verify `/api/health/database` on its no-traffic
    candidate before promotion.

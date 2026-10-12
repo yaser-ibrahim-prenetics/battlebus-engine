@@ -776,6 +776,7 @@ export async function createSalesOrderLine(
     currency,
     countryCode,
     discountCode,
+    lineDescription,
   } = req;
 
   const body = {
@@ -790,6 +791,7 @@ export async function createSalesOrderLine(
       : {}),
     THK_DiscountType: giftCardNumber,
     THK_PromotionCode: discountCode && discountCode.length > 0 ? discountCode[0] : "",
+    ...(lineDescription ? { LineDescription: lineDescription } : {}),
     ...(shippingWarehouseId ? { ShippingWarehouseId: shippingWarehouseId } : {}),
   };
 
@@ -1426,8 +1428,7 @@ export async function assertPrepaymentInvoicePosted(
     return {
       depositFulfillment: check.depositFulfillment,
       processingStatus: check.processingStatus,
-      orderingCustomerAccountNumber:
-        check.header?.OrderingCustomerAccountNumber ?? null,
+      orderingCustomerAccountNumber: check.header?.OrderingCustomerAccountNumber ?? null,
     };
   }
 
@@ -1578,9 +1579,7 @@ export async function createFulfilment(
       assertThkFulfilmentSucceeded(result, salesOrderNumber);
       const thkWarning = getThkFulfilmentWarningMessage(result.Message);
       if (thkWarning) {
-        console.warn(
-          `[D365] THK fulfilment warning for ${salesOrderNumber}: ${thkWarning}`
-        );
+        console.warn(`[D365] THK fulfilment warning for ${salesOrderNumber}: ${thkWarning}`);
       } else {
         console.log(`[D365] Created fulfilment for: ${salesOrderNumber}`);
       }
@@ -1792,7 +1791,7 @@ export async function getSalesOrderLines(
   const filter = `dataAreaId eq '${dataAreaId}' and SalesOrderNumber eq '${salesOrderNumber}'`;
   // Keep select minimal for cross-tenant compatibility:
   // some environments do not expose SalesQuantity/SalesPrice/LineDiscountAmount on SalesOrderLine.
-  const select = "ItemNumber,InventoryLotId,ShippingWarehouseId,ShippingSiteId";
+  const select = "ItemNumber,InventoryLotId,ShippingWarehouseId,ShippingSiteId,LineDescription";
   const url = `${config.dynamics.baseUrl}/data/SalesOrderLines?${D365_ODATA_CROSS_COMPANY_QUERY}&$filter=${encodeURIComponent(filter)}&$select=${select}`;
 
   const response = await pacedFetch(url, {
@@ -1860,7 +1859,9 @@ export async function getSalesOrderLineFulfilmentDimensionsMap(
   const lines = await getSalesOrderLines(salesOrderNumber, dataAreaId);
   const out: Record<string, SalesOrderLineFulfilmentDimensions> = {};
   for (const line of lines) {
-    const item = String(line.ItemNumber || "").trim().toUpperCase();
+    const item = String(line.ItemNumber || "")
+      .trim()
+      .toUpperCase();
     const warehouse = String(line.ShippingWarehouseId || "").trim();
     if (!item || !warehouse) continue;
     out[item] = {
@@ -2242,7 +2243,10 @@ export async function getSalesOrderByShopifyId(
     }
 
     const looseThkFilter = `THK_ShopifyReference eq '${odataQuotedLiteral(ref)}'`;
-    const looseThkOrder = await tryFilter(looseThkFilter, "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE");
+    const looseThkOrder = await tryFilter(
+      looseThkFilter,
+      "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE"
+    );
     if (looseThkOrder) {
       console.log(
         `[D365] Found order: ${looseThkOrder.SalesOrderNumber} (cross-company THK ref=${ref})`

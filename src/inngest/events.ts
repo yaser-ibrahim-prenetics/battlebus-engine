@@ -25,6 +25,10 @@ export type ShopifyRefundCreatedEvent = {
     receivedAt: string;
     /** Set when replaying from drain-pending-actions (do not re-queue indefinitely). */
     fromDrain?: boolean;
+    /** Database lease used by the refund-before-order recovery dispatcher. */
+    refundRecoveryToken?: string;
+    /** Monotonic dispatch attempt used to build a stable recovery event ID. */
+    refundRecoveryAttempt?: number;
     /**
      * `loop_return_closed` — payload was synthesized from Loop Returns webhook
      * (skip Shopify-only duplicate detection that looks for Loop in order timeline).

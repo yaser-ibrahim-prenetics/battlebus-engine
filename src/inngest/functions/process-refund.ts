@@ -1,3 +1,5 @@
+import { randomUUID } from "crypto";
+
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -19,17 +21,22 @@ import {
 } from "@/lib/utils/constants";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
-import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/flow-logs";
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import { saveRefundOrderLine } from "@/lib/services/order-lines";
 import { shopifyRefundCreatedByLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
 import { normalizeShopifyOrderIdFromLoopProvider } from "@/lib/helpers/loop-return-refund";
-import { storePendingAction } from "@/lib/services/pending-actions";
+import {
+  acceptRefundRecovery,
+  completeRefundOperation,
+  deferRefundUntilOrder,
+  reserveRefundOperation,
+} from "@/lib/services/refund-operations";
+import { ensureRefundLineCreated } from "@/lib/services/refund-line-creation";
 
 export const processRefund = inngest.createFunction(
   {
     id: "process-shopify-refund",
     name: "Process Shopify Refund",
-    idempotency: "event.data.refundId",
     retries: RETRY_CONFIGS.DEFAULT,
     throttle: {
       ...THROTTLE_CONFIGS.REFUND,
@@ -124,40 +131,6 @@ export const processRefund = inngest.createFunction(
       };
     }
 
-    // 0. Cross-run dedupe guard.
-    //
-    // Inngest's `idempotency: "event.data.refundId"` covers same-event retries, but
-    // a Hub-triggered refund race followed by Shopify's webhook can still produce two
-    // distinct events sharing the same `refundId`. Mirror spock-store's per-line
-    // `shopifyLineItemId` check by looking at `flow_logs` for a prior completed
-    // emit for this refund.
-    const alreadyProcessed = await step.run("refund-dedupe-check", async () => {
-      return hasCompletedRefundFlowLog(String(refundId));
-    });
-    if (alreadyProcessed) {
-      console.log(
-        `[Refund ${refundId}] Skipped — prior completed refund flow log exists for this refundId`
-      );
-      logRefundTraceLifecycle({
-        ...refundTrace,
-        phase: "process_refund_already_processed",
-      });
-      logFlowEvent({
-        flow: "refund",
-        step: "already_processed",
-        status: "skipped",
-        runId,
-        shopifyOrderId: String(shopifyOrderId),
-        payload: { refundId: String(refundId) },
-      });
-      return {
-        status: "already_processed",
-        refundId,
-        shopifyOrderId,
-        reason: "Prior completed refund flow log exists for this refundId",
-      };
-    }
-
     // 1. Get Shopify Order first (needed for order name lookup)
     const shopifyOrder = await step.run("get-shopify-order", async () => {
       const order = await shopify.getOrder(shopifyOrderId);
@@ -210,6 +183,62 @@ export const processRefund = inngest.createFunction(
       }
     }
 
+    // PostgreSQL is the authority for cross-event deduplication. A primary key
+    // on refund_id allows only one run to own D365 side effects at a time. A
+    // recovery event must present the dispatch lease created by the recovery
+    // cron; ordinary events may acquire only new or due awaiting-order rows.
+    const operation = await step.run("reserve-refund-operation", async () => {
+      const recoveryToken = (
+        event.data as ShopifyRefundCreatedEvent["data"]
+      ).refundRecoveryToken?.trim();
+      if (recoveryToken) {
+        return acceptRefundRecovery({
+          refundId: String(refundId),
+          claimToken: recoveryToken,
+        });
+      }
+
+      return reserveRefundOperation({
+        refundId: String(refundId),
+        shopifyOrderId: String(shopifyOrderId),
+        eventName: "shopify/refund.created",
+        eventData: event.data,
+        claimToken: randomUUID(),
+      });
+    });
+
+    if (!operation.claimed || !operation.claimToken) {
+      const status =
+        operation.state === "completed"
+          ? "already_processed"
+          : operation.state === "dead_letter"
+            ? "failed"
+            : operation.state === "awaiting_order"
+              ? "deferred"
+              : "in_progress";
+      console.log(`[Refund ${refundId}] Skipped — database operation is ${operation.state}`);
+      logRefundTraceLifecycle({
+        ...refundTrace,
+        phase: "process_refund_database_deduplicated",
+        operationState: operation.state,
+      });
+      logFlowEvent({
+        flow: "refund",
+        step: "database_deduplicated",
+        status: "skipped",
+        runId,
+        shopifyOrderId: String(shopifyOrderId),
+        payload: { refundId: String(refundId), operationState: operation.state },
+      });
+      return {
+        status,
+        refundId,
+        shopifyOrderId,
+        reason: `Refund operation is already ${operation.state}`,
+      };
+    }
+    const refundClaimToken = operation.claimToken;
+
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
     // THK_ShopifyReference is set from Shopify order `name` at header creation (see toD365SalesOrderHeaderV3).
     // Try shipping-country-routed + all configured data areas (like spock-store finding the SO regardless
@@ -246,24 +275,17 @@ export const processRefund = inngest.createFunction(
     });
 
     if (!d365Order && config.features.enableDynamicsSync) {
-      if ((event.data as ShopifyRefundCreatedEvent["data"]).fromDrain) {
-        return {
-          status: "failed",
-          refundId,
-          shopifyOrderId,
-          message: "D365 order not found after drain — refund permanently skipped",
-        };
-      }
-      const queuedRefund = await step.run("store-pending-refund", async () => {
-        await storePendingAction(String(shopifyOrderId), {
-          action: "refund",
+      const deferredRefund = await step.run("defer-refund-until-order", async () => {
+        await deferRefundUntilOrder({
+          refundId: String(refundId),
+          claimToken: refundClaimToken,
           eventName: "shopify/refund.created",
           eventData: event.data,
-          createdAt: new Date().toISOString(),
+          error: "D365 sales order is not visible yet",
         });
         return {
           ok: true,
-          step: "store-pending-refund",
+          step: "defer-refund-until-order",
           refundId: String(refundId),
           shopifyOrderId: String(shopifyOrderId),
         } as const;
@@ -271,7 +293,7 @@ export const processRefund = inngest.createFunction(
       logRefundTraceLifecycle({
         ...refundTrace,
         phase: "process_refund_deferred_no_processed_order",
-        queuedRefundStepOutput: queuedRefund,
+        deferredRefundStepOutput: deferredRefund,
       });
       console.log(
         `[Refund ${refundId}] Deferred for shopifyOrderId=${shopifyOrderId} — ` +
@@ -281,12 +303,19 @@ export const processRefund = inngest.createFunction(
         status: "deferred",
         refundId,
         shopifyOrderId,
-        queuedRefund,
-        reason: "D365 sales order is not visible yet; refund queued for durable replay.",
+        deferredRefund,
+        reason: "D365 sales order is not visible yet; refund retained for database recovery.",
       };
     }
 
     if (!d365Order && !config.features.enableDynamicsSync) {
+      await step.run("complete-refund-dynamics-disabled", async () => {
+        await completeRefundOperation({
+          refundId: String(refundId),
+          claimToken: refundClaimToken,
+        });
+        return { completed: true };
+      });
       emitRefundConfirmation("dynamics_disabled", "skipped", {
         reason: "enableDynamicsSync=false",
       });
@@ -421,6 +450,14 @@ export const processRefund = inngest.createFunction(
     });
 
     if (refundAmountUsd <= 0) {
+      await step.run("complete-zero-refund-operation", async () => {
+        await completeRefundOperation({
+          refundId: String(refundId),
+          claimToken: refundClaimToken,
+          d365OrderNumber: d365Order?.SalesOrderNumber ?? null,
+        });
+        return { completed: true };
+      });
       emitRefundConfirmation("skip_zero_refund_amount", "skipped", {
         reason: "refund_amount_usd_le_zero",
         refundAmount,
@@ -462,15 +499,18 @@ export const processRefund = inngest.createFunction(
         })
       );
 
-      const result = await dynamics.createSalesOrderLine(d365LinePayload);
-
-      return { ...result, status: "created", request: d365LinePayload };
+      return ensureRefundLineCreated({
+        refundId: String(refundId),
+        claimToken: refundClaimToken,
+        operation,
+        request: d365LinePayload,
+      });
     });
 
-    // Emit the dedupe anchor immediately after the negative line is created so that
-    // any duplicate `refundId` event landing later can short-circuit in step 0,
-    // even if the current run fails before the `done` log is written.
-    if (refundLine.status === "created") {
+    // Keep the flow-log anchor for rollout backfill and operations. PostgreSQL
+    // remains authoritative; reconciled writes are logged after D365 confirms
+    // the deterministic line marker.
+    if (refundLine.status === "created" || refundLine.status === "reconciled") {
       emitRefundConfirmation("d365_refund_line_created", "completed", {
         d365OrderNumber: d365Order?.SalesOrderNumber || null,
         refundSku: warehouseInfo.refundSku,
@@ -697,6 +737,16 @@ export const processRefund = inngest.createFunction(
       reason: "Refund processed",
       shopifyFinancialStatus: shopifyOrder.financial_status,
       refundType,
+    });
+
+    await step.run("complete-refund-operation", async () => {
+      await completeRefundOperation({
+        refundId: String(refundId),
+        claimToken: refundClaimToken,
+        d365OrderNumber: d365Order?.SalesOrderNumber ?? null,
+        inventoryLotId: refundLine.InventoryLotId ?? null,
+      });
+      return { completed: true };
     });
 
     logFlowEvent({

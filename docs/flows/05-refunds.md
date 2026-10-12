@@ -53,9 +53,14 @@ When a Shopify refund is created, Battle Bus processes it by creating a negative
 
 The `process-shopify-refund` Inngest function performs these steps:
 
-### Step 0: Cross-run Dedupe Guard
+### Step 0: Database Refund Reservation
 
-Queries `flow_logs` for a prior completed refund emit (`step IN ("refund_line_created", "done")` with `payload->>refundId = <refundId>`). If one already exists, the run exits early with `status: "already_processed"`. This closes the gap left by Inngest event-level idempotency when the same `refundId` arrives via two different event paths (e.g. a Hub-initiated refund racing the Shopify webhook).
+Atomically reserves `refund_id` in `public.refund_operations`. The primary key
+allows only one Inngest run to own the D365 side effects, even when the same
+refund arrives concurrently through multiple event paths. Existing completed,
+processing, or line-created operations exit before the D365 lookup. Recovery
+events must also present the database dispatch lease attached by
+`recover-pending-refunds`.
 
 ### Step 1: Get Shopify Order
 
@@ -63,7 +68,9 @@ Fetches the Shopify order to get the order name (used for D365 lookup).
 
 ### Step 2: Get D365 Order
 
-Looks up the D365 sales order by `THK_ShopifyReference` (order name). If not found and D365 sync is enabled, defers via pending actions.
+Looks up the D365 sales order by `THK_ShopifyReference` (order name). If it is
+not visible yet, the owned refund operation moves to `awaiting_order` with
+bounded exponential backoff.
 
 ### Step 3: Determine Warehouse Info
 
@@ -106,7 +113,13 @@ Calls `dynamics.createSalesOrderLine` with:
 - `price: refundAmountUsd`
 - `itemNumber: refundSku` (data-area-specific refund item)
 
-Returns `InventoryLotId` for the return fulfilment. Immediately emits a `refund_line_created` flow log so the dedupe guard can short-circuit any duplicate refund events even if this run fails partway through.
+Returns `InventoryLotId` for the return fulfilment and records the operation as
+`line_created` while retaining the same database claim. Before the POST, the
+operation moves to `creating_line` and the line receives a deterministic,
+hashed `LineDescription` marker. If the POST succeeds but its database
+acknowledgement fails, retries search D365 for that marker and reconcile the lot
+ID instead of issuing another POST. Other events carrying the same refund ID
+cannot create another negative line.
 
 ### Step 6: Post Return Fulfilment
 
@@ -138,9 +151,22 @@ Sends refund event with amount, type (full/partial), and financial status.
 
 If the D365 order is not yet created when the refund arrives:
 
-- **First attempt**: Stored as pending action via `storePendingAction`.
-- **Drain replay**: `drain-pending-actions` cron replays with `fromDrain: true`.
-- **After drain**: If D365 order still not found, returns `status: "failed"`.
+- **First attempt**: The refund operation moves to `awaiting_order` and retains
+  its event payload in private Cloud SQL storage.
+- **Recovery dispatch**: `recover-pending-refunds` claims due rows with
+  `FOR UPDATE SKIP LOCKED`, attaches a lease token, and emits a stable event ID.
+- **Still missing**: The handler returns the row to `awaiting_order` with
+  exponential backoff capped at one hour.
+- **Order visible**: The leased recovery run performs the D365 refund and marks
+  the operation `completed`; the database scrubs the retained event payload.
+
+Dispatch leases are single-use: accepting a lease atomically moves the row out
+of `dispatching`, so replaying the same token cannot start another worker.
+Expired active states are recoverable. A `creating_line` recovery only performs
+D365 marker reconciliation and never blindly repeats an ambiguous POST. After
+12 database recovery attempts, the row moves to `dead_letter`, its retained
+event payload is scrubbed, and its minimal error and timing metadata remain
+available for operator intervention.
 
 ## Currency Handling
 
@@ -153,14 +179,25 @@ Refund amounts are converted to USD before creating the D365 line using the prio
 
 ## Error Handling
 
-- D365 order not found → deferred (pending action).
+- D365 order not found → deferred in `refund_operations` for automatic recovery.
 - Refund amount is 0 → skipped.
 - Return invoice fails (when opt-in is enabled) → non-blocking (Slack alert, function returns success).
 - Dry run mode → returns early with `status: "dry_run"`.
 
-## Idempotency
+## Idempotency and ownership
 
-Two layers:
+The refund migration series (`000009` through `000013`) makes PostgreSQL
+authoritative. It separates the ledger schema, recovery indexes, lifecycle
+triggers, and access controls, then backfills completed refund IDs from the
+existing flow log:
 
-1. **Inngest event-level** — `idempotency: "event.data.refundId"` dedupes retries of the same event within Inngest's window.
-2. **Cross-run flow-log guard** — step 0 above queries `flow_logs` for any prior completed refund emit carrying the same `refundId`, so even a second event with the same `refundId` from a different path cannot create a duplicate negative D365 line. This mirrors spock-store's per-line `shopifyLineItemId` check.
+1. `refund_id` is the table primary key, so concurrent event paths contend on
+   one row rather than racing a diagnostic log lookup.
+2. State transitions require the current `claim_token`; stale recovery events
+   cannot process the refund.
+3. Recovery dispatches use stable IDs derived from the refund ID and database
+   attempt number.
+4. D365 line creation uses a hashed per-refund marker and a pre-write database
+   checkpoint, closing the external-write acknowledgement window.
+5. Completion and dead-lettering scrub `event_data` while retaining operational
+   audit metadata.
