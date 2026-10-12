@@ -8,11 +8,6 @@ ALTER TABLE public.refund_operations
   ADD CONSTRAINT refund_operations_hold_deadline_consistent
     CHECK (hold_until IS NULL OR available_at >= hold_until);
 
-CREATE INDEX idx_refund_operations_active_hold
-  ON public.refund_operations (hold_until, created_at)
-  WHERE hold_until IS NOT NULL
-    AND state NOT IN ('completed', 'dead_letter');
-
 COMMENT ON COLUMN public.refund_operations.hold_until IS
   'Earliest processing time for a refund held because its webhook line snapshot was unfulfilled.';
 COMMENT ON COLUMN public.refund_operations.hold_reason IS
