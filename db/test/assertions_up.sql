@@ -91,6 +91,7 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.pending_lifecycle_actions', 'SELECT')
     OR has_table_privilege('authenticated', 'public.refund_operations', 'SELECT')
     OR has_table_privilege('authenticated', 'public.battle_hub_pending_lifecycle_actions', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.battle_hub_refund_operations', 'SELECT')
   THEN
     RAISE EXCEPTION 'Sensitive backend tables are exposed to authenticated clients';
   END IF;
@@ -115,6 +116,18 @@ BEGIN
     RAISE EXCEPTION 'Battle Hub runtime cannot read the safe pending-action view';
   END IF;
 
+  IF NOT has_table_privilege(
+    'battle_hub_runtime',
+    'public.battle_hub_refund_operations',
+    'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub runtime cannot read the safe refund-operation view';
+  END IF;
+
+  IF has_table_privilege('battle_hub_runtime', 'public.refund_operations', 'SELECT') THEN
+    RAISE EXCEPTION 'Battle Hub runtime can read the private refund operation table';
+  END IF;
+
   IF has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'INSERT')
     OR has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'UPDATE')
     OR has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'DELETE')
@@ -130,6 +143,16 @@ BEGIN
       AND column_name = 'event_data'
   ) THEN
     RAISE EXCEPTION 'Battle Hub pending-action view exposes event_data';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'battle_hub_refund_operations'
+      AND column_name = 'event_data'
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub refund-operation view exposes event_data';
   END IF;
 
   IF NOT EXISTS (
@@ -199,6 +222,40 @@ BEGIN
 
   IF (SELECT event_data FROM public.refund_operations WHERE refund_id = 'migration-refund-dedupe') <> '{}'::jsonb THEN
     RAISE EXCEPTION 'Completed refund operation payload was not scrubbed';
+  END IF;
+END
+$$;
+
+INSERT INTO public.refund_operations (
+  refund_id,
+  shopify_order_id,
+  event_data,
+  state,
+  available_at,
+  hold_until,
+  hold_reason
+)
+VALUES (
+  'migration-refund-hold',
+  'migration-held-order',
+  '{"private":"held-payload"}',
+  'awaiting_order',
+  now() + interval '24 hours',
+  now() + interval '24 hours',
+  'unfulfilled_refund_line'
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.battle_hub_refund_operations
+    WHERE refund_id = 'migration-refund-hold'
+      AND shopify_order_id = 'migration-held-order'
+      AND hold_reason = 'unfulfilled_refund_line'
+      AND hold_until IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'Battle Hub refund-operation view does not expose active hold metadata';
   END IF;
 END
 $$;
