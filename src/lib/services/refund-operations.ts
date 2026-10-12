@@ -18,6 +18,8 @@ export interface RefundOperationClaim {
   d365OrderNumber: string | null;
   inventoryLotId: string | null;
   externalIdempotencyKey: string | null;
+  holdUntil?: string | null;
+  holdReason?: string | null;
 }
 
 export interface RefundRecoveryDispatch {
@@ -40,6 +42,8 @@ interface RefundOperationClaimRow extends QueryResultRow {
   d365_order_number: string | null;
   inventory_lot_id: string | null;
   external_idempotency_key: string | null;
+  hold_until: Date | string | null;
+  hold_reason: string | null;
 }
 
 interface RefundRecoveryDispatchRow extends QueryResultRow {
@@ -69,6 +73,13 @@ function mapClaim(row: RefundOperationClaimRow): RefundOperationClaim {
     d365OrderNumber: row.d365_order_number ?? null,
     inventoryLotId: row.inventory_lot_id ?? null,
     externalIdempotencyKey: row.external_idempotency_key ?? null,
+    holdUntil:
+      row.hold_until instanceof Date
+        ? row.hold_until.toISOString()
+        : row.hold_until
+          ? String(row.hold_until)
+          : null,
+    holdReason: row.hold_reason ?? null,
   };
 }
 
@@ -78,6 +89,8 @@ export async function reserveRefundOperation({
   eventName,
   eventData,
   claimToken,
+  holdUntil = null,
+  holdReason = null,
   leaseSeconds = 900,
 }: {
   refundId: string;
@@ -85,6 +98,8 @@ export async function reserveRefundOperation({
   eventName: string;
   eventData: Record<string, unknown>;
   claimToken: string;
+  holdUntil?: Date | null;
+  holdReason?: string | null;
   leaseSeconds?: number;
 }): Promise<RefundOperationClaim> {
   requireDatabase();
@@ -97,34 +112,62 @@ export async function reserveRefundOperation({
          event_name,
          event_data,
          state,
+         available_at,
          claim_token,
-         lease_expires_at
+         lease_expires_at,
+         hold_until,
+         hold_reason
        )
-       VALUES ($1, $2, $3, $4::jsonb, 'processing', $5::uuid, now() + ($6 * interval '1 second'))
+       VALUES (
+         $1,
+         $2,
+         $3,
+         $4::jsonb,
+         CASE WHEN $7::timestamptz > now() THEN 'awaiting_order' ELSE 'processing' END,
+         CASE WHEN $7::timestamptz > now() THEN $7::timestamptz ELSE now() END,
+         CASE WHEN $7::timestamptz > now() THEN NULL ELSE $5::uuid END,
+         CASE
+           WHEN $7::timestamptz > now() THEN NULL
+           ELSE now() + ($6 * interval '1 second')
+         END,
+         CASE WHEN $7::timestamptz > now() THEN $7::timestamptz ELSE NULL END,
+         CASE WHEN $7::timestamptz > now() THEN $8 ELSE NULL END
+       )
        ON CONFLICT (refund_id) DO UPDATE
        SET shopify_order_id = EXCLUDED.shopify_order_id,
            event_name = EXCLUDED.event_name,
            event_data = EXCLUDED.event_data,
            state = 'processing',
-           claim_token = EXCLUDED.claim_token,
-           lease_expires_at = EXCLUDED.lease_expires_at,
+           claim_token = $5::uuid,
+           lease_expires_at = now() + ($6 * interval '1 second'),
            attempts = refund_operations.attempts + 1,
            last_error = NULL
        WHERE refund_operations.state = 'awaiting_order'
          AND refund_operations.available_at <= now()
-       RETURNING true AS claimed, state, claim_token,
-         d365_order_number, inventory_lot_id, external_idempotency_key
+         AND EXCLUDED.state = 'processing'
+       RETURNING (state = 'processing') AS claimed, state, claim_token,
+         d365_order_number, inventory_lot_id, external_idempotency_key,
+         hold_until, hold_reason
      )
      SELECT claimed, state, claim_token, d365_order_number, inventory_lot_id,
-       external_idempotency_key FROM claimed
+       external_idempotency_key, hold_until, hold_reason FROM claimed
      UNION ALL
      SELECT false AS claimed, state, claim_token, d365_order_number,
-       inventory_lot_id, external_idempotency_key
+       inventory_lot_id, external_idempotency_key, hold_until, hold_reason
      FROM public.refund_operations
      WHERE refund_id = $1
        AND NOT EXISTS (SELECT 1 FROM claimed)
      LIMIT 1`,
-    [refundId, shopifyOrderId, eventName, JSON.stringify(eventData), claimToken, safeLeaseSeconds]
+    [
+      refundId,
+      shopifyOrderId,
+      eventName,
+      JSON.stringify(eventData),
+      claimToken,
+      safeLeaseSeconds,
+      holdUntil,
+      holdReason,
+    ]
   );
   const row = result.rows[0];
   if (!row) throw new Error(`Refund operation ${refundId} could not be reserved`);

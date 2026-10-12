@@ -86,11 +86,7 @@ describe("decideRefundHold", () => {
   });
 
   it("can be disabled with a zero-hour hold", () => {
-    const result = decideRefundHold(
-      refund({ refund_line_items: [refundLine(null)] }),
-      0,
-      now
-    );
+    const result = decideRefundHold(refund({ refund_line_items: [refundLine(null)] }), 0, now);
 
     expect(result.shouldHold).toBe(false);
   });
