@@ -52,6 +52,7 @@ import {
   getSubscriptionRewards,
   subscriptionRewardLineItemId,
 } from "../helpers/subscription-rewards";
+import { getAssociatedOrderLink } from "../helpers/order-linkage";
 
 // GPS Order Type constants
 const GpsOrderType = {
@@ -123,6 +124,11 @@ export function toD365SalesOrderHeaderV3(
  */
 function buildOrderComment(order: ShopifyOrderPayload, accounting?: OrderAccounting): string {
   const parts: string[] = accounting ? [accountingComment(order, accounting)] : [];
+  const associatedOrder = getAssociatedOrderLink(order);
+
+  if (associatedOrder) {
+    parts.push(`Associated Order: ${associatedOrder.orderName}`);
+  }
 
   // Add gift card purchase info
   const lineItems = getLineItems(order);
