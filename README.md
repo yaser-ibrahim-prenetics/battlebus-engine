@@ -351,6 +351,12 @@ GPS_FULFILLMENT_POLL_DAYS_BACK=30
 STORD_BASE_URL=https://api.stord.com
 STORD_API_KEY=your_api_key
 
+# OpenAI Ads conversions (durable Cloud SQL outbox; opt-in)
+OPENAI_ADS_ENABLED=false
+OPENAI_ADS_PIXEL_ID=your_pixel_id
+OPENAI_ADS_CONVERSIONS_API_KEY=your_secret_api_key
+OPENAI_ADS_SOURCE_URL=https://www.example.com
+
 # Feature Flags
 DRY_RUN_MODE=false
 ENABLE_DYNAMICS_SYNC=true

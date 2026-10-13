@@ -57,6 +57,7 @@ import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 import { loadSaudiShortAddress } from "./process-shopify-order/saudi-short-address";
+import { enqueueOpenAiAdsConversion } from "@/lib/services/openai-ads-conversions";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -776,6 +777,22 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     // STEP 10: Notify CS Platform
     // =========================================================================
+    const openAiAdsConversion = config.openAiAds.enabled
+      ? await step.run("enqueue-openai-ads-conversion", async () => {
+          const conversion = await enqueueOpenAiAdsConversion({
+            shopifyOrderId,
+            shopifyOrderName,
+            occurredAt: order.processed_at || order.created_at,
+          });
+          await inngest.send({
+            id: `openai-ads-${conversion.eventId}`,
+            name: "openai.ads/conversion.queued",
+            data: { eventId: conversion.eventId },
+          });
+          return conversion;
+        })
+      : null;
+
     await step.run("notify-cs-platform", async () => {
       try {
         const finalStatus = gpsResult.status === "backorder" ? "backorder" : "completed";
@@ -787,7 +804,13 @@ export const processSubscriptionOrder = inngest.createFunction(
             status: finalStatus,
             warehouse: warehouseName,
             subscriptionContractId,
-            state: saudiShortAddress ? { saudiShortAddress } : undefined,
+            state:
+              saudiShortAddress || openAiAdsConversion
+                ? {
+                    ...(saudiShortAddress ? { saudiShortAddress } : {}),
+                    ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
+                  }
+                : undefined,
           },
           {
             inngestIdempotencyKey,

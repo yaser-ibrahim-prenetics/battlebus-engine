@@ -147,6 +147,13 @@ export const config = {
     enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
   },
 
+  openAiAds: {
+    enabled: process.env.OPENAI_ADS_ENABLED === "true",
+    pixelId: process.env.OPENAI_ADS_PIXEL_ID || "",
+    conversionsApiKey: process.env.OPENAI_ADS_CONVERSIONS_API_KEY || "",
+    sourceUrl: process.env.OPENAI_ADS_SOURCE_URL || "",
+  },
+
   // Slack Notification Channels
   slack: {
     applicationName: "store",
