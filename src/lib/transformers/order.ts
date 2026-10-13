@@ -47,6 +47,7 @@ import {
 } from "../helpers/warehouse";
 import type { GpsOrderData, GpsProductItem } from "../clients/gps";
 import type { GiftCardApplication, GiftCardPurchase } from "../helpers/payment-accounting";
+import { getAssociatedOrderLink } from "../helpers/order-linkage";
 import {
   getSubscriptionRewards,
   subscriptionRewardLineItemId,
@@ -132,6 +133,11 @@ function buildOrderComment(
   }
 ): string {
   const parts: string[] = [];
+  const associatedOrder = getAssociatedOrderLink(order);
+
+  if (associatedOrder) {
+    parts.push(`Associated Order: ${associatedOrder.orderName}`);
+  }
 
   for (const giftCard of accounting?.giftCardApplications || []) {
     parts.push(

@@ -100,6 +100,14 @@ describe("Order Transformers", () => {
       expect(header.comment).toContain("Gift Card: 1234 - 25.00 USD");
       expect(header.comment).toContain("Gift Card Purchase: 9876 - 50.00 x 1");
     });
+
+    it("includes normalized replacement order linkage in the D365 comment", () => {
+      const order = loadFixture("gpsUsOrder");
+      order.tags = `${order.tags}, replacement-im8-4321`;
+      const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse");
+
+      expect(header.comment).toContain("Associated Order: IM8-4321");
+    });
   });
 
   describe("toD365SalesOrderLine", () => {

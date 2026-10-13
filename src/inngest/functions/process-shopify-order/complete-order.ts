@@ -2,6 +2,7 @@ import * as csPlatform from "@/lib/clients/cs-platform";
 import { classifyGpsError, isGpsInventoryError } from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import { isGpsUkWarehouse } from "@/lib/helpers/warehouse";
+import { getAssociatedOrderLink } from "@/lib/helpers/order-linkage";
 import { flushAll as flushFlowLogs, logFlowEvent } from "@/lib/services/flow-logs";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
@@ -52,6 +53,7 @@ export async function completeOrderProcessing({
   const salesOrderNo = salesOrderNumber;
   const d365InventoryLotsBySku = syncResult.d365InventoryLotsBySku || {};
   const gpsResult = syncResult.gpsResult;
+  const associatedOrder = getAssociatedOrderLink(order);
 
   // Publish GPS result
   if (gpsResult.type === "real" && "result" in gpsResult) {
@@ -246,6 +248,7 @@ export async function completeOrderProcessing({
                 giftCardApplications: paymentAccounting.giftCardApplications,
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
+              ...(associatedOrder ? { associatedOrder } : {}),
             },
           },
           { inngestIdempotencyKey, inngestRunId }
@@ -278,6 +281,7 @@ export async function completeOrderProcessing({
                 giftCardApplications: paymentAccounting.giftCardApplications,
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
+              ...(associatedOrder ? { associatedOrder } : {}),
               failureContext: null,
             },
           },
