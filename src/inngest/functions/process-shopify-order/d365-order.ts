@@ -27,6 +27,7 @@ export async function createD365Order({
   dataAreaId,
   skipD365,
   paymentAccounting,
+  saudiShortAddress,
   publishStatus,
 }: {
   step: StepTools;
@@ -37,6 +38,7 @@ export async function createD365Order({
   dataAreaId: string;
   skipD365: boolean;
   paymentAccounting: OrderPaymentAccounting;
+  saudiShortAddress?: string;
   publishStatus: PublishStatus;
 }) {
   // ── Step: create D365 header ───────────────────────────────────
@@ -46,6 +48,7 @@ export async function createD365Order({
       paymentReference: paymentAccounting.paymentReference,
       giftCardApplications: paymentAccounting.giftCardApplications,
       giftCardPurchases: paymentAccounting.giftCardPurchases,
+      shortAddress: saudiShortAddress,
     });
     let d365Header;
     if (skipD365) {

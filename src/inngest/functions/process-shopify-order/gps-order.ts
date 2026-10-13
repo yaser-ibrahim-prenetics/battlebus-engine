@@ -17,6 +17,7 @@ export async function processGpsOrder({
   salesOrderNo,
   warehouseName,
   destinationCountryCode,
+  saudiShortAddress,
   publishStatus,
 }: {
   step: StepTools;
@@ -26,6 +27,7 @@ export async function processGpsOrder({
   salesOrderNo: string;
   warehouseName: string;
   destinationCountryCode: string;
+  saudiShortAddress?: string;
   publishStatus: PublishStatus;
 }) {
   // --- Build GPS payload (pure transform, no external write) ---
@@ -34,7 +36,7 @@ export async function processGpsOrder({
     shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
   let gpsOrderPayload: ReturnType<typeof toGpsOutboundOrder> | null = null;
   try {
-    gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
+    gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNo, warehouseName, saudiShortAddress);
     const itemCount = gpsOrderPayload?.productList?.length || 0;
     await publishStatus("gps.build-payload", "completed", `Payload built with ${itemCount} items`, {
       itemCount,

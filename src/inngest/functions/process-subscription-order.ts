@@ -56,6 +56,7 @@ import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
+import { loadSaudiShortAddress } from "./process-shopify-order/saudi-short-address";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -453,6 +454,12 @@ export const processSubscriptionOrder = inngest.createFunction(
     });
 
     const { dataAreaId, warehouseName, country_code } = warehouseInfo;
+    const saudiShortAddress = await loadSaudiShortAddress({
+      step,
+      order,
+      shopifyOrderId,
+      shopifyStore,
+    });
 
     // =========================================================================
     // STEP 5: Create D365 Sales Order Header (check for existing first)
@@ -509,7 +516,9 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped", salesOrderNumber: "" };
       }
 
-      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId, {
+        shortAddress: saudiShortAddress,
+      });
 
       const result = await retryWithBackoff(
         () => dynamics.createSalesOrderHeaderV3(headerPayload),
@@ -698,7 +707,12 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
 
       try {
-        const gpsOrder = toGpsOutboundOrder(order, d365OrderNumber, warehouseName);
+        const gpsOrder = toGpsOutboundOrder(
+          order,
+          d365OrderNumber,
+          warehouseName,
+          saudiShortAddress
+        );
         const result = await gps.createOutboundOrder(
           gpsOrder,
           warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -773,6 +787,7 @@ export const processSubscriptionOrder = inngest.createFunction(
             status: finalStatus,
             warehouse: warehouseName,
             subscriptionContractId,
+            state: saudiShortAddress ? { saudiShortAddress } : undefined,
           },
           {
             inngestIdempotencyKey,

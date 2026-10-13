@@ -341,12 +341,19 @@ export async function getOrder(
  * Get all metafields for a Shopify order.
  * Used as a fallback for legacy GPS metafield keys (e.g. gpsorderid / gpsukorderid).
  */
-export async function getOrderMetafields(orderId: string | number): Promise<any[]> {
-  const url = buildUrl(`/orders/${orderId}/metafields.json?limit=250`);
+export async function getOrderMetafields(
+  orderId: string | number,
+  shopDomainForCredentials?: string | null
+): Promise<any[]> {
+  const credentials = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/metafields.json?limit=250`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: {
+      "X-Shopify-Access-Token": credentials.accessToken,
+      "Content-Type": "application/json",
+    },
   });
 
   if (!response.ok) {
@@ -593,7 +600,9 @@ export interface ShopifyOrderEvent {
   subject_id?: number | null;
 }
 
-export async function getOrderEvents(orderId: string | number): Promise<{ events: ShopifyOrderEvent[] }> {
+export async function getOrderEvents(
+  orderId: string | number
+): Promise<{ events: ShopifyOrderEvent[] }> {
   const url = buildUrl(`/orders/${orderId}/events.json`);
 
   const response = await fetch(url, {

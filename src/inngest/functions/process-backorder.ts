@@ -22,8 +22,9 @@ import { config } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import { setGpsOrderMetafield } from "@/lib/clients/shopify";
+import { getOrderMetafields, setGpsOrderMetafield } from "@/lib/clients/shopify";
 import { toGpsOutboundOrder, shouldSendToGps } from "@/lib/transformers/order";
+import { getIm8ShortAddressFromMetafields } from "@/lib/transformers/address";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
 import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
@@ -119,7 +120,10 @@ export const processBackorder = inngest.createFunction(
     if (incomingSequence.length > 0 && event.name === "backorder/retry") {
       const result = await step.run("dispatch-sequenced-rerun", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
-        const freshOrder = (await getOrder(shopifyOrderId)) as unknown as ShopifyOrderPayload;
+        const freshOrder = (await getOrder(
+          shopifyOrderId,
+          event.data.shopifyStore
+        )) as unknown as ShopifyOrderPayload;
         const fulfillments = Array.isArray((freshOrder as any)?.fulfillments)
           ? ((freshOrder as any).fulfillments as any[])
           : [];
@@ -240,7 +244,7 @@ export const processBackorder = inngest.createFunction(
       const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
         try {
           const { getOrder } = await import("@/lib/clients/shopify");
-          const freshOrder = await getOrder(shopifyOrderId);
+          const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
           const d365NumManual = String(d365OrderNumber || "").trim();
@@ -286,7 +290,18 @@ export const processBackorder = inngest.createFunction(
             return { success: true, replayDispatched: true };
           }
 
-          const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
+          const saudiShortAddress =
+            order.shipping_address?.country_code === "SA"
+              ? getIm8ShortAddressFromMetafields(
+                  await getOrderMetafields(shopifyOrderId, event.data.shopifyStore)
+                )
+              : "";
+          const gpsPayload = toGpsOutboundOrder(
+            order,
+            d365OrderNumber,
+            warehouse,
+            saudiShortAddress
+          );
           const result = await gps.createOutboundOrder(
             gpsPayload,
             warehouse as "GPS Warehouse" | "GPS UK Warehouse"
@@ -470,7 +485,7 @@ export const processBackorder = inngest.createFunction(
         try {
           // Refetch order from Shopify for latest data
           const { getOrder } = await import("@/lib/clients/shopify");
-          const freshOrder = await getOrder(shopifyOrderId);
+          const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
           const order = freshOrder as unknown as ShopifyOrderPayload;
 
           const d365NumLoop = String(d365OrderNumber || "").trim();
@@ -529,7 +544,18 @@ export const processBackorder = inngest.createFunction(
           }
 
           // Rebuild GPS payload
-          const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
+          const saudiShortAddress =
+            order.shipping_address?.country_code === "SA"
+              ? getIm8ShortAddressFromMetafields(
+                  await getOrderMetafields(shopifyOrderId, event.data.shopifyStore)
+                )
+              : "";
+          const gpsPayload = toGpsOutboundOrder(
+            order,
+            d365OrderNumber,
+            warehouse,
+            saudiShortAddress
+          );
           const result = await gps.createOutboundOrder(
             gpsPayload,
             warehouse as "GPS Warehouse" | "GPS UK Warehouse"

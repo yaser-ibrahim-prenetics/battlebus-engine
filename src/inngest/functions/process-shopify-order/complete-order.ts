@@ -23,6 +23,7 @@ export async function completeOrderProcessing({
   gpsLogisticsChannel,
   fulfillmentSplit,
   paymentAccounting,
+  saudiShortAddress,
   inngestIdempotencyKey,
   inngestRunId,
   orderProcessingStart,
@@ -41,6 +42,7 @@ export async function completeOrderProcessing({
   gpsLogisticsChannel?: string;
   fulfillmentSplit: FulfillmentSplitResult;
   paymentAccounting: OrderPaymentAccounting;
+  saudiShortAddress: string;
   inngestIdempotencyKey: string;
   inngestRunId: string;
   orderProcessingStart: number;
@@ -249,6 +251,7 @@ export async function completeOrderProcessing({
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
               ...(associatedOrder ? { associatedOrder } : {}),
+              ...(saudiShortAddress ? { saudiShortAddress } : {}),
             },
           },
           { inngestIdempotencyKey, inngestRunId }
@@ -282,6 +285,7 @@ export async function completeOrderProcessing({
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
               ...(associatedOrder ? { associatedOrder } : {}),
+              ...(saudiShortAddress ? { saudiShortAddress } : {}),
               failureContext: null,
             },
           },

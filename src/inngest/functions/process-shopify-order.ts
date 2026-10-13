@@ -34,6 +34,7 @@ import {
   type OrderPaymentAccounting,
 } from "./process-shopify-order/payment-accounting";
 import { prepareShopifyOrder } from "./process-shopify-order/prepare-order";
+import { loadSaudiShortAddress } from "./process-shopify-order/saudi-short-address";
 import type { OrderLinesSupabaseSyncLog, OrderSyncResult } from "./process-shopify-order/types";
 import { handleValidationFailure } from "./process-shopify-order/validation-failure";
 
@@ -365,6 +366,12 @@ export const processShopifyOrder = inngest.createFunction(
     const dataAreaId = routingResult.dataAreaId;
     const country_code = routingResult.countryCode;
     const gpsLogisticsChannel = getGpsLogisticsChannelIfApplicable(warehouseName, order);
+    const saudiShortAddress = await loadSaudiShortAddress({
+      step,
+      order,
+      shopifyOrderId,
+      shopifyStore,
+    });
 
     let salesOrderNumber: string | undefined;
     try {
@@ -452,6 +459,7 @@ export const processShopifyOrder = inngest.createFunction(
             dataAreaId,
             skipD365,
             paymentAccounting,
+            saudiShortAddress,
             publishStatus,
           });
 
@@ -463,6 +471,7 @@ export const processShopifyOrder = inngest.createFunction(
           salesOrderNo,
           warehouseName,
           destinationCountryCode: country_code,
+          saudiShortAddress,
           publishStatus,
         });
         const gpsResult = gpsProcessing.gpsResult;
@@ -485,6 +494,7 @@ export const processShopifyOrder = inngest.createFunction(
         shopifyOrderId,
         shopifyOrderName,
         warehouseName,
+        saudiShortAddress,
         dataAreaId,
         skipD365,
         inngestIdempotencyKey,
@@ -507,6 +517,7 @@ export const processShopifyOrder = inngest.createFunction(
         gpsLogisticsChannel,
         fulfillmentSplit,
         paymentAccounting,
+        saudiShortAddress,
         inngestIdempotencyKey,
         inngestRunId,
         orderProcessingStart: _orderProcessingStart,
