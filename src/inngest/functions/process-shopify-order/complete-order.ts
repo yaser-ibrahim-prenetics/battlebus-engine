@@ -37,7 +37,7 @@ export async function completeOrderProcessing({
   shopifyOrderName: string;
   salesOrderNumber: string;
   warehouseName: string;
-  gpsLogisticsChannel: string;
+  gpsLogisticsChannel?: string;
   fulfillmentSplit: FulfillmentSplitResult;
   paymentAccounting: OrderPaymentAccounting;
   inngestIdempotencyKey: string;
@@ -240,7 +240,7 @@ export async function completeOrderProcessing({
             state: {
               ...(Object.keys(d365InventoryLotsBySku).length > 0 ? { d365InventoryLotsBySku } : {}),
               fulfillmentSplit,
-              gpsLogisticsChannel,
+              ...(gpsLogisticsChannel ? { gpsLogisticsChannel } : {}),
               paymentAccounting: {
                 paymentReference: paymentAccounting.paymentReference,
                 giftCardApplications: paymentAccounting.giftCardApplications,
@@ -272,7 +272,7 @@ export async function completeOrderProcessing({
             state: {
               ...(Object.keys(d365InventoryLotsBySku).length > 0 ? { d365InventoryLotsBySku } : {}),
               fulfillmentSplit,
-              gpsLogisticsChannel,
+              ...(gpsLogisticsChannel ? { gpsLogisticsChannel } : {}),
               paymentAccounting: {
                 paymentReference: paymentAccounting.paymentReference,
                 giftCardApplications: paymentAccounting.giftCardApplications,

@@ -9,7 +9,7 @@
 
 import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
-import { getGpsLogisticsChannel } from "@/lib/helpers/warehouse";
+import { getGpsLogisticsChannelIfApplicable } from "@/lib/helpers/warehouse";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import {
   CONCURRENCY_CONFIGS,
@@ -364,7 +364,7 @@ export const processShopifyOrder = inngest.createFunction(
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;
     const country_code = routingResult.countryCode;
-    const gpsLogisticsChannel = getGpsLogisticsChannel(warehouseName, order);
+    const gpsLogisticsChannel = getGpsLogisticsChannelIfApplicable(warehouseName, order);
 
     let salesOrderNumber: string | undefined;
     try {
@@ -437,9 +437,9 @@ export const processShopifyOrder = inngest.createFunction(
 
         paymentAccounting = await loadOrderPaymentAccounting({
           step,
-          order,
           shopifyOrderId,
           shopifyOrderName,
+          shopifyStore,
         });
 
         const { salesOrderNo, lineItems, d365InventoryLotsBySku, orderLinesSupabase } =

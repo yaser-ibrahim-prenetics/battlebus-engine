@@ -22,6 +22,7 @@ export function getPurchasePaymentReference(transactions: ShopifyTransaction[]):
   const paymentReference = transactions.reduce((reference, transaction) => {
     if (
       ["capture", "sale"].includes(String(transaction.kind).toLowerCase()) &&
+      String(transaction.status).toLowerCase() === "success" &&
       String(transaction.gateway).toLowerCase() !== "gift_card"
     ) {
       return (
@@ -48,7 +49,8 @@ export function getGiftCardApplications(
   for (const transaction of transactions) {
     if (
       String(transaction.gateway).toLowerCase() !== "gift_card" ||
-      !["capture", "sale"].includes(String(transaction.kind).toLowerCase())
+      !["capture", "sale"].includes(String(transaction.kind).toLowerCase()) ||
+      String(transaction.status).toLowerCase() !== "success"
     ) {
       continue;
     }
@@ -71,7 +73,7 @@ export function getGiftCardApplications(
 }
 
 export function getGiftCardMaskedCodes(
-  fulfillments: ShopifyFulfillment[],
+  fulfillments: Array<Pick<ShopifyFulfillment, "receipt">>,
   lineItems: ShopifyLineItem[]
 ): Record<string, string> | null {
   const codes: Record<string, string> = {};

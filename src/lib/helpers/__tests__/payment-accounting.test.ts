@@ -37,6 +37,37 @@ describe("payment accounting", () => {
     expect(getPurchasePaymentReference([])).toBe("");
   });
 
+  it("ignores failed and pending purchase transactions", () => {
+    expect(
+      getPurchasePaymentReference([
+        {
+          id: 1,
+          kind: "capture",
+          gateway: "shopify_payments",
+          status: "failed",
+          amount: "75",
+          payment_id: "failed-payment",
+        },
+        {
+          id: 2,
+          kind: "sale",
+          gateway: "shopify_payments",
+          status: "pending",
+          amount: "75",
+          payment_id: "pending-payment",
+        },
+        {
+          id: 3,
+          kind: "capture",
+          gateway: "shopify_payments",
+          status: "success",
+          amount: "75",
+          payment_id: "successful-payment",
+        },
+      ])
+    ).toBe("successful-payment");
+  });
+
   it("rejects gift-card-only transactions as a purchase reference", () => {
     expect(() =>
       getPurchasePaymentReference([
@@ -65,6 +96,25 @@ describe("payment accounting", () => {
     expect(getGiftCardApplications([transaction, { ...transaction, id: 2 }])).toEqual([
       { giftCardNumber: "1234", amount: "25", currency: "USD" },
     ]);
+  });
+
+  it("ignores failed and pending gift-card applications", () => {
+    const transaction = {
+      id: 1,
+      kind: "capture",
+      gateway: "gift_card",
+      status: "success",
+      amount: "25",
+      currency: "USD",
+      receipt: { gift_card_last_characters: "1234" },
+    };
+    expect(
+      getGiftCardApplications([
+        { ...transaction, id: 2, status: "failed" },
+        { ...transaction, id: 3, status: "pending" },
+        transaction,
+      ])
+    ).toEqual([{ giftCardNumber: "1234", amount: "25", currency: "USD" }]);
   });
 
   it("maps purchased gift cards to masked fulfillment codes", () => {

@@ -1,11 +1,10 @@
-import { getOrderTransactions } from "@/lib/clients/shopify";
+import { getOrder, getOrderTransactions } from "@/lib/clients/shopify";
 import {
   getGiftCardApplications,
   getGiftCardMaskedCodes,
   getGiftCardPurchases,
   getPurchasePaymentReference,
 } from "@/lib/helpers/payment-accounting";
-import type { ShopifyOrderPayload } from "../../events";
 import type { StepTools } from "./types";
 
 export type OrderPaymentAccounting = {
@@ -24,20 +23,23 @@ export const EMPTY_PAYMENT_ACCOUNTING: OrderPaymentAccounting = {
 
 export async function loadOrderPaymentAccounting({
   step,
-  order,
   shopifyOrderId,
   shopifyOrderName,
+  shopifyStore,
 }: {
   step: StepTools;
-  order: ShopifyOrderPayload;
   shopifyOrderId: string;
   shopifyOrderName: string;
+  shopifyStore?: string | null;
 }): Promise<OrderPaymentAccounting> {
   return step.run("shopify-payment-accounting", async () => {
-    const transactions = await getOrderTransactions(shopifyOrderId);
+    const [freshOrder, transactions] = await Promise.all([
+      getOrder(shopifyOrderId, shopifyStore),
+      getOrderTransactions(shopifyOrderId, shopifyStore),
+    ]);
     const giftCardCodes = getGiftCardMaskedCodes(
-      Array.isArray(order.fulfillments) ? order.fulfillments : [],
-      Array.isArray(order.line_items) ? order.line_items : []
+      Array.isArray(freshOrder.fulfillments) ? freshOrder.fulfillments : [],
+      Array.isArray(freshOrder.line_items) ? freshOrder.line_items : []
     );
     if (giftCardCodes === null) {
       throw new Error(
@@ -47,7 +49,7 @@ export async function loadOrderPaymentAccounting({
     return {
       paymentReference: getPurchasePaymentReference(transactions),
       giftCardApplications: getGiftCardApplications(transactions),
-      giftCardPurchases: getGiftCardPurchases(order.line_items || [], giftCardCodes),
+      giftCardPurchases: getGiftCardPurchases(freshOrder.line_items || [], giftCardCodes),
       giftCardCodes,
     };
   });

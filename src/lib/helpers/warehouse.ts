@@ -432,6 +432,18 @@ export function getGpsLogisticsChannel(
   return config.logisticsChannel;
 }
 
+/**
+ * Resolve GPS metadata only for warehouses that are actually dispatched to GPS.
+ * Non-GPS orders still continue through D365 without requiring a GPS channel.
+ */
+export function getGpsLogisticsChannelIfApplicable(
+  warehouseName: string,
+  order?: { tags?: string | null }
+): string | undefined {
+  if (!isGpsWarehouse(warehouseName)) return undefined;
+  return getGpsLogisticsChannel(warehouseName, order);
+}
+
 // ============================================================================
 // Service SKU Helpers
 // ============================================================================

@@ -17,6 +17,7 @@ import {
   resolveCountryRouting,
   getGpsWarehouseCode,
   getGpsLogisticsChannel,
+  getGpsLogisticsChannelIfApplicable,
   getShippingSku,
   getTaxSku,
   getRefundSku,
@@ -294,6 +295,12 @@ describe("Warehouse Routing Helpers", () => {
       expect(
         getGpsLogisticsChannel("GPS Warehouse", { tags: "Expedited Shipping" })
       ).toBe("GPS-IM8-STANDARD");
+    });
+
+    it("omits GPS logistics metadata for non-GPS warehouses", () => {
+      expect(getGpsLogisticsChannelIfApplicable("STORD ATL Location")).toBeUndefined();
+      expect(getGpsLogisticsChannelIfApplicable("STORD EU Location")).toBeUndefined();
+      expect(getGpsLogisticsChannelIfApplicable("HK Warehouse")).toBeUndefined();
     });
   });
 
