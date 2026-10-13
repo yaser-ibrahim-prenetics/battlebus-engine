@@ -31,21 +31,9 @@ import {
   type OrderLineRecord,
   type SaveOrderLinesResult,
 } from "@/lib/services/order-lines";
-import { type WarehouseName } from "@/lib/helpers/warehouse";
 import { validateOrderCompletely } from "@/lib/utils/validation";
 import {
-  getDataAreaIdForLocationAndCountry,
-  getLocationRoutingDebugContext,
-  getWarehouseNameForLocation,
-  findLocationByWarehouseName,
-  resolveStordEuOverrideForMappedLocation,
-  resolveStordHubWhenFulfillmentLocationUnmapped,
-} from "@/lib/services/location-routing";
-import { determineWarehouse } from "@/lib/helpers/warehouse";
-import { getFulfillmentOrders } from "@/lib/clients/shopify";
-import {
   THROTTLE_CONFIGS,
-  CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
@@ -58,118 +46,13 @@ import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 import { loadSaudiShortAddress } from "./process-shopify-order/saudi-short-address";
 import { enqueueOpenAiAdsConversion } from "@/lib/services/openai-ads-conversions";
-
-function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
-  const activeOrders = fulfillmentOrders.filter(
-    (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
-  );
-  if (!activeOrders.length) return null;
-
-  // Priority 1: open FOs with a real delivery method AND a non-virtual location
-  const deliverable = activeOrders.filter((fo: any) => {
-    const methodType = String(fo?.delivery_method?.method_type || "").toLowerCase();
-    const assignedLocationName = String(fo?.assigned_location?.name || "").toLowerCase();
-    return methodType !== "none" && !assignedLocationName.includes("virtual");
-  });
-  if (deliverable[0]?.assigned_location_id) {
-    return Number(deliverable[0].assigned_location_id);
-  }
-
-  // Priority 2: any open FO whose assigned location is not virtual (ignoring delivery method)
-  const nonVirtual = activeOrders.filter(
-    (fo: any) =>
-      !String(fo?.assigned_location?.name || "")
-        .toLowerCase()
-        .includes("virtual")
-  );
-  if (nonVirtual[0]?.assigned_location_id) {
-    return Number(nonVirtual[0].assigned_location_id);
-  }
-
-  // All open FOs point to virtual — return null so caller can use intended_location_id
-  return null;
-}
-
-function getIntendedLocationIdFromOrder(order: ShopifyOrderPayload): number | null {
-  const attributes = Array.isArray((order as any)?.note_attributes)
-    ? ((order as any).note_attributes as Array<{ name?: string; value?: string }>)
-    : [];
-
-  const getAttr = (key: string) =>
-    attributes.find((a) => String(a?.name || "").toLowerCase() === key)?.value || "";
-
-  const intendedName = getAttr("intended_location_name");
-  // Skip if the noted intended location is itself virtual — it was created incorrectly
-  if (intendedName && String(intendedName).toLowerCase().includes("virtual")) {
-    return null;
-  }
-
-  const intendedId = getAttr("intended_location_id");
-  const parsed = Number(String(intendedId).trim());
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function isNonRetryableOrderError(message: string): boolean {
-  const m = String(message || "").toLowerCase();
-  return (
-    m.includes("out of stock") ||
-    m.includes("inventory insufficient") ||
-    m.includes("cannot be reserved") ||
-    (m.includes("item number") && m.includes("does not exist")) ||
-    m.includes("sku有误") ||
-    m.includes("未维护新品") ||
-    m.includes("未通过审核") ||
-    m.includes("unknown warehouse") ||
-    m.includes("unsupported warehouse") ||
-    m.includes("unsupported virtual warehouse") ||
-    m.includes("not fully configured in battle hub")
-  );
-}
-
-function isServiceSkuItemNumber(itemNumber?: string | null): boolean {
-  const sku = String(itemNumber || "").toUpperCase();
-  return sku.startsWith("IM8-SER-") || sku.startsWith("PRE-SER-");
-}
-
-function isD365ItemNotFoundError(message: string): boolean {
-  const m = String(message || "").toLowerCase();
-  return m.includes("item number") && m.includes("does not exist");
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-/**
- * Detect whether a subscription order has a refill SKU but is missing
- * the required "Subscription order" tag (Skio applies it async after creation).
- * Mirrors spock-store's isUnTaggedRefillOrder.
- */
-function isRefillOrder(order: ShopifyOrderPayload): boolean {
-  const tags = (order.tags || "")
-    .toLowerCase()
-    .split(",")
-    .map((t) => t.trim());
-
-  const hasRefillTag = tags.some(
-    (t) => t.includes("refill") || t.includes("renewal") || t.includes("subscription order")
-  );
-
-  // Any SKU that is mapped in the refill mapping (IM8-FG-000010 etc.) indicates a refill
-  const hasRefillSku = order.line_items.some(
-    (item) => item.sku && !item.gift_card && item.requires_shipping
-  );
-
-  return hasRefillSku && !hasRefillTag;
-}
-
-/**
- * Extract the Skio subscription contract ID from note_attributes.
- */
-function extractSubscriptionContractId(order: ShopifyOrderPayload): string {
-  const attrs = order.note_attributes || [];
-  return attrs.find((a) => a.name === "subscription_id" || a.name === "contract_id")?.value || "";
-}
+import {
+  isD365ItemNotFoundError,
+  isNonRetryableOrderError,
+  isRefillOrder,
+  isServiceSkuItemNumber,
+} from "./process-subscription-order/helpers";
+import { determineSubscriptionWarehouse } from "./process-subscription-order/routing";
 
 // ============================================================================
 // FUNCTION DEFINITION
@@ -312,149 +195,14 @@ export const processSubscriptionOrder = inngest.createFunction(
     // STEP 4: Determine warehouse and dataAreaId strictly from Battle Hub
     // location settings. No country/config fallback.
     // =========================================================================
-    const warehouseInfo = await step.run("determine-warehouse", async () => {
-      const country_code =
-        order.shipping_address?.country_code || order.billing_address?.country_code || "US";
-      const intendedLocationId = getIntendedLocationIdFromOrder(order);
-
-      let fulfillmentLocationId: number | undefined;
-      try {
-        const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-        const selectedId = selectPreferredFulfillmentLocationId(fulfillmentOrders as any[]);
-        fulfillmentLocationId = selectedId ?? undefined;
-      } catch {
-        console.warn(`[Subscription] Could not fetch fulfillment orders for ${shopifyOrderName}`);
-      }
-
-      if (!fulfillmentLocationId && intendedLocationId) {
-        fulfillmentLocationId = intendedLocationId;
-        console.log(
-          `[Subscription Routing] Using intended_location_id=${intendedLocationId} from order note attributes for ${shopifyOrderName}`
-        );
-      }
-
-      if (!fulfillmentLocationId) {
-        const expectedWarehouseName = determineWarehouse(country_code);
-        const hubLocation = await findLocationByWarehouseName(expectedWarehouseName, "im8");
-        if (hubLocation?.shopifyLocationId) {
-          fulfillmentLocationId = Number(hubLocation.shopifyLocationId);
-          console.warn(
-            `[Subscription Routing] ${shopifyOrderName}: Shopify only assigned a virtual location. ` +
-              `Resolved to "${expectedWarehouseName}" (id=${fulfillmentLocationId}) via country=${country_code} + Battle Hub config.`
-          );
-        } else {
-          throw new Error(
-            `[Subscription Routing] No Shopify fulfillment location assigned for ${shopifyOrderName} and no Battle Hub location is configured for country=${country_code} (expected warehouse: ${expectedWarehouseName}). ` +
-              `Configure the location in Battle Hub Locations settings.`
-          );
-        }
-      }
-
-      let locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-        fulfillmentLocationId,
-        country_code,
-        "im8"
-      );
-      let warehouseNameFromLocation = await getWarehouseNameForLocation(
-        fulfillmentLocationId,
-        "im8"
-      );
-
-      const stordEuOverride = await resolveStordEuOverrideForMappedLocation(
-        warehouseNameFromLocation,
-        country_code,
-        "im8"
-      );
-      if (stordEuOverride) {
-        const originalLocationId = fulfillmentLocationId;
-        const originalWarehouseName = warehouseNameFromLocation;
-        fulfillmentLocationId = Number(stordEuOverride.hubShopifyLocationId);
-        locationDataAreaId = stordEuOverride.dataAreaId;
-        warehouseNameFromLocation = stordEuOverride.warehouseName;
-        console.warn(
-          `[Subscription Routing] ${shopifyOrderName}: STORD routing normalized for country=${country_code}; ` +
-            `location ${originalLocationId} (${originalWarehouseName || "unknown"}) → ` +
-            `${stordEuOverride.hubShopifyLocationId} (${stordEuOverride.warehouseName}), ` +
-            `dataAreaId=${stordEuOverride.dataAreaId}.`
-        );
-      }
-
-      if (
-        intendedLocationId &&
-        intendedLocationId !== fulfillmentLocationId &&
-        String(warehouseNameFromLocation || "")
-          .toLowerCase()
-          .includes("virtual")
-      ) {
-        const intendedWarehouse = await getWarehouseNameForLocation(intendedLocationId, "im8");
-        if (intendedWarehouse && !String(intendedWarehouse).toLowerCase().includes("virtual")) {
-          fulfillmentLocationId = intendedLocationId;
-          locationDataAreaId = await getDataAreaIdForLocationAndCountry(
-            fulfillmentLocationId,
-            country_code,
-            "im8"
-          );
-          warehouseNameFromLocation = intendedWarehouse;
-          console.log(
-            `[Subscription Routing] Switched from virtual location to intended_location_id=${intendedLocationId} for ${shopifyOrderName}`
-          );
-        }
-      }
-
-      if (!locationDataAreaId || !warehouseNameFromLocation) {
-        const stordHub = await resolveStordHubWhenFulfillmentLocationUnmapped(
-          order,
-          country_code,
-          "im8"
-        );
-        if (stordHub) {
-          const unknownLoc = fulfillmentLocationId;
-          locationDataAreaId = stordHub.dataAreaId;
-          warehouseNameFromLocation = stordHub.warehouseName;
-          fulfillmentLocationId = Number(stordHub.hubShopifyLocationId);
-          console.warn(
-            `[Subscription Routing] ${shopifyOrderName}: fulfillment location ${unknownLoc} is not in Battle Hub; ` +
-              `all lines use fulfillment_service=stord — using configured "${stordHub.warehouseName}" ` +
-              `(hub Shopify location id ${stordHub.hubShopifyLocationId}). ` +
-              `Add or update this location in Battle Hub (shopify_location_id=${unknownLoc}).`
-          );
-        }
-      }
-
-      if (!locationDataAreaId || !warehouseNameFromLocation) {
-        const routingContext = await getLocationRoutingDebugContext(
-          fulfillmentLocationId,
-          country_code,
-          "im8"
-        );
-        throw new Error(
-          `[Subscription Routing] Shopify location ${fulfillmentLocationId} is not fully configured in Battle Hub for country ${country_code}. Set the location warehouse name and dataAreaId/country override in Locations; country fallback is disabled. Context: ${routingContext}`
-        );
-      }
-
-      if (String(warehouseNameFromLocation).toLowerCase().includes("virtual")) {
-        const routingContext = await getLocationRoutingDebugContext(
-          fulfillmentLocationId,
-          country_code,
-          "im8"
-        );
-        throw new Error(
-          `[Subscription Routing] Unsupported virtual warehouse "${warehouseNameFromLocation}" for Shopify location ${fulfillmentLocationId}. Configure a real fulfillment location in Shopify and Battle Hub. Context: ${routingContext}`
-        );
-      }
-
-      console.log(
-        `[Subscription Routing] Location ${fulfillmentLocationId} → warehouse: ${warehouseNameFromLocation}, dataAreaId: ${locationDataAreaId}`
-      );
-      return {
-        dataAreaId: locationDataAreaId,
-        warehouseName: warehouseNameFromLocation as WarehouseName,
-        country_code,
-        routingSource: "location" as const,
-      };
+    const warehouseInfo = await determineSubscriptionWarehouse({
+      step,
+      order,
+      shopifyOrderId,
+      shopifyOrderName,
     });
 
-    const { dataAreaId, warehouseName, country_code } = warehouseInfo;
+    const { dataAreaId, warehouseName } = warehouseInfo;
     const saudiShortAddress = await loadSaudiShortAddress({
       step,
       order,

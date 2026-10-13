@@ -10,7 +10,6 @@
 import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
 import { getGpsLogisticsChannelIfApplicable } from "@/lib/helpers/warehouse";
-import { logFlowEvent } from "@/lib/services/flow-logs";
 import {
   CONCURRENCY_CONFIGS,
   RATE_LIMIT_CONFIGS,
@@ -19,9 +18,8 @@ import {
   TAG_WAIT_ENABLED,
   THROTTLE_CONFIGS,
 } from "@/lib/utils/constants";
-import { orderChannel } from "../channels";
 import { inngest } from "../client";
-import type { ShopifyOrderPayload } from "../events";
+import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
 import { completeOrderProcessing } from "./process-shopify-order/complete-order";
 import { createD365Order } from "./process-shopify-order/d365-order";
 import { handleExistingD365Order } from "./process-shopify-order/existing-d365-order";
@@ -34,6 +32,8 @@ import {
   type OrderPaymentAccounting,
 } from "./process-shopify-order/payment-accounting";
 import { prepareShopifyOrder } from "./process-shopify-order/prepare-order";
+import { createOrderRealtimePublisher } from "./process-shopify-order/realtime-publisher";
+import { createOrderRunSequenceHandoff } from "./process-shopify-order/run-sequence-handoff";
 import { loadSaudiShortAddress } from "./process-shopify-order/saudi-short-address";
 import type { OrderLinesSupabaseSyncLog, OrderSyncResult } from "./process-shopify-order/types";
 import { handleValidationFailure } from "./process-shopify-order/validation-failure";
@@ -72,12 +72,6 @@ export const processShopifyOrder = inngest.createFunction(
       orderJson,
       shopifyStore,
     } = event.data;
-    const ch = orderChannel({ orderName: shopifyOrderName });
-    /** Inngest Realtime `publish` is only injected when the run opts into channels; guard to avoid TypeError. */
-    const publishToRealtime = async (channel: unknown, payload: Record<string, unknown>) => {
-      if (typeof publish !== "function") return;
-      await publish(channel, payload);
-    };
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
       String(rawShopifyOrderId || "").includes("-rerun-");
@@ -100,147 +94,25 @@ export const processShopifyOrder = inngest.createFunction(
 
     const _orderProcessingStart = Date.now();
 
-    // Track step start times and completed durations for timing summary
-    const stepStartTimes = new Map<string, number>();
-    const stepDurations: Array<{ step: string; durationMs: number }> = [];
-
-    // Helper to publish status updates via Inngest Realtime
-    const publishStatus = async (
-      stepName: string,
-      status: "running" | "completed" | "failed" | "skipped",
-      message?: string,
-      data?: Record<string, unknown>
-    ) => {
-      const now = Date.now();
-      let durationMs: number | undefined;
-
-      // Track timing
-      if (status === "running") {
-        stepStartTimes.set(stepName, now);
-      } else if (status === "completed" || status === "failed") {
-        const startTime = stepStartTimes.get(stepName);
-        if (startTime) {
-          durationMs = now - startTime;
-          stepStartTimes.delete(stepName);
-          stepDurations.push({ step: stepName, durationMs });
-        }
-      }
-
-      try {
-        logFlowEvent({
-          level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
-          flow: "order_paid",
-          step: stepName,
-          runId: inngestRunId,
-          shopifyOrderId,
-          shopifyOrderName,
-          status,
-          durationMs,
-          errorMessage: status === "failed" ? message : undefined,
-          payload: data,
-        });
-        await publishToRealtime(ch.status, {
-          orderName: shopifyOrderName,
-          inngestIdempotencyKey,
-          inngestRunId,
-          step: stepName,
-          status,
-          message,
-          data,
-          durationMs,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (err) {
-        // Don't fail the function if realtime publish fails
-        console.warn(`[Realtime] Failed to publish status: ${err}`);
-      }
-    };
-
-    // Helper to publish final result
-    const publishResult = async (
-      status: "success" | "failed" | "skipped",
-      resultData?: {
-        d365OrderNumber?: string;
-        gpsOrderNo?: string;
-        warehouse?: string;
-        error?: string;
-      }
-    ) => {
-      try {
-        logFlowEvent({
-          level: status === "failed" ? "error" : status === "skipped" ? "warn" : "info",
-          flow: "order_paid",
-          step: "result",
-          runId: inngestRunId,
-          shopifyOrderId,
-          shopifyOrderName,
-          d365OrderNumber: resultData?.d365OrderNumber,
-          status,
-          errorMessage: resultData?.error,
-          payload: resultData,
-        });
-        await publishToRealtime(ch.result, {
-          orderName: shopifyOrderName,
-          inngestIdempotencyKey,
-          inngestRunId,
-          status,
-          ...resultData,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.warn(`[Realtime] Failed to publish result: ${err}`);
-      }
-    };
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Sequenced rerun hand-off: when this run was dispatched as part of a
-    // multi-stage rerun (state.runSequence), `event.data.runSequence` carries
-    // the remaining stages to execute after this one. We dispatch the next
-    // stage on success and persist progress to orders.state.runSequence.
-    // ────────────────────────────────────────────────────────────────────────
-    const incomingRunSequence: import("../events").RunSequenceStage[] = Array.isArray(
-      event.data.runSequence
-    )
-      ? (event.data.runSequence as import("../events").RunSequenceStage[])
+    const { publishStatus, publishResult, stepDurations } = createOrderRealtimePublisher({
+      publish,
+      shopifyOrderId,
+      shopifyOrderName,
+      inngestIdempotencyKey,
+      inngestRunId,
+    });
+    const incomingRunSequence = Array.isArray(event.data.runSequence)
+      ? (event.data.runSequence as RunSequenceStage[])
       : [];
-    const handOffSequencedRunIfAny = async (resultPayload: Record<string, unknown>) => {
-      if (incomingRunSequence.length === 0) return;
-      try {
-        const { advanceRunSequence } = await import("@/lib/services/run-sequence");
-        await advanceRunSequence({
-          shopifyOrderId,
-          shopifyOrderName,
-          completedStage: {
-            id: `order_creation-${inngestRunId}`,
-            stage: "order_creation",
-            eventName: "shopify/order.paid",
-            status: "completed",
-            runId: inngestRunId,
-          },
-          remaining: incomingRunSequence,
-          orderJson: order,
-          fulfillments: Array.isArray((order as any)?.fulfillments)
-            ? ((order as any).fulfillments as any[])
-            : [],
-          shopifyStore,
-          inngestRunId,
-          inngestIdempotencyKey,
-        });
-        logFlowEvent({
-          flow: "order_paid",
-          step: "sequenced-handoff",
-          status: "completed",
-          runId: inngestRunId,
-          shopifyOrderId,
-          shopifyOrderName,
-          payload: { ...resultPayload, nextStage: incomingRunSequence[0]?.stage },
-        });
-      } catch (err) {
-        console.warn(
-          `[RunSequence] Failed to advance after order_creation for ${shopifyOrderName}: ${err}`
-        );
-      }
-    };
+    const handOffSequencedRunIfAny = createOrderRunSequenceHandoff({
+      incomingRunSequence,
+      getOrder: () => order,
+      shopifyOrderId,
+      shopifyOrderName,
+      shopifyStore,
+      inngestRunId,
+      inngestIdempotencyKey,
+    });
 
     // Publish initial status
     await publishStatus("started", "running", "Order processing started");
