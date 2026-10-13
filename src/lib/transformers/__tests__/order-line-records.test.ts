@@ -3,6 +3,21 @@ import { toOrderLineRecords } from "../order";
 import { loadFixture } from "../../../../tests/fixtures";
 
 describe("toOrderLineRecords", () => {
+  it("persists subscription rewards with a stable synthetic line id", () => {
+    const order = loadFixture("subscriptionOrder");
+    order.tags = `${order.tags}, Subscription order 3`;
+    order.line_items[0].sku = "IM8-FG-000035";
+    const records = toOrderLineRecords(order, "U001-SO-500", "GPS Warehouse");
+
+    expect(records).toContainEqual({
+      shopifyLineItemId: "subscription-reward:IM8-FG-000022",
+      shopifySku: "IM8-FG-000022",
+      d365ItemNumber: "IM8-FG-000022",
+      quantity: 1,
+      price: 0,
+      isServiceLine: false,
+    });
+  });
   it("produces product lines with Shopify line item IDs", () => {
     const order = loadFixture("gpsUsOrder");
     const records = toOrderLineRecords(order, "U001-SO-100", "GPS Warehouse");

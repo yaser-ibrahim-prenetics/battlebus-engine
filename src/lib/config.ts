@@ -237,6 +237,8 @@ export const config = {
      * double-post. Enable only for tenants that require the explicit action.
      */
     enableReturnInvoicePosting: process.env.ENABLE_RETURN_INVOICE_POSTING === "true",
+    /** Spock parity: add configured reward products to eligible subscription renewals. */
+    enableSubscriptionRewards: process.env.DISABLE_SUBSCRIPTION_REWARD !== "true",
   },
 
   /** Loop Returns: `return.closed` refund webhook + Shopify refund de-dupe vs Loop. */
