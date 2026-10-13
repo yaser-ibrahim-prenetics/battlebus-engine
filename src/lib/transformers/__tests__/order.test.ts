@@ -275,7 +275,7 @@ describe("Order Transformers", () => {
       const gpsOrder = toGpsOutboundOrder(order, "H007-SO-200", "GPS UK Warehouse");
 
       expect(gpsOrder.whCode).toBe("LHR");
-      expect(gpsOrder.logisticsChannel).toBe("GPS-IM8-STANDARD-UK");
+      expect(gpsOrder.logisticsChannel).toBe("RS-RM-UK");
       expect(gpsOrder.countryRegionCode).toBe("GB");
     });
 

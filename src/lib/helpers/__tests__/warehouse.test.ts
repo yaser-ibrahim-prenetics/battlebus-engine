@@ -280,7 +280,20 @@ describe("Warehouse Routing Helpers", () => {
 
     it("getGpsLogisticsChannel returns correct channels", () => {
       expect(getGpsLogisticsChannel("GPS Warehouse")).toBe("GPS-IM8-STANDARD");
-      expect(getGpsLogisticsChannel("GPS UK Warehouse")).toBe("GPS-IM8-STANDARD-UK");
+      expect(getGpsLogisticsChannel("GPS UK Warehouse")).toBe("RS-RM-UK");
+      expect(
+        getGpsLogisticsChannel("GPS UK Warehouse", {
+          tags: " VIP ,  expedited shipping  , newsletter ",
+        })
+      ).toBe("RS-DPDZONE1");
+      expect(
+        getGpsLogisticsChannel("GPS UK Warehouse", {
+          tags: "VIP, Expedited Shipping Plus",
+        })
+      ).toBe("RS-RM-UK");
+      expect(
+        getGpsLogisticsChannel("GPS Warehouse", { tags: "Expedited Shipping" })
+      ).toBe("GPS-IM8-STANDARD");
     });
   });
 
