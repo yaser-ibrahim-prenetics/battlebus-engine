@@ -514,6 +514,8 @@ export interface ShopifyOrderPayload {
   tags: string;
   customer: ShopifyCustomer | null;
   refunds: ShopifyRefund[];
+  fulfillments?: ShopifyFulfillment[];
+  payment_gateway_names?: string[];
   cancel_reason: keyof typeof CancelReasonEnum | null;
   // Subscription / app metadata
   source_name: string | null; // 'subscription_contract' for Skio/Prive renewals
@@ -622,7 +624,12 @@ export interface ShopifyTransaction {
     balance_transaction?: {
       exchange_rate?: number | string;
     } | null;
+    gift_card_last_characters?: string;
+    metadata?: {
+      order_id?: string;
+    };
   } | null;
+  payment_id?: string;
 }
 
 export interface ShopifyRefundPayload {
@@ -680,6 +687,12 @@ export interface ShopifyFulfillment {
   tracking_urls: string[];
   location_id: number | null;
   line_items: ShopifyFulfillmentLineItem[];
+  receipt?: {
+    gift_cards?: Array<{
+      line_item_id: number | string;
+      masked_code: string;
+    }>;
+  };
 }
 
 export interface ShopifyFulfillmentLineItem {

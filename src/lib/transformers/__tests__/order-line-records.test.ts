@@ -56,10 +56,14 @@ describe("toOrderLineRecords", () => {
     expect(records.some((r) => r.d365ItemNumber === "IM8-FG-G00003")).toBe(false);
   });
 
-  it("skips gift card lines", () => {
+  it("persists gift card lines for D365 and Hub accounting", () => {
     const order = loadFixture("multiLineOrder");
     const records = toOrderLineRecords(order, "U001-SO-300", "GPS Warehouse");
-    expect(records.some((r) => r.d365ItemNumber === "IM8-GC-50")).toBe(false);
+    expect(records.find((r) => r.d365ItemNumber === "IM8-GC-50")).toMatchObject({
+      shopifySku: "IM8-GC-50",
+      quantity: 1,
+      isServiceLine: false,
+    });
   });
 
   it("uses HK warehouse service SKU for HK orders with non-zero shipping", () => {

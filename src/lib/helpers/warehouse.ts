@@ -403,15 +403,45 @@ export function getGpsWarehouseCode(warehouseName: string): string {
   return config.gpsCode;
 }
 
+export const GPS_UK_EXPEDITED_SHIPPING_TAG = "expedited shipping";
+export const GPS_UK_EXPEDITED_CHANNEL = "RS-DPDZONE1";
+
 /**
- * Get GPS logistics channel for API calls
+ * Get GPS logistics channel for API calls.
+ *
+ * Spock Store routes UK orders tagged exactly `Expedited Shipping` through
+ * DPD Zone 1. All other UK orders use the configured Royal Mail channel.
  */
-export function getGpsLogisticsChannel(warehouseName: string): string {
+export function getGpsLogisticsChannel(
+  warehouseName: string,
+  order?: { tags?: string | null }
+): string {
   const config = getWarehouseConfig(warehouseName);
   if (!config.logisticsChannel) {
     throw new Error(`Warehouse ${warehouseName} does not have a logistics channel`);
   }
+
+  const tags = String(order?.tags || "")
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean);
+  if (isGpsUkWarehouse(warehouseName) && tags.includes(GPS_UK_EXPEDITED_SHIPPING_TAG)) {
+    return GPS_UK_EXPEDITED_CHANNEL;
+  }
+
   return config.logisticsChannel;
+}
+
+/**
+ * Resolve GPS metadata only for warehouses that are actually dispatched to GPS.
+ * Non-GPS orders still continue through D365 without requiring a GPS channel.
+ */
+export function getGpsLogisticsChannelIfApplicable(
+  warehouseName: string,
+  order?: { tags?: string | null }
+): string | undefined {
+  if (!isGpsWarehouse(warehouseName)) return undefined;
+  return getGpsLogisticsChannel(warehouseName, order);
 }
 
 // ============================================================================

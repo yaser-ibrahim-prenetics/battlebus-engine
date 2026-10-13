@@ -227,7 +227,7 @@ describe("E2E: Order Creation Flow", () => {
       const gpsPayload = toGpsOutboundOrder(order, "H007-SO-TEST", "GPS UK Warehouse");
 
       expect(gpsPayload.whCode).toBe("LHR");
-      expect(gpsPayload.logisticsChannel).toBe("GPS-IM8-STANDARD-UK");
+      expect(gpsPayload.logisticsChannel).toBe("RS-RM-UK");
     });
 
     it("STORD orders are not sent to GPS", () => {

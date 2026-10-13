@@ -33,7 +33,7 @@
       "dataAreaId": "H007",
       "orderingCustomerAccountNumber": "H007-C000000001",
       "gpsCode": "LHR",
-      "logisticsChannel": "GPS-IM8-STANDARD-UK",
+      "logisticsChannel": "RS-RM-UK",
       "fulfilment": {
         "shippingSiteId": "Prenetics",
         "shippingWarehouseId": "OPS-WH02",

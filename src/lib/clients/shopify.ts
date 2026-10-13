@@ -558,13 +558,18 @@ export async function searchOrdersByName(
  * Get Order Transactions
  */
 export async function getOrderTransactions(
-  orderId: string | number
+  orderId: string | number,
+  shopDomainForCredentials?: string | null
 ): Promise<ShopifyTransaction[]> {
-  const url = buildUrl(`/orders/${orderId}/transactions.json`);
+  const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
+  const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders/${orderId}/transactions.json`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: {
+      "X-Shopify-Access-Token": c.accessToken,
+      "Content-Type": "application/json",
+    },
   });
 
   if (!response.ok) {
@@ -956,6 +961,7 @@ export interface ShopifyOrder {
   tags: string;
   customer: ShopifyCustomer | null;
   refunds: ShopifyRefund[];
+  fulfillments?: ShopifyFulfillment[];
   /** Present on many API responses; used for FX / refund rate extraction. */
   transactions?: ShopifyTransaction[];
 }
@@ -1049,6 +1055,14 @@ export interface ShopifyTransaction {
   gateway: string;
   status: string;
   amount: string;
+  currency?: string;
+  payment_id?: string;
+  receipt?: {
+    gift_card_last_characters?: string;
+    metadata?: {
+      order_id?: string;
+    };
+  };
 }
 
 export interface ShopifyFulfillmentOrder {
@@ -1089,6 +1103,12 @@ export interface ShopifyFulfillment {
   tracking_number: string;
   tracking_company: string;
   tracking_url: string;
+  receipt?: {
+    gift_cards?: Array<{
+      line_item_id: number | string;
+      masked_code: string;
+    }>;
+  };
 }
 
 export interface ShopifyFraudAnalysis {
