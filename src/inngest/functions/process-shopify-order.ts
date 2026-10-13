@@ -58,6 +58,7 @@ import {
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse, isGpsUkWarehouse } from "@/lib/helpers/warehouse";
+import { getAssociatedOrderLink } from "@/lib/helpers/order-linkage";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -1784,6 +1785,7 @@ export const processShopifyOrder = inngest.createFunction(
         });
 
         await step.run("notify-hub-already-exists-synced", async () => {
+          const associatedOrder = getAssociatedOrderLink(order);
           await Promise.all([
             csPlatform.sendOrderCreated(
               {
@@ -1796,6 +1798,7 @@ export const processShopifyOrder = inngest.createFunction(
                 gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
                 gpsSkipped: gpsRetryResult.type === "skipped",
                 orderJson: order,
+                ...(associatedOrder ? { state: { associatedOrder } } : {}),
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -1816,7 +1819,10 @@ export const processShopifyOrder = inngest.createFunction(
                 lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
                 lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
                 retryAt: null,
-                state: { failureContext: null },
+                state: {
+                  ...(associatedOrder ? { associatedOrder } : {}),
+                  failureContext: null,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -2021,6 +2027,7 @@ export const processShopifyOrder = inngest.createFunction(
 
       if (!routedToBackorder) {
         await step.run("notify-hub-order-created-and-synced", async () => {
+          const associatedOrder = getAssociatedOrderLink(order);
           await Promise.all([
             csPlatform.sendOrderCreated(
               {
@@ -2035,8 +2042,15 @@ export const processShopifyOrder = inngest.createFunction(
                   isGpsUkWarehouse(warehouseName) && gpsOrderId ? gpsOrderId : undefined,
                 gpsSkipped,
                 orderJson: order,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku } }
+                ...(Object.keys(d365InventoryLotsBySku).length > 0 || associatedOrder
+                  ? {
+                      state: {
+                        ...(Object.keys(d365InventoryLotsBySku).length > 0
+                          ? { d365InventoryLotsBySku }
+                          : {}),
+                        ...(associatedOrder ? { associatedOrder } : {}),
+                      },
+                    }
                   : {}),
               },
               { inngestIdempotencyKey, inngestRunId }
@@ -2061,9 +2075,13 @@ export const processShopifyOrder = inngest.createFunction(
                 lastError: null,
                 lastErrorType: null,
                 retryAt: null,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku, failureContext: null } }
-                  : { state: { failureContext: null } }),
+                state: {
+                  ...(Object.keys(d365InventoryLotsBySku).length > 0
+                    ? { d365InventoryLotsBySku }
+                    : {}),
+                  ...(associatedOrder ? { associatedOrder } : {}),
+                  failureContext: null,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
