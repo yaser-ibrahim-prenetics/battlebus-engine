@@ -60,7 +60,12 @@ import {
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
 import { determineWarehouse, isGpsUkWarehouse } from "@/lib/helpers/warehouse";
-import { shouldSplitFulfillmentOrder, isDomesticOrder } from "@/lib/helpers/split";
+import {
+  buildFulfillmentSegments,
+  isDomesticOrder,
+  shouldSplitFulfillmentOrder,
+  toShopifyFulfillmentOrderSplits,
+} from "@/lib/helpers/split";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
@@ -981,6 +986,22 @@ export const processShopifyOrder = inngest.createFunction(
           | { type: "failed"; error: string }
           | { type: "skipped"; reason: string };
       };
+      let fulfillmentSplit: {
+        applied: boolean;
+        reason: string;
+        threshold: number | null;
+        error?: string;
+        fulfillmentOrders: Array<{
+          sourceFulfillmentOrderId: string;
+          segments: ReturnType<typeof buildFulfillmentSegments>;
+          resultingFulfillmentOrderIds: string[];
+        }>;
+      } = {
+        applied: false,
+        reason: "d365_order_already_existed",
+        threshold: null,
+        fulfillmentOrders: [],
+      };
 
       if (existingCheck.exists) {
         await publishStatus(
@@ -1388,7 +1409,7 @@ export const processShopifyOrder = inngest.createFunction(
 
         // ── Step: Shopify fulfillment order split (optional, non-blocking) ─
         await publishStatus("send-to-gps", "running", "Preparing GPS warehouse order");
-        await step.run("shopify-fulfillment-order-split", async () => {
+        fulfillmentSplit = await step.run("shopify-fulfillment-order-split", async () => {
           try {
             const orderTotal = parseFloat(order.total_price || "0");
             const countryCode = country_code || "US";
@@ -1400,76 +1421,107 @@ export const processShopifyOrder = inngest.createFunction(
                 `(total=${orderTotal}, threshold=${splitDecision.threshold}, country=${countryCode})`
             );
 
-            if (splitDecision.shouldSplit) {
-              const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
-              const openFO = fulfillmentOrders?.find(
-                (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+            if (!splitDecision.shouldSplit) {
+              return {
+                applied: false as const,
+                reason: splitDecision.reason,
+                threshold: splitDecision.threshold,
+                fulfillmentOrders: [],
+              };
+            }
+
+            const fulfillmentOrders = await getFulfillmentOrders(Number(shopifyOrderId));
+            const openFulfillmentOrders = (fulfillmentOrders || []).filter(
+              (fo: any) => fo?.status === "open" || fo?.status === "in_progress"
+            );
+            if (openFulfillmentOrders.length === 0) {
+              console.warn(
+                `[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`
               );
+              return {
+                applied: false as const,
+                reason: "no_open_fulfillment_order",
+                threshold: splitDecision.threshold,
+                fulfillmentOrders: [],
+              };
+            }
 
-              if (!openFO) {
-                console.warn(
-                  `[Fulfillment Split] No open fulfillment order found for ${shopifyOrderName}`
-                );
-              } else {
-                const fulfillmentOrderGid = `gid://shopify/FulfillmentOrder/${openFO.id}`;
-                const foLineItems = (openFO as any).line_items || [];
-
-                if (foLineItems.length < 2) {
-                  console.log(
-                    `[Fulfillment Split] Only ${foLineItems.length} line item(s), cannot split`
-                  );
-                } else {
-                  const midpoint = Math.ceil(foLineItems.length / 2);
-                  const splitLineItems = foLineItems.slice(midpoint).map((li: any) => ({
-                    fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${li.id}`,
-                    quantity: li.quantity || li.fulfillable_quantity || 1,
-                  }));
-
-                  const mutation = `
-                    mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
-                      fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
-                        fulfillmentOrders { id }
-                        userErrors { field message }
-                      }
-                    }
-                  `;
-
-                  const graphqlResult = await shopifyAdminGraphql<{
-                    data?: {
-                      fulfillmentOrderSplit?: {
-                        fulfillmentOrders?: Array<{ id: string }>;
-                        userErrors?: Array<{ field?: string[]; message: string }>;
-                      };
-                    };
-                  }>(mutation, {
-                    fulfillmentOrderId: fulfillmentOrderGid,
-                    fulfillmentOrderSplits: [{ fulfillmentOrderLineItems: splitLineItems }],
-                  });
-                  const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors;
-
-                  if (userErrors && userErrors.length > 0) {
-                    const errorMsg = userErrors.map((e: any) => e.message).join(", ");
-                    console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
-                    await slack.sendWarningMessage(
-                      SlackChannelEnum.SHOPIFY,
-                      `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
-                    );
-                  } else {
-                    const newFOs =
-                      graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || [];
-                    console.log(
-                      `[Fulfillment Split] Successfully split ${shopifyOrderName} into ${newFOs.length} fulfillment orders`
-                    );
-
-                    await slack.sendOrderMessage(
-                      SlackChannelEnum.SHOPIFY,
-                      `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
-                        `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
-                    );
-                  }
+            const mutation = `
+              mutation fulfillmentOrderSplit($fulfillmentOrderId: ID!, $fulfillmentOrderSplits: [FulfillmentOrderSplitInput!]!) {
+                fulfillmentOrderSplit(fulfillmentOrderId: $fulfillmentOrderId, fulfillmentOrderSplits: $fulfillmentOrderSplits) {
+                  fulfillmentOrders { id }
+                  userErrors { field message }
                 }
               }
+            `;
+            const splitOrders: Array<{
+              sourceFulfillmentOrderId: string;
+              segments: ReturnType<typeof buildFulfillmentSegments>;
+              resultingFulfillmentOrderIds: string[];
+            }> = [];
+
+            for (const fulfillmentOrder of openFulfillmentOrders) {
+              const segments = buildFulfillmentSegments(
+                Array.isArray(fulfillmentOrder.line_items) ? fulfillmentOrder.line_items : [],
+                Array.isArray(order.line_items) ? order.line_items : [],
+                splitDecision.threshold
+              );
+              const fulfillmentOrderSplits = toShopifyFulfillmentOrderSplits(segments);
+              if (fulfillmentOrderSplits.length === 0) continue;
+
+              const sourceFulfillmentOrderId = String(fulfillmentOrder.id);
+              const graphqlResult = await shopifyAdminGraphql<{
+                data?: {
+                  fulfillmentOrderSplit?: {
+                    fulfillmentOrders?: Array<{ id: string }>;
+                    userErrors?: Array<{ field?: string[]; message: string }>;
+                  };
+                };
+              }>(mutation, {
+                fulfillmentOrderId: `gid://shopify/FulfillmentOrder/${sourceFulfillmentOrderId}`,
+                fulfillmentOrderSplits,
+              });
+              const userErrors = graphqlResult?.data?.fulfillmentOrderSplit?.userErrors || [];
+              if (userErrors.length > 0) {
+                throw new Error(userErrors.map((error) => error.message).join(", "));
+              }
+
+              splitOrders.push({
+                sourceFulfillmentOrderId,
+                segments,
+                resultingFulfillmentOrderIds: (
+                  graphqlResult?.data?.fulfillmentOrderSplit?.fulfillmentOrders || []
+                ).map((fo) => fo.id),
+              });
             }
+
+            if (splitOrders.length === 0) {
+              return {
+                applied: false as const,
+                reason: "single_segment",
+                threshold: splitDecision.threshold,
+                fulfillmentOrders: [],
+              };
+            }
+
+            const segmentCount = splitOrders.reduce(
+              (count, splitOrder) => count + splitOrder.segments.length,
+              0
+            );
+            console.log(
+              `[Fulfillment Split] Successfully split ${shopifyOrderName} into ${segmentCount} value segments`
+            );
+            await slack.sendOrderMessage(
+              SlackChannelEnum.SHOPIFY,
+              `[Fulfillment Split] ${shopifyOrderName} split into ${segmentCount} value segments ` +
+                `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
+            );
+            return {
+              applied: true as const,
+              reason: "split_applied",
+              threshold: splitDecision.threshold,
+              fulfillmentOrders: splitOrders,
+            };
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
@@ -1477,6 +1529,13 @@ export const processShopifyOrder = inngest.createFunction(
               SlackChannelEnum.SHOPIFY,
               `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
             );
+            return {
+              applied: false as const,
+              reason: "split_failed",
+              threshold: null,
+              error: errorMsg,
+              fulfillmentOrders: [],
+            };
           }
         });
 
@@ -2094,9 +2153,12 @@ export const processShopifyOrder = inngest.createFunction(
                     : undefined,
                 gpsSkipped,
                 orderJson: order,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku } }
-                  : {}),
+                state: {
+                  ...(Object.keys(d365InventoryLotsBySku).length > 0
+                    ? { d365InventoryLotsBySku }
+                    : {}),
+                  fulfillmentSplit,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -2122,9 +2184,13 @@ export const processShopifyOrder = inngest.createFunction(
                 lastError: null,
                 lastErrorType: null,
                 retryAt: null,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku, failureContext: null } }
-                  : { state: { failureContext: null } }),
+                state: {
+                  ...(Object.keys(d365InventoryLotsBySku).length > 0
+                    ? { d365InventoryLotsBySku }
+                    : {}),
+                  fulfillmentSplit,
+                  failureContext: null,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),

@@ -22,6 +22,109 @@ export interface SplitDecision {
   threshold: number;
 }
 
+export interface FulfillmentOrderLineForSplit {
+  id: string | number;
+  line_item_id: string | number;
+  quantity: number;
+  fulfillable_quantity?: number;
+}
+
+export interface ShopifyLinePrice {
+  id: string | number;
+  price: string | number;
+}
+
+export interface FulfillmentSegmentItem {
+  fulfillmentOrderLineItemId: string;
+  shopifyLineItemId: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface FulfillmentSegment {
+  index: number;
+  subtotal: number;
+  items: FulfillmentSegmentItem[];
+}
+
+/**
+ * Partition an open Shopify fulfillment order by value, including splits that
+ * divide the quantity of a single line item. This mirrors Spock Store's
+ * per-unit segmentation instead of cutting the line-item array at a midpoint.
+ */
+export function buildFulfillmentSegments(
+  fulfillmentLines: FulfillmentOrderLineForSplit[],
+  shopifyLines: ShopifyLinePrice[],
+  threshold: number
+): FulfillmentSegment[] {
+  const prices = new Map(
+    shopifyLines.map((line) => [String(line.id), Math.max(0, Number(line.price) || 0)])
+  );
+  const segments: FulfillmentSegment[] = [];
+  let items: FulfillmentSegmentItem[] = [];
+  let subtotal = 0;
+
+  const flush = () => {
+    if (items.length === 0) return;
+    segments.push({
+      index: segments.length,
+      subtotal: Number(subtotal.toFixed(2)),
+      items,
+    });
+    items = [];
+    subtotal = 0;
+  };
+
+  for (const line of fulfillmentLines) {
+    const shopifyLineItemId = String(line.line_item_id);
+    const unitPrice = prices.get(shopifyLineItemId);
+    if (unitPrice === undefined) {
+      throw new Error(
+        `Fulfillment line ${line.id} references unknown Shopify line ${shopifyLineItemId}`
+      );
+    }
+
+    let remaining = Math.max(
+      0,
+      Math.trunc(Number(line.fulfillable_quantity ?? line.quantity) || 0)
+    );
+    while (remaining > 0) {
+      if (threshold > 0 && items.length > 0 && subtotal + unitPrice > threshold) {
+        flush();
+      }
+
+      let quantity = remaining;
+      if (threshold > 0 && unitPrice > 0) {
+        const available = threshold - subtotal;
+        quantity = Math.max(1, Math.min(remaining, Math.floor(available / unitPrice)));
+      }
+
+      items.push({
+        fulfillmentOrderLineItemId: String(line.id),
+        shopifyLineItemId,
+        quantity,
+        unitPrice,
+      });
+      subtotal += unitPrice * quantity;
+      remaining -= quantity;
+
+      if (threshold > 0 && subtotal >= threshold) flush();
+    }
+  }
+
+  flush();
+  return segments;
+}
+
+export function toShopifyFulfillmentOrderSplits(segments: FulfillmentSegment[]) {
+  return segments.slice(0, -1).map((segment) => ({
+    fulfillmentOrderLineItems: segment.items.map((item) => ({
+      fulfillmentOrderLineItemId: `gid://shopify/FulfillmentOrderLineItem/${item.fulfillmentOrderLineItemId}`,
+      quantity: item.quantity,
+    })),
+  }));
+}
+
 /**
  * Determine if an order should have its fulfillment orders split
  * Based on order total and shipping destination
