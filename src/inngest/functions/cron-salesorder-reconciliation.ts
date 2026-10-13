@@ -34,6 +34,7 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { orderReconciliationQueries } from "@/lib/db/queries/order-reconciliation";
 import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
@@ -363,11 +364,7 @@ async function fetchOrderRowsByName(
     let rows: OrderRow[];
     try {
       const result = await queryDatabase<OrderRow>(
-        `SELECT shopify_order_name, d365_order_number, d365_sync_status, gps_order_no,
-                gps_uk_order_no, gps_sync_status, shopify_financial_status,
-                shopify_cancelled_at, shopify_fulfillment_status, warehouse
-         FROM public.orders
-         WHERE shopify_order_name = ANY($1::text[])`,
+        orderReconciliationQueries.findByNames,
         [batchNames]
       );
       rows = result.rows;

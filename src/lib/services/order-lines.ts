@@ -11,11 +11,8 @@
 //   'tax'      → combined tax + duty line
 //   any other  → real Shopify line_item.id
 
-import {
-  isDatabaseConfigured,
-  queryDatabase,
-  quoteIdentifier,
-} from "@/lib/db/database";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { buildUpsertOrderLinesQuery, orderLineQueries } from "@/lib/db/queries/order-lines";
 
 export const SHOPIFY_SHIPPING_LINE_ITEM_ID = "shipping";
 export const SHOPIFY_TAX_LINE_ITEM_ID = "tax";
@@ -78,21 +75,7 @@ async function upsertRows(rows: Record<string, unknown>[]): Promise<void> {
   if (rows.length === 0) return;
   const columns = Object.keys(rows[0]);
   const values = rows.flatMap((row) => columns.map((column) => row[column]));
-  const tuples = rows.map((_, rowIndex) => {
-    const offset = rowIndex * columns.length;
-    return `(${columns.map((__, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
-  });
-  const updates = columns
-    .filter((column) => !["shopify_order_id", "shopify_line_item_id"].includes(column))
-    .map((column) => `${quoteIdentifier(column)} = EXCLUDED.${quoteIdentifier(column)}`)
-    .join(", ");
-  await queryDatabase(
-    `INSERT INTO public.order_lines (${columns.map(quoteIdentifier).join(", ")})
-     VALUES ${tuples.join(", ")}
-     ON CONFLICT (shopify_order_id, shopify_line_item_id)
-     DO UPDATE SET ${updates}`,
-    values
-  );
+  await queryDatabase(buildUpsertOrderLinesQuery(columns, rows.length), values);
 }
 
 // ============================================================================
@@ -159,8 +142,7 @@ export async function updateOrderLineLotId(
 
   try {
     await queryDatabase(
-      `UPDATE public.order_lines SET dynamics_inventory_lot_id = $3
-       WHERE shopify_order_id = $1 AND shopify_line_item_id = $2`,
+      orderLineQueries.updateLotId,
       [shopifyOrderId, shopifyLineItemId, lotId]
     );
   } catch (error) {
@@ -311,7 +293,7 @@ export async function fetchOrderLines(
   // Try by order name first (faster, more reliable)
   if (nameVariants.length > 0) {
     const byName = await queryDatabase<SavedOrderLine>(
-      `SELECT * FROM public.order_lines WHERE shopify_order_name = ANY($1::text[])`,
+      orderLineQueries.findByOrderName,
       [nameVariants]
     );
     if (byName.rows.length > 0) return byName.rows;
@@ -320,7 +302,7 @@ export async function fetchOrderLines(
   // Fall back to numeric order id
   try {
     const result = await queryDatabase<SavedOrderLine>(
-      `SELECT * FROM public.order_lines WHERE shopify_order_id = $1`,
+      orderLineQueries.findByOrderId,
       [String(shopifyOrderId)]
     );
     return result.rows;
@@ -412,9 +394,7 @@ export async function markServiceLinesFulfilled(
   if (!databaseAvailable() || shopifyLineItemIds.length === 0) return;
   try {
     await queryDatabase(
-      `UPDATE public.order_lines
-       SET is_fulfilled_to_dynamics = true, fulfilled_at = now()
-       WHERE shopify_order_id = $1 AND shopify_line_item_id = ANY($2::text[])`,
+      orderLineQueries.markServiceLinesFulfilled,
       [shopifyOrderId, shopifyLineItemIds]
     );
   } catch (error) {

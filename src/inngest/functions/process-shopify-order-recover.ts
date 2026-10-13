@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { getOrder, searchOrdersByName, type ShopifyOrder } from "@/lib/clients/shopify";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { orderRecoveryQueries } from "@/lib/db/queries/order-recovery";
 
 type RecoverInput = {
   shopifyOrderIds?: string[];
@@ -70,7 +71,7 @@ async function fetchExistingHubOrderKeys(params: {
 
   if (shopifyOrderIds.length > 0) {
     const result = await queryDatabase<{ shopify_order_id: string | null }>(
-      `SELECT shopify_order_id FROM public.orders WHERE shopify_order_id = ANY($1::text[])`,
+      orderRecoveryQueries.existingIds,
       [shopifyOrderIds]
     );
     for (const row of result.rows) {
@@ -81,7 +82,7 @@ async function fetchExistingHubOrderKeys(params: {
 
   if (shopifyOrderNames.length > 0) {
     const result = await queryDatabase<{ shopify_order_name: string | null }>(
-      `SELECT shopify_order_name FROM public.orders WHERE shopify_order_name = ANY($1::text[])`,
+      orderRecoveryQueries.existingNames,
       [shopifyOrderNames]
     );
     for (const row of result.rows) {

@@ -19,11 +19,8 @@
  *   CLOUD_SQL_INSTANCE_CONNECTION_NAME / DB_NAME / DB_USER – Cloud SQL IAM connection
  *   DATABASE_URL             – local development fallback
  */
-import {
-  isDatabaseConfigured,
-  queryDatabase,
-  quoteIdentifier,
-} from "@/lib/db/database";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { createFlowLogQueries } from "@/lib/db/queries/flow-logs";
 
 type FlowLogLevel = "info" | "warn" | "error";
 type FlowLogStatus = "started" | "running" | "completed" | "failed" | "skipped";
@@ -55,7 +52,7 @@ let _warnedMissingConfig = false;
 let _lastPruneAt = 0;
 
 const ENABLED = process.env.FLOW_LOGS_ENABLED !== "false";
-const TABLE = quoteIdentifier(process.env.FLOW_LOGS_TABLE || "flow_logs");
+const queries = createFlowLogQueries(process.env.FLOW_LOGS_TABLE || "flow_logs");
 const RETENTION_DAYS = Math.max(
   1,
   Number.isFinite(Number(process.env.FLOW_LOG_RETENTION_DAYS))
@@ -91,7 +88,7 @@ async function pruneOldLogsIfDue(): Promise<void> {
 
   const cutoffIso = new Date(now - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   try {
-    await queryDatabase(`DELETE FROM ${TABLE} WHERE ts < $1`, [cutoffIso]);
+    await queryDatabase(queries.prune, [cutoffIso]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[FlowLogs] Retention prune skipped: ${message}`);
@@ -167,14 +164,7 @@ async function drainBuffer(): Promise<void> {
       "payload",
     ];
     const values = batch.flatMap((row) => columns.map((column) => row[column]));
-    const tuples = batch.map((_, rowIndex) => {
-      const offset = rowIndex * columns.length;
-      return `(${columns.map((__, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
-    });
-    await queryDatabase(
-      `INSERT INTO ${TABLE} (${columns.map(quoteIdentifier).join(", ")}) VALUES ${tuples.join(", ")}`,
-      values
-    );
+    await queryDatabase(queries.insert(columns, batch.length), values);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[FlowLogs] Unexpected batch error: ${msg}`);
@@ -229,7 +219,7 @@ export async function logFlowEventSync(event: FlowLogEvent): Promise<void> {
     const row = eventToRow(event);
     const columns = Object.keys(row);
     await queryDatabase(
-      `INSERT INTO ${TABLE} (${columns.map(quoteIdentifier).join(", ")}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")})`,
+      queries.insert(columns, 1),
       columns.map((column) => row[column])
     );
   } catch (err) {
