@@ -176,4 +176,3 @@ export async function getUnfulfilledGpsOrders(
   console.log(`[Shopify] Found ${gpsOrders.length} orders with GPS metafields`);
   return gpsOrders;
 }
-

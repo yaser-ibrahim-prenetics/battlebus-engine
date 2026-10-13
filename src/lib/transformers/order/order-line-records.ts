@@ -6,12 +6,11 @@ import {
   isServiceSku,
   mapShopifySkuToDynamicsForOrderLine,
 } from "../sku";
+import { getShippingSku, getTaxSku, getWarehouseConfig } from "../../helpers/warehouse";
 import {
-  getShippingSku,
-  getTaxSku,
-  getWarehouseConfig,
-} from "../../helpers/warehouse";
-import { getSubscriptionRewards, subscriptionRewardLineItemId } from "../../helpers/subscription-rewards";
+  getSubscriptionRewards,
+  subscriptionRewardLineItemId,
+} from "../../helpers/subscription-rewards";
 import { calculateDutyAmount, calculateShippingCost, calculateTaxAmount } from "./calculations";
 import { toD365SalesOrderLine } from "./d365-lines";
 

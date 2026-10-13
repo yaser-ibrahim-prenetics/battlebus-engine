@@ -376,4 +376,3 @@ export async function getOrderEvents(
   const events = Array.isArray(data?.events) ? (data.events as ShopifyOrderEvent[]) : [];
   return { events };
 }
-

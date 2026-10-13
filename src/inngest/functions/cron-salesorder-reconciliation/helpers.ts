@@ -23,4 +23,3 @@ export function extractShopifyOrderId(orderId: string): string | null {
   const match = raw.match(/\/(\d+)\s*$/);
   return match ? match[1] : null;
 }
-

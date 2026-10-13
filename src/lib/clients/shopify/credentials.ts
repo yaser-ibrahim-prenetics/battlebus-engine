@@ -123,4 +123,3 @@ export function verifyWebhookSignature(
 
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader));
 }
-

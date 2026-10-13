@@ -15,7 +15,8 @@ export function shouldSendToGps(order: ShopifyOrderPayload, warehouseName?: stri
   return order.line_items.some((item) => item.requires_shipping && !item.gift_card);
 }
 
-export function shouldSendToStord(_order: ShopifyOrderPayload): boolean {
+export function shouldSendToStord(order: ShopifyOrderPayload): boolean {
+  void order;
   return false;
 }
 

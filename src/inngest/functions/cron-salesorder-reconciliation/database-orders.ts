@@ -52,4 +52,3 @@ export async function fetchOrderRowsByName(
   }
   return { rows: out, error: null };
 }
-

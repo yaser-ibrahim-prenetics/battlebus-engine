@@ -28,4 +28,3 @@ export async function getOrderRisks(orderId: string | number): Promise<ShopifyFr
   const data = await response.json();
   return data.risks;
 }
-

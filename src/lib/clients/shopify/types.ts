@@ -186,4 +186,3 @@ export interface ShopifyFraudAnalysis {
   message: string;
   merchant_message: string;
 }
-

@@ -134,7 +134,7 @@ export async function getInventoryLevelsByLocation(inventoryItemId: number): Pro
           locationsMap.set(String(location.id), location.name);
         }
       }
-    } catch (error) {
+    } catch {
       // If location fetch fails, continue without location names
     }
   }
@@ -196,4 +196,3 @@ export async function getAllLocations(): Promise<
     fulfillment_service_id: loc.fulfillment_service_id ? String(loc.fulfillment_service_id) : null,
   }));
 }
-
