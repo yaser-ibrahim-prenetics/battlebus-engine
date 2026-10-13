@@ -46,6 +46,8 @@ BEGIN
     OR has_table_privilege('authenticated', 'public.refund_operations', 'SELECT')
     OR has_table_privilege('authenticated', 'public.battle_hub_pending_lifecycle_actions', 'SELECT')
     OR has_table_privilege('authenticated', 'public.battle_hub_refund_operations', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.openai_ads_conversions', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.reconciliation_history', 'SELECT')
   THEN
     RAISE EXCEPTION 'Sensitive backend tables are exposed to authenticated clients';
   END IF;
@@ -80,6 +82,12 @@ BEGIN
 
   IF has_table_privilege('battle_hub_runtime', 'public.refund_operations', 'SELECT') THEN
     RAISE EXCEPTION 'Battle Hub runtime can read the private refund operation table';
+  END IF;
+
+  IF has_table_privilege('battle_hub_runtime', 'public.openai_ads_conversions', 'SELECT')
+    OR has_table_privilege('battle_hub_runtime', 'public.reconciliation_history', 'SELECT')
+  THEN
+    RAISE EXCEPTION 'Battle Hub runtime can read private delivery or reconciliation tables';
   END IF;
 
   IF has_table_privilege('battle_hub_runtime', 'public.pending_lifecycle_actions', 'INSERT')

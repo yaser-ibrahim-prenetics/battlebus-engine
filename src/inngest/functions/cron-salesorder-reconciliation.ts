@@ -39,6 +39,10 @@ import * as slack from "@/lib/clients/slack";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 import { shopifyAdminGraphql } from "@/lib/clients/shopify";
+import {
+  completeReconciliationHistory,
+  startReconciliationHistory,
+} from "@/lib/services/reconciliation-history";
 
 type ReconType = "salesorder" | "gps_us" | "gps_uk" | "fulfillment";
 
@@ -70,9 +74,12 @@ type ReconResult = {
   dateFrom: string;
   dateTo: string;
   totalOrders: number;
+  matchedOrders: number;
   unsyncedOrders: string[];
   unsyncedOrderIds: string[];
   missingDbFulfillmentIds?: string[];
+  missingDbFulfillments?: string[];
+  missingShopifyFulfillments?: string[];
   status: "ok" | "error";
   message: string;
 };
@@ -174,7 +181,10 @@ function getPreviousUtcDayRange(now: Date): {
 }
 
 /** Inclusive `[fromYmd, toYmd]` in UTC calendar days → UTC bounds. */
-function utcInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
+function utcInclusiveRangeToUtcBounds(
+  fromYmd: string,
+  toYmd: string
+): {
   fromIso: string;
   dateEndExclusiveIso: string;
   fromDate: string;
@@ -280,10 +290,13 @@ async function fetchShopifyWindowOrders(params: {
 
   while (hasNextPage) {
     pageIndex += 1;
-    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
-      query: shopifyQuery,
-      after: cursor,
-    });
+    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(
+      query,
+      {
+        query: shopifyQuery,
+        after: cursor,
+      }
+    );
 
     const edges = res?.data?.orders?.edges || [];
     const pageInfo = res?.data?.orders?.pageInfo;
@@ -313,7 +326,8 @@ async function fetchShopifyWindowOrders(params: {
         totalPrice: amount != null && amount !== "" ? String(amount) : null,
       });
     }
-    const endCursor = pageInfo?.endCursor || (edges.length > 0 ? edges[edges.length - 1]?.cursor : null) || null;
+    const endCursor =
+      pageInfo?.endCursor || (edges.length > 0 ? edges[edges.length - 1]?.cursor : null) || null;
     cursor = endCursor;
     hasNextPage = Boolean(pageInfo?.hasNextPage && cursor);
   }
@@ -363,10 +377,9 @@ async function fetchOrderRowsByName(
     const batchNames = names.slice(i, i + BATCH);
     let rows: OrderRow[];
     try {
-      const result = await queryDatabase<OrderRow>(
-        orderReconciliationQueries.findByNames,
-        [batchNames]
-      );
+      const result = await queryDatabase<OrderRow>(orderReconciliationQueries.findByNames, [
+        batchNames,
+      ]);
       rows = result.rows;
     } catch (error) {
       return {
@@ -487,7 +500,14 @@ async function runOneRecon(params: {
       runId,
       errorType: "reconciliation_query_error",
       errorMessage: error.message,
-      payload: { type, checkId, store: storeCode, dateFrom, dateTo, shopifyOrderCount: shopifyNames.length },
+      payload: {
+        type,
+        checkId,
+        store: storeCode,
+        dateFrom,
+        dateTo,
+        shopifyOrderCount: shopifyNames.length,
+      },
     });
     if (trace) {
       reconTrace(trace.runId, trace.type, "recon_failed", {
@@ -502,6 +522,7 @@ async function runOneRecon(params: {
       dateFrom,
       dateTo,
       totalOrders: 0,
+      matchedOrders: 0,
       unsyncedOrders: [],
       unsyncedOrderIds: [],
       status: "error",
@@ -539,8 +560,7 @@ async function runOneRecon(params: {
       const r = dbByName.get(name);
       if (!r) continue; // missing-row is salesorder recon's concern, not GPS.
       if (String(r.warehouse || "") !== wh) continue;
-      const gpsOrderNoForWarehouse =
-        type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
+      const gpsOrderNoForWarehouse = type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
       const hasGpsId = Boolean(String(gpsOrderNoForWarehouse || "").trim());
       const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
       const gpsFailed = gpsStatus === "failed";
@@ -567,9 +587,7 @@ async function runOneRecon(params: {
         missingShopifyFulfillments.push(o.name);
       }
     }
-    unsyncedOrders = Array.from(
-      new Set([...missingDbFulfillments, ...missingShopifyFulfillments])
-    );
+    unsyncedOrders = Array.from(new Set([...missingDbFulfillments, ...missingShopifyFulfillments]));
     unsyncedOrderIds = [...missingDbFulfillmentIds];
   }
 
@@ -654,9 +672,12 @@ async function runOneRecon(params: {
     dateFrom,
     dateTo,
     totalOrders: shopifyNames.length,
+    matchedOrders: dbByName.size,
     unsyncedOrders,
     unsyncedOrderIds,
-    ...(type === "fulfillment" ? { missingDbFulfillmentIds } : {}),
+    ...(type === "fulfillment"
+      ? { missingDbFulfillmentIds, missingDbFulfillments, missingShopifyFulfillments }
+      : {}),
     status,
     message,
   };
@@ -673,7 +694,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     triggers: [{ cron: "0 0 * * *" }, { event: "reconciliation/run" }],
     concurrency: { limit: 1 },
   },
-  async ({ event, runId }: { event?: any; runId?: string }) => {
+  async ({ event, runId, attempt }: { event?: any; runId?: string; attempt?: number }) => {
     const storeCode = toStoreCode();
     const eventType = String(event?.name || "");
     const requestedType = String(event?.data?.type || "all") as
@@ -689,7 +710,10 @@ export const cronSalesorderReconciliation = inngest.createFunction(
       ? utcInclusiveRangeToUtcBounds(manualFrom, manualTo)
       : getPreviousUtcDayRange(new Date());
     const { fromIso, dateEndExclusiveIso, fromDate, toDate } = computed;
-    const safeRunId = String(runId || "");
+    const safeRunId = String(runId || crypto.randomUUID());
+    // Inngest exposes a zero-based retry attempt; persist it as a human-readable one-based value.
+    const safeAttempt = Math.max(1, Number(attempt ?? 0) + 1);
+    const triggerType = eventType === "reconciliation/run" ? "manual" : "cron";
 
     console.log(
       JSON.stringify({
@@ -730,23 +754,65 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     }
 
     const types: ReconType[] =
-      requestedType === "all"
-        ? ["salesorder", "gps_us", "gps_uk", "fulfillment"]
-        : [requestedType];
+      requestedType === "all" ? ["salesorder", "gps_us", "gps_uk", "fulfillment"] : [requestedType];
     const results: ReconResult[] = [];
     for (const type of types) {
       // Keep deterministic per-check order in run result payload and modal rendering.
-
-      const item = await runOneRecon({
+      const auditId = await startReconciliationHistory({
+        runId: safeRunId,
+        attempt: safeAttempt,
+        storeCode,
         type,
-        dateFromIso: fromIso,
-        dateEndExclusiveIso,
+        triggerType,
         dateFrom: fromDate,
         dateTo: toDate,
-        storeCode,
-        runId: safeRunId,
+        windowStart: fromIso,
+        windowEndExclusive: dateEndExclusiveIso,
       });
-      results.push(item);
+
+      try {
+        const item = await runOneRecon({
+          type,
+          dateFromIso: fromIso,
+          dateEndExclusiveIso,
+          dateFrom: fromDate,
+          dateTo: toDate,
+          storeCode,
+          runId: safeRunId,
+        });
+        await completeReconciliationHistory({
+          auditId,
+          status: item.status === "ok" ? "passed" : "failed",
+          totalOrders: item.totalOrders,
+          matchedOrders: item.matchedOrders,
+          discrepancyCount: item.unsyncedOrders.length,
+          details: {
+            checkId: item.checkId,
+            unsyncedOrders: item.unsyncedOrders,
+            unsyncedOrderIds: item.unsyncedOrderIds,
+            missingDbFulfillments: item.missingDbFulfillments || [],
+            missingDbFulfillmentIds: item.missingDbFulfillmentIds || [],
+            missingShopifyFulfillments: item.missingShopifyFulfillments || [],
+          },
+          message: item.message,
+          error: item.status === "error" ? item.message : undefined,
+        });
+        results.push(item);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await completeReconciliationHistory({
+          auditId,
+          status: "failed",
+          totalOrders: 0,
+          matchedOrders: 0,
+          discrepancyCount: 0,
+          details: { checkId: auditId, phase: "unhandled_error" },
+          error: errorMessage,
+        }).catch((historyError) => {
+          console.error("[Reconciliation] Failed to finalize history", historyError);
+        });
+        throw error;
+      }
     }
 
     await flushFlowLogs();
