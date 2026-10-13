@@ -25,6 +25,7 @@
 
 import { config } from "@/lib/config";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { locationRoutingQueries } from "@/lib/db/queries/location-routing";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import warehouseConfig from "../mappings/warehouse-config.json";
@@ -226,9 +227,7 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
   }
 
   try {
-    const result = await queryDatabase(
-      `SELECT * FROM public.locations WHERE active = true ORDER BY name ASC`
-    );
+    const result = await queryDatabase(locationRoutingQueries.listActive);
     const mappings = result.rows.map(rowToMapping);
     if (mappings.length === 0) {
       console.warn("[LocationRouting] PostgreSQL returned 0 active locations — trying Hub API fallback");
@@ -411,7 +410,7 @@ export async function upsertLocation(params: {
   try {
     // Check if row already exists
     const existingResult = await queryDatabase<{ id: string }>(
-      `SELECT id FROM public.locations WHERE shopify_location_id = $1 LIMIT 1`,
+      locationRoutingQueries.findByShopifyLocationId,
       [params.shopifyLocationId]
     );
     const existing = existingResult.rows[0];
@@ -419,11 +418,7 @@ export async function upsertLocation(params: {
     if (existing) {
       // UPDATE — only touch address fields + active/name; preserve routing config
       await queryDatabase(
-        `UPDATE public.locations
-         SET name = $2, address_line1 = $3, address_line2 = $4, city = $5,
-             province = $6, country = $7, zip = $8, phone = $9, active = $10,
-             fulfillment_service_id = $11, updated_at = now()
-         WHERE shopify_location_id = $1`,
+        locationRoutingQueries.update,
         [
           params.shopifyLocationId,
           params.name,
@@ -444,11 +439,7 @@ export async function upsertLocation(params: {
     } else {
       // INSERT — write everything including default routing values
       await queryDatabase(
-        `INSERT INTO public.locations (
-           id, shopify_location_id, name, warehouse_name, dynamics_data_area_id,
-           country_data_area_mapping, address_line1, address_line2, city, province,
-           country, zip, phone, active, fulfillment_service_id
-         ) VALUES ($1, $1, $2, $3, $4, '[]'::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        locationRoutingQueries.insert,
         [
           params.shopifyLocationId,
           params.name,
@@ -484,7 +475,7 @@ export async function deactivateLocation(shopifyLocationId: string): Promise<voi
   if (!databaseAvailable()) return;
   try {
     await queryDatabase(
-      `UPDATE public.locations SET active = false, updated_at = now() WHERE shopify_location_id = $1`,
+      locationRoutingQueries.deactivate,
       [shopifyLocationId]
     );
     console.log(`[LocationRouting] ✅ Deactivated location ${shopifyLocationId}`);

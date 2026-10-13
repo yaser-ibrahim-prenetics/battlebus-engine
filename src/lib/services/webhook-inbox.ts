@@ -17,11 +17,8 @@
  * Environment variables:
  *   WEBHOOK_INBOX_TABLE       – table name (default: "webhook_inbox")
  */
-import {
-  isDatabaseConfigured,
-  queryDatabase,
-  quoteIdentifier,
-} from "@/lib/db/database";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { createWebhookInboxQueries } from "@/lib/db/queries/webhook-inbox";
 
 export type WebhookInboxStatus = "received" | "published" | "failed";
 
@@ -47,7 +44,7 @@ export type UnpublishedInboxEntry = {
   attempts: number;
 };
 
-const TABLE = quoteIdentifier(process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox");
+const queries = createWebhookInboxQueries(process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox");
 
 let _warnedMissingConfig = false;
 
@@ -71,9 +68,7 @@ export async function recordInboxEntry(params: RecordInboxEntryParams): Promise<
   try {
     if (!databaseAvailable()) return null;
     const result = await queryDatabase<{ id: string }>(
-      `INSERT INTO ${TABLE} (source, topic, payload, headers, events, status)
-       VALUES ($1, $2, $3, $4, $5, 'received')
-       RETURNING id`,
+      queries.record,
       [
         params.source,
         params.topic ?? null,
@@ -95,12 +90,7 @@ export async function markInboxPublished(id: string, eventIds: string[]): Promis
   if (!id) return;
   try {
     if (!databaseAvailable()) return;
-    await queryDatabase(
-      `UPDATE ${TABLE}
-       SET status = 'published', published_at = now(), event_ids = $2
-       WHERE id = $1`,
-      [id, eventIds]
-    );
+    await queryDatabase(queries.markPublished, [id, eventIds]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[WebhookInbox] Unexpected markInboxPublished(${id}) error: ${msg}`);
@@ -112,12 +102,7 @@ export async function markInboxFailed(id: string, error: string): Promise<void> 
   if (!id) return;
   try {
     if (!databaseAvailable()) return;
-    await queryDatabase(
-      `UPDATE ${TABLE}
-       SET status = 'failed', attempts = attempts + 1, last_error = $2
-       WHERE id = $1`,
-      [id, error]
-    );
+    await queryDatabase(queries.markFailed, [id, error]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[WebhookInbox] Unexpected markInboxFailed(${id}) error: ${msg}`);
@@ -138,11 +123,7 @@ export async function getUnpublishedInboxEntries(limit: number): Promise<Unpubli
       events: WebhookInboxEvent[];
       attempts: number;
     }>(
-      `SELECT id, source, topic, events, attempts
-       FROM ${TABLE}
-       WHERE status <> 'published'
-       ORDER BY received_at ASC
-       LIMIT $1`,
+      queries.listUnpublished,
       [Math.max(1, limit)]
     );
     return result.rows.map((row) => ({

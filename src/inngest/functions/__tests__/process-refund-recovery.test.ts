@@ -17,6 +17,7 @@ vi.mock("@/lib/config", () => ({
     },
     loop: { enabled: false },
     dynamics: { dataAreaId: "U001" },
+    delays: { refundHoldHours: 24 },
   },
 }));
 
@@ -102,6 +103,8 @@ describe("processRefund database recovery", () => {
       d365OrderNumber: null,
       inventoryLotId: null,
       externalIdempotencyKey: null,
+      holdUntil: null,
+      holdReason: null,
     });
 
     const result = await handler({
@@ -128,6 +131,8 @@ describe("processRefund database recovery", () => {
       d365OrderNumber: null,
       inventoryLotId: null,
       externalIdempotencyKey: null,
+      holdUntil: null,
+      holdReason: null,
     });
 
     await handler({
@@ -154,6 +159,8 @@ describe("processRefund database recovery", () => {
       d365OrderNumber: null,
       inventoryLotId: null,
       externalIdempotencyKey: null,
+      holdUntil: null,
+      holdReason: null,
     });
 
     const result = await handler({
@@ -165,5 +172,42 @@ describe("processRefund database recovery", () => {
     expect(result).toMatchObject({ status: "already_processed" });
     expect(resolveD365OrderHeaderForRefundWithAudit).not.toHaveBeenCalled();
     expect(deferRefundUntilOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns a durable hold before any D365 lookup", async () => {
+    const holdUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    vi.mocked(reserveRefundOperation).mockResolvedValue({
+      claimed: false,
+      state: "awaiting_order",
+      claimToken: null,
+      d365OrderNumber: null,
+      inventoryLotId: null,
+      externalIdempotencyKey: null,
+      holdUntil,
+      holdReason: "unfulfilled_refund_line",
+    });
+
+    const result = await handler({
+      event: refundEvent({
+        refundJson: {
+          id: 42,
+          order_id: 1001,
+          created_at: new Date().toISOString(),
+          transactions: [],
+          refund_line_items: [{ line_item: { fulfillment_status: null } }],
+        },
+      }),
+      step: immediateStep(),
+      runId: "run-held",
+    });
+
+    expect(reserveRefundOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        holdUntil: expect.any(Date),
+        holdReason: "unfulfilled_refund_line",
+      })
+    );
+    expect(result).toMatchObject({ status: "held", holdUntil });
+    expect(resolveD365OrderHeaderForRefundWithAudit).not.toHaveBeenCalled();
   });
 });

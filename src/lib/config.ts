@@ -208,8 +208,7 @@ export const config = {
      * Controls the scheduled product inventory reconciliation cron only.
      * Manual inventory reconciliation endpoints/events remain available.
      */
-    enableProductInventorySyncCron:
-      process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
+    enableProductInventorySyncCron: process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
     enabledGpsOutboundMock: false,
     /**
      * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
@@ -240,6 +239,7 @@ export const config = {
   delays: {
     orderSyncDelayMinutes: safeParseInt(process.env.ORDER_SYNC_DELAY_MINUTES, 5),
     outOfStockRetryHours: safeParseInt(process.env.OOS_RETRY_HOURS, 4),
+    refundHoldHours: clampInt(safeParseInt(process.env.IM8_REFUND_HOLD_HOURS, 24), 0, 168),
   },
 
   /** Daily/manual reconciliation windows use UTC calendar days. */

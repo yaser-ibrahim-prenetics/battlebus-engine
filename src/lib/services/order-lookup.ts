@@ -3,6 +3,7 @@
  * when Dynamics OData lookups by Shopify reference miss.
  */
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { orderLookupQueries } from "@/lib/db/queries/order-lookup";
 
 function databaseAvailable(): boolean {
   const available = isDatabaseConfigured();
@@ -63,11 +64,7 @@ export async function fetchD365HintByShopifyOrderId(
   const variants = shopifyNameLookupVariants(shopifyOrderName);
   if (variants.length > 0) {
     const byName = await queryDatabase(
-      `SELECT d365_order_number, warehouse
-       FROM public.orders
-       WHERE d365_order_number IS NOT NULL
-         AND (shopify_order_name = ANY($1::text[]) OR order_number = ANY($1::text[]) OR id = ANY($1::text[]))
-       LIMIT 1`,
+      orderLookupQueries.d365HintByName,
       [variants]
     );
     const hint = rowToHint(byName.rows[0] ?? null);
@@ -78,11 +75,7 @@ export async function fetchD365HintByShopifyOrderId(
   if (!id) return null;
 
   const byId = await queryDatabase(
-    `SELECT d365_order_number, warehouse
-     FROM public.orders
-     WHERE d365_order_number IS NOT NULL
-       AND (shopify_order_id = $1 OR platform_order_id = $1)
-     LIMIT 1`,
+    orderLookupQueries.d365HintById,
     [id]
   );
   return rowToHint(byId.rows[0] ?? null);
@@ -114,11 +107,7 @@ export async function fetchD365InventoryLotsByShopifyOrder(
   const variants = shopifyNameLookupVariants(shopifyOrderName);
   if (variants.length > 0) {
     const byName = await queryDatabase(
-      `SELECT state
-       FROM public.orders
-       WHERE state IS NOT NULL
-         AND (shopify_order_name = ANY($1::text[]) OR order_number = ANY($1::text[]) OR id = ANY($1::text[]))
-       LIMIT 1`,
+      orderLookupQueries.stateByName,
       [variants]
     );
     const lots = extractLots(byName.rows[0] ?? null);
@@ -129,10 +118,7 @@ export async function fetchD365InventoryLotsByShopifyOrder(
   if (!id) return null;
 
   const byId = await queryDatabase(
-    `SELECT state
-     FROM public.orders
-     WHERE state IS NOT NULL AND (shopify_order_id = $1 OR platform_order_id = $1)
-     LIMIT 1`,
+    orderLookupQueries.stateById,
     [id]
   );
   return extractLots(byId.rows[0] ?? null);
@@ -148,13 +134,7 @@ export async function fetchGpsRecoveryContextByShopifyOrderName(
   const variants = shopifyNameLookupVariants(shopifyOrderName);
   if (variants.length === 0) return null;
   const result = await queryDatabase<Record<string, unknown>>(
-    `SELECT shopify_order_name, shopify_order_id, warehouse, gps_order_no,
-            gps_uk_order_no, shopify_fulfillment_status, d365_order_number
-     FROM public.orders
-     WHERE shopify_order_name = ANY($1::text[])
-        OR order_number = ANY($1::text[])
-        OR id = ANY($1::text[])
-     LIMIT 1`,
+    orderLookupQueries.gpsRecoveryContextByName,
     [variants]
   );
   const data = result.rows[0];

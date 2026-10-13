@@ -20,6 +20,7 @@ import type { ShopifyFulfillment } from "../events";
 import { gpsSimulationStore } from "@/lib/stores/gps-simulation";
 import { getLocationIdForWarehouse } from "@/lib/services/location-routing";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { gpsSyncQueries } from "@/lib/db/queries/gps-sync";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 
 /** GPS status 5 = 异常 (Exception). Any inventory-related exceptionDesc is routed to backorder. */
@@ -294,13 +295,7 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
         gps_order_no: string | null;
         warehouse: string | null;
       }>(
-        `SELECT id, shopify_order_id, shopify_order_name, gps_order_no, warehouse
-         FROM public.orders
-         WHERE gps_order_no IS NOT NULL
-           AND warehouse = ANY($1::text[])
-           AND (shopify_fulfillment_status IS NULL OR shopify_fulfillment_status <> 'fulfilled')
-           AND created_at >= $2
-         LIMIT 500`,
+        gpsSyncQueries.recentUnfulfilledOrders,
         [["GPS Warehouse", "GPS UK Warehouse"], pollCutoffIso]
       );
       const rows = result.rows;

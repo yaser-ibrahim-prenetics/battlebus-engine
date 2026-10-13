@@ -54,6 +54,8 @@ describe("refund operations", () => {
       d365OrderNumber: null,
       inventoryLotId: null,
       externalIdempotencyKey: null,
+      holdUntil: null,
+      holdReason: null,
     });
     expect(queryDatabase).toHaveBeenCalledWith(
       expect.stringContaining("ON CONFLICT (refund_id) DO UPDATE"),
@@ -64,6 +66,8 @@ describe("refund operations", () => {
         JSON.stringify({ refundId: "refund-42" }),
         "00000000-0000-0000-0000-000000000099",
         60,
+        null,
+        null,
       ]
     );
   });
@@ -92,7 +96,59 @@ describe("refund operations", () => {
       d365OrderNumber: null,
       inventoryLotId: null,
       externalIdempotencyKey: null,
+      holdUntil: null,
+      holdReason: null,
     });
+  });
+
+  it("persists a future hold without acquiring a processing lease", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "SELECT",
+      rowCount: 1,
+      oid: 0,
+      fields: [],
+      rows: [
+        {
+          claimed: false,
+          state: "awaiting_order",
+          claim_token: null,
+          hold_until: "2026-10-11T00:00:00.000Z",
+          hold_reason: "unfulfilled_refund_line",
+        },
+      ],
+    });
+
+    const holdUntil = new Date("2026-10-11T00:00:00.000Z");
+    const result = await reserveRefundOperation({
+      refundId: "refund-held",
+      shopifyOrderId: "1001",
+      eventName: "shopify/refund.created",
+      eventData: { refundId: "refund-held" },
+      claimToken: "00000000-0000-0000-0000-000000000099",
+      holdUntil,
+      holdReason: "unfulfilled_refund_line",
+    });
+
+    expect(result).toMatchObject({
+      claimed: false,
+      state: "awaiting_order",
+      claimToken: null,
+      holdUntil: "2026-10-11T00:00:00.000Z",
+      holdReason: "unfulfilled_refund_line",
+    });
+    expect(queryDatabase).toHaveBeenCalledWith(
+      expect.stringContaining("EXCLUDED.state = 'processing'"),
+      [
+        "refund-held",
+        "1001",
+        "shopify/refund.created",
+        JSON.stringify({ refundId: "refund-held" }),
+        "00000000-0000-0000-0000-000000000099",
+        900,
+        holdUntil,
+        "unfulfilled_refund_line",
+      ]
+    );
   });
 
   it("fails closed when PostgreSQL is unavailable", async () => {

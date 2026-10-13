@@ -32,6 +32,7 @@ import {
   reserveRefundOperation,
 } from "@/lib/services/refund-operations";
 import { ensureRefundLineCreated } from "@/lib/services/refund-line-creation";
+import { decideRefundHold } from "@/lib/services/refund-hold";
 
 export const processRefund = inngest.createFunction(
   {
@@ -198,43 +199,63 @@ export const processRefund = inngest.createFunction(
         });
       }
 
+      const hold = decideRefundHold(refund, config.delays.refundHoldHours);
+
       return reserveRefundOperation({
         refundId: String(refundId),
         shopifyOrderId: String(shopifyOrderId),
         eventName: "shopify/refund.created",
         eventData: event.data,
         claimToken: randomUUID(),
+        holdUntil: hold.holdUntil,
+        holdReason: hold.reason,
       });
     });
 
     if (!operation.claimed || !operation.claimToken) {
+      const isHeld =
+        operation.state === "awaiting_order" &&
+        operation.holdUntil != null &&
+        new Date(operation.holdUntil).getTime() > Date.now();
       const status =
         operation.state === "completed"
           ? "already_processed"
           : operation.state === "dead_letter"
             ? "failed"
-            : operation.state === "awaiting_order"
-              ? "deferred"
-              : "in_progress";
+            : isHeld
+              ? "held"
+              : operation.state === "awaiting_order"
+                ? "deferred"
+                : "in_progress";
       console.log(`[Refund ${refundId}] Skipped — database operation is ${operation.state}`);
       logRefundTraceLifecycle({
         ...refundTrace,
-        phase: "process_refund_database_deduplicated",
+        phase: isHeld ? "process_refund_held" : "process_refund_database_deduplicated",
         operationState: operation.state,
+        holdUntil: operation.holdUntil,
+        holdReason: operation.holdReason,
       });
       logFlowEvent({
         flow: "refund",
-        step: "database_deduplicated",
+        step: isHeld ? "held_unfulfilled_refund" : "database_deduplicated",
         status: "skipped",
         runId,
         shopifyOrderId: String(shopifyOrderId),
-        payload: { refundId: String(refundId), operationState: operation.state },
+        payload: {
+          refundId: String(refundId),
+          operationState: operation.state,
+          holdUntil: operation.holdUntil,
+          holdReason: operation.holdReason,
+        },
       });
       return {
         status,
         refundId,
         shopifyOrderId,
-        reason: `Refund operation is already ${operation.state}`,
+        holdUntil: operation.holdUntil,
+        reason: isHeld
+          ? `Unfulfilled refund is held until ${operation.holdUntil}`
+          : `Refund operation is already ${operation.state}`,
       };
     }
     const refundClaimToken = operation.claimToken;
