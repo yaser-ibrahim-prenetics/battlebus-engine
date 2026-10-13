@@ -6,6 +6,7 @@ import {
   buildLotIdMapFromOrderLines,
   getLotFromSavedOrderLineByShopifyLineItemId,
   filterUnfulfilledServiceLines,
+  filterUnfulfilledSupplementalLines,
   type SavedOrderLine,
 } from "../order-lines";
 
@@ -128,5 +129,27 @@ describe("order-lines (unit)", () => {
     const result = filterUnfulfilledServiceLines(lines);
     expect(result).toHaveLength(2);
     expect(result.map((l) => l.shopify_line_item_id)).not.toContain(refundLine.shopify_line_item_id);
+  });
+
+  it("includes unfulfilled subscription rewards in supplemental fulfillment picks", () => {
+    const rewardLine: SavedOrderLine = {
+      ...baseProductLine,
+      id: "reward-1",
+      shopify_line_item_id: "subscription-reward:IM8-FG-000022",
+      shopify_sku: "IM8-FG-000022",
+      d365_item_number: "IM8-FG-000022",
+      quantity: 3,
+      price: 0,
+      is_service_line: false,
+    };
+    const result = filterUnfulfilledSupplementalLines([
+      baseProductLine,
+      shippingLine,
+      rewardLine,
+    ]);
+    expect(result.map((line) => line.shopify_line_item_id)).toEqual([
+      "shipping",
+      "subscription-reward:IM8-FG-000022",
+    ]);
   });
 });
