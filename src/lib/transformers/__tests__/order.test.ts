@@ -86,9 +86,19 @@ describe("Order Transformers", () => {
 
     it("includes gift card info in comment", () => {
       const order = loadFixture("multiLineOrder");
-      const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse");
+      const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse", undefined, {
+        paymentReference: "pi_order_42",
+        giftCardApplications: [
+          { giftCardNumber: "1234", amount: "25.00", currency: "USD" },
+        ],
+        giftCardPurchases: [
+          { giftCardNumber: "9876", price: "50.00", quantity: 1 },
+        ],
+      });
 
-      expect(header.comment).toContain("Gift Card Purchase");
+      expect(header.paymentId).toBe("pi_order_42");
+      expect(header.comment).toContain("Gift Card: 1234 - 25.00 USD");
+      expect(header.comment).toContain("Gift Card Purchase: 9876 - 50.00 x 1");
     });
   });
 
@@ -217,12 +227,20 @@ describe("Order Transformers", () => {
       );
     });
 
-    it("skips gift card lines", () => {
+    it("accounts for gift card purchase lines in D365", () => {
       const order = loadFixture("multiLineOrder");
-      const lines = toD365SalesOrderLines(order, "U001-SO-300", "GPS Warehouse");
+      const giftCardItem = order.line_items.find((item) => item.gift_card)!;
+      const lines = toD365SalesOrderLines(
+        order,
+        "U001-SO-300",
+        "GPS Warehouse",
+        true,
+        undefined,
+        { [String(giftCardItem.id)]: "9876" }
+      );
 
       const giftCardLine = lines.find((l) => l.itemNumber === "IM8-GC-50");
-      expect(giftCardLine).toBeUndefined();
+      expect(giftCardLine).toMatchObject({ giftCardNumber: "9876", quantity: 1, price: 50 });
     });
 
     it("skips dummy IM8-FG-G* test SKUs (not released in D365), same as GPS path", () => {

@@ -1049,6 +1049,14 @@ export interface ShopifyTransaction {
   gateway: string;
   status: string;
   amount: string;
+  currency?: string;
+  payment_id?: string;
+  receipt?: {
+    gift_card_last_characters?: string;
+    metadata?: {
+      order_id?: string;
+    };
+  };
 }
 
 export interface ShopifyFulfillmentOrder {

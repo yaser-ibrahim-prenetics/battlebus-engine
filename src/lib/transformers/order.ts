@@ -46,6 +46,7 @@ import {
   getOrderingCustomerAccountNumberByDataAreaId,
 } from "../helpers/warehouse";
 import type { GpsOrderData, GpsProductItem } from "../clients/gps";
+import type { GiftCardApplication, GiftCardPurchase } from "../helpers/payment-accounting";
 
 // GPS Order Type constants
 const GpsOrderType = {
@@ -65,7 +66,12 @@ const GpsOrderType = {
 export function toD365SalesOrderHeaderV3(
   order: ShopifyOrderPayload,
   warehouseName?: string,
-  dataAreaIdOverride?: string
+  dataAreaIdOverride?: string,
+  accounting?: {
+    paymentReference?: string;
+    giftCardApplications?: GiftCardApplication[];
+    giftCardPurchases?: GiftCardPurchase[];
+  }
 ): D365SalesOrderHeaderV3Request {
   const warehouse =
     warehouseName ||
@@ -100,8 +106,9 @@ export function toD365SalesOrderHeaderV3(
     shopifyReference: order.name,
     shippingAddress: shippingAddress ? toSalesOrderHeadersV3Address(shippingAddress) : undefined,
     billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
-    comment: buildOrderComment(order),
+    comment: buildOrderComment(order, accounting),
     currency: order.currency,
+    paymentId: accounting?.paymentReference || undefined,
     // spock-store: DefaultShippingWarehouseId is NOT set on header — warehouse
     // is applied per product line via ShippingWarehouseId on SalesOrderLines only.
     // Skip fulfilment notification for GPS UK to avoid double notification
@@ -113,16 +120,24 @@ export function toD365SalesOrderHeaderV3(
  * Build order comment for D365
  * Includes gift card info, associated orders, etc.
  */
-function buildOrderComment(order: ShopifyOrderPayload): string {
+function buildOrderComment(
+  order: ShopifyOrderPayload,
+  accounting?: {
+    giftCardApplications?: GiftCardApplication[];
+    giftCardPurchases?: GiftCardPurchase[];
+  }
+): string {
   const parts: string[] = [];
 
-  // Add gift card purchase info
-  const lineItems = getLineItems(order);
-  const giftCardItems = lineItems.filter((item) => item.gift_card === true);
-  if (giftCardItems.length > 0) {
-    for (const gc of giftCardItems) {
-      parts.push(`Gift Card Purchase: ${gc.sku || gc.title || "Unknown"} x ${gc.quantity}`);
-    }
+  for (const giftCard of accounting?.giftCardApplications || []) {
+    parts.push(
+      `Gift Card: ${giftCard.giftCardNumber} - ${giftCard.amount} ${giftCard.currency}`
+    );
+  }
+  for (const giftCard of accounting?.giftCardPurchases || []) {
+    parts.push(
+      `Gift Card Purchase: ${giftCard.giftCardNumber} - ${giftCard.price} x ${giftCard.quantity}`
+    );
   }
 
   // Add gift card discount codes applied to order
@@ -192,7 +207,8 @@ export function toD365SalesOrderLines(
   salesOrderNumber: string,
   warehouseName: string,
   includeShippingAndTax: boolean = true,
-  dataAreaIdOverride?: string
+  dataAreaIdOverride?: string,
+  giftCardCodes: Record<string, string> = {}
 ): D365SalesOrderLineRequest[] {
   const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
     ? (dataAreaIdOverride || "").toUpperCase()
@@ -222,7 +238,6 @@ export function toD365SalesOrderLines(
   }
 
   for (const item of lineItems) {
-    if (item.gift_card) continue;
     const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
     if (!rawSku) {
       // Some Shopify app-generated lines (insurance/fees/etc.) can be non-shippable and have no SKU.
@@ -259,6 +274,9 @@ export function toD365SalesOrderLines(
       discountCodes,
       countryCode
     );
+    if (item.gift_card) {
+      line.giftCardNumber = giftCardCodes[String(item.id)];
+    }
     const transformedLine = skuTransformer(line);
     const withWarehouse: D365SalesOrderLineRequest =
       lineShippingWarehouseId && !isServiceSku(transformedLine.itemNumber)
@@ -350,7 +368,6 @@ export function toOrderLineRecords(
   const lineItems = getLineItems(order);
 
   for (const item of lineItems) {
-    if (item.gift_card) continue;
     const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
     if (!rawSku) {
       if (item.requires_shipping === false) continue;

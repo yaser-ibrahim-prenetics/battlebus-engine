@@ -158,10 +158,20 @@ describe("Order Creation Flow (Integration)", () => {
   });
 
   describe("Multi-line order with gift cards", () => {
-    it("filters gift cards from D365 lines and GPS order", () => {
+    it("accounts for gift cards in D365 and filters them from GPS", () => {
       const order = loadFixture("multiLineOrder");
-      const d365Lines = toD365SalesOrderLines(order, "U001-SO-300", "GPS Warehouse");
-      expect(d365Lines.find((l) => l.itemNumber === "IM8-GC-50")).toBeUndefined();
+      const giftCardItem = order.line_items.find((item) => item.gift_card)!;
+      const d365Lines = toD365SalesOrderLines(
+        order,
+        "U001-SO-300",
+        "GPS Warehouse",
+        true,
+        undefined,
+        { [String(giftCardItem.id)]: "9876" }
+      );
+      expect(d365Lines.find((l) => l.itemNumber === "IM8-GC-50")).toMatchObject({
+        giftCardNumber: "9876",
+      });
 
       const gpsOrder = toGpsOutboundOrder(order, "U001-SO-300", "GPS Warehouse");
       expect(gpsOrder.productList.find((p: any) => p.sku === "IM8-GC-50")).toBeUndefined();

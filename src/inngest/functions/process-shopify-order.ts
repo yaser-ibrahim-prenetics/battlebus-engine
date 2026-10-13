@@ -15,6 +15,7 @@ import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import {
   getVariantSkusByVariantIds,
+  getOrderTransactions,
   setGpsOrderMetafield,
   shopifyAdminGraphql,
 } from "@/lib/clients/shopify";
@@ -81,6 +82,12 @@ import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
+import {
+  getGiftCardApplications,
+  getGiftCardMaskedCodes,
+  getGiftCardPurchases,
+  getPurchasePaymentReference,
+} from "@/lib/helpers/payment-accounting";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -1002,6 +1009,17 @@ export const processShopifyOrder = inngest.createFunction(
         threshold: null,
         fulfillmentOrders: [],
       };
+      let paymentAccounting: {
+        paymentReference: string;
+        giftCardApplications: ReturnType<typeof getGiftCardApplications>;
+        giftCardPurchases: ReturnType<typeof getGiftCardPurchases>;
+        giftCardCodes: Record<string, string>;
+      } = {
+        paymentReference: "",
+        giftCardApplications: [],
+        giftCardPurchases: [],
+        giftCardCodes: {},
+      };
 
       if (existingCheck.exists) {
         await publishStatus(
@@ -1025,10 +1043,33 @@ export const processShopifyOrder = inngest.createFunction(
       } else {
         await publishStatus("d365.check-existing", "completed", "No existing order found");
 
+        paymentAccounting = await step.run("shopify-payment-accounting", async () => {
+          const transactions = await getOrderTransactions(shopifyOrderId);
+          const giftCardCodes = getGiftCardMaskedCodes(
+            Array.isArray(order.fulfillments) ? order.fulfillments : [],
+            Array.isArray(order.line_items) ? order.line_items : []
+          );
+          if (giftCardCodes === null) {
+            throw new Error(
+              `[Shopify] Gift-card purchase for ${shopifyOrderName} does not have an issued masked code yet`
+            );
+          }
+          return {
+            paymentReference: getPurchasePaymentReference(transactions),
+            giftCardApplications: getGiftCardApplications(transactions),
+            giftCardPurchases: getGiftCardPurchases(order.line_items || [], giftCardCodes),
+            giftCardCodes,
+          };
+        });
+
         // ── Step: create D365 header ───────────────────────────────────
         await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
         const headerResult = await step.run("d365-create-header", async () => {
-          const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+          const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId, {
+            paymentReference: paymentAccounting.paymentReference,
+            giftCardApplications: paymentAccounting.giftCardApplications,
+            giftCardPurchases: paymentAccounting.giftCardPurchases,
+          });
           let d365Header;
           if (skipD365) {
             d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
@@ -1055,7 +1096,8 @@ export const processShopifyOrder = inngest.createFunction(
           salesOrderNo,
           warehouseName,
           true,
-          dataAreaId
+          dataAreaId,
+          paymentAccounting.giftCardCodes
         );
         lineItems.forEach((item) => {
           item.dataAreaId = dataAreaId;
@@ -2158,6 +2200,11 @@ export const processShopifyOrder = inngest.createFunction(
                     ? { d365InventoryLotsBySku }
                     : {}),
                   fulfillmentSplit,
+                  paymentAccounting: {
+                    paymentReference: paymentAccounting.paymentReference,
+                    giftCardApplications: paymentAccounting.giftCardApplications,
+                    giftCardPurchases: paymentAccounting.giftCardPurchases,
+                  },
                 },
               },
               { inngestIdempotencyKey, inngestRunId }
@@ -2189,6 +2236,11 @@ export const processShopifyOrder = inngest.createFunction(
                     ? { d365InventoryLotsBySku }
                     : {}),
                   fulfillmentSplit,
+                  paymentAccounting: {
+                    paymentReference: paymentAccounting.paymentReference,
+                    giftCardApplications: paymentAccounting.giftCardApplications,
+                    giftCardPurchases: paymentAccounting.giftCardPurchases,
+                  },
                   failureContext: null,
                 },
               },
