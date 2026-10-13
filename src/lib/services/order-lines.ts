@@ -13,6 +13,7 @@
 
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { buildUpsertOrderLinesQuery, orderLineQueries } from "@/lib/db/queries/order-lines";
+import { isSubscriptionRewardLineItemId } from "@/lib/helpers/subscription-rewards";
 
 export const SHOPIFY_SHIPPING_LINE_ITEM_ID = "shipping";
 export const SHOPIFY_TAX_LINE_ITEM_ID = "tax";
@@ -364,6 +365,18 @@ export function filterUnfulfilledServiceLines(lines: SavedOrderLine[]): SavedOrd
       !isRefundSyntheticOrderLine(l) &&
       (l.is_service_line || isServiceItemNumber(l.d365_item_number)) &&
       !l.is_fulfilled_to_dynamics
+  );
+}
+
+/** Shipping/tax service rows plus synthetic subscription rewards appended to the first shipment. */
+export function filterUnfulfilledSupplementalLines(lines: SavedOrderLine[]): SavedOrderLine[] {
+  return lines.filter(
+    (line) =>
+      !isRefundSyntheticOrderLine(line) &&
+      (line.is_service_line ||
+        isServiceItemNumber(line.d365_item_number) ||
+        isSubscriptionRewardLineItemId(line.shopify_line_item_id)) &&
+      !line.is_fulfilled_to_dynamics
   );
 }
 

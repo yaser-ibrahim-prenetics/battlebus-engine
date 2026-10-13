@@ -42,9 +42,10 @@ import {
   fetchOrderLines,
   buildLotIdMapFromOrderLines,
   getLotFromSavedOrderLineByShopifyLineItemId,
-  filterUnfulfilledServiceLines,
+  filterUnfulfilledSupplementalLines,
   markServiceLinesFulfilled,
 } from "@/lib/services/order-lines";
+import { isSubscriptionRewardLineItemId } from "@/lib/helpers/subscription-rewards";
 import { logFlowEvent, logFlowEventSync } from "@/lib/services/flow-logs";
 import {
   getThkFulfilmentWarningMessage,
@@ -394,13 +395,13 @@ export const processShopifyFulfillment = inngest.createFunction(
         shopifyOrderName || order?.name
       );
       const orderLinesLotMap = buildLotIdMapFromOrderLines(savedOrderLines);
-      const unfulfilledServiceLines = filterUnfulfilledServiceLines(savedOrderLines);
-      let serviceLinesFulfilled = false;
+      const unfulfilledSupplementalLines = filterUnfulfilledSupplementalLines(savedOrderLines);
+      let supplementalLinesFulfilled = false;
 
       if (savedOrderLines.length > 0) {
         console.log(
           `[D365][OrderLines] Loaded ${savedOrderLines.length} saved line(s) from Supabase for ${shopifyOrderName}; ` +
-            `${unfulfilledServiceLines.length} unfulfilled service line(s)`
+            `${unfulfilledSupplementalLines.length} unfulfilled supplemental line(s)`
         );
       }
 
@@ -584,20 +585,20 @@ export const processShopifyFulfillment = inngest.createFunction(
 
           // Append service lines (shipping + tax) from Supabase — not present on Shopify fulfillments.
           // First successful product fulfillment includes them once; then mark fulfilled (spock-store parity).
-          const serviceLinesToAppend =
-            !serviceLinesFulfilled && unfulfilledServiceLines.length > 0
-              ? unfulfilledServiceLines
+          const supplementalLinesToAppend =
+            !supplementalLinesFulfilled && unfulfilledSupplementalLines.length > 0
+              ? unfulfilledSupplementalLines
               : [];
 
           let serviceLotMap = lotIdMap;
-          const serviceNeedsOdataLot = serviceLinesToAppend.some((sl) => {
+          const serviceNeedsOdataLot = supplementalLinesToAppend.some((sl) => {
             const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
             const key = String(sl.d365_item_number ?? "")
               .trim()
               .toUpperCase();
             return !rowLot && !String(serviceLotMap[key] ?? "").trim();
           });
-          if (serviceNeedsOdataLot && serviceLinesToAppend.length > 0) {
+          if (serviceNeedsOdataLot && supplementalLinesToAppend.length > 0) {
             const refreshedForService = await dynamics.getLotIdMap(
               d365Order.SalesOrderNumber!,
               dataAreaId
@@ -611,7 +612,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
           const fulfilmentLinesWithService = [
             ...fulfillmentLines,
-            ...serviceLinesToAppend.map((sl) => {
+            ...supplementalLinesToAppend.map((sl) => {
               const itemUpper = String(sl.d365_item_number ?? "")
                 .trim()
                 .toUpperCase();
@@ -621,7 +622,9 @@ export const processShopifyFulfillment = inngest.createFunction(
                 itemNumber: sl.d365_item_number,
                 quantity: Number(sl.quantity) || 1,
                 lotId,
-                trackingNumber: "",
+                trackingNumber: isSubscriptionRewardLineItemId(sl.shopify_line_item_id)
+                  ? fulfillment.tracking_number || ""
+                  : "",
                 shippingSiteId: fulfilmentWarehouseConfig.shippingSiteId,
                 shippingWarehouseId: fulfilmentWarehouseConfig.shippingWarehouseId,
                 shippingWarehouseLocationId: fulfilmentWarehouseConfig.shippingWarehouseLocationId,
@@ -629,9 +632,9 @@ export const processShopifyFulfillment = inngest.createFunction(
             }),
           ];
 
-          if (serviceLinesToAppend.length > 0) {
+          if (supplementalLinesToAppend.length > 0) {
             console.log(
-              `[D365][ServiceLines] Appending ${serviceLinesToAppend.length} service line(s) to fulfillment for ${shopifyOrderName}: ${serviceLinesToAppend.map((l) => l.d365_item_number).join(", ")}`
+              `[D365][SupplementalLines] Appending ${supplementalLinesToAppend.length} supplemental line(s) to fulfillment for ${shopifyOrderName}: ${supplementalLinesToAppend.map((l) => l.d365_item_number).join(", ")}`
             );
           }
 
@@ -712,11 +715,11 @@ export const processShopifyFulfillment = inngest.createFunction(
           });
 
           // Mark service lines fulfilled so they are not sent again on subsequent fulfillments
-          if (serviceLinesToAppend.length > 0) {
-            serviceLinesFulfilled = true;
+          if (supplementalLinesToAppend.length > 0) {
+            supplementalLinesFulfilled = true;
             await markServiceLinesFulfilled(
               String(shopifyOrderId),
-              serviceLinesToAppend.map((l) => l.shopify_line_item_id)
+              supplementalLinesToAppend.map((l) => l.shopify_line_item_id)
             );
           }
 

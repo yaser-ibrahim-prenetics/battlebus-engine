@@ -47,6 +47,10 @@ import {
 } from "../helpers/warehouse";
 import type { GpsOrderData, GpsProductItem } from "../clients/gps";
 import type { GiftCardApplication, GiftCardPurchase } from "../helpers/payment-accounting";
+import {
+  getSubscriptionRewards,
+  subscriptionRewardLineItemId,
+} from "../helpers/subscription-rewards";
 
 // GPS Order Type constants
 const GpsOrderType = {
@@ -289,6 +293,18 @@ export function toD365SalesOrderLines(
   lines.length = 0;
   lines.push(...explodedLines);
 
+  for (const reward of getSubscriptionRewards(order)) {
+    lines.push({
+      salesOrderNumber,
+      dataAreaId,
+      itemNumber: reward.sku,
+      quantity: reward.quantity,
+      price: 0,
+      currency,
+      ...(lineShippingWarehouseId ? { shippingWarehouseId: lineShippingWarehouseId } : {}),
+    });
+  }
+
   // Add service lines (shipping/tax) using warehouse-config service SKUs.
   // Mirrors spock-store behavior: tax line is derived from order-level tax (+ duties).
   if (includeShippingAndTax) {
@@ -402,6 +418,17 @@ export function toOrderLineRecords(
     }
   }
 
+  for (const reward of getSubscriptionRewards(order)) {
+    records.push({
+      shopifyLineItemId: subscriptionRewardLineItemId(reward.sku),
+      shopifySku: reward.sku,
+      d365ItemNumber: reward.sku,
+      quantity: reward.quantity,
+      price: 0,
+      isServiceLine: false,
+    });
+  }
+
   // Shipping service line — synthetic shopifyLineItemId 'shipping', detected by IM8-SER-* SKU
   const shippingCost = calculateShippingCost(order);
   if (shippingCost > 0) {
@@ -482,7 +509,11 @@ export function toGpsOutboundOrder(
   // Explode bundles, filter service/dummy SKUs, and merge duplicates
   const explodedProductLines = explodeBundleLines(productLines);
   const filteredLines = filterDummySkus(filterServiceSkus(explodedProductLines));
-  const productList = mergeGpsDuplicateSkuLines(filteredLines);
+  const rewardLines = getSubscriptionRewards(order).map((reward) => ({
+    itemNumber: reward.sku,
+    quantity: reward.quantity,
+  }));
+  const productList = mergeGpsDuplicateSkuLines([...filteredLines, ...rewardLines]);
 
   return {
     platformOrderNo: order.name,
