@@ -60,7 +60,11 @@ import {
   resolveStordEuOverrideForMappedLocation,
   resolveStordHubWhenFulfillmentLocationUnmapped,
 } from "@/lib/services/location-routing";
-import { determineWarehouse, isGpsUkWarehouse } from "@/lib/helpers/warehouse";
+import {
+  determineWarehouse,
+  getGpsLogisticsChannel,
+  isGpsUkWarehouse,
+} from "@/lib/helpers/warehouse";
 import {
   buildFulfillmentSegments,
   isDomesticOrder,
@@ -940,6 +944,7 @@ export const processShopifyOrder = inngest.createFunction(
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;
     const country_code = routingResult.countryCode;
+    const gpsLogisticsChannel = getGpsLogisticsChannel(warehouseName, order);
 
     let salesOrderNumber: string | undefined;
     /** Captured from D365 line create responses — persisted on Hub `orders.state` for fulfillment Lotid fallback. */
@@ -2200,6 +2205,7 @@ export const processShopifyOrder = inngest.createFunction(
                     ? { d365InventoryLotsBySku }
                     : {}),
                   fulfillmentSplit,
+                  gpsLogisticsChannel,
                   paymentAccounting: {
                     paymentReference: paymentAccounting.paymentReference,
                     giftCardApplications: paymentAccounting.giftCardApplications,
@@ -2236,6 +2242,7 @@ export const processShopifyOrder = inngest.createFunction(
                     ? { d365InventoryLotsBySku }
                     : {}),
                   fulfillmentSplit,
+                  gpsLogisticsChannel,
                   paymentAccounting: {
                     paymentReference: paymentAccounting.paymentReference,
                     giftCardApplications: paymentAccounting.giftCardApplications,
