@@ -1,6 +1,12 @@
 import { config } from "../../config";
 import type { InventoryLevel } from "./types";
 
+function toShopifyLocationGid(locationId: string): string {
+  return locationId.startsWith("gid://shopify/Location/")
+    ? locationId
+    : `gid://shopify/Location/${locationId}`;
+}
+
 /** Query Shopify inventory levels for the requested SKUs. */
 export async function queryShopifyInventory(
   skus: string[],
@@ -66,6 +72,7 @@ export async function queryShopifyInventory(
 
   const result = new Map<string, InventoryLevel>();
   const variants = data.data?.productVariants?.edges || [];
+  const requestedLocationGid = locationId ? toShopifyLocationGid(locationId) : undefined;
 
   for (const { node: variant } of variants) {
     const sku = variant.sku;
@@ -76,7 +83,7 @@ export async function queryShopifyInventory(
     let totalIncoming = 0;
 
     for (const { node: level } of variant.inventoryItem?.inventoryLevels?.edges || []) {
-      if (locationId && level.location.id !== locationId) continue;
+      if (requestedLocationGid && String(level.location.id) !== requestedLocationGid) continue;
 
       for (const quantity of level.quantities || []) {
         switch (quantity.name) {
