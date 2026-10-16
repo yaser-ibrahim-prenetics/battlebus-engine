@@ -5,9 +5,9 @@ BEGIN
   SELECT array_agg(expected.name ORDER BY expected.name)
   INTO remaining_tables
   FROM unnest(ARRAY[
-    'audit_entities', 'audit_log', 'battle_hub_pending_lifecycle_actions', 'battle_hub_refund_operations', 'flow_logs', 'inventory', 'locations',
+    'audit_entities', 'audit_log', 'battle_hub_openai_ads_conversions', 'battle_hub_pending_lifecycle_actions', 'battle_hub_reconciliation_history', 'battle_hub_refund_operations', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
-    'refund_operations',
+    'openai_ads_conversions', 'reconciliation_history', 'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'

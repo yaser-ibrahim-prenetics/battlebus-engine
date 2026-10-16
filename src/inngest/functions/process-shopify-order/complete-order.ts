@@ -1,8 +1,11 @@
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { classifyGpsError, isGpsInventoryError } from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
+import { config } from "@/lib/config";
 import { isGpsUkWarehouse } from "@/lib/helpers/warehouse";
+import { getAssociatedOrderLink } from "@/lib/helpers/order-linkage";
 import { flushAll as flushFlowLogs, logFlowEvent } from "@/lib/services/flow-logs";
+import { enqueueOpenAiAdsConversion } from "@/lib/services/openai-ads-conversions";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../../client";
@@ -22,6 +25,7 @@ export async function completeOrderProcessing({
   gpsLogisticsChannel,
   fulfillmentSplit,
   paymentAccounting,
+  saudiShortAddress,
   inngestIdempotencyKey,
   inngestRunId,
   orderProcessingStart,
@@ -40,6 +44,7 @@ export async function completeOrderProcessing({
   gpsLogisticsChannel?: string;
   fulfillmentSplit: FulfillmentSplitResult;
   paymentAccounting: OrderPaymentAccounting;
+  saudiShortAddress: string;
   inngestIdempotencyKey: string;
   inngestRunId: string;
   orderProcessingStart: number;
@@ -52,6 +57,22 @@ export async function completeOrderProcessing({
   const salesOrderNo = salesOrderNumber;
   const d365InventoryLotsBySku = syncResult.d365InventoryLotsBySku || {};
   const gpsResult = syncResult.gpsResult;
+  const associatedOrder = getAssociatedOrderLink(order);
+  const openAiAdsConversion = config.openAiAds.enabled
+    ? await step.run("enqueue-openai-ads-conversion", async () => {
+        const conversion = await enqueueOpenAiAdsConversion({
+          shopifyOrderId,
+          shopifyOrderName,
+          occurredAt: order.processed_at || order.created_at,
+        });
+        await inngest.send({
+          id: `openai-ads-${conversion.eventId}`,
+          name: "openai.ads/conversion.queued",
+          data: { eventId: conversion.eventId },
+        });
+        return conversion;
+      })
+    : null;
 
   // Publish GPS result
   if (gpsResult.type === "real" && "result" in gpsResult) {
@@ -246,6 +267,9 @@ export async function completeOrderProcessing({
                 giftCardApplications: paymentAccounting.giftCardApplications,
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
+              ...(associatedOrder ? { associatedOrder } : {}),
+              ...(saudiShortAddress ? { saudiShortAddress } : {}),
+              ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
             },
           },
           { inngestIdempotencyKey, inngestRunId }
@@ -278,6 +302,9 @@ export async function completeOrderProcessing({
                 giftCardApplications: paymentAccounting.giftCardApplications,
                 giftCardPurchases: paymentAccounting.giftCardPurchases,
               },
+              ...(associatedOrder ? { associatedOrder } : {}),
+              ...(saudiShortAddress ? { saudiShortAddress } : {}),
+              ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
               failureContext: null,
             },
           },

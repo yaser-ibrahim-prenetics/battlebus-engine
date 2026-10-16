@@ -24,6 +24,7 @@ export async function handleExistingD365Order({
   shopifyOrderId,
   shopifyOrderName,
   warehouseName,
+  saudiShortAddress,
   dataAreaId,
   skipD365,
   inngestIdempotencyKey,
@@ -38,6 +39,7 @@ export async function handleExistingD365Order({
   shopifyOrderId: string;
   shopifyOrderName: string;
   warehouseName: string;
+  saudiShortAddress?: string;
   dataAreaId: string;
   skipD365: boolean;
   inngestIdempotencyKey: string;
@@ -149,7 +151,12 @@ export async function handleExistingD365Order({
       }
 
       try {
-        const gpsOrderPayload = toGpsOutboundOrder(order, reusedSalesOrderNumber, warehouseName);
+        const gpsOrderPayload = toGpsOutboundOrder(
+          order,
+          reusedSalesOrderNumber,
+          warehouseName,
+          saudiShortAddress
+        );
         const result = await gps.createOutboundOrder(
           gpsOrderPayload,
           warehouseName as "GPS Warehouse" | "GPS UK Warehouse"

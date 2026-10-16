@@ -100,6 +100,14 @@ describe("Order Transformers", () => {
       expect(header.comment).toContain("Gift Card: 1234 - 25.00 USD");
       expect(header.comment).toContain("Gift Card Purchase: 9876 - 50.00 x 1");
     });
+
+    it("includes normalized replacement order linkage in the D365 comment", () => {
+      const order = loadFixture("gpsUsOrder");
+      order.tags = `${order.tags}, replacement-im8-4321`;
+      const header = toD365SalesOrderHeaderV3(order, "GPS Warehouse");
+
+      expect(header.comment).toContain("Associated Order: IM8-4321");
+    });
   });
 
   describe("toD365SalesOrderLine", () => {
@@ -271,6 +279,21 @@ describe("Order Transformers", () => {
       const shippingLines = lines.filter((l) => l.itemNumber === "IM8-SER-000002");
       expect(shippingLines.length).toBe(0);
     });
+
+    it("adds a zero-price reward line for an eligible subscription recurrence", () => {
+      const order = loadFixture("subscriptionOrder");
+      order.tags = `${order.tags}, Subscription order 3`;
+      order.line_items[0].sku = "IM8-FG-000035";
+      const lines = toD365SalesOrderLines(order, "U001-SO-500", "GPS Warehouse");
+
+      expect(lines).toContainEqual(
+        expect.objectContaining({
+          itemNumber: "IM8-FG-000022",
+          quantity: 1,
+          price: 0,
+        })
+      );
+    });
   });
 
   describe("toGpsOutboundOrder", () => {
@@ -329,6 +352,15 @@ describe("Order Transformers", () => {
       expect(() => toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse")).toThrow(
         "No shipping address"
       );
+    });
+
+    it("includes subscription rewards in the GPS product list", () => {
+      const order = loadFixture("subscriptionOrder");
+      order.tags = `${order.tags}, Subscription order 3`;
+      order.line_items[0].sku = "IM8-FG-000035";
+      const gpsOrder = toGpsOutboundOrder(order, "U001-SO-500", "GPS Warehouse");
+
+      expect(gpsOrder.productList).toContainEqual({ sku: "IM8-FG-000022", quantity: 1 });
     });
   });
 

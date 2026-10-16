@@ -18,17 +18,14 @@
 // 5. After max retries: escalate to Slack and mark as exhausted
 
 import { inngest } from "../client";
-import { config } from "@/lib/config";
-import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import { setGpsOrderMetafield } from "@/lib/clients/shopify";
-import { toGpsOutboundOrder, shouldSendToGps } from "@/lib/transformers/order";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
 import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { advanceRunSequence } from "@/lib/services/run-sequence";
+import { retryBackorder } from "./process-backorder/retry-backorder";
 
 export const processBackorder = inngest.createFunction(
   {
@@ -119,7 +116,10 @@ export const processBackorder = inngest.createFunction(
     if (incomingSequence.length > 0 && event.name === "backorder/retry") {
       const result = await step.run("dispatch-sequenced-rerun", async () => {
         const { getOrder } = await import("@/lib/clients/shopify");
-        const freshOrder = (await getOrder(shopifyOrderId)) as unknown as ShopifyOrderPayload;
+        const freshOrder = (await getOrder(
+          shopifyOrderId,
+          event.data.shopifyStore
+        )) as unknown as ShopifyOrderPayload;
         const fulfillments = Array.isArray((freshOrder as any)?.fulfillments)
           ? ((freshOrder as any).fulfillments as any[])
           : [];
@@ -237,82 +237,16 @@ export const processBackorder = inngest.createFunction(
     // Manual retry request: perform exactly one retry attempt.
     if (manualRetryOnly && isManualRetryRequest) {
       const manualAttempt = retryCount + 1;
-      const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
-        try {
-          const { getOrder } = await import("@/lib/clients/shopify");
-          const freshOrder = await getOrder(shopifyOrderId);
-          const order = freshOrder as unknown as ShopifyOrderPayload;
-
-          const d365NumManual = String(d365OrderNumber || "").trim();
-          if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
-            await inngest.send({
-              name: "shopify/order.paid",
-              data: {
-                shopifyOrderId: String(shopifyOrderId),
-                shopifyOrderName,
-                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                orderJson: order,
-                receivedAt: new Date().toISOString(),
-              },
-            });
-            return { success: true, replayDispatched: true };
-          }
-
-          if (effectiveRetryMode === "fulfillment_replay") {
-            const fulfillments = Array.isArray((order as any)?.fulfillments)
-              ? ((order as any).fulfillments as any[])
-              : [];
-            if (fulfillments.length === 0) {
-              return {
-                success: false,
-                error: "No Shopify fulfillments found to replay",
-                isInventoryError: false,
-              };
-            }
-
-            await inngest.send({
-              name: "shopify/order.fulfilled",
-              data: {
-                shopifyOrderId,
-                shopifyOrderName,
-                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                orderJson: order,
-                fulfillments,
-                receivedAt: new Date().toISOString(),
-                fromBackorderRetry: true,
-              },
-            });
-
-            return { success: true, replayDispatched: true };
-          }
-
-          const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
-          const result = await gps.createOutboundOrder(
-            gpsPayload,
-            warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-          );
-
-          const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
-          if (gpsOrderNo) {
-            await setGpsOrderMetafield(shopifyOrderId, {
-              gpsOrderId: gpsOrderNo,
-              warehouse,
-              d365OrderNumber,
-              createdAt: new Date().toISOString(),
-            });
-          }
-
-          return { success: true, gpsOrderNo };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: msg,
-            isInventoryError:
-              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
-          };
-        }
-      });
+      const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () =>
+        retryBackorder({
+          shopifyOrderId,
+          shopifyOrderName,
+          shopifyStore: event.data.shopifyStore,
+          d365OrderNumber,
+          warehouse,
+          retryMode: effectiveRetryMode,
+        })
+      );
 
       if (retryResult.success) {
         await step.run("notify-backorder-resolved-manual", async () => {
@@ -467,104 +401,18 @@ export const processBackorder = inngest.createFunction(
 
       // Attempt GPS order creation
       const retryResult = await step.run(`retry-gps-order-${retryCount}`, async () => {
-        try {
-          // Refetch order from Shopify for latest data
-          const { getOrder } = await import("@/lib/clients/shopify");
-          const freshOrder = await getOrder(shopifyOrderId);
-          const order = freshOrder as unknown as ShopifyOrderPayload;
-
-          const d365NumLoop = String(d365OrderNumber || "").trim();
-          if (effectiveRetryMode === "gps_outbound" && !d365NumLoop) {
-            await inngest.send({
-              name: "shopify/order.paid",
-              data: {
-                shopifyOrderId: String(shopifyOrderId),
-                shopifyOrderName,
-                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                orderJson: order,
-                receivedAt: new Date().toISOString(),
-              },
-            });
-            return {
-              success: true,
-              retryCount,
-              triggeredBy,
-              replayDispatched: true,
-            };
-          }
-
-          if (effectiveRetryMode === "fulfillment_replay") {
-            const fulfillments = Array.isArray((order as any)?.fulfillments)
-              ? ((order as any).fulfillments as any[])
-              : [];
-            if (fulfillments.length === 0) {
-              return {
-                success: false,
-                error: "No Shopify fulfillments found to replay",
-                isInventoryError: false,
-                retryCount,
-                triggeredBy,
-              };
-            }
-
-            await inngest.send({
-              name: "shopify/order.fulfilled",
-              data: {
-                shopifyOrderId,
-                shopifyOrderName,
-                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                orderJson: order,
-                fulfillments,
-                receivedAt: new Date().toISOString(),
-                fromBackorderRetry: true,
-              },
-            });
-
-            return {
-              success: true,
-              retryCount,
-              triggeredBy,
-              replayDispatched: true,
-            };
-          }
-
-          // Rebuild GPS payload
-          const gpsPayload = toGpsOutboundOrder(order, d365OrderNumber, warehouse);
-          const result = await gps.createOutboundOrder(
-            gpsPayload,
-            warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-          );
-
-          // Store GPS metafield on success
-          const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
-          if (gpsOrderNo) {
-            await setGpsOrderMetafield(shopifyOrderId, {
-              gpsOrderId: gpsOrderNo,
-              warehouse,
-              d365OrderNumber,
-              createdAt: new Date().toISOString(),
-            });
-          }
-
-          return {
-            success: true,
-            gpsOrderNo,
-            retryCount,
-            triggeredBy,
-          };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          console.log(`[Backorder] Retry ${retryCount} failed: ${msg}`);
-
-          return {
-            success: false,
-            error: msg,
-            isInventoryError:
-              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
-            retryCount,
-            triggeredBy,
-          };
+        const result = await retryBackorder({
+          shopifyOrderId,
+          shopifyOrderName,
+          shopifyStore: event.data.shopifyStore,
+          d365OrderNumber,
+          warehouse,
+          retryMode: effectiveRetryMode,
+        });
+        if (!result.success) {
+          console.log(`[Backorder] Retry ${retryCount} failed: ${result.error}`);
         }
+        return { ...result, retryCount, triggeredBy };
       });
 
       if (retryResult.success) {

@@ -495,6 +495,7 @@ export interface ShopifyOrderPayload {
   name: string;
   email: string;
   created_at: string;
+  processed_at?: string;
   updated_at: string;
   cancelled_at: string | null;
   total_price: string;

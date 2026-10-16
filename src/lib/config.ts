@@ -147,6 +147,13 @@ export const config = {
     enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
   },
 
+  openAiAds: {
+    enabled: process.env.OPENAI_ADS_ENABLED === "true",
+    pixelId: process.env.OPENAI_ADS_PIXEL_ID || "",
+    conversionsApiKey: process.env.OPENAI_ADS_CONVERSIONS_API_KEY || "",
+    sourceUrl: process.env.OPENAI_ADS_SOURCE_URL || "",
+  },
+
   // Slack Notification Channels
   slack: {
     applicationName: "store",
@@ -217,6 +224,8 @@ export const config = {
      * double-post. Enable only for tenants that require the explicit action.
      */
     enableReturnInvoicePosting: process.env.ENABLE_RETURN_INVOICE_POSTING === "true",
+    /** Spock parity: add configured reward products to eligible subscription renewals. */
+    enableSubscriptionRewards: process.env.DISABLE_SUBSCRIPTION_REWARD !== "true",
   },
 
   /** Loop Returns: `return.closed` refund webhook + Shopify refund de-dupe vs Loop. */
