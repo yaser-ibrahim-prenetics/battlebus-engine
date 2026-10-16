@@ -19,6 +19,7 @@ export const reconciliationHistoryQueries = {
          discrepancy_count = 0,
          details = '{}'::jsonb,
          message = NULL,
+         started_at = now(),
          completed_at = NULL,
          error = NULL,
          updated_at = now()

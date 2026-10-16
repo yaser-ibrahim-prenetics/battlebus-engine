@@ -57,6 +57,27 @@ export const openAiAdsConversionQueries = {
      SELECT * FROM claimed
      ORDER BY event_id`,
 
+  claimForRedelivery: `UPDATE public.openai_ads_conversions
+     SET state = 'delivering',
+         claim_token = $2::uuid,
+         lease_expires_at = now() + ($3 * interval '1 second'),
+         attempts = 1,
+         available_at = now(),
+         delivered_at = NULL,
+         dead_lettered_at = NULL,
+         updated_at = now()
+     WHERE event_id = $1
+       AND (
+         state IN ('pending', 'dead_letter')
+         OR (state = 'delivering' AND lease_expires_at <= now())
+       )
+     RETURNING event_id,
+       shopify_order_id,
+       shopify_order_name,
+       occurred_at,
+       attempts,
+       claim_token`,
+
   markDelivered: `UPDATE public.openai_ads_conversions
      SET state = 'delivered',
          claim_token = NULL,

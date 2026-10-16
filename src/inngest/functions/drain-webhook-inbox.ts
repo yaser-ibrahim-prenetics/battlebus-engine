@@ -26,7 +26,10 @@ export const drainWebhookInbox = inngest.createFunction(
     // Only one sweep at a time — prevents overlapping cron runs from
     // double-publishing the same inbox row.
     concurrency: { limit: 1 },
-    triggers: [{ cron: `*/${config.webhookInbox.drainIntervalMinutes} * * * *` }],
+    triggers: [
+      { cron: `*/${config.webhookInbox.drainIntervalMinutes} * * * *` },
+      { event: "admin/webhook-inbox.drain" },
+    ],
   },
   async ({ step, event }: { step: any; event: any }) => {
     const _flowStart = Date.now();

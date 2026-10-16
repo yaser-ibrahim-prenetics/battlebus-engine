@@ -112,7 +112,10 @@ export const drainPendingActions = inngest.createFunction(
     name: "Drain Pending Lifecycle Actions",
     retries: RETRY_CONFIGS.LOW_PRIORITY,
     concurrency: { limit: 1 },
-    triggers: [{ cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` }],
+    triggers: [
+      { cron: `*/${config.pendingActions.drainIntervalMinutes} * * * *` },
+      { event: "admin/pending-actions.drain" },
+    ],
   },
   runDrainPendingActions
 );

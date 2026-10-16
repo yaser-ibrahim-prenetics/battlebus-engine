@@ -255,8 +255,6 @@ export async function queryProductInventory(options: {
     console.log("[GPS-Inventory] No SKUs provided, querying all");
   }
 
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-
   const skuChunks =
     skus.length > 0
       ? Array.from({ length: Math.ceil(skus.length / OMS_MAX_SKU_LIST_SIZE) }, (_, i) =>
@@ -266,24 +264,29 @@ export async function queryProductInventory(options: {
 
   const allProducts: GpsProductInventoryItem[] = [];
   for (const skuChunk of skuChunks) {
-    const data: Record<string, unknown> = {
-      page: 1,
-      pageSize: OMS_MAX_PAGE_SIZE,
-      warehouseCode: creds.warehouseCode,
-    };
-    if (skuChunk.length > 0) {
-      data.skuList = skuChunk;
-    }
+    let page = 1;
+    let receivedForChunk = 0;
+    const seenPages = new Set<string>();
 
-    const authCode = generateAuthCode(creds.apiKey, creds.apiSecret, timestamp, data);
-    const requestBody = {
-      appKey: creds.apiKey,
-      data,
-      reqTime: timestamp,
-    };
-    const url = `${creds.baseUrl}/openapi/v1/product/list?authcode=${authCode}`;
+    while (true) {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const data: Record<string, unknown> = {
+        page,
+        pageSize: OMS_MAX_PAGE_SIZE,
+        warehouseCode: creds.warehouseCode,
+      };
+      if (skuChunk.length > 0) {
+        data.skuList = skuChunk;
+      }
 
-    try {
+      const authCode = generateAuthCode(creds.apiKey, creds.apiSecret, timestamp, data);
+      const requestBody = {
+        appKey: creds.apiKey,
+        data,
+        reqTime: timestamp,
+      };
+      const url = `${creds.baseUrl}/openapi/v1/product/list?authcode=${authCode}`;
+
       const response = await pacedFetch(url, {
         method: "POST",
         headers: {
@@ -303,7 +306,26 @@ export async function queryProductInventory(options: {
         throw new Error(`Product list error: ${result.msg || result.message}`);
       }
 
-      const products = result.data?.list || result.data || [];
+      const responseData = result.data;
+      const products = Array.isArray(responseData) ? responseData : responseData?.list || [];
+      const rawTotal = Array.isArray(responseData) ? undefined : responseData?.total;
+      const totalValue =
+        rawTotal === undefined || rawTotal === null || rawTotal === ""
+          ? undefined
+          : Number(rawTotal);
+      const total =
+        totalValue !== undefined && Number.isFinite(totalValue) && totalValue >= 0
+          ? totalValue
+          : undefined;
+      const pageFingerprint = products
+        .map((product: Record<string, unknown>) => String(product.sku || product.productSku || ""))
+        .join("\u0000");
+
+      if (products.length > 0 && seenPages.has(pageFingerprint)) {
+        throw new Error(`Product list pagination repeated page ${page} for ${region}`);
+      }
+      if (products.length > 0) seenPages.add(pageFingerprint);
+
       allProducts.push(
         ...products.map((p: Record<string, unknown>) => ({
           sku: p.sku || p.productSku,
@@ -316,8 +338,20 @@ export async function queryProductInventory(options: {
           defectiveQty: p.defectiveQty || p.defective || 0,
         }))
       );
-    } catch (error) {
-      console.error("[GPS-Inventory] Product inventory query failed:", error);
+      receivedForChunk += products.length;
+
+      if (total !== undefined) {
+        if (receivedForChunk >= total) break;
+        if (products.length === 0) {
+          throw new Error(
+            `Product list pagination ended after ${receivedForChunk} of ${total} products for ${region}`
+          );
+        }
+      } else if (products.length < OMS_MAX_PAGE_SIZE) {
+        break;
+      }
+
+      page += 1;
     }
   }
   return allProducts;

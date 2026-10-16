@@ -29,6 +29,18 @@ interface ClaimRow extends QueryResultRow {
   claim_token: string;
 }
 
+function toConversionClaim(row: ClaimRow): OpenAiAdsConversionClaim {
+  return {
+    eventId: row.event_id,
+    shopifyOrderId: row.shopify_order_id,
+    shopifyOrderName: row.shopify_order_name,
+    occurredAt:
+      row.occurred_at instanceof Date ? row.occurred_at.toISOString() : String(row.occurred_at),
+    attempts: row.attempts,
+    claimToken: row.claim_token,
+  };
+}
+
 function requireDatabase(): void {
   if (!isDatabaseConfigured()) {
     throw new Error("Cloud SQL is required for durable OpenAI Ads conversion delivery");
@@ -86,15 +98,24 @@ export async function claimOpenAiAdsConversions({
     Math.max(1, maxAttempts),
     eventId || null,
   ]);
-  return result.rows.map((row) => ({
-    eventId: row.event_id,
-    shopifyOrderId: row.shopify_order_id,
-    shopifyOrderName: row.shopify_order_name,
-    occurredAt:
-      row.occurred_at instanceof Date ? row.occurred_at.toISOString() : String(row.occurred_at),
-    attempts: row.attempts,
-    claimToken: row.claim_token,
-  }));
+  return result.rows.map(toConversionClaim);
+}
+
+export async function claimOpenAiAdsConversionForRedelivery({
+  eventId,
+  leaseSeconds = 300,
+}: {
+  eventId: string;
+  leaseSeconds?: number;
+}): Promise<OpenAiAdsConversionClaim | null> {
+  requireDatabase();
+  const claimToken = randomUUID();
+  const result = await queryDatabase<ClaimRow>(openAiAdsConversionQueries.claimForRedelivery, [
+    eventId,
+    claimToken,
+    Math.max(60, Math.min(leaseSeconds, 1800)),
+  ]);
+  return result.rows[0] ? toConversionClaim(result.rows[0]) : null;
 }
 
 export async function markOpenAiAdsConversionDelivered({
