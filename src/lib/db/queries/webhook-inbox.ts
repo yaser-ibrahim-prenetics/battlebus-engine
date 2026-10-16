@@ -1,25 +1,205 @@
 import { quoteIdentifier } from "@/lib/db/database";
 
-export function createWebhookInboxQueries(tableName: string) {
-  const table = quoteIdentifier(tableName);
+function outboxTimelineCte(timeline: string, changedRows: string): string {
+  return `timeline AS (
+         INSERT INTO ${timeline} (
+           idempotency_key, shopify_order_id, shopify_order_name,
+           source, event_type, stage, status, message,
+           error_class, recovery_action, metadata, occurred_at
+         )
+         SELECT concat('outbox:', changed.id::text, ':', changed.state, ':', changed.attempts::text),
+                changed.shopify_order_id, changed.shopify_order_name,
+                changed.source, 'outbox', changed.event_name, changed.state,
+                changed.last_error, changed.error_class, changed.recovery_action,
+                jsonb_build_object(
+                  'outboxId', changed.id,
+                  'eventId', changed.event_id,
+                  'attempts', changed.attempts,
+                  'schemaVersion', changed.schema_version
+                ),
+                now()
+         FROM ${changedRows} changed
+         WHERE changed.shopify_order_id IS NOT NULL
+            OR changed.shopify_order_name IS NOT NULL
+         ON CONFLICT (idempotency_key) DO NOTHING
+       )`;
+}
+
+export function createWebhookInboxQueries(
+  inboxTableName: string,
+  outboxTableName = "event_outbox",
+  timelineTableName = "workflow_timeline_events"
+) {
+  const inbox = quoteIdentifier(inboxTableName);
+  const outbox = quoteIdentifier(outboxTableName);
+  const timeline = quoteIdentifier(timelineTableName);
 
   return {
-    record: `INSERT INTO ${table} (source, topic, payload, headers, events, status)
-       VALUES ($1, $2, $3, $4, $5, 'received')
-       RETURNING id`,
+    recordWithOutbox: `WITH receipt AS (
+         INSERT INTO ${inbox} (
+           source, topic, payload, headers, events, status,
+           idempotency_key, schema_version, payload_hash, published_at
+         )
+         VALUES (
+           $1, $2, $3::jsonb, $4::jsonb, $5::jsonb,
+           CASE WHEN jsonb_array_length($5::jsonb) = 0 THEN 'published' ELSE 'received' END,
+           $6, $7, $8,
+           CASE WHEN jsonb_array_length($5::jsonb) = 0 THEN now() ELSE NULL END
+         )
+         ON CONFLICT (source, idempotency_key) DO UPDATE
+           SET duplicate_count = ${inbox}.duplicate_count + 1,
+               updated_at = now()
+           WHERE ${inbox}.payload_hash = EXCLUDED.payload_hash
+         RETURNING id, status, payload_hash, duplicate_count
+       ), queued AS (
+         INSERT INTO ${outbox} (
+           inbox_id, source, topic, schema_version, event_name, event_id,
+           event_data, idempotency_key, shopify_order_id, shopify_order_name
+         )
+         SELECT receipt.id, $1, $2, $7, item.event_name, item.event_id,
+                item.event_data, item.idempotency_key,
+                item.shopify_order_id, item.shopify_order_name
+         FROM receipt
+         CROSS JOIN LATERAL jsonb_to_recordset($9::jsonb) AS item(
+           event_name text,
+           event_id text,
+           event_data jsonb,
+           idempotency_key text,
+           shopify_order_id text,
+           shopify_order_name text
+         )
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING *
+       ), ${outboxTimelineCte(timeline, "queued")}
+       SELECT id, status, payload_hash, duplicate_count FROM receipt`,
 
-    markPublished: `UPDATE ${table}
-       SET status = 'published', published_at = now(), event_ids = $2
-       WHERE id = $1`,
+    claimForInbox: `WITH candidates AS (
+         SELECT id
+         FROM ${outbox}
+         WHERE inbox_id = $1
+           AND (
+             (state = 'pending' AND available_at <= now())
+             OR (state = 'processing' AND lease_expires_at <= now())
+           )
+         ORDER BY created_at, id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2
+       ), claimed AS (
+         UPDATE ${outbox} queued
+         SET state = 'processing', claim_token = gen_random_uuid(),
+             lease_expires_at = now() + make_interval(secs => $3),
+             attempts = attempts + 1
+         FROM candidates
+         WHERE queued.id = candidates.id
+         RETURNING queued.*
+       ), ${outboxTimelineCte(timeline, "claimed")}
+       SELECT id, inbox_id, source, topic, schema_version, event_name,
+              event_id, event_data, idempotency_key, shopify_order_id,
+              shopify_order_name, attempts, claim_token
+       FROM claimed`,
 
-    markFailed: `UPDATE ${table}
-       SET status = 'failed', attempts = attempts + 1, last_error = $2
-       WHERE id = $1`,
+    claimDue: `WITH candidates AS (
+         SELECT id
+         FROM ${outbox}
+         WHERE (
+             (state = 'pending' AND available_at <= now())
+             OR (state = 'processing' AND lease_expires_at <= now())
+           )
+           AND ($2::uuid IS NULL OR id = $2::uuid)
+         ORDER BY available_at, created_at, id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       ), claimed AS (
+         UPDATE ${outbox} queued
+         SET state = 'processing', claim_token = gen_random_uuid(),
+             lease_expires_at = now() + make_interval(secs => $3),
+             attempts = attempts + 1
+         FROM candidates
+         WHERE queued.id = candidates.id
+         RETURNING queued.*
+       ), ${outboxTimelineCte(timeline, "claimed")}
+       SELECT id, inbox_id, source, topic, schema_version, event_name,
+              event_id, event_data, idempotency_key, shopify_order_id,
+              shopify_order_name, attempts, claim_token
+       FROM claimed`,
 
-    listUnpublished: `SELECT id, source, topic, events, attempts
-       FROM ${table}
-       WHERE status <> 'published'
-       ORDER BY received_at ASC
+    markOutboxPublished: `WITH changed AS (
+         UPDATE ${outbox}
+         SET state = 'published', published_at = now(),
+             claim_token = NULL, lease_expires_at = NULL,
+             last_error = NULL, error_class = NULL, recovery_action = NULL
+         WHERE id = $1 AND claim_token = $2::uuid AND state = 'processing'
+         RETURNING *
+       ), ${outboxTimelineCte(timeline, "changed")}
+       SELECT inbox_id FROM changed`,
+
+    markOutboxFailed: `WITH changed AS (
+         UPDATE ${outbox}
+         SET state = CASE WHEN $5::boolean THEN 'dead_letter' ELSE 'pending' END,
+             available_at = CASE
+               WHEN $5::boolean THEN available_at
+               ELSE now() + make_interval(secs => $6::integer)
+             END,
+             claim_token = NULL, lease_expires_at = NULL,
+             last_error = $3, error_class = $4, recovery_action = $7,
+             dead_lettered_at = CASE WHEN $5::boolean THEN now() ELSE NULL END
+         WHERE id = $1 AND claim_token = $2::uuid AND state = 'processing'
+         RETURNING *
+       ), ${outboxTimelineCte(timeline, "changed")}
+       SELECT inbox_id, state FROM changed`,
+
+    refreshInboxStatus: `UPDATE ${inbox} receipt
+       SET status = CASE
+             WHEN NOT EXISTS (SELECT 1 FROM ${outbox} WHERE inbox_id = receipt.id)
+               THEN 'published'
+             WHEN EXISTS (
+               SELECT 1 FROM ${outbox} WHERE inbox_id = receipt.id AND state = 'dead_letter'
+             ) THEN 'failed'
+             WHEN NOT EXISTS (
+               SELECT 1 FROM ${outbox} WHERE inbox_id = receipt.id AND state <> 'published'
+             ) THEN 'published'
+             ELSE 'received'
+           END,
+           attempts = COALESCE((
+             SELECT max(attempts) FROM ${outbox} WHERE inbox_id = receipt.id
+           ), receipt.attempts),
+           last_error = (
+             SELECT last_error FROM ${outbox}
+             WHERE inbox_id = receipt.id AND last_error IS NOT NULL
+             ORDER BY updated_at DESC LIMIT 1
+           ),
+           event_ids = ARRAY(
+             SELECT event_id FROM ${outbox}
+             WHERE inbox_id = receipt.id AND state = 'published' AND event_id IS NOT NULL
+             ORDER BY created_at
+           ),
+           published_at = CASE
+             WHEN NOT EXISTS (
+               SELECT 1 FROM ${outbox} WHERE inbox_id = receipt.id AND state <> 'published'
+             ) THEN COALESCE(receipt.published_at, now())
+             ELSE NULL
+           END
+       WHERE receipt.id = $1
+       RETURNING status`,
+
+    requeueDeadLetter: `WITH changed AS (
+         UPDATE ${outbox}
+         SET state = 'pending', available_at = now(),
+             claim_token = NULL, lease_expires_at = NULL,
+             last_error = NULL, error_class = NULL, recovery_action = NULL,
+             dead_lettered_at = NULL
+         WHERE id = $1::uuid AND state = 'dead_letter'
+         RETURNING *
+       ), ${outboxTimelineCte(timeline, "changed")}
+       SELECT id, inbox_id FROM changed`,
+
+    listDeadLetters: `SELECT id, inbox_id, source, topic, schema_version,
+              event_name, event_id, idempotency_key, shopify_order_id,
+              shopify_order_name, attempts, last_error, error_class,
+              recovery_action, dead_lettered_at
+       FROM ${outbox}
+       WHERE state = 'dead_letter'
+       ORDER BY dead_lettered_at DESC
        LIMIT $1`,
   } as const;
 }

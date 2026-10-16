@@ -52,7 +52,10 @@ let _warnedMissingConfig = false;
 let _lastPruneAt = 0;
 
 const ENABLED = process.env.FLOW_LOGS_ENABLED !== "false";
-const queries = createFlowLogQueries(process.env.FLOW_LOGS_TABLE || "flow_logs");
+const queries = createFlowLogQueries(
+  process.env.FLOW_LOGS_TABLE || "flow_logs",
+  process.env.WORKFLOW_TIMELINE_TABLE || "workflow_timeline_events"
+);
 const RETENTION_DAYS = Math.max(
   1,
   Number.isFinite(Number(process.env.FLOW_LOG_RETENTION_DAYS))
@@ -70,9 +73,7 @@ function databaseAvailable(): boolean {
   const available = ENABLED && isDatabaseConfigured();
   if (!available && ENABLED && !_warnedMissingConfig) {
     _warnedMissingConfig = true;
-    console.warn(
-      "[FlowLogs] PostgreSQL is not configured - flow logs drain disabled"
-    );
+    console.warn("[FlowLogs] PostgreSQL is not configured - flow logs drain disabled");
   }
   return available;
 }
