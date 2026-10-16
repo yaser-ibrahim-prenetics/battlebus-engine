@@ -19,6 +19,7 @@ import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { syncD365ToShopify } from "@/lib/services/inventory-sync";
+import { mapShopifySkuToDynamicsForOrderLine } from "@/lib/transformers/sku";
 
 // Types for sync progress
 interface StepResult {
@@ -105,7 +106,10 @@ export const processInventoryFullSync = inngest.createFunction(
     }
 
     const results: StepResult[] = [];
-    const inventory: Map<string, { sku: string; gpsQty: number }> = new Map();
+    const inventory: Map<
+      string,
+      { sku: string; gpsQty: number; dataAreaId: string }
+    > = new Map();
 
     // ========================================================================
     // STEP 1: GPS Warehouse Sync
@@ -137,26 +141,36 @@ export const processInventoryFullSync = inngest.createFunction(
           const usItems = await gpsInventory.queryProductInventory({ region: "US" });
           const ukItems = await gpsInventory.queryProductInventory({ region: "UK" });
 
-          // Combine and aggregate by SKU
-          const allItems = [...usItems, ...ukItems];
-          const skuMap = new Map<string, number>();
-
-          for (const item of allItems) {
-            if (skus && skus.length > 0 && !skus.includes(item.sku)) continue;
-            const current = skuMap.get(item.sku) || 0;
-            skuMap.set(item.sku, current + (item.availableQty || 0));
+          // Keep each warehouse segment separate; US and UK map to different D365
+          // companies and Shopify locations and must never be summed together.
+          const segments = [
+            { dataAreaId: "U001", items: usItems },
+            { dataAreaId: "H007", items: ukItems },
+          ];
+          const skuMap = new Map<
+            string,
+            { sku: string; gpsQty: number; dataAreaId: string }
+          >();
+          for (const segment of segments) {
+            for (const item of segment.items) {
+              if (skus && skus.length > 0 && !skus.includes(item.sku)) continue;
+              const key = `${segment.dataAreaId}:${item.sku}`;
+              const current = skuMap.get(key)?.gpsQty || 0;
+              skuMap.set(key, {
+                sku: item.sku,
+                gpsQty: current + (item.availableQty || 0),
+                dataAreaId: segment.dataAreaId,
+              });
+            }
           }
 
           // Return inventory data to store after step completes
-          const inventoryData = Array.from(skuMap.entries()).map(([sku, qty]) => ({
-            sku,
-            gpsQty: qty,
-          }));
+          const inventoryData = Array.from(skuMap.values());
 
           return {
             step: "gps" as const,
             success: true,
-            itemsProcessed: allItems.length,
+            itemsProcessed: usItems.length + ukItems.length,
             itemsSucceeded: skuMap.size,
             itemsFailed: 0,
             message: `Synced ${skuMap.size} SKUs from GPS`,
@@ -177,7 +191,7 @@ export const processInventoryFullSync = inngest.createFunction(
             message: "GPS sync failed",
             error: errMsg,
             durationMs: Date.now() - startTime,
-            inventoryData: [] as { sku: string; gpsQty: number }[],
+            inventoryData: [] as Array<{ sku: string; gpsQty: number; dataAreaId: string }>,
           };
         }
       });
@@ -197,7 +211,7 @@ export const processInventoryFullSync = inngest.createFunction(
 
       // Store inventory data for later steps
       for (const item of gpsResult.inventoryData) {
-        inventory.set(item.sku, item);
+        inventory.set(`${item.dataAreaId}:${item.sku}`, item);
       }
 
       results.push(gpsResult);
@@ -223,29 +237,33 @@ export const processInventoryFullSync = inngest.createFunction(
         try {
           console.log("[InventoryFullSync] Fetching D365 inventory for comparison...");
 
-          // Fetch current D365 inventory
-          const d365Inventory = await dynamics.getInventory({
-            dataAreaId: config.dynamics.dataAreaId,
-          });
-
-          // Create lookup by item number
+          // Fetch each D365 company represented by a warehouse segment.
+          const dataAreaIds = Array.from(
+            new Set(Array.from(inventory.values()).map((item) => item.dataAreaId))
+          );
           const d365Map = new Map<string, number>();
-          for (const item of d365Inventory.items) {
-            const qty = item.AvailableOnHandQuantity || 0;
-            d365Map.set(item.ItemNumber, qty);
+          for (const dataAreaId of dataAreaIds) {
+            const d365Inventory = await dynamics.getInventory({ dataAreaId });
+            for (const item of d365Inventory.items) {
+              const qty = item.AvailableOnHandQuantity || 0;
+              d365Map.set(`${dataAreaId}:${item.ItemNumber}`, qty);
+            }
           }
 
           // Compare and identify drift
           let succeeded = 0;
           let driftCount = 0;
 
-          for (const [sku, data] of inventory) {
-            const d365Qty = d365Map.get(sku) ?? null;
+          for (const data of inventory.values()) {
+            const d365Sku = mapShopifySkuToDynamicsForOrderLine(data.sku);
+            const d365Qty = d365Map.get(`${data.dataAreaId}:${d365Sku}`) ?? null;
             const gpsQty = data.gpsQty;
 
             if (d365Qty !== null && d365Qty !== gpsQty) {
               driftCount++;
-              console.log(`[InventoryFullSync] Drift: ${sku} GPS=${gpsQty} D365=${d365Qty}`);
+              console.log(
+                `[InventoryFullSync] Drift: ${data.sku} (${data.dataAreaId}) GPS=${gpsQty} D365=${d365Qty}`
+              );
             }
             succeeded++;
           }
@@ -313,10 +331,16 @@ export const processInventoryFullSync = inngest.createFunction(
         const startTime = Date.now();
 
         try {
-          const candidateSkus = Array.from(
-            new Set((skus?.length ? skus : Array.from(inventory.keys())).map(String))
-          );
-          if (candidateSkus.length === 0) {
+          const candidates =
+            inventory.size > 0
+              ? Array.from(inventory.values()).map(({ sku, dataAreaId }) => ({ sku, dataAreaId }))
+              : Array.from(
+                  new Set<string>((Array.isArray(skus) ? skus : []).map((value) => String(value)))
+                ).map((sku) => ({
+                  sku,
+                  dataAreaId: config.dynamics.dataAreaId,
+                }));
+          if (candidates.length === 0) {
             throw new Error("Shopify sync requires SKUs or a completed GPS inventory step");
           }
 
@@ -324,10 +348,10 @@ export const processInventoryFullSync = inngest.createFunction(
             return {
               step: "shopify" as const,
               success: true,
-              itemsProcessed: candidateSkus.length,
-              itemsSucceeded: candidateSkus.length,
+              itemsProcessed: candidates.length,
+              itemsSucceeded: candidates.length,
               itemsFailed: 0,
-              message: `DRY RUN - Would sync ${candidateSkus.length} SKU(s) from D365 to Shopify`,
+              message: `DRY RUN - Would sync ${candidates.length} SKU segment(s) from D365 to Shopify`,
               error: undefined as string | undefined,
               durationMs: Date.now() - startTime,
             };
@@ -335,8 +359,8 @@ export const processInventoryFullSync = inngest.createFunction(
 
           let succeeded = 0;
           const failures: Array<{ sku: string; error: string }> = [];
-          for (const sku of candidateSkus) {
-            const result = await syncD365ToShopify(sku, config.dynamics.dataAreaId);
+          for (const { sku, dataAreaId } of candidates) {
+            const result = await syncD365ToShopify(sku, dataAreaId);
             if (result.success) succeeded += 1;
             else failures.push({ sku, error: result.error || result.message });
           }
@@ -344,7 +368,7 @@ export const processInventoryFullSync = inngest.createFunction(
           return {
             step: "shopify" as const,
             success: failures.length === 0,
-            itemsProcessed: candidateSkus.length,
+            itemsProcessed: candidates.length,
             itemsSucceeded: succeeded,
             itemsFailed: failures.length,
             message: `Synced ${succeeded} SKU(s) from D365 to Shopify`,
