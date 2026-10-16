@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { classifyDeliveryError } from "@/lib/errors/delivery-error";
 import {
   claimDueOutboxEvents,
   markOutboxFailed,
@@ -9,8 +10,6 @@ import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { assertWebhookSchemaVersion } from "@/lib/webhooks/schema-registry";
-
-const MAX_DELIVERY_ATTEMPTS = 10;
 
 export const drainWebhookInbox = inngest.createFunction(
   {
@@ -62,15 +61,10 @@ export const drainWebhookInbox = inngest.createFunction(
           await markOutboxPublished(entry);
           published++;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const terminal = entry.attempts >= MAX_DELIVERY_ATTEMPTS;
-          const state = await markOutboxFailed(entry, {
-            message,
-            errorClass: "unknown",
-            recoveryAction: terminal ? "manual_review" : "retry",
-            terminal,
-            retryDelaySeconds: Math.min(3600, 30 * 2 ** Math.max(0, entry.attempts - 1)),
-          });
+          const state = await markOutboxFailed(
+            entry,
+            classifyDeliveryError(error, entry.attempts)
+          );
           if (state === "dead_letter") deadLettered++;
           else retried++;
         }

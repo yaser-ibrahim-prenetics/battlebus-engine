@@ -1,4 +1,5 @@
 import { inngest } from "@/inngest/client";
+import { classifyDeliveryError } from "@/lib/errors/delivery-error";
 import {
   claimOutboxForInbox,
   markOutboxFailed,
@@ -87,14 +88,7 @@ export async function publishWebhookEvents(
         eventIds.push(...(sendResult?.ids ?? []));
         await markOutboxPublished(entry);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await markOutboxFailed(entry, {
-          message,
-          errorClass: "unknown",
-          recoveryAction: "retry",
-          terminal: entry.attempts >= 10,
-          retryDelaySeconds: Math.min(3600, 30 * 2 ** Math.max(0, entry.attempts - 1)),
-        });
+        await markOutboxFailed(entry, classifyDeliveryError(error, entry.attempts));
         throw error;
       }
     }

@@ -8,6 +8,7 @@ import { requireServiceAuth } from "@/lib/auth/service-auth";
 const OPERATIONS = {
   "pending-actions.drain": "admin/pending-actions.drain",
   "webhook-inbox.drain": "admin/webhook-inbox.drain",
+  "webhook-outbox.replay": "admin/webhook-outbox.replay",
   "openai-ads.redeliver": "admin/openai-ads.redeliver",
   "inventory.sync": "inventory/sync.requested",
   "reconciliation.run": "reconciliation/run",
@@ -30,6 +31,12 @@ function strings(value: unknown): string[] {
 }
 
 function validate(operation: Operation, input: Record<string, unknown>): string | null {
+  if (operation === "webhook-outbox.replay") {
+    const outboxId = String(input.outboxId || "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outboxId)) {
+      return "outboxId must be a valid UUID";
+    }
+  }
   if (operation === "openai-ads.redeliver" && !String(input.eventId || "").trim()) {
     return "eventId is required";
   }
