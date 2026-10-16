@@ -18,6 +18,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+import { syncD365ToShopify } from "@/lib/services/inventory-sync";
 
 // Types for sync progress
 interface StepResult {
@@ -312,21 +313,42 @@ export const processInventoryFullSync = inngest.createFunction(
         const startTime = Date.now();
 
         try {
-          console.log("[InventoryFullSync] Shopify sync is de-emphasized");
-          console.log(
-            "[InventoryFullSync] Shopify doesn't track inventory (continues selling when OOS)"
+          const candidateSkus = Array.from(
+            new Set((skus?.length ? skus : Array.from(inventory.keys())).map(String))
           );
+          if (candidateSkus.length === 0) {
+            throw new Error("Shopify sync requires SKUs or a completed GPS inventory step");
+          }
 
-          // Shopify sync is informational only - we don't actively push
-          // because Shopify is not the source of truth for inventory
+          if (dryRun) {
+            return {
+              step: "shopify" as const,
+              success: true,
+              itemsProcessed: candidateSkus.length,
+              itemsSucceeded: candidateSkus.length,
+              itemsFailed: 0,
+              message: `DRY RUN - Would sync ${candidateSkus.length} SKU(s) from D365 to Shopify`,
+              error: undefined as string | undefined,
+              durationMs: Date.now() - startTime,
+            };
+          }
+
+          let succeeded = 0;
+          const failures: Array<{ sku: string; error: string }> = [];
+          for (const sku of candidateSkus) {
+            const result = await syncD365ToShopify(sku, config.dynamics.dataAreaId);
+            if (result.success) succeeded += 1;
+            else failures.push({ sku, error: result.error || result.message });
+          }
+
           return {
             step: "shopify" as const,
-            success: true,
-            itemsProcessed: inventory.size,
-            itemsSucceeded: inventory.size,
-            itemsFailed: 0,
-            message: `Shopify sync skipped (de-emphasized)`,
-            error: undefined as string | undefined,
+            success: failures.length === 0,
+            itemsProcessed: candidateSkus.length,
+            itemsSucceeded: succeeded,
+            itemsFailed: failures.length,
+            message: `Synced ${succeeded} SKU(s) from D365 to Shopify`,
+            error: failures.length > 0 ? JSON.stringify(failures.slice(0, 20)) : undefined,
             durationMs: Date.now() - startTime,
           };
         } catch (error: unknown) {

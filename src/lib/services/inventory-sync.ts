@@ -17,7 +17,7 @@ import { config } from "../config";
 import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
 import * as shopify from "../clients/shopify";
-import { mapShopifySkuToDynamicsForOrderLine, mapDynamicsSkuToShopify } from "../transformers/sku";
+import { mapShopifySkuToDynamicsForOrderLine } from "../transformers/sku";
 import { getLocationIdForWarehouse } from "./location-routing";
 
 // ============================================================================
@@ -281,7 +281,7 @@ export async function queryShopifyInventory(
   const skuQuery = skus.map((sku) => `sku:${sku}`).join(" OR ");
 
   const query = `
-    query getInventoryLevels($query: String!, $locationId: ID) {
+    query getInventoryLevels($query: String!) {
       productVariants(first: 100, query: $query) {
         edges {
           node {
@@ -309,9 +309,6 @@ export async function queryShopifyInventory(
   `;
 
   const variables: Record<string, unknown> = { query: skuQuery };
-  if (locationId) {
-    variables.locationId = locationId;
-  }
 
   if (config.features.dryRunMode) {
     console.log("[InventorySync] DRY RUN - Would query Shopify inventory");
@@ -581,32 +578,20 @@ export async function syncD365ToShopify(
       };
     }
 
-    // Use Shopify REST API to update inventory
-    // This requires the inventory_item_id which we need to look up
-    // For now, use GraphQL mutation
+    if (!locationId) {
+      throw new Error(`No Shopify location is mapped to D365 data area ${dataAreaId}`);
+    }
 
-    const mutation = `
-      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-        inventorySetQuantities(input: $input) {
-          inventoryAdjustmentGroup {
-            reason
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    // Note: This requires inventoryItemId lookup first
-    // For production, we'd maintain a SKU -> inventoryItemId mapping
-
-    console.log(`[InventorySync] Shopify inventory update pending full implementation`);
+    const updated = await shopify.setSkuInventoryAtLocation({
+      sku,
+      locationId,
+      quantity: d365Level.available,
+      referenceDocumentUri: `gid://battle-bus/D365Inventory/${encodeURIComponent(dataAreaId)}-${encodeURIComponent(sku)}`,
+    });
 
     return {
       success: true,
-      message: `Adjustment of ${adjustment} recorded for Shopify`,
+      message: `Set ${updated.updated} Shopify variant(s) to ${d365Level.available}`,
       sku,
       source: "d365",
       destination: "shopify",
