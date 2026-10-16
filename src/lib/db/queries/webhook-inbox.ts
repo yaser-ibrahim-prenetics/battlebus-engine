@@ -49,6 +49,7 @@ export function createWebhookInboxQueries(
          ON CONFLICT (source, idempotency_key) DO UPDATE
            SET duplicate_count = ${inbox}.duplicate_count + 1,
                updated_at = now()
+           WHERE ${inbox}.payload_hash = EXCLUDED.payload_hash
          RETURNING id, status, payload_hash, duplicate_count
        ), queued AS (
          INSERT INTO ${outbox} (

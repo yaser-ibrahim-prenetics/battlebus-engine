@@ -179,7 +179,9 @@ export async function recordInboxEntry(
     JSON.stringify(durableEvents),
   ]);
   const row = result.rows[0];
-  if (!row) throw new Error("Durable webhook receipt was not recorded");
+  if (!row) {
+    throw new Error(`Idempotency key ${idempotencyKey} was reused with a different payload`);
+  }
   if (row.payload_hash !== payloadHash) {
     throw new Error(`Idempotency key ${idempotencyKey} was reused with a different payload`);
   }

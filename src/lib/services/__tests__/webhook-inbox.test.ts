@@ -59,6 +59,35 @@ describe("durable webhook inbox and outbox", () => {
     });
   });
 
+  it("rejects an idempotency-key collision before queuing outbox events", async () => {
+    vi.mocked(queryDatabase).mockResolvedValueOnce({
+      command: "SELECT",
+      rowCount: 0,
+      oid: 0,
+      fields: [],
+      rows: [],
+    });
+
+    await expect(
+      recordInboxEntry({
+        source: "shopify",
+        topic: "orders/create",
+        payload: { id: 1002 },
+        headers: { "x-shopify-webhook-id": "webhook-1001" },
+        schemaVersion: "1.0",
+        events: [
+          {
+            name: "shopify/order.created",
+            data: { order: { id: 1002, name: "#IM8-1002" } },
+          },
+        ],
+      })
+    ).rejects.toThrow("Idempotency key webhook-1001 was reused with a different payload");
+
+    const [sql] = vi.mocked(queryDatabase).mock.calls[0];
+    expect(sql).toContain('WHERE "webhook_inbox".payload_hash = EXCLUDED.payload_hash');
+  });
+
   it("claims due events with a database lease", async () => {
     vi.mocked(queryDatabase).mockResolvedValueOnce({
       command: "UPDATE",
