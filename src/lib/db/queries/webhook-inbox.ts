@@ -146,7 +146,7 @@ export function createWebhookInboxQueries(
        RETURNING status`,
 
     requeueDeadLetter: `UPDATE ${outbox}
-       SET state = 'pending', attempts = 0, available_at = now(),
+       SET state = 'pending', available_at = now(),
            claim_token = NULL, lease_expires_at = NULL,
            last_error = NULL, error_class = NULL, recovery_action = NULL,
            dead_lettered_at = NULL

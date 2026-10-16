@@ -128,5 +128,6 @@ describe("durable webhook inbox and outbox", () => {
     expect(await requeueDeadLetter("00000000-0000-4000-8000-000000000003")).toBe(false);
     expect(await requeueDeadLetter("00000000-0000-4000-8000-000000000004")).toBe(true);
     expect(vi.mocked(queryDatabase).mock.calls[1][0]).toContain("state = 'dead_letter'");
+    expect(vi.mocked(queryDatabase).mock.calls[1][0]).not.toContain("attempts = 0");
   });
 });
