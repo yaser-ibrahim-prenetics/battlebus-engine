@@ -30,12 +30,5 @@ BEGIN
     RAISE EXCEPTION 'Rollback left the refund-operation payload scrubber behind';
   END IF;
 
-  IF to_regprocedure('public.battle_platform_capture_outbox_timeline()') IS NOT NULL THEN
-    RAISE EXCEPTION 'Rollback left the outbox timeline capture function behind';
-  END IF;
-
-  IF to_regprocedure('public.battle_platform_capture_flow_log_timeline()') IS NOT NULL THEN
-    RAISE EXCEPTION 'Rollback left the flow-log timeline capture function behind';
-  END IF;
 END
 $$;

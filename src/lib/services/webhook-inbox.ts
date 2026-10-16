@@ -44,7 +44,8 @@ export type ClaimedOutboxEvent = {
 
 const queries = createWebhookInboxQueries(
   process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox",
-  process.env.EVENT_OUTBOX_TABLE || "event_outbox"
+  process.env.EVENT_OUTBOX_TABLE || "event_outbox",
+  process.env.WORKFLOW_TIMELINE_TABLE || "workflow_timeline_events"
 );
 
 function requireDatabase(): void {

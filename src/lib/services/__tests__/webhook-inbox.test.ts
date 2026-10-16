@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { queryDatabase } from "@/lib/db/database";
-import {
-  claimOutboxForInbox,
-  recordInboxEntry,
-  requeueDeadLetter,
-} from "../webhook-inbox";
+import { claimOutboxForInbox, recordInboxEntry, requeueDeadLetter } from "../webhook-inbox";
 
 vi.mock("@/lib/db/database", () => ({
   isDatabaseConfigured: vi.fn(() => true),
@@ -48,6 +44,7 @@ describe("durable webhook inbox and outbox", () => {
     const [sql, values] = vi.mocked(queryDatabase).mock.calls[0];
     expect(sql).toContain("ON CONFLICT (source, idempotency_key) DO UPDATE");
     expect(sql).toContain("ON CONFLICT (idempotency_key) DO NOTHING");
+    expect(sql).toContain('INSERT INTO "workflow_timeline_events"');
     expect(values?.[2]).toBe('{"a":1,"b":2}');
     expect(values?.[5]).toBe("webhook-1001");
     expect(JSON.parse(String(values?.[8]))[0]).toMatchObject({
@@ -87,17 +84,16 @@ describe("durable webhook inbox and outbox", () => {
       ],
     });
 
-    const entries = await claimOutboxForInbox(
-      "00000000-0000-4000-8000-000000000001",
-      20,
-      90
-    );
+    const entries = await claimOutboxForInbox("00000000-0000-4000-8000-000000000001", 20, 90);
 
     expect(queryDatabase).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE SKIP LOCKED"), [
       "00000000-0000-4000-8000-000000000001",
       20,
       90,
     ]);
+    expect(vi.mocked(queryDatabase).mock.calls[0][0]).toContain(
+      'INSERT INTO "workflow_timeline_events"'
+    );
     expect(entries[0]).toMatchObject({ eventId: "event-1001", attempts: 1 });
   });
 
