@@ -48,10 +48,11 @@ function retryAfterSeconds(error: ErrorLike): number | undefined {
   let raw = error.retryAfter;
   const headers = error.response?.headers;
   if (raw == null && headers && typeof headers === "object") {
-    raw =
-      "get" in headers && typeof headers.get === "function"
-        ? headers.get("retry-after")
-        : headers["retry-after"];
+    if ("get" in headers && typeof headers.get === "function") {
+      raw = headers.get("retry-after");
+    } else {
+      raw = (headers as Record<string, unknown>)["retry-after"];
+    }
   }
   if (raw == null) return undefined;
   const seconds = Number(raw);
