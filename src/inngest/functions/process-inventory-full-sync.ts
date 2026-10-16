@@ -243,8 +243,8 @@ export const processInventoryFullSync = inngest.createFunction(
           );
           const d365Map = new Map<string, number>();
           for (const dataAreaId of dataAreaIds) {
-            const d365Inventory = await dynamics.getInventory({ dataAreaId });
-            for (const item of d365Inventory.items) {
+            const d365Inventory = await dynamics.getAllInventory({ dataAreaId });
+            for (const item of d365Inventory) {
               const qty = item.AvailableOnHandQuantity || 0;
               d365Map.set(`${dataAreaId}:${item.ItemNumber}`, qty);
             }
