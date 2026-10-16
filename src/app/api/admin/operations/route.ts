@@ -19,10 +19,20 @@ type Operation = keyof typeof OPERATIONS;
 
 function strings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return Array.from(new Set(value.map(String).map((item) => item.trim()).filter(Boolean)));
+  return Array.from(
+    new Set(
+      value
+        .map(String)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function validate(operation: Operation, input: Record<string, unknown>): string | null {
+  if (operation === "openai-ads.redeliver" && !String(input.eventId || "").trim()) {
+    return "eventId is required";
+  }
   if (operation === "order.recover" && strings(input.shopifyOrderNames).length === 0) {
     return "shopifyOrderNames must contain at least one order";
   }

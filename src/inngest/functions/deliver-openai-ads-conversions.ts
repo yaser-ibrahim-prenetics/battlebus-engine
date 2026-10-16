@@ -7,6 +7,7 @@ import {
 } from "@/lib/clients/openai-ads";
 import { config } from "@/lib/config";
 import {
+  claimOpenAiAdsConversionForRedelivery,
   claimOpenAiAdsConversions,
   markOpenAiAdsConversionDelivered,
   markOpenAiAdsConversionFailed,
@@ -31,17 +32,26 @@ export const deliverOpenAiAdsConversions = inngest.createFunction(
   async ({ event, step }: { event: any; step: any }) => {
     if (!config.openAiAds.enabled) return { status: "disabled" };
 
+    const isManualRedelivery = event.name === "admin/openai-ads.redeliver";
     const requestedEventId =
-      event.name === "openai.ads/conversion.queued" || event.name === "admin/openai-ads.redeliver"
+      event.name === "openai.ads/conversion.queued" || isManualRedelivery
         ? String(event.data?.eventId || "")
         : undefined;
-    const claims = await step.run("claim-openai-ads-conversions", () =>
-      claimOpenAiAdsConversions({
+    const claims = await step.run("claim-openai-ads-conversions", async () => {
+      if (isManualRedelivery) {
+        if (!requestedEventId) return [];
+        const claim = await claimOpenAiAdsConversionForRedelivery({
+          eventId: requestedEventId,
+        });
+        return claim ? [claim] : [];
+      }
+
+      return claimOpenAiAdsConversions({
         eventId: requestedEventId || undefined,
         limit: requestedEventId ? 1 : 25,
         maxAttempts: MAX_DELIVERY_ATTEMPTS,
-      })
-    );
+      });
+    });
 
     const results: Array<{ eventId: string; state: string; attempts: number }> = [];
     for (const [index, claim] of claims.entries()) {
