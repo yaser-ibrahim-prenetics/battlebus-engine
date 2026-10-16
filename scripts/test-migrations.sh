@@ -24,6 +24,14 @@ migration_args=(
   -database "${MIGRATION_TEST_DATABASE_URL}"
 )
 
+apply_migrations_with_legacy_inbox_fixture() {
+  migrate "${migration_args[@]}" up 34
+  psql "${MIGRATION_TEST_DATABASE_URL}" \
+    --set ON_ERROR_STOP=1 \
+    --file "${repo_root}/db/test/fixtures/pre_event_outbox_backfill.sql"
+  migrate "${migration_args[@]}" up
+}
+
 bootstrap_test_admin() {
   DATABASE_URL="${MIGRATION_TEST_DATABASE_URL}" \
     BATTLE_HUB_ADMIN_EMAIL="migration-admin@example.com" \
@@ -33,7 +41,7 @@ bootstrap_test_admin() {
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
   --file "${repo_root}/db/test/bootstrap.sql"
-migrate "${migration_args[@]}" up
+apply_migrations_with_legacy_inbox_fixture
 bootstrap_test_admin
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
@@ -42,7 +50,7 @@ migrate "${migration_args[@]}" down -all
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
   --file "${repo_root}/db/test/assertions_down.sql"
-migrate "${migration_args[@]}" up
+apply_migrations_with_legacy_inbox_fixture
 bootstrap_test_admin
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
