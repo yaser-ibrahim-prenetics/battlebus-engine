@@ -21,7 +21,7 @@ BEGIN
     FROM public.battle_hub_workflow_timeline
     WHERE shopify_order_id = '801'
   ) < 4 THEN
-    RAISE EXCEPTION 'Battle Hub workflow timeline view does not expose captured events';
+    RAISE EXCEPTION 'Battle Hub workflow timeline view does not expose stored events';
   END IF;
 END
 $$;
