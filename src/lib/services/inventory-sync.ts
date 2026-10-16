@@ -116,6 +116,7 @@ export async function getWarehouseMapping(
     (m) =>
       m.gpsName === identifier ||
       m.gpsCode === identifier ||
+      m.d365DataAreaId.toUpperCase() === identifier.toUpperCase() ||
       m.d365WarehouseId === identifier ||
       m.shopifyLocationId === identifier
   );
