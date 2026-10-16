@@ -7,11 +7,11 @@ BEGIN
   SELECT array_agg(expected.name ORDER BY expected.name)
   INTO missing_tables
   FROM unnest(ARRAY[
-    'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
+    'audit_entities', 'audit_log', 'event_outbox', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
     'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
-    'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
+    'user_permissions', 'user_preferences', 'users', 'webhook_inbox', 'workflow_timeline_events',
     'workspace_members', 'workspaces'
   ]) AS expected(name)
   WHERE to_regclass('public.' || expected.name) IS NULL;
@@ -21,11 +21,11 @@ BEGIN
   END IF;
 
   FOREACH table_name IN ARRAY ARRAY[
-    'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
+    'audit_entities', 'audit_log', 'event_outbox', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
     'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
-    'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
+    'user_permissions', 'user_preferences', 'users', 'webhook_inbox', 'workflow_timeline_events',
     'workspace_members', 'workspaces'
   ]
   LOOP
