@@ -1,92 +1,96 @@
-// ============================================================================
-// DRAIN WEBHOOK INBOX — CRON SAFETY NET
-// ============================================================================
-// Periodic sweep that re-attempts publishing any `webhook_inbox` row not yet
-// marked `published`. This is the safety net for the case where a webhook
-// route's inngest.send() failed (and the route already returned a 5xx so the
-// sender — e.g. Shopify — will retry within its own window) or the process
-// crashed between recording the inbox row and sending the event. Even if
-// neither of those retries land, this cron eventually republishes the event.
-
 import { inngest } from "../client";
 import {
-  getUnpublishedInboxEntries,
-  markInboxPublished,
-  markInboxFailed,
+  claimDueOutboxEvents,
+  markOutboxFailed,
+  markOutboxPublished,
+  requeueDeadLetter,
 } from "@/lib/services/webhook-inbox";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+import { assertWebhookSchemaVersion } from "@/lib/webhooks/schema-registry";
+
+const MAX_DELIVERY_ATTEMPTS = 10;
 
 export const drainWebhookInbox = inngest.createFunction(
   {
     id: "drain-webhook-inbox",
-    name: "Drain Webhook Inbox",
+    name: "Drain Durable Webhook Outbox",
     retries: RETRY_CONFIGS.LOW_PRIORITY,
-    // Only one sweep at a time — prevents overlapping cron runs from
-    // double-publishing the same inbox row.
     concurrency: { limit: 1 },
     triggers: [
       { cron: `*/${config.webhookInbox.drainIntervalMinutes} * * * *` },
       { event: "admin/webhook-inbox.drain" },
+      { event: "admin/webhook-outbox.replay" },
     ],
   },
   async ({ step, event }: { step: any; event: any }) => {
-    const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const flowStart = Date.now();
+    const runId = event.id;
+    const requestedOutboxId =
+      event.name === "admin/webhook-outbox.replay" && typeof event.data?.outboxId === "string"
+        ? event.data.outboxId
+        : undefined;
 
     logFlowEvent({
-      flow: "webhook_inbox_drain",
+      flow: "webhook_outbox_drain",
       step: "start",
       status: "started",
-      runId: _runId,
-      payload: { intervalMinutes: config.webhookInbox.drainIntervalMinutes },
+      runId,
+      payload: { requestedOutboxId },
     });
 
     const drainResult = await step.run("drain", async () => {
-      const entries = await getUnpublishedInboxEntries(50);
-
-      if (entries.length === 0) {
-        return { count: 0, published: 0, failed: 0 };
+      if (requestedOutboxId) {
+        const requeued = await requeueDeadLetter(requestedOutboxId);
+        if (!requeued) {
+          return { count: 0, published: 0, retried: 0, deadLettered: 0, replayed: false };
+        }
       }
 
-      console.log(`[WebhookInboxDrain] ${entries.length} unpublished inbox row(s) to retry`);
-
+      const entries = await claimDueOutboxEvents(requestedOutboxId ? 1 : 50, requestedOutboxId);
       let published = 0;
-      let failed = 0;
+      let retried = 0;
+      let deadLettered = 0;
 
       for (const entry of entries) {
-        if (!entry.events || entry.events.length === 0) {
-          // Nothing to send — treat as trivially published.
-          await markInboxPublished(entry.id, []);
-          published++;
-          continue;
-        }
-
         try {
-          const sendResult = await inngest.send(entry.events as any);
-          await markInboxPublished(entry.id, sendResult?.ids ?? []);
+          assertWebhookSchemaVersion(entry.source, entry.schemaVersion);
+          await inngest.send([
+            { name: entry.eventName, data: entry.eventData, id: entry.eventId ?? undefined },
+          ] as Parameters<typeof inngest.send>[0]);
+          await markOutboxPublished(entry);
           published++;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.error(
-            `[WebhookInboxDrain] Retry publish failed for inbox row ${entry.id} (source=${entry.source}):`,
-            error
-          );
-          await markInboxFailed(entry.id, message);
-          failed++;
+          const terminal = entry.attempts >= MAX_DELIVERY_ATTEMPTS;
+          const state = await markOutboxFailed(entry, {
+            message,
+            errorClass: "unknown",
+            recoveryAction: terminal ? "manual_review" : "retry",
+            terminal,
+            retryDelaySeconds: Math.min(3600, 30 * 2 ** Math.max(0, entry.attempts - 1)),
+          });
+          if (state === "dead_letter") deadLettered++;
+          else retried++;
         }
       }
 
-      return { count: entries.length, published, failed };
+      return {
+        count: entries.length,
+        published,
+        retried,
+        deadLettered,
+        replayed: Boolean(requestedOutboxId),
+      };
     });
 
     logFlowEvent({
-      flow: "webhook_inbox_drain",
+      flow: "webhook_outbox_drain",
       step: "done",
       status: "completed",
-      runId: _runId,
-      durationMs: Date.now() - _flowStart,
+      runId,
+      durationMs: Date.now() - flowStart,
       payload: drainResult,
     });
 

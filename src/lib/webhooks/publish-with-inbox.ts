@@ -1,31 +1,16 @@
-// ============================================================================
-// PUBLISH WEBHOOK EVENTS — durable inbox + best-effort Inngest publish
-// ============================================================================
-// Shared by every webhook route (Shopify, GPS, GPS individual, STORD, Loop,
-// Dynamics fulfilment). Guarantees the inbound webhook is never silently
-// lost if inngest.send() fails or throws:
-//
-//   1. Persist the webhook (payload + intended events) to the `webhook_inbox`
-//      table BEFORE attempting to send — this is awaited, so it happens even
-//      if the process crashes immediately after.
-//   2. Always attempt inngest.send() for the collected events.
-//   3. On success, mark the inbox row `published` (fire-and-forget) and
-//      return { published: true }.
-//   4. On failure, mark the inbox row `failed` (awaited) and return
-//      { published: false } so the caller can respond with a 5xx — this lets
-//      the webhook sender's own retry logic (e.g. Shopify retries non-2xx
-//      webhooks for up to 48h) kick in. The `drain-webhook-inbox` cron is the
-//      safety net for events that still never make it through.
-
 import { inngest } from "@/inngest/client";
 import {
+  claimOutboxForInbox,
+  markOutboxFailed,
+  markOutboxPublished,
   recordInboxEntry,
-  markInboxPublished,
-  markInboxFailed,
   type WebhookInboxEvent,
 } from "@/lib/services/webhook-inbox";
+import {
+  assertWebhookPayload,
+  resolveWebhookSchemaVersion,
+} from "@/lib/webhooks/schema-registry";
 
-/** Header names whose values must never be persisted verbatim. */
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
   "x-api-key",
@@ -39,18 +24,12 @@ const SENSITIVE_HEADER_NAMES = new Set([
   "set-cookie",
 ]);
 
-/**
- * Build a redacted headers map safe to persist in the inbox `headers` jsonb
- * column: sensitive header values are replaced with a boolean presence flag,
- * everything else is passed through as-is.
- */
 export function redactWebhookHeaders(
   headers: Record<string, string | null | undefined>
 ): Record<string, string | boolean> {
   const redacted: Record<string, string | boolean> = {};
   for (const [key, value] of Object.entries(headers)) {
-    const lowerKey = key.toLowerCase();
-    if (SENSITIVE_HEADER_NAMES.has(lowerKey)) {
+    if (SENSITIVE_HEADER_NAMES.has(key.toLowerCase())) {
       redacted[key] = Boolean(value);
     } else if (value != null) {
       redacted[key] = value;
@@ -65,59 +44,65 @@ export type PublishWebhookEventsParams = {
   payload: unknown;
   headers: Record<string, string | null | undefined>;
   events: WebhookInboxEvent[];
+  idempotencyKey?: string;
 };
 
 export type PublishWebhookEventsResult =
-  | { published: true; eventIds: string[]; inboxId: string | null }
+  | { published: true; eventIds: string[]; inboxId: string }
   | { published: false; inboxId: string | null; error: string };
 
-/**
- * Durably record the inbound webhook, then attempt to publish its event(s)
- * to Inngest. Never throws — failures are captured and returned in the
- * result so the caller can decide the HTTP response.
- */
 export async function publishWebhookEvents(
   params: PublishWebhookEventsParams
 ): Promise<PublishWebhookEventsResult> {
-  const { source, topic, payload, headers, events } = params;
-
-  // 1. Durability guarantee: persist before we ever attempt to send.
-  const inboxId = await recordInboxEntry({
-    source,
-    topic: topic ?? null,
-    payload,
-    headers: redactWebhookHeaders(headers) as Record<string, string>,
-    events,
-  });
-
-  // Nothing to send (e.g. filtered/skipped topic) — trivially "published".
-  if (events.length === 0) {
-    if (inboxId) {
-      void markInboxPublished(inboxId, []);
-    }
-    return { published: true, eventIds: [], inboxId };
-  }
-
+  let inboxId: string | null = null;
   try {
-    const sendResult = await inngest.send(events as Parameters<typeof inngest.send>[0]);
-    const eventIds = sendResult?.ids ?? [];
+    const schemaVersion = resolveWebhookSchemaVersion(params.source, params.headers);
+    assertWebhookPayload(params.payload, params.source, schemaVersion);
+    const receipt = await recordInboxEntry({
+      source: params.source,
+      topic: params.topic ?? null,
+      payload: params.payload,
+      headers: redactWebhookHeaders(params.headers),
+      events: params.events,
+      schemaVersion,
+      idempotencyKey: params.idempotencyKey,
+    });
+    inboxId = receipt.id;
 
-    if (inboxId) {
-      // Fire-and-forget: the send already succeeded, this is just bookkeeping.
-      void markInboxPublished(inboxId, eventIds);
+    if (params.events.length === 0 || receipt.status === "published") {
+      return { published: true, eventIds: [], inboxId };
+    }
+
+    const claimed = await claimOutboxForInbox(inboxId, params.events.length);
+    if (claimed.length === 0) {
+      return { published: true, eventIds: [], inboxId };
+    }
+
+    const eventIds: string[] = [];
+    for (const entry of claimed) {
+      try {
+        const sendResult = await inngest.send([
+          { name: entry.eventName, data: entry.eventData, id: entry.eventId ?? undefined },
+        ] as Parameters<typeof inngest.send>[0]);
+        eventIds.push(...(sendResult?.ids ?? []));
+        await markOutboxPublished(entry);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await markOutboxFailed(entry, {
+          message,
+          errorClass: "unknown",
+          recoveryAction: "retry",
+          terminal: entry.attempts >= 10,
+          retryDelaySeconds: Math.min(3600, 30 * 2 ** Math.max(0, entry.attempts - 1)),
+        });
+        throw error;
+      }
     }
 
     return { published: true, eventIds, inboxId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[WebhookInbox] Failed to publish ${source} event(s) to Inngest:`, error);
-
-    if (inboxId) {
-      // Awaited: the caller needs the failure safely recorded before
-      // deciding what status code to return.
-      await markInboxFailed(inboxId, message);
-    }
-
+    console.error(`[WebhookInbox] Failed durable publish for ${params.source}:`, error);
     return { published: false, inboxId, error: message };
   }
 }

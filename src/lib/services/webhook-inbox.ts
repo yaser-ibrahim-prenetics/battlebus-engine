@@ -1,22 +1,4 @@
-/**
- * PostgreSQL Webhook Inbox — durability layer for inbound webhooks.
- *
- * Every webhook route (Shopify, GPS, GPS individual, STORD, Loop, Dynamics
- * fulfilment) records the raw payload + intended Inngest event(s) here
- * immediately after signature verification, before attempting
- * `inngest.send()`. If the send fails (or the process crashes before it
- * runs), the row stays `received`/`failed` and is retried by the
- * `drain-webhook-inbox` cron (see src/inngest/functions/drain-webhook-inbox.ts).
- *
- * Mirrors the defensive style of flow-logs.ts: every call is
- * wrapped in try/catch and never throws to the caller. When PostgreSQL is
- * unconfigured, reads return empty results and writes are silently skipped
- * (logged via console.warn) — the webhook route still gets to decide
- * whether to fail the request based on the Inngest publish result itself.
- *
- * Environment variables:
- *   WEBHOOK_INBOX_TABLE       – table name (default: "webhook_inbox")
- */
+import { createHash } from "node:crypto";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { createWebhookInboxQueries } from "@/lib/db/queries/webhook-inbox";
 
@@ -32,110 +14,301 @@ export type RecordInboxEntryParams = {
   source: string;
   topic?: string | null;
   payload: unknown;
-  headers: Record<string, string>;
+  headers: Record<string, string | boolean>;
   events: WebhookInboxEvent[];
+  schemaVersion: string;
+  idempotencyKey?: string;
 };
 
-export type UnpublishedInboxEntry = {
+export type RecordedInboxEntry = {
   id: string;
+  status: WebhookInboxStatus;
+  duplicate: boolean;
+};
+
+export type ClaimedOutboxEvent = {
+  id: string;
+  inboxId: string;
   source: string;
   topic: string | null;
-  events: WebhookInboxEvent[];
+  schemaVersion: string;
+  eventName: string;
+  eventId: string | null;
+  eventData: Record<string, unknown>;
+  idempotencyKey: string;
+  shopifyOrderId: string | null;
+  shopifyOrderName: string | null;
   attempts: number;
+  claimToken: string;
 };
 
-const queries = createWebhookInboxQueries(process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox");
+const queries = createWebhookInboxQueries(
+  process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox",
+  process.env.EVENT_OUTBOX_TABLE || "event_outbox"
+);
 
-let _warnedMissingConfig = false;
-
-function databaseAvailable(): boolean {
-  const available = isDatabaseConfigured();
-  if (!available && !_warnedMissingConfig) {
-    _warnedMissingConfig = true;
-    console.warn("[WebhookInbox] PostgreSQL is not configured - webhook inbox disabled");
-  }
-  return available;
-}
-
-/**
- * Insert a `received` row for an inbound webhook. Must be awaited BEFORE
- * attempting to publish to Inngest — this is the durability guarantee.
- *
- * Returns the new row's id, or `null` if PostgreSQL is unconfigured or the
- * insert failed (never throws).
- */
-export async function recordInboxEntry(params: RecordInboxEntryParams): Promise<string | null> {
-  try {
-    if (!databaseAvailable()) return null;
-    const result = await queryDatabase<{ id: string }>(
-      queries.record,
-      [
-        params.source,
-        params.topic ?? null,
-        params.payload ?? {},
-        params.headers ?? {},
-        params.events ?? [],
-      ]
-    );
-    return result.rows[0]?.id ?? null;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected insert error for source=${params.source}: ${msg}`);
-    return null;
+function requireDatabase(): void {
+  if (!isDatabaseConfigured()) {
+    throw new Error("Durable webhook storage is not configured");
   }
 }
 
-/** Mark a row as successfully published to Inngest. Never throws. */
-export async function markInboxPublished(id: string, eventIds: string[]): Promise<void> {
-  if (!id) return;
-  try {
-    if (!databaseAvailable()) return;
-    await queryDatabase(queries.markPublished, [id, eventIds]);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected markInboxPublished(${id}) error: ${msg}`);
-  }
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
 }
 
-/** Mark a row as failed to publish (increments attempts). Never throws. */
-export async function markInboxFailed(id: string, error: string): Promise<void> {
-  if (!id) return;
-  try {
-    if (!databaseAvailable()) return;
-    await queryDatabase(queries.markFailed, [id, error]);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected markInboxFailed(${id}) error: ${msg}`);
-  }
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
-/**
- * Fetch inbox rows not yet published, oldest first, for the drain cron to
- * re-attempt. Returns `[]` on any error or when PostgreSQL is unconfigured.
- */
-export async function getUnpublishedInboxEntries(limit: number): Promise<UnpublishedInboxEntry[]> {
-  try {
-    if (!databaseAvailable()) return [];
-    const result = await queryDatabase<{
-      id: string;
-      source: string;
-      topic: string | null;
-      events: WebhookInboxEvent[];
-      attempts: number;
-    }>(
-      queries.listUnpublished,
-      [Math.max(1, limit)]
-    );
-    return result.rows.map((row) => ({
-      id: row.id as string,
-      source: row.source as string,
-      topic: (row.topic as string | null) ?? null,
-      events: (row.events as WebhookInboxEvent[]) || [],
-      attempts: row.attempts ?? 0,
-    }));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected getUnpublishedInboxEntries error: ${msg}`);
-    return [];
+function findHeader(
+  headers: Record<string, string | boolean>,
+  names: readonly string[]
+): string | undefined {
+  const normalized = new Map(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
+  );
+  for (const name of names) {
+    const value = normalized.get(name);
+    if (typeof value === "string" && value.trim()) return value.trim();
   }
+  return undefined;
+}
+
+function extractOrderReference(data: Record<string, unknown>): {
+  shopifyOrderId: string | null;
+  shopifyOrderName: string | null;
+} {
+  const nestedOrder =
+    data.order && typeof data.order === "object"
+      ? (data.order as Record<string, unknown>)
+      : undefined;
+  const id =
+    data.shopifyOrderId ??
+    data.shopify_order_id ??
+    nestedOrder?.shopifyOrderId ??
+    nestedOrder?.shopify_order_id ??
+    nestedOrder?.id;
+  const name =
+    data.shopifyOrderName ??
+    data.shopify_order_name ??
+    data.orderName ??
+    nestedOrder?.shopifyOrderName ??
+    nestedOrder?.shopify_order_name ??
+    nestedOrder?.name;
+
+  return {
+    shopifyOrderId: id == null ? null : String(id),
+    shopifyOrderName: name == null ? null : String(name),
+  };
+}
+
+function inboxIdempotencyKey(params: RecordInboxEntryParams, payloadHash: string): string {
+  if (params.idempotencyKey?.trim()) return params.idempotencyKey.trim();
+  return (
+    findHeader(params.headers, [
+      "x-shopify-webhook-id",
+      "x-loop-webhook-id",
+      "x-webhook-id",
+      "idempotency-key",
+    ]) ?? `${params.topic ?? "webhook"}:${payloadHash}`
+  );
+}
+
+function mapClaimedRow(row: Record<string, unknown>): ClaimedOutboxEvent {
+  return {
+    id: String(row.id),
+    inboxId: String(row.inbox_id),
+    source: String(row.source),
+    topic: row.topic == null ? null : String(row.topic),
+    schemaVersion: String(row.schema_version),
+    eventName: String(row.event_name),
+    eventId: row.event_id == null ? null : String(row.event_id),
+    eventData: (row.event_data ?? {}) as Record<string, unknown>,
+    idempotencyKey: String(row.idempotency_key),
+    shopifyOrderId: row.shopify_order_id == null ? null : String(row.shopify_order_id),
+    shopifyOrderName: row.shopify_order_name == null ? null : String(row.shopify_order_name),
+    attempts: Number(row.attempts),
+    claimToken: String(row.claim_token),
+  };
+}
+
+export async function recordInboxEntry(
+  params: RecordInboxEntryParams
+): Promise<RecordedInboxEntry> {
+  requireDatabase();
+  const payloadJson = canonicalJson(params.payload ?? {});
+  const payloadHash = sha256(payloadJson);
+  const idempotencyKey = inboxIdempotencyKey(params, payloadHash);
+  const durableEvents = params.events.map((event, index) => {
+    const eventIdempotencyKey = event.id
+      ? `${params.source}:event:${event.id}`
+      : `${params.source}:${idempotencyKey}:${index}:${event.name}`;
+    const order = extractOrderReference(event.data);
+    return {
+      event_name: event.name,
+      event_id: event.id ?? sha256(eventIdempotencyKey),
+      event_data: event.data,
+      idempotency_key: eventIdempotencyKey,
+      shopify_order_id: order.shopifyOrderId,
+      shopify_order_name: order.shopifyOrderName,
+    };
+  });
+
+  const result = await queryDatabase<{
+    id: string;
+    status: WebhookInboxStatus;
+    payload_hash: string;
+    duplicate_count: number;
+  }>(queries.recordWithOutbox, [
+    params.source,
+    params.topic ?? null,
+    payloadJson,
+    JSON.stringify(params.headers ?? {}),
+    JSON.stringify(params.events ?? []),
+    idempotencyKey,
+    params.schemaVersion,
+    payloadHash,
+    JSON.stringify(durableEvents),
+  ]);
+  const row = result.rows[0];
+  if (!row) throw new Error("Durable webhook receipt was not recorded");
+  if (row.payload_hash !== payloadHash) {
+    throw new Error(`Idempotency key ${idempotencyKey} was reused with a different payload`);
+  }
+  return {
+    id: row.id,
+    status: row.status,
+    duplicate: Number(row.duplicate_count) > 0,
+  };
+}
+
+export async function claimOutboxForInbox(
+  inboxId: string,
+  limit = 50,
+  leaseSeconds = 120
+): Promise<ClaimedOutboxEvent[]> {
+  requireDatabase();
+  const result = await queryDatabase(queries.claimForInbox, [
+    inboxId,
+    Math.max(1, limit),
+    Math.max(30, leaseSeconds),
+  ]);
+  return result.rows.map((row) => mapClaimedRow(row));
+}
+
+export async function claimDueOutboxEvents(
+  limit = 50,
+  outboxId?: string,
+  leaseSeconds = 120
+): Promise<ClaimedOutboxEvent[]> {
+  requireDatabase();
+  const result = await queryDatabase(queries.claimDue, [
+    Math.max(1, limit),
+    outboxId ?? null,
+    Math.max(30, leaseSeconds),
+  ]);
+  return result.rows.map((row) => mapClaimedRow(row));
+}
+
+export async function markOutboxPublished(entry: ClaimedOutboxEvent): Promise<void> {
+  requireDatabase();
+  const result = await queryDatabase<{ inbox_id: string }>(queries.markOutboxPublished, [
+    entry.id,
+    entry.claimToken,
+  ]);
+  if (result.rowCount !== 1) throw new Error(`Outbox claim ${entry.id} is no longer active`);
+  await refreshInboxStatus(entry.inboxId);
+}
+
+export async function refreshInboxStatus(inboxId: string): Promise<WebhookInboxStatus> {
+  requireDatabase();
+  const result = await queryDatabase<{ status: WebhookInboxStatus }>(queries.refreshInboxStatus, [
+    inboxId,
+  ]);
+  return result.rows[0]?.status ?? "received";
+}
+
+export async function markOutboxFailed(
+  entry: ClaimedOutboxEvent,
+  failure: {
+    message: string;
+    errorClass: string;
+    recoveryAction: string;
+    terminal: boolean;
+    retryDelaySeconds: number;
+  }
+): Promise<"pending" | "dead_letter"> {
+  requireDatabase();
+  const result = await queryDatabase<{
+    inbox_id: string;
+    state: "pending" | "dead_letter";
+  }>(queries.markOutboxFailed, [
+    entry.id,
+    entry.claimToken,
+    failure.message,
+    failure.errorClass,
+    failure.terminal,
+    Math.max(1, failure.retryDelaySeconds),
+    failure.recoveryAction,
+  ]);
+  const row = result.rows[0];
+  if (!row) throw new Error(`Outbox claim ${entry.id} is no longer active`);
+  await refreshInboxStatus(row.inbox_id);
+  return row.state;
+}
+
+export async function requeueDeadLetter(outboxId: string): Promise<boolean> {
+  requireDatabase();
+  const result = await queryDatabase<{ inbox_id: string }>(queries.requeueDeadLetter, [outboxId]);
+  const inboxId = result.rows[0]?.inbox_id;
+  if (!inboxId) return false;
+  await refreshInboxStatus(inboxId);
+  return true;
+}
+
+export type DeadLetterSummary = {
+  id: string;
+  inboxId: string;
+  source: string;
+  topic: string | null;
+  schemaVersion: string;
+  eventName: string;
+  eventId: string | null;
+  idempotencyKey: string;
+  shopifyOrderId: string | null;
+  shopifyOrderName: string | null;
+  attempts: number;
+  lastError: string | null;
+  errorClass: string | null;
+  recoveryAction: string | null;
+  deadLetteredAt: string;
+};
+
+export async function listDeadLetters(limit = 100): Promise<DeadLetterSummary[]> {
+  requireDatabase();
+  const result = await queryDatabase(queries.listDeadLetters, [Math.min(500, Math.max(1, limit))]);
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    inboxId: String(row.inbox_id),
+    source: String(row.source),
+    topic: row.topic == null ? null : String(row.topic),
+    schemaVersion: String(row.schema_version),
+    eventName: String(row.event_name),
+    eventId: row.event_id == null ? null : String(row.event_id),
+    idempotencyKey: String(row.idempotency_key),
+    shopifyOrderId: row.shopify_order_id == null ? null : String(row.shopify_order_id),
+    shopifyOrderName: row.shopify_order_name == null ? null : String(row.shopify_order_name),
+    attempts: Number(row.attempts),
+    lastError: row.last_error == null ? null : String(row.last_error),
+    errorClass: row.error_class == null ? null : String(row.error_class),
+    recoveryAction: row.recovery_action == null ? null : String(row.recovery_action),
+    deadLetteredAt: String(row.dead_lettered_at),
+  }));
 }
