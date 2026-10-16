@@ -22,13 +22,19 @@ export const deliverOpenAiAdsConversions = inngest.createFunction(
     name: "Deliver OpenAI Ads Conversions",
     retries: 2,
     concurrency: [{ limit: 3 }],
-    triggers: [{ event: "openai.ads/conversion.queued" }, { cron: "*/5 * * * *" }],
+    triggers: [
+      { event: "openai.ads/conversion.queued" },
+      { event: "admin/openai-ads.redeliver" },
+      { cron: "*/5 * * * *" },
+    ],
   },
   async ({ event, step }: { event: any; step: any }) => {
     if (!config.openAiAds.enabled) return { status: "disabled" };
 
     const requestedEventId =
-      event.name === "openai.ads/conversion.queued" ? String(event.data?.eventId || "") : undefined;
+      event.name === "openai.ads/conversion.queued" || event.name === "admin/openai-ads.redeliver"
+        ? String(event.data?.eventId || "")
+        : undefined;
     const claims = await step.run("claim-openai-ads-conversions", () =>
       claimOpenAiAdsConversions({
         eventId: requestedEventId || undefined,
