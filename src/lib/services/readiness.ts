@@ -77,7 +77,9 @@ export async function getReadinessReport(): Promise<ReadinessReport> {
       config.gpsUk.apiKey,
       config.gpsUk.apiSecret,
     ]),
-    configured("battle_hub", config.csPlatform.enabled, [config.csPlatform.baseUrl]),
+    configured("battle_hub", config.csPlatform.enabled, [
+      config.csPlatform.baseUrl || process.env.BATTLE_HUB_URL,
+    ]),
     configured("inngest", Boolean(process.env.K_SERVICE), [
       process.env.INNGEST_EVENT_KEY,
       process.env.INNGEST_SIGNING_KEY,
