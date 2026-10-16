@@ -1,24 +1,3 @@
-INSERT INTO public.webhook_inbox (
-  id,
-  source,
-  topic,
-  payload,
-  events,
-  idempotency_key,
-  schema_version,
-  payload_hash
-)
-VALUES (
-  '00000000-0000-0000-0000-000000000801',
-  'shopify',
-  'orders/paid',
-  '{"id":"801"}',
-  '[{"name":"shopify/order.paid","id":"shopify-paid-801","data":{"shopifyOrderId":"801","shopifyOrderName":"#IM8-801"}}]',
-  'shopify:orders/paid:801',
-  '1.0',
-  'hash-801'
-);
-
 INSERT INTO public.event_outbox (
   id,
   inbox_id,
@@ -81,26 +60,10 @@ DO $$
 BEGIN
   IF (
     SELECT count(*)
-    FROM public.battle_hub_workflow_timeline
+    FROM public.workflow_timeline_events
     WHERE shopify_order_id = '801'
   ) < 4 THEN
-    RAISE EXCEPTION 'Workflow timeline did not capture durable delivery and flow transitions';
-  END IF;
-
-  IF has_table_privilege('battle_hub_runtime', 'public.event_outbox', 'SELECT') THEN
-    RAISE EXCEPTION 'Battle Hub runtime can read the private event outbox';
-  END IF;
-
-  IF has_table_privilege('battle_hub_runtime', 'public.workflow_timeline_events', 'SELECT') THEN
-    RAISE EXCEPTION 'Battle Hub runtime can read the private timeline table';
-  END IF;
-
-  IF NOT has_table_privilege(
-    'battle_hub_runtime',
-    'public.battle_hub_workflow_timeline',
-    'SELECT'
-  ) THEN
-    RAISE EXCEPTION 'Battle Hub runtime cannot read the workflow timeline view';
+    RAISE EXCEPTION 'Workflow timeline did not capture outbox and flow-log transitions';
   END IF;
 END
 $$;

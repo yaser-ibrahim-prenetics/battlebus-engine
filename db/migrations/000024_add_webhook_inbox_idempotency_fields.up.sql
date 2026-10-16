@@ -20,17 +20,6 @@ ALTER TABLE public.webhook_inbox
   ADD CONSTRAINT webhook_inbox_idempotency_key_nonempty
     CHECK (length(btrim(idempotency_key)) > 0);
 
-CREATE UNIQUE INDEX idx_webhook_inbox_source_idempotency
-  ON public.webhook_inbox (source, idempotency_key);
-
-CREATE INDEX idx_webhook_inbox_schema_version
-  ON public.webhook_inbox (source, schema_version);
-
-DROP TRIGGER IF EXISTS battle_platform_webhook_inbox_updated_at ON public.webhook_inbox;
-CREATE TRIGGER battle_platform_webhook_inbox_updated_at
-  BEFORE UPDATE ON public.webhook_inbox
-  FOR EACH ROW EXECUTE FUNCTION public.battle_platform_set_updated_at();
-
 COMMENT ON COLUMN public.webhook_inbox.idempotency_key IS
   'Stable producer key used to collapse duplicate webhook deliveries end to end.';
 COMMENT ON COLUMN public.webhook_inbox.schema_version IS

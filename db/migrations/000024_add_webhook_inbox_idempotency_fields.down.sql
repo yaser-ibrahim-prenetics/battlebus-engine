@@ -1,9 +1,5 @@
 BEGIN;
 
-DROP TRIGGER IF EXISTS battle_platform_webhook_inbox_updated_at ON public.webhook_inbox;
-DROP INDEX IF EXISTS public.idx_webhook_inbox_schema_version;
-DROP INDEX IF EXISTS public.idx_webhook_inbox_source_idempotency;
-
 ALTER TABLE public.webhook_inbox
   DROP CONSTRAINT IF EXISTS webhook_inbox_idempotency_key_nonempty,
   DROP CONSTRAINT IF EXISTS webhook_inbox_schema_version_nonempty,

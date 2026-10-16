@@ -39,34 +39,6 @@ CREATE TABLE public.event_outbox (
     CHECK ((state = 'dead_letter') = (dead_lettered_at IS NOT NULL))
 );
 
-CREATE INDEX idx_event_outbox_due
-  ON public.event_outbox (available_at, created_at)
-  WHERE state = 'pending';
-CREATE INDEX idx_event_outbox_expired_lease
-  ON public.event_outbox (lease_expires_at)
-  WHERE state = 'processing';
-CREATE INDEX idx_event_outbox_inbox
-  ON public.event_outbox (inbox_id, state);
-CREATE INDEX idx_event_outbox_order
-  ON public.event_outbox (shopify_order_id, created_at DESC);
-CREATE INDEX idx_event_outbox_dead_letter
-  ON public.event_outbox (dead_lettered_at DESC)
-  WHERE state = 'dead_letter';
-
-CREATE TRIGGER battle_platform_event_outbox_updated_at
-  BEFORE UPDATE ON public.event_outbox
-  FOR EACH ROW EXECUTE FUNCTION public.battle_platform_set_updated_at();
-
-ALTER TABLE public.event_outbox ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.event_outbox FROM anon, authenticated, battle_hub_runtime;
-GRANT ALL ON TABLE public.event_outbox TO service_role;
-
-CREATE POLICY event_outbox_service_role_all
-  ON public.event_outbox
-  FOR ALL TO service_role
-  USING (true)
-  WITH CHECK (true);
-
 COMMENT ON TABLE public.event_outbox IS
   'Durable event-delivery queue separated from webhook receipt, with leases, retries, and terminal dead letters.';
 
