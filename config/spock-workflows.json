@@ -1,0 +1,517 @@
+{
+  "version": 1,
+  "spockRevision": "66540e77d4f415c8280d59816e320c712a83b53d",
+  "scope": "All non-Europa registered capabilities are required until production activity is verified. No implicit exclusions.",
+  "excludedTasks": {
+    "europa": "User explicitly excludes Europa",
+    "europastore": "User explicitly excludes Europa",
+    "test.locked-indefinitely": "Synthetic fault injection; required in recovery drills, not a business workflow"
+  },
+  "workflows": [
+    {
+      "id": "shopify:orders/create",
+      "task": "shopify",
+      "topic": "orders/create",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "shopify:orders/paid",
+      "task": "shopify",
+      "topic": "orders/paid",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "shopify:orders/updated",
+      "task": "shopify",
+      "topic": "orders/updated",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "shopify:orders/fulfilled",
+      "task": "shopify",
+      "topic": "orders/fulfilled",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "shopify:refunds/create",
+      "task": "shopify",
+      "topic": "refunds/create",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "shopify:orders/cancelled",
+      "task": "shopify",
+      "topic": "orders/cancelled",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:orders/create",
+      "task": "circlednastore",
+      "topic": "orders/create",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:orders/paid",
+      "task": "circlednastore",
+      "topic": "orders/paid",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:orders/updated",
+      "task": "circlednastore",
+      "topic": "orders/updated",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:orders/fulfilled",
+      "task": "circlednastore",
+      "topic": "orders/fulfilled",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:refunds/create",
+      "task": "circlednastore",
+      "topic": "refunds/create",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:orders/cancelled",
+      "task": "circlednastore",
+      "topic": "orders/cancelled",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "circlednastore:discount",
+      "task": "circlednastore",
+      "topic": "discount",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "dynamics:fulfilment",
+      "task": "dynamics",
+      "topic": "fulfilment",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "dynamics:inventory",
+      "task": "dynamics",
+      "topic": "inventory",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "dynamics:reconciliation",
+      "task": "dynamics",
+      "topic": "reconciliation",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "extensiv:InventorySummaryUpdate",
+      "task": "extensiv",
+      "topic": "InventorySummaryUpdate",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "extensiv:OrderConfirm",
+      "task": "extensiv",
+      "topic": "OrderConfirm",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "extensiv:ReceiverConfirm",
+      "task": "extensiv",
+      "topic": "ReceiverConfirm",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "prive:subscriptions/created",
+      "task": "prive",
+      "topic": "subscriptions/created",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "prive:subscriptionActivities/created",
+      "task": "prive",
+      "topic": "subscriptionActivities/created",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "loop:return.closed",
+      "task": "loop",
+      "topic": "return.closed",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "loop:return.created",
+      "task": "loop",
+      "topic": "return.created",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "loop:return.updated",
+      "task": "loop",
+      "topic": "return.updated",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "loop:return.requested",
+      "task": "loop",
+      "topic": "return.requested",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "gps:batch",
+      "task": "gps",
+      "topic": "batch",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "gps:individual",
+      "task": "gps",
+      "topic": "individual",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "gps:manual",
+      "task": "gps",
+      "topic": "manual",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "reconciliation:orders",
+      "task": "reconciliation",
+      "topic": "orders",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "reconciliation:fulfillments",
+      "task": "reconciliation",
+      "topic": "fulfillments",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "reconciliation:gps_orders",
+      "task": "reconciliation",
+      "topic": "gps_orders",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "reconciliation:gps_orders_uk",
+      "task": "reconciliation",
+      "topic": "gps_orders_uk",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "dynamics-reconciliation:sales_order",
+      "task": "dynamics-reconciliation",
+      "topic": "sales_order",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/dynamicsreconciliation.ts"
+    },
+    {
+      "id": "dynamics-reconciliation:fulfilment",
+      "task": "dynamics-reconciliation",
+      "topic": "fulfilment",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/dynamicsreconciliation.ts"
+    },
+    {
+      "id": "update.salesorder:repair",
+      "task": "update.salesorder",
+      "topic": "repair",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "replay:task",
+      "task": "replay",
+      "topic": "task",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "openai.ads:delivery",
+      "task": "openai.ads",
+      "topic": "delivery",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "heartbeat:liveness",
+      "task": "heartbeat",
+      "topic": "liveness",
+      "required": true,
+      "domains": [
+        "orders"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    },
+    {
+      "id": "notification:dispatch",
+      "task": "notification",
+      "topic": "dispatch",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts"
+    }
+  ]
+}
+
