@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { selectShippingChannel } from "@/lib/domain/orders/shipping";
-// @ts-expect-error Local Node-only reference loader deliberately has no runtime app import.
 import {
   loadShippingReference,
   readWorkflowRegistry,

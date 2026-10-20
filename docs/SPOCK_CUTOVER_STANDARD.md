@@ -1,7 +1,9 @@
 # Spock replacement cutover standard
 
 Reference: Spock Store develop at `66540e77d4f415c8280d59816e320c712a83b53d`.
-Both change branches start from `codex/durable-workflows-timelines`.
+Both change branches start from the durable-workflow phase. Bus is rebased onto
+its squash-merged `codex/operational-parity-readiness-inventory` base; Hub remains
+stacked on `codex/durable-workflows-timelines`.
 
 ## Required evidence
 
