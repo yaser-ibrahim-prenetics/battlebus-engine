@@ -11,6 +11,7 @@
 //   COUNTRY_ROUTING_OVERRIDES='{"AU":"HK Warehouse","JP":"HK Warehouse"}'
 
 import warehouseConfig from "../mappings/warehouse-config.json";
+import { selectShippingChannel } from "@/lib/domain/orders/shipping";
 import { IGpsIndividualFulfilment } from "../types/gps";
 
 // ============================================================================
@@ -421,15 +422,12 @@ export function getGpsLogisticsChannel(
     throw new Error(`Warehouse ${warehouseName} does not have a logistics channel`);
   }
 
-  const tags = String(order?.tags || "")
-    .split(",")
-    .map((tag) => tag.trim().toLowerCase())
-    .filter(Boolean);
-  if (isGpsUkWarehouse(warehouseName) && tags.includes(GPS_UK_EXPEDITED_SHIPPING_TAG)) {
-    return GPS_UK_EXPEDITED_CHANNEL;
-  }
-
-  return config.logisticsChannel;
+  return selectShippingChannel({
+    tags: order?.tags,
+    isUkWarehouse: isGpsUkWarehouse(warehouseName),
+    standardChannel: config.logisticsChannel,
+    expeditedChannel: GPS_UK_EXPEDITED_CHANNEL,
+  });
 }
 
 /**
