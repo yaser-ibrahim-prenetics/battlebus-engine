@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "cutover:replay": "node --import tsx scripts/cutover/replay.ts",
+    "test:spock-contract": "node scripts/cutover/require-reference.mjs && vitest run tests/integration/spock-shipping-contract.test.ts",
     "db:create": "node scripts/create-migration.mjs",
     "db:bootstrap-admin": "bash scripts/db-bootstrap-admin.sh",
     "db:validate": "node scripts/validate-migrations.mjs",
@@ -67,6 +69,7 @@
     "husky": "^9.1.7",
     "prettier": "^3.2.5",
     "tailwindcss": "^4",
+    "tsx": "4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.0"
   }
