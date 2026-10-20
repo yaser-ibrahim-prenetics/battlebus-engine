@@ -22,4 +22,3 @@ export const workflowHealthQueries = {
     count(*) FILTER (WHERE state = 'dead_letter')::int AS dead_letters
     FROM public.event_outbox`,
 } as const;
-

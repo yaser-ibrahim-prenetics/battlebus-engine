@@ -12,7 +12,9 @@ import type { ReplayAdapter } from "../../src/lib/domain/cutover/contracts";
 async function main() {
   const [cases, spockPath, busPath] = process.argv.slice(2);
   if (!cases || !spockPath || !busPath || process.env.CUTOVER_ISOLATED_WORKER !== "true") {
-    throw new Error("Usage (isolated worker only): tsx scripts/cutover/replay.ts cases.jsonl spock-adapter.mjs bus-adapter.mjs");
+    throw new Error(
+      "Usage (isolated worker only): tsx scripts/cutover/replay.ts cases.jsonl spock-adapter.mjs bus-adapter.mjs"
+    );
   }
   const load = async (path: string): Promise<ReplayAdapter> =>
     (await import(pathToFileURL(resolve(path)).href)).default;
@@ -27,12 +29,22 @@ async function main() {
     count++;
     if (result.status !== "matched") failed++;
     // Never emit source references, payloads, context or provider error bodies.
-    console.log(JSON.stringify({ evidenceId: result.id, status: result.status, differences: result.differences }));
+    console.log(
+      JSON.stringify({
+        evidenceId: result.id,
+        status: result.status,
+        differences: result.differences,
+      })
+    );
   }
   console.log(JSON.stringify({ cases: count, failed }));
   if (!count || failed) process.exitCode = 1;
 }
-main().catch(() => {
-  console.error("Replay failed; inspect isolated worker diagnostics without exposing customer payloads.");
-  process.exitCode = 1;
-}).finally(closeDatabase);
+main()
+  .catch(() => {
+    console.error(
+      "Replay failed; inspect isolated worker diagnostics without exposing customer payloads."
+    );
+    process.exitCode = 1;
+  })
+  .finally(closeDatabase);

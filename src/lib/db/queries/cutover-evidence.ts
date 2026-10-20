@@ -24,4 +24,3 @@ export const cutoverEvidenceQueries = {
     WHERE spock_revision = $1 AND bus_revision = $2
     ORDER BY recorded_at DESC LIMIT 50`,
 } as const;
-

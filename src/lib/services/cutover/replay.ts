@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { replayCaseSchema, type ReplayAdapter, type ReplayCase } from "@/lib/domain/cutover/contracts";
+import {
+  replayCaseSchema,
+  type ReplayAdapter,
+  type ReplayCase,
+} from "@/lib/domain/cutover/contracts";
 import { canonicalJson, compareOutputs } from "@/lib/domain/cutover/compare";
 
 export type ReplayEvidence = {
@@ -58,26 +62,39 @@ export async function replayPair(
 ): Promise<ReplayEvidence> {
   const input = replayCaseSchema.parse(raw);
   for (const [system, adapter] of Object.entries(adapters)) {
-    if (adapter.isolation !== "capture-only" ||
-        adapter.system !== (system === "spock" ? "spock" : "battle-bus") ||
-        !/^[a-f0-9]{40}$/.test(adapter.revision)) {
+    if (
+      adapter.isolation !== "capture-only" ||
+      adapter.system !== (system === "spock" ? "spock" : "battle-bus") ||
+      !/^[a-f0-9]{40}$/.test(adapter.revision)
+    ) {
       throw new Error("Replay requires capture-only adapters with immutable git revisions");
     }
   }
   const evidence: ReplayEvidence = {
-    id: randomUUID(), caseId: input.caseId, workflowId: input.workflowId,
-    mode: input.mode, provenance: input.provenance, sourceReference: input.sourceReference,
-    capturedAt: input.capturedAt, inputHash: hash({ payload: input.payload, context: input.context }),
-    spockRevision: adapters.spock.revision, busRevision: adapters.battleBus.revision,
-    status: "error", differences: [], spockHash: null, busHash: null,
-    startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
+    id: randomUUID(),
+    caseId: input.caseId,
+    workflowId: input.workflowId,
+    mode: input.mode,
+    provenance: input.provenance,
+    sourceReference: input.sourceReference,
+    capturedAt: input.capturedAt,
+    inputHash: hash({ payload: input.payload, context: input.context }),
+    spockRevision: adapters.spock.revision,
+    busRevision: adapters.battleBus.revision,
+    status: "error",
+    differences: [],
+    spockHash: null,
+    busHash: null,
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
   };
   try {
     if (!Object.values(adapters).every((adapter) => adapter.workflows.includes(input.workflowId))) {
       throw new Error("Unsupported workflow");
     }
     const [spock, bus] = await Promise.all([
-      execute(adapters.spock, input, timeoutMs), execute(adapters.battleBus, input, timeoutMs),
+      execute(adapters.spock, input, timeoutMs),
+      execute(adapters.battleBus, input, timeoutMs),
     ]);
     const compared = compareOutputs(spock, bus);
     evidence.status = compared.matched ? "matched" : "mismatch";
@@ -92,4 +109,3 @@ export async function replayPair(
   await persist(evidence);
   return evidence;
 }
-

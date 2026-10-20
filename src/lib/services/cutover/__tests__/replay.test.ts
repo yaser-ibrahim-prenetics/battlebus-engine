@@ -2,16 +2,27 @@ import { describe, expect, it, vi } from "vitest";
 import { replayPair } from "../replay";
 import type { ReplayAdapter, ReplayCase } from "@/lib/domain/cutover/contracts";
 const input: ReplayCase = {
-  caseId: "case-1", workflowId: "shopify:orders/paid", mode: "contract",
-  provenance: "synthetic", sourceReference: "fixture:case-1",
-  capturedAt: "2026-10-20T00:00:00Z", payload: { order: 1 }, context: { inventory: 5 },
+  caseId: "case-1",
+  workflowId: "shopify:orders/paid",
+  mode: "contract",
+  provenance: "synthetic",
+  sourceReference: "fixture:case-1",
+  capturedAt: "2026-10-20T00:00:00Z",
+  payload: { order: 1 },
+  context: { inventory: 5 },
 };
 const empty = () => ({ financial: [], orders: [], fulfillment: [], inventory: [] });
 function adapters() {
-  const base = { revision: "a".repeat(40), isolation: "capture-only" as const,
-    workflows: [input.workflowId], execute: vi.fn(async () => empty()) };
-  return { spock: { ...base, system: "spock" as const },
-    battleBus: { ...base, system: "battle-bus" as const } };
+  const base = {
+    revision: "a".repeat(40),
+    isolation: "capture-only" as const,
+    workflows: [input.workflowId],
+    execute: vi.fn(async () => empty()),
+  };
+  return {
+    spock: { ...base, system: "spock" as const },
+    battleBus: { ...base, system: "battle-bus" as const },
+  };
 }
 describe("paired replay", () => {
   it("passes identical immutable isolated inputs and persists the result", async () => {
@@ -48,12 +59,22 @@ describe("paired replay", () => {
     const pair = adapters();
     pair.spock.execute = vi.fn(() => new Promise(() => {}));
     expect((await replayPair(input, pair, vi.fn(), 5)).status).toBe("error");
-    await expect(replayPair(input, {
-      ...pair, spock: { ...pair.spock, isolation: "live" } as unknown as ReplayAdapter,
-    }, vi.fn())).rejects.toThrow("capture-only");
+    await expect(
+      replayPair(
+        input,
+        {
+          ...pair,
+          spock: { ...pair.spock, isolation: "live" } as unknown as ReplayAdapter,
+        },
+        vi.fn()
+      )
+    ).rejects.toThrow("capture-only");
   });
   it("does not report success if durable persistence fails", async () => {
-    await expect(replayPair(input, adapters(), async () => { throw new Error("db down"); }))
-      .rejects.toThrow("db down");
+    await expect(
+      replayPair(input, adapters(), async () => {
+        throw new Error("db down");
+      })
+    ).rejects.toThrow("db down");
   });
 });

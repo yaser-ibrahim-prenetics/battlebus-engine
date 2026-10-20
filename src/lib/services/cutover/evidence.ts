@@ -8,30 +8,51 @@ export async function persistReplayEvidence(e: ReplayEvidence): Promise<void> {
   if (!registry.workflows.some((w) => w.id === e.workflowId)) throw new Error("Unknown workflow");
   if (e.spockRevision !== registry.spockRevision) throw new Error("Unpinned Spock reference");
   await queryDatabase(queries.insert, [
-    e.id, e.caseId, e.workflowId, e.mode, e.provenance, e.sourceReference, e.capturedAt,
-    e.inputHash, e.spockRevision, e.busRevision, e.status, JSON.stringify(e.differences),
-    e.spockHash, e.busHash, e.startedAt, e.completedAt,
+    e.id,
+    e.caseId,
+    e.workflowId,
+    e.mode,
+    e.provenance,
+    e.sourceReference,
+    e.capturedAt,
+    e.inputHash,
+    e.spockRevision,
+    e.busRevision,
+    e.status,
+    JSON.stringify(e.differences),
+    e.spockHash,
+    e.busHash,
+    e.startedAt,
+    e.completedAt,
   ]);
 }
 
 export async function getCutoverReport(busRevision: string) {
-  if (!/^[a-f0-9]{40}$/.test(busRevision)) throw new Error("An immutable Bus git revision is required");
+  if (!/^[a-f0-9]{40}$/.test(busRevision))
+    throw new Error("An immutable Bus git revision is required");
   const [summary, recent] = await Promise.all([
     queryDatabase<EvidenceSummary>(queries.summary, [registry.spockRevision, busRevision]),
     queryDatabase(queries.recent, [registry.spockRevision, busRevision]),
   ]);
-  const assessment = evaluateCutover(registry.workflows.map((w) => w.id), summary.rows);
-  const workflows = assessment.workflows.map(workflow => {
-    const entry = registry.workflows.find(w => w.id === workflow.workflowId);
+  const assessment = evaluateCutover(
+    registry.workflows.map((w) => w.id),
+    summary.rows
+  );
+  const workflows = assessment.workflows.map((workflow) => {
+    const entry = registry.workflows.find((w) => w.id === workflow.workflowId);
     const blockers = [...workflow.blockers];
-    if (entry?.adapterStatus !== "validated") blockers.push("paired workflow adapters not implemented and validated");
+    if (entry?.adapterStatus !== "validated")
+      blockers.push("paired workflow adapters not implemented and validated");
     return { ...workflow, blockers, ready: blockers.length === 0 };
   });
   return {
-    ready: workflows.length > 0 && workflows.every(w => w.ready), workflows,
-    spockRevision: registry.spockRevision, busRevision,
-    checkedAt: new Date().toISOString(), policy: CUTOVER_POLICY, recent: recent.rows,
+    ready: workflows.length > 0 && workflows.every((w) => w.ready),
+    workflows,
+    spockRevision: registry.spockRevision,
+    busRevision,
+    checkedAt: new Date().toISOString(),
+    policy: CUTOVER_POLICY,
+    recent: recent.rows,
     evidence: summary.rows,
   };
 }
-

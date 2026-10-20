@@ -9,8 +9,18 @@ describe("cutover comparison", () => {
     expect(() => compareOutputs({}, empty())).toThrow();
   });
   it("compares money and payment references exactly", () => {
-    const left = { ...empty(), financial: [{ key: "payment", currency: "GBP",
-      amount: "9.99", kind: "charge", paymentReference: "shopify:123" }] };
+    const left = {
+      ...empty(),
+      financial: [
+        {
+          key: "payment",
+          currency: "GBP",
+          amount: "9.99",
+          kind: "charge",
+          paymentReference: "shopify:123",
+        },
+      ],
+    };
     const right = structuredClone(left);
     right.financial[0].paymentReference = "different";
     expect(compareOutputs(left, right).differences).toEqual(["financial"]);
@@ -18,18 +28,28 @@ describe("cutover comparison", () => {
     expect(compareOutputs(left, right).matched).toBe(false);
   });
   it("normalizes order, never drops duplicate identities", () => {
-    const rows = ["a", "b"].map(key => ({ key, sku: key, location: "UK", available: 4 }));
-    expect(compareOutputs({ ...empty(), inventory: rows },
-      { ...empty(), inventory: [...rows].reverse() }).matched).toBe(true);
+    const rows = ["a", "b"].map((key) => ({ key, sku: key, location: "UK", available: 4 }));
+    expect(
+      compareOutputs(
+        { ...empty(), inventory: rows },
+        { ...empty(), inventory: [...rows].reverse() }
+      ).matched
+    ).toBe(true);
     expect(() => compareOutputs({ ...empty(), inventory: [rows[0], rows[0]] }, empty())).toThrow();
   });
 });
 
 const now = Date.parse("2026-10-20T00:00:00Z");
-const evidence = (): EvidenceSummary[] => REQUIRED_MODES.map(mode => ({
-  workflow_id: "shopify:orders/paid", mode, samples: 100, failures: 0,
-  production_samples: 100, shadow_days: 7, latest_at: new Date(now).toISOString(),
-}));
+const evidence = (): EvidenceSummary[] =>
+  REQUIRED_MODES.map((mode) => ({
+    workflow_id: "shopify:orders/paid",
+    mode,
+    samples: 100,
+    failures: 0,
+    production_samples: 100,
+    shadow_days: 7,
+    latest_at: new Date(now).toISOString(),
+  }));
 describe("cutover gate", () => {
   const ids = ["shopify:orders/paid"];
   it("fails closed for missing workflows or empty scope", () => {
@@ -40,7 +60,13 @@ describe("cutover gate", () => {
   it("requires every evidence mode and real production observations", () => {
     expect(evaluateCutover(ids, evidence(), now).ready).toBe(true);
     for (const mode of REQUIRED_MODES) {
-      expect(evaluateCutover(ids, evidence().filter(e => e.mode !== mode), now).ready).toBe(false);
+      expect(
+        evaluateCutover(
+          ids,
+          evidence().filter((e) => e.mode !== mode),
+          now
+        ).ready
+      ).toBe(false);
     }
     const rows = evidence();
     rows[1].production_samples = 0;
@@ -62,8 +88,14 @@ describe("cutover gate", () => {
 });
 
 it("SLOs fail closed for empty samples, failures and old backlog", () => {
-  const row = { function_id: "order", completed: 100, failed: 0,
-    latency_seconds: 20, backlog: 0, backlog_age_seconds: 0 };
+  const row = {
+    function_id: "order",
+    completed: 100,
+    failed: 0,
+    latency_seconds: 20,
+    backlog: 0,
+    backlog_age_seconds: 0,
+  };
   expect(evaluateSlo(row).ok).toBe(true);
   expect(evaluateSlo({ ...row, completed: 0 }).ok).toBe(false);
   expect(evaluateSlo({ ...row, failed: 2 }).ok).toBe(false);
