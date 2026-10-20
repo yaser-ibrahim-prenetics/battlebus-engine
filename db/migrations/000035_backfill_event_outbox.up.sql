@@ -49,8 +49,8 @@ SELECT
   COALESCE(
     legacy.event_id,
     encode(
-      digest(
-        concat(
+      sha256(
+        convert_to(concat(
           legacy.source,
           ':',
           legacy.inbox_idempotency_key,
@@ -58,8 +58,7 @@ SELECT
           legacy.event_index,
           ':',
           legacy.event_name
-        ),
-        'sha256'
+        ), 'UTF8')
       ),
       'hex'
     )
