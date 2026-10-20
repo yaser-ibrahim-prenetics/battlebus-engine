@@ -37,3 +37,27 @@ export function loadShippingReference(repository, revision) {
 export function readWorkflowRegistry() {
   return JSON.parse(readFileSync(new URL("../../config/spock-workflows.json", import.meta.url), "utf8"));
 }
+
+export function checkProcessorCoverage(repository, registry) {
+  const source = execFileSync("git", ["show", registry.spockRevision + ":src/component/taskprocessor.ts"],
+    { cwd: resolve(repository), encoding: "utf8", maxBuffer: 2 * 1024 * 1024 });
+  const parsed = ts.createSourceFile("processors.ts", source, ts.ScriptTarget.Latest, true);
+  const declaration = parsed.statements.filter(ts.isVariableStatement)
+    .flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(parsed) === "processors");
+  const entries = declaration?.initializer?.arguments?.[0];
+  if (!entries || !ts.isArrayLiteralExpression(entries)) throw new Error("Processor registry shape changed");
+  const symbols = {
+    READ_EUROPA_STORE_SHIPPING_TASK_TYPE: "read.europastore.fulfilment",
+    READ_EUROPA_STORE_INVENTORY_TASK_TYPE: "read.europastore.inventory",
+    READ_EUROPA_STORE_TASK_TYPE: "read.europastore",
+    INDEFINITELY_LOCKED_TASK_TYPE: "test.locked-indefinitely",
+  };
+  const registered = new Set(registry.workflows.map(w => w.task));
+  for (const entry of entries.elements) {
+    if (!ts.isArrayLiteralExpression(entry)) throw new Error("Unexpected processor entry");
+    const key = entry.elements[0];
+    const task = ts.isStringLiteral(key) ? key.text : symbols[key.getText(parsed)];
+    if (!task) throw new Error("Unknown processor symbol: " + key.getText(parsed));
+    if (!registered.has(task) && !registry.excludedTasks[task]) throw new Error("Untracked Spock capability: " + task);
+  }
+}

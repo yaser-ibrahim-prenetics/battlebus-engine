@@ -5,7 +5,10 @@
   "excludedTasks": {
     "europa": "User explicitly excludes Europa",
     "europastore": "User explicitly excludes Europa",
-    "test.locked-indefinitely": "Synthetic fault injection; required in recovery drills, not a business workflow"
+    "test.locked-indefinitely": "Synthetic fault injection; required in recovery drills, not a business workflow",
+    "read.europastore": "Europa explicitly excluded from this cutover",
+    "read.europastore.inventory": "Europa explicitly excluded from this cutover",
+    "read.europastore.fulfilment": "Europa explicitly excluded from this cutover"
   },
   "workflows": [
     {
@@ -19,7 +22,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "shopify:orders/paid",
@@ -32,7 +36,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "shopify:orders/updated",
@@ -45,7 +50,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "shopify:orders/fulfilled",
@@ -58,7 +64,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "shopify:refunds/create",
@@ -71,7 +78,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "shopify:orders/cancelled",
@@ -84,7 +92,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:orders/create",
@@ -97,7 +106,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:orders/paid",
@@ -110,7 +120,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:orders/updated",
@@ -123,7 +134,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:orders/fulfilled",
@@ -136,7 +148,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:refunds/create",
@@ -149,7 +162,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:orders/cancelled",
@@ -162,7 +176,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "circlednastore:discount",
@@ -175,7 +190,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "dynamics:fulfilment",
@@ -188,7 +204,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "dynamics:inventory",
@@ -201,7 +218,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "dynamics:reconciliation",
@@ -214,7 +232,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "extensiv:InventorySummaryUpdate",
@@ -227,7 +246,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "extensiv:OrderConfirm",
@@ -240,7 +260,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "extensiv:ReceiverConfirm",
@@ -253,7 +274,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "prive:subscriptions/created",
@@ -266,7 +288,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "prive:subscriptionActivities/created",
@@ -279,7 +302,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "loop:return.closed",
@@ -292,7 +316,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "loop:return.created",
@@ -305,7 +330,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "loop:return.updated",
@@ -318,7 +344,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "loop:return.requested",
@@ -331,7 +358,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "gps:batch",
@@ -344,7 +372,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "gps:individual",
@@ -357,7 +386,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "gps:manual",
@@ -370,7 +400,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "reconciliation:orders",
@@ -383,7 +414,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "reconciliation:fulfillments",
@@ -396,7 +428,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "reconciliation:gps_orders",
@@ -409,7 +442,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "reconciliation:gps_orders_uk",
@@ -422,7 +456,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "dynamics-reconciliation:sales_order",
@@ -435,7 +470,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/dynamicsreconciliation.ts"
+      "spockSource": "src/component/dynamicsreconciliation.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "dynamics-reconciliation:fulfilment",
@@ -448,12 +484,13 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/dynamicsreconciliation.ts"
+      "spockSource": "src/component/dynamicsreconciliation.ts",
+      "adapterStatus": "not_implemented"
     },
     {
-      "id": "update.salesorder:repair",
+      "id": "update.salesorder:prepaymentSalesOrder",
       "task": "update.salesorder",
-      "topic": "repair",
+      "topic": "prepaymentSalesOrder",
       "required": true,
       "domains": [
         "financial",
@@ -461,7 +498,92 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:confirmSalesOrder",
+      "task": "update.salesorder",
+      "topic": "confirmSalesOrder",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:extensivOrderId",
+      "task": "update.salesorder",
+      "topic": "extensivOrderId",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:gpsOrderId",
+      "task": "update.salesorder",
+      "topic": "gpsOrderId",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:gpsUkOrderId",
+      "task": "update.salesorder",
+      "topic": "gpsUkOrderId",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:dynamicSalesOrderNumber",
+      "task": "update.salesorder",
+      "topic": "dynamicSalesOrderNumber",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "update.salesorder:fulfilmentOrderIds",
+      "task": "update.salesorder",
+      "topic": "fulfilmentOrderIds",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "replay:task",
@@ -474,7 +596,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "openai.ads:delivery",
@@ -487,7 +610,8 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "heartbeat:liveness",
@@ -497,7 +621,8 @@
       "domains": [
         "orders"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     },
     {
       "id": "notification:dispatch",
@@ -510,7 +635,22 @@
         "fulfillment",
         "inventory"
       ],
-      "spockSource": "src/component/taskprocessor.ts"
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
+    },
+    {
+      "id": "gps-individual:order",
+      "task": "gps-individual",
+      "topic": "order",
+      "required": true,
+      "domains": [
+        "financial",
+        "orders",
+        "fulfillment",
+        "inventory"
+      ],
+      "spockSource": "src/component/taskprocessor.ts",
+      "adapterStatus": "not_implemented"
     }
   ]
 }

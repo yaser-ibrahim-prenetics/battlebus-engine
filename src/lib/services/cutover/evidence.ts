@@ -20,8 +20,15 @@ export async function getCutoverReport(busRevision: string) {
     queryDatabase<EvidenceSummary>(queries.summary, [registry.spockRevision, busRevision]),
     queryDatabase(queries.recent, [registry.spockRevision, busRevision]),
   ]);
+  const assessment = evaluateCutover(registry.workflows.map((w) => w.id), summary.rows);
+  const workflows = assessment.workflows.map(workflow => {
+    const entry = registry.workflows.find(w => w.id === workflow.workflowId);
+    const blockers = [...workflow.blockers];
+    if (entry?.adapterStatus !== "validated") blockers.push("paired workflow adapters not implemented and validated");
+    return { ...workflow, blockers, ready: blockers.length === 0 };
+  });
   return {
-    ...evaluateCutover(registry.workflows.map((w) => w.id), summary.rows),
+    ready: workflows.length > 0 && workflows.every(w => w.ready), workflows,
     spockRevision: registry.spockRevision, busRevision,
     checkedAt: new Date().toISOString(), policy: CUTOVER_POLICY, recent: recent.rows,
     evidence: summary.rows,
