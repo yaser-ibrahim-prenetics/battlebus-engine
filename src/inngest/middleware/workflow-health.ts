@@ -2,6 +2,7 @@ import { Middleware, type Inngest } from "inngest";
 import { queryDatabase } from "@/lib/db/database";
 import { workflowHealthQueries as queries } from "@/lib/db/queries/workflow-health";
 import { InngestApiRateLimitTerminalMiddleware } from "./inngest-api-rate-limit-terminal";
+import { classifyWorkflowOutcome } from "@/lib/domain/cutover/workflow-outcome";
 
 /** Hooks are terminal-run aware; replaying memoized steps does not inflate sample counts. */
 export class WorkflowHealthMiddleware extends InngestApiRateLimitTerminalMiddleware {
@@ -23,19 +24,19 @@ export class WorkflowHealthMiddleware extends InngestApiRateLimitTerminalMiddlew
   async onRunComplete({ ctx, fn, output }: Middleware.OnRunCompleteArgs) {
     // A run may have started before this instrumentation was deployed.
     await this.onRunStart({ ctx, fn });
-    const result = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
-    const failed = result.success === false || ["failed", "error"].includes(String(result.status));
+    const outcome = classifyWorkflowOutcome(fn.id(), output);
     await queryDatabase(queries.finish, [
       ctx.runId,
-      failed ? "failed" : "completed",
+      outcome === "failed" ? "failed" : "completed",
       ctx.attempt + 1,
+      outcome === "skipped",
     ]);
   }
 
   async onRunError({ ctx, fn, isFinalAttempt }: Middleware.OnRunErrorArgs) {
     await this.onRunStart({ ctx, fn });
     if (isFinalAttempt) {
-      await queryDatabase(queries.finish, [ctx.runId, "failed", ctx.attempt + 1]);
+      await queryDatabase(queries.finish, [ctx.runId, "failed", ctx.attempt + 1, false]);
     } else {
       await queryDatabase(queries.retry, [ctx.runId, ctx.attempt + 1]);
     }

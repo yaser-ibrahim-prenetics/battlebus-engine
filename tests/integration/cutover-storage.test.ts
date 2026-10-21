@@ -55,8 +55,16 @@ it.skipIf(!connectionString)(
         null,
       ]);
       await client.query(health.retry, ["query-test-run", 2]);
-      await client.query(health.finish, ["query-test-run", "failed", 3]);
-      await client.query(health.finish, ["query-test-run", "completed", 4]);
+      await client.query(health.finish, ["query-test-run", "failed", 3, false]);
+      await client.query(health.finish, ["query-test-run", "completed", 4, false]);
+      await client.query(health.start, [
+        "skipped-run",
+        "query-test-function",
+        "fixture",
+        revision,
+        null,
+      ]);
+      await client.query(health.finish, ["skipped-run", "completed", 1, true]);
       const report = await client.query(health.report, [revision]);
       expect(report.rows[0]).toMatchObject({ completed: 1, failed: 1, backlog: 0 });
       expect((await client.query(health.outbox)).rows[0]).toHaveProperty("dead_letters");

@@ -26,7 +26,7 @@ it("records returned business failures, including runs missing their initial obs
     output: { status: "failed" },
   } as unknown as Middleware.OnRunCompleteArgs);
   expect(queryDatabase).toHaveBeenNthCalledWith(1, queries.start, expect.any(Array));
-  expect(queryDatabase).toHaveBeenLastCalledWith(queries.finish, ["run1", "failed", 3]);
+  expect(queryDatabase).toHaveBeenLastCalledWith(queries.finish, ["run1", "failed", 3, false]);
 });
 it("counts only terminal failures, not retry attempts", async () => {
   await middleware.onRunError({
@@ -38,5 +38,27 @@ it("counts only terminal failures, not retry attempts", async () => {
     ...args,
     isFinalAttempt: true,
   } as unknown as Middleware.OnRunErrorArgs);
-  expect(queryDatabase).toHaveBeenLastCalledWith(queries.finish, ["run1", "failed", 3]);
+  expect(queryDatabase).toHaveBeenLastCalledWith(queries.finish, ["run1", "failed", 3, false]);
+});
+
+it.each([
+  ["cron-gps-sync", { status: "completed", errors: 3 }, "failed"],
+  [
+    "cron-salesorder-reconciliation",
+    { status: "completed", results: [{ status: "error" }] },
+    "failed",
+  ],
+  ["cron-gps-sync", { status: "skipped" }, "skipped"],
+])("persists the business outcome for %s", async (id, output, status) => {
+  await middleware.onRunComplete({
+    ...args,
+    fn: { id: () => id },
+    output,
+  } as unknown as Middleware.OnRunCompleteArgs);
+  expect(queryDatabase).toHaveBeenLastCalledWith(queries.finish, [
+    "run1",
+    status === "skipped" ? "completed" : status,
+    3,
+    status === "skipped",
+  ]);
 });
