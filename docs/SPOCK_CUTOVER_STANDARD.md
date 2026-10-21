@@ -80,6 +80,17 @@ metadata and hashes are persisted; input files must remain in approved private
 storage and outside version control. Deadline aborts are cooperative: worker
 isolation must prevent side effects even when an adapter ignores its AbortSignal.
 
+Apply migrations 42–44 before deploying these fixes. Provision an independent
+worker database identity with membership in `battle_bus_replay_writer` only (not
+`service_role` or `battle_bus_runtime`). Configure the isolated worker's normal
+`DATABASE_URL` or Cloud SQL IAM settings for that identity; never copy application
+runtime credentials into it. The CLI verifies role separation before loading
+adapters. Provisioning this identity requires operator approval outside migrations.
+The writer can INSERT evidence but cannot read, update, delete or write application
+tables. Runtime can read evidence but cannot insert it. Health metrics remain
+runtime telemetry, not independent attestation. Rollback of migration 44 restores
+the older runtime write permission and must not be used during a cutover assessment.
+
 GET `/api/admin/cutover?revision=<git-sha>` requires `BATTLE_BUS_API_KEY`.
 HTTP 200 returns an assessment, not approval. Evidence/storage/probe failures
 return unavailable; an undeployed candidate cannot pass using current health.

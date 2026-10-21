@@ -3,7 +3,10 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { replayPair } from "../../src/lib/services/cutover/replay";
-import { persistReplayEvidence } from "../../src/lib/services/cutover/evidence";
+import {
+  assertReplayWriterIdentity,
+  persistReplayEvidence,
+} from "../../src/lib/services/cutover/evidence";
 import { closeDatabase } from "../../src/lib/db/database";
 import type { ReplayAdapter } from "../../src/lib/domain/cutover/contracts";
 
@@ -16,6 +19,7 @@ async function main() {
       "Usage (isolated worker only): tsx scripts/cutover/replay.ts cases.jsonl spock-adapter.mjs bus-adapter.mjs"
     );
   }
+  await assertReplayWriterIdentity();
   const load = async (path: string): Promise<ReplayAdapter> =>
     (await import(pathToFileURL(resolve(path)).href)).default;
   const adapters = { spock: await load(spockPath), battleBus: await load(busPath) };

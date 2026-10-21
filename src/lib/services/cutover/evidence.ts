@@ -4,6 +4,17 @@ import { cutoverEvidenceQueries as queries } from "@/lib/db/queries/cutover-evid
 import { evaluateCutover, CUTOVER_POLICY, type EvidenceSummary } from "@/lib/domain/cutover/gate";
 import type { ReplayEvidence } from "./replay";
 
+/** A separate worker uses its own DB credentials; runtime credentials are never a fallback. */
+export async function assertReplayWriterIdentity(): Promise<void> {
+  const result = await queryDatabase<{ replay_writer: boolean; runtime_writer: boolean }>(
+    queries.writerIdentity
+  );
+  const identity = result.rows[0];
+  if (!identity?.replay_writer || identity.runtime_writer) {
+    throw new Error("An isolated replay-writer database identity is required");
+  }
+}
+
 export async function persistReplayEvidence(e: ReplayEvidence): Promise<void> {
   if (!registry.workflows.some((w) => w.id === e.workflowId)) throw new Error("Unknown workflow");
   if (e.spockRevision !== registry.spockRevision) throw new Error("Unpinned Spock reference");

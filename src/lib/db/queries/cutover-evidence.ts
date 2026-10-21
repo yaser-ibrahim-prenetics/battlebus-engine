@@ -1,9 +1,12 @@
 export const cutoverEvidenceQueries = {
+  writerIdentity: `SELECT
+    pg_has_role(current_user, 'battle_bus_replay_writer', 'MEMBER') AS replay_writer,
+    pg_has_role(current_user, 'service_role', 'MEMBER') AS runtime_writer`,
   insert: `INSERT INTO public.cutover_evidence (
     id, case_id, workflow_id, mode, provenance, source_reference, captured_at, input_hash,
     spock_revision, bus_revision, status, differences, spock_hash, bus_hash, started_at, completed_at
   ) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::timestamptz,$16::timestamptz)
-  ON CONFLICT (id) DO NOTHING`,
+  `,
   summary: `SELECT workflow_id, mode,
     count(DISTINCT input_hash) FILTER (WHERE status = 'matched'
       AND recorded_at >= now() - CASE WHEN mode = 'shadow' THEN interval '8 days' ELSE interval '24 hours' END)::int AS samples,

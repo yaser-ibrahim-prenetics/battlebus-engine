@@ -15,7 +15,7 @@ it.skipIf(!connectionString)(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SET LOCAL ROLE service_role");
+      await client.query("SET LOCAL ROLE battle_bus_replay_writer");
       const revision = "f".repeat(40);
       const insert = (id: string, status: string, input: string) =>
         client.query(evidence.insert, [
@@ -39,6 +39,8 @@ it.skipIf(!connectionString)(
       await insert("00000000-0000-0000-0000-000000000101", "matched", "a");
       await insert("00000000-0000-0000-0000-000000000102", "matched", "a");
       await insert("00000000-0000-0000-0000-000000000103", "mismatch", "b");
+      await client.query("RESET ROLE");
+      await client.query("SET LOCAL ROLE service_role");
       const result = await client.query(evidence.summary, [revision, revision]);
       expect(result.rows[0]).toMatchObject({ samples: 1, production_samples: 1, failures: 1 });
       await client.query(health.start, [

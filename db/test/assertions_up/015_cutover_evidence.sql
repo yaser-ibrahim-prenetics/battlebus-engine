@@ -5,12 +5,17 @@ BEGIN
     OR has_table_privilege('battle_hub_runtime', 'public.cutover_evidence', 'SELECT') THEN
     RAISE EXCEPTION 'Cutover evidence privileges are too broad';
   END IF;
-  IF NOT has_table_privilege('service_role', 'public.cutover_evidence', 'INSERT') THEN
+  IF has_table_privilege('service_role', 'public.cutover_evidence', 'INSERT')
+    OR has_table_privilege('battle_bus_runtime', 'public.cutover_evidence', 'INSERT')
+    OR pg_has_role('battle_bus_runtime', 'battle_bus_replay_writer', 'MEMBER') THEN
+    RAISE EXCEPTION 'Runtime must not write replay evidence';
+  END IF;
+  IF NOT has_table_privilege('battle_bus_replay_writer', 'public.cutover_evidence', 'INSERT') THEN
     RAISE EXCEPTION 'Replay evidence cannot be persisted';
   END IF;
 END
 $$;
-SET LOCAL ROLE service_role;
+SET LOCAL ROLE battle_bus_replay_writer;
 INSERT INTO public.cutover_evidence
   (id, case_id, workflow_id, mode, provenance, source_reference, captured_at,
    input_hash, spock_revision, bus_revision, status, differences, spock_hash, bus_hash, started_at, completed_at)
