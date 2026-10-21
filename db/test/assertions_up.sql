@@ -13,6 +13,10 @@ BEGIN;
 \ir assertions_up/012_workflow_timeline_storage.sql
 \ir assertions_up/013_workflow_timeline_hub_access.sql
 \ir assertions_up/014_event_outbox_backfill.sql
+\ir assertions_up/015_cutover_evidence.sql
+\ir assertions_up/016_workflow_run_health.sql
+\ir assertions_up/017_replay_writer_isolation.sql
+\ir assertions_up/018_workflow_sample_exclusion.sql
 \ir assertions_up/005_authenticated_permissions.sql
 
 ROLLBACK;

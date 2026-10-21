@@ -10,7 +10,7 @@ BEGIN
     'openai_ads_conversions', 'reconciliation_history', 'refund_operations',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox', 'workflow_timeline_events',
-    'workspace_members', 'workspaces'
+    'workspace_members', 'workspaces', 'cutover_evidence', 'workflow_run_health'
   ]) AS expected(name)
   WHERE to_regclass('public.' || expected.name) IS NOT NULL;
 

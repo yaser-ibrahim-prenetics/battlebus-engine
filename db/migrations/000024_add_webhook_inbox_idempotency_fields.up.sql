@@ -9,7 +9,7 @@ ALTER TABLE public.webhook_inbox
 
 UPDATE public.webhook_inbox
 SET idempotency_key = id::text,
-    payload_hash = encode(digest(payload::text, 'sha256'), 'hex'),
+    payload_hash = encode(sha256(convert_to(payload::text, 'UTF8')), 'hex'),
     updated_at = COALESCE(published_at, received_at);
 
 ALTER TABLE public.webhook_inbox
