@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { Pool } from "pg";
 import { cutoverEvidenceQueries as evidence } from "@/lib/db/queries/cutover-evidence";
 import { workflowHealthQueries as health } from "@/lib/db/queries/workflow-health";
+import { evaluateSlo } from "@/lib/domain/cutover/slo";
 
 const connectionString = process.env.CUTOVER_TEST_DATABASE_URL;
 it.skipIf(!connectionString)(
@@ -67,6 +68,26 @@ it.skipIf(!connectionString)(
       await client.query(health.finish, ["skipped-run", "completed", 1, true]);
       const report = await client.query(health.report, [revision]);
       expect(report.rows[0]).toMatchObject({ completed: 1, failed: 1, backlog: 0 });
+      const oldRevision = "e".repeat(40);
+      await client.query(health.start, [
+        "old-running",
+        "query-test-function",
+        "fixture",
+        oldRevision,
+        new Date(Date.now() - 7200000).toISOString(),
+      ]);
+      await client.query(health.start, [
+        "old-finished",
+        "query-test-function",
+        "fixture",
+        oldRevision,
+        null,
+      ]);
+      await client.query(health.finish, ["old-finished", "completed", 1, false]);
+      const afterDeploy = (await client.query(health.report, [revision])).rows[0];
+      expect(afterDeploy).toMatchObject({ completed: 1, failed: 1, backlog: 1 });
+      expect(Number(afterDeploy.backlog_age_seconds)).toBeGreaterThan(7100);
+      expect(evaluateSlo(afterDeploy).blockers).toContain("backlog age");
       expect((await client.query(health.outbox)).rows[0]).toHaveProperty("dead_letters");
     } finally {
       await client.query("ROLLBACK");

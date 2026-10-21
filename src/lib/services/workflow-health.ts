@@ -22,6 +22,6 @@ export async function getWorkflowHealth(revision: string) {
     targets: SLO_TARGETS,
     workflows,
     outbox: queue,
-    note: "Wall-clock time includes intentional sleeps and refund holds; objectives require operational review.",
+    note: "Completed samples belong to the candidate revision and exclude skipped/simulated/deferred runs. Backlog includes every revision. Wall-clock time includes intentional sleeps and refund holds; objectives require operational review.",
   };
 }
