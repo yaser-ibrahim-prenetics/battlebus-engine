@@ -15,6 +15,7 @@ vi.mock("@/lib/services/flow-logs", () => ({
 
 describe("runDrainPendingActions", () => {
   const originalEnabled = config.csPlatform.enabled;
+  const originalDryRun = config.features.dryRunMode;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -22,6 +23,17 @@ describe("runDrainPendingActions", () => {
 
   afterEach(() => {
     config.csPlatform.enabled = originalEnabled;
+    config.features.dryRunMode = originalDryRun;
+  });
+
+  it("does not drain or clear lifecycle actions in dry-run even with Hub connected", async () => {
+    config.csPlatform.enabled = true;
+    config.features.dryRunMode = true;
+    const step = { run: vi.fn() };
+    const result = await runDrainPendingActions({ step, event: { id: "dry-run", data: {} } });
+    expect(result).toEqual({ status: "disabled", reason: "dry-run", processed: 0 });
+    expect(step.run).not.toHaveBeenCalled();
+    expect(getAllPendingActionOrders).not.toHaveBeenCalled();
   });
 
   it("does not call Battle Hub when CS Platform is disabled", async () => {
