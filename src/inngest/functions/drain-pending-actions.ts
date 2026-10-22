@@ -27,6 +27,9 @@ export async function runDrainPendingActions({ step, event }: { step: any; event
     console.info("[PendingActions] Drain skipped because CS Platform is disabled");
     return { status: "disabled", reason: "cs-platform-disabled", processed: 0 };
   }
+  if (config.features.dryRunMode) {
+    return { status: "disabled", reason: "dry-run", processed: 0 };
+  }
 
   const _flowStart = Date.now();
   const _runId = (event as any).id;

@@ -17,6 +17,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+import { sendHubWebhook } from "@/lib/clients/hub-transport";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
@@ -46,9 +47,6 @@ interface InventorySyncPayload {
   reason?: string;
 }
 
-// Battle Hub webhook URL for inventory sync results
-const BATTLE_HUB_URL = process.env.BATTLE_HUB_URL || "";
-
 /**
  * Notify Battle Hub of inventory sync completion
  * Updates Supabase with per-system quantities and sync timestamps
@@ -60,23 +58,19 @@ async function notifyBattleHub(
   syncStatus: "synced" | "failed",
   error?: string
 ): Promise<void> {
-  if (!BATTLE_HUB_URL) {
-    console.log("[InventoryMesh] BATTLE_HUB_URL not configured, skipping callback");
+  if (!config.csPlatform.enabled || config.features.dryRunMode) {
+    console.log("[InventoryMesh] Hub delivery disabled or dry-run; skipping callback");
     return;
   }
 
   try {
-    const response = await fetch(`${BATTLE_HUB_URL}/api/webhooks/inventory`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const response = await sendHubWebhook("/api/webhooks/inventory", {
         sku,
         system,
         quantity,
         syncStatus,
         timestamp: new Date().toISOString(),
         ...(error && { error }),
-      }),
     });
 
     if (!response.ok) {

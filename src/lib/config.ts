@@ -134,7 +134,7 @@ export const config = {
 
   // CS Platform (Battle Hub) Configuration
   csPlatform: {
-    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_CS_URL || "",
+    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_HUB_URL || process.env.BATTLE_CS_URL || "",
     webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "",
     enabled: process.env.CS_PLATFORM_ENABLED !== "false",
   },
@@ -350,7 +350,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     }
     if (!config.csPlatform.webhookSecret) {
       console.warn(
-        "CS_PLATFORM_WEBHOOK_SECRET is not set - webhooks will be sent without signature verification"
+        "CS_PLATFORM_WEBHOOK_SECRET is not set - Battle Hub callbacks will fail closed"
       );
     }
   }

@@ -4,17 +4,12 @@
 // Sends order events to battle-cs support platform
 
 import { config } from "@/lib/config";
-import crypto from "crypto";
+import { sendHubWebhook } from "./hub-transport";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 
 interface OrderEvent {
   event: string;
   data: any;
-}
-
-function generateSignature(payload: string): string {
-  if (!config.csPlatform.webhookSecret) return "";
-  return crypto.createHmac("sha256", config.csPlatform.webhookSecret).update(payload).digest("hex");
 }
 
 export async function sendOrderEvent(event: OrderEvent): Promise<void> {
@@ -35,9 +30,6 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
 
   const _start = Date.now();
   try {
-    const payload = JSON.stringify(event);
-    const signature = generateSignature(payload);
-
     // Route events to appropriate webhook endpoints
     let webhookPath = "/api/webhooks/orders"; // Default
     if (event.event.startsWith("product.")) {
@@ -46,14 +38,7 @@ export async function sendOrderEvent(event: OrderEvent): Promise<void> {
       webhookPath = "/api/webhooks/locations";
     }
 
-    const response = await fetch(`${config.csPlatform.baseUrl}${webhookPath}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Battle-Bus-Signature": signature,
-      },
-      body: payload,
-    });
+    const response = await sendHubWebhook(webhookPath, event);
 
     if (!response.ok) {
       const raw = await response.text();

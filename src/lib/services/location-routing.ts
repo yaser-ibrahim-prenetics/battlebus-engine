@@ -180,7 +180,6 @@ function mergeStaticProductionLocationOverrides(dynamic: LocationMapping[]): Loc
 async function fetchLocationMappings(): Promise<LocationMapping[]> {
   async function fetchFromHubApi(reason: string): Promise<LocationMapping[]> {
     try {
-      const hubUrl = config.csPlatform.baseUrl;
       const serviceSecret =
         config.csPlatform.webhookSecret ||
         process.env.INTERNAL_SERVICE_SECRET ||
@@ -192,12 +191,8 @@ async function fetchLocationMappings(): Promise<LocationMapping[]> {
         );
         return [];
       }
-      const response = await fetch(`${hubUrl}/api/locations/mappings`, {
-        headers: {
-          Authorization: `Bearer ${serviceSecret}`,
-          "x-battle-bus-webhook-secret": serviceSecret,
-        },
-      });
+      const { readHubLocationMappings } = await import("@/lib/clients/hub-transport");
+      const response = await readHubLocationMappings();
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         console.warn(
