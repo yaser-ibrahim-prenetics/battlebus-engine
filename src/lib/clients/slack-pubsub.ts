@@ -15,10 +15,15 @@ export async function publishSlackToPubSub(notification: SlackNotification): Pro
     method: "POST",
     timeout: 10_000,
     retry: false, // The durable outbox owns publication retries.
-    data: { messages: [{
-      data: Buffer.from(JSON.stringify(notification)).toString("base64"),
-      attributes: { "notification-id": notification.id, "schema-version": "1" },
-    }] },
+    data: {
+      messages: [
+        {
+          data: Buffer.from(JSON.stringify(notification)).toString("base64"),
+          attributes: { "notification-id": notification.id, "schema-version": "1" },
+        },
+      ],
+    },
   });
-  if (result.data.messageIds?.length !== 1) throw new Error("Pub/Sub did not acknowledge the notification");
+  if (result.data.messageIds?.length !== 1)
+    throw new Error("Pub/Sub did not acknowledge the notification");
 }

@@ -9,5 +9,5 @@ export const drainSlackNotificationOutbox = inngest.createFunction(
     concurrency: { limit: 1 },
     triggers: [{ cron: "* * * * *" }],
   },
-  async ({ step }) => step.run("publish-notifications", drainSlackOutbox),
+  async ({ step }) => step.run("publish-notifications", drainSlackOutbox)
 );

@@ -1,8 +1,11 @@
-import { queryDatabase } from '@/lib/db/database';
-import type { SlackNotification } from '@/lib/clients/slack';
-import { enqueueNotificationSQL } from '@/lib/sql/slack-notifications/enqueue';
-import { claimNotificationsSQL } from '@/lib/sql/slack-notifications/claim';
-import { completeNotificationSQL, retryNotificationSQL } from '@/lib/sql/slack-notifications/finish';
+import { queryDatabase } from "@/lib/db/database";
+import type { SlackNotification } from "@/lib/clients/slack";
+import { enqueueNotificationSQL } from "@/lib/sql/slack-notifications/enqueue";
+import { claimNotificationsSQL } from "@/lib/sql/slack-notifications/claim";
+import {
+  completeNotificationSQL,
+  retryNotificationSQL,
+} from "@/lib/sql/slack-notifications/finish";
 
 type Publisher = (notification: SlackNotification) => Promise<void>;
 type Claimed = {
@@ -13,7 +16,8 @@ type Claimed = {
 };
 
 export async function enqueueSlackNotification(notification: SlackNotification): Promise<void> {
-  if (!notification.id || notification.id.length > 1024) throw new Error('Invalid Slack notification ID');
+  if (!notification.id || notification.id.length > 1024)
+    throw new Error("Invalid Slack notification ID");
   await queryDatabase(enqueueNotificationSQL, [notification.id, JSON.stringify(notification)]);
 }
 
@@ -29,7 +33,9 @@ export async function drainSlackNotifications(publish: Publisher, id?: string) {
     } catch {
       // Do not persist credentials, endpoint URLs, or payloads from provider errors.
       await queryDatabase(retryNotificationSQL, [row.notification_id, row.lease_token]);
-      console.error(`[SlackOutbox] Publication failed id=${row.notification_id} attempt=${row.attempts}`);
+      console.error(
+        `[SlackOutbox] Publication failed id=${row.notification_id} attempt=${row.attempts}`
+      );
       failed++;
     }
   }

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { publishMessages } from "@/lib/clients/kafka";
 import type { ISlackAttachment } from "../types/slack";
-import { enqueueSlackNotification, drainSlackNotifications } from "@/lib/services/slack-notifications/outbox";
+import {
+  enqueueSlackNotification,
+  drainSlackNotifications,
+} from "@/lib/services/slack-notifications/outbox";
 import { publishSlackToPubSub } from "./slack-pubsub";
 
 // Type for Slack channel keys
@@ -128,7 +131,11 @@ async function publishToKafka(notification: SlackNotification): Promise<void> {
 }
 
 export async function drainSlackOutbox() {
-  if (config.slack.transport === "webhook" || config.slack.integration !== "real" || !config.slack.publishEnabled) {
+  if (
+    config.slack.transport === "webhook" ||
+    config.slack.integration !== "real" ||
+    !config.slack.publishEnabled
+  ) {
     return { claimed: 0, published: 0, failed: 0 };
   }
   return drainSlackNotifications(publishQueuedNotification);
@@ -155,7 +162,8 @@ export async function sendSlackNotification(notification: SlackNotification): Pr
     }
     if (config.slack.transport === "kafka" || config.slack.transport === "pubsub") {
       await enqueueSlackNotification(notification);
-      if (config.slack.publishEnabled) await drainSlackNotifications(publishQueuedNotification, notification.id);
+      if (config.slack.publishEnabled)
+        await drainSlackNotifications(publishQueuedNotification, notification.id);
     } else {
       await postToWebhook(notification);
     }

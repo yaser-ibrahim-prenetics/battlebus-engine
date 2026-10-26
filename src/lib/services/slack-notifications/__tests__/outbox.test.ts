@@ -4,7 +4,12 @@ vi.mock("@/lib/db/database", () => ({ queryDatabase: query }));
 import { enqueueSlackNotification, drainSlackNotifications } from "../outbox";
 import type { SlackNotification } from "@/lib/clients/slack";
 
-const payload: SlackNotification = { id: "evt:error", channel: "system", severity: "error", title: "Failure" };
+const payload: SlackNotification = {
+  id: "evt:error",
+  channel: "system",
+  severity: "error",
+  title: "Failure",
+};
 const row = { notification_id: payload.id, payload, lease_token: "lease-1", attempts: 1 };
 
 describe("Slack durable publication", () => {
@@ -29,7 +34,9 @@ describe("Slack durable publication", () => {
   });
 
   it("retains an uncertain publish for safe retry if the database update fails", async () => {
-    query.mockResolvedValueOnce({ rows: [row] }).mockRejectedValueOnce(new Error("connection lost"))
+    query
+      .mockResolvedValueOnce({ rows: [row] })
+      .mockRejectedValueOnce(new Error("connection lost"))
       .mockResolvedValueOnce({ rows: [] });
     const publish = vi.fn().mockResolvedValue(undefined);
     expect((await drainSlackNotifications(publish)).failed).toBe(1);
