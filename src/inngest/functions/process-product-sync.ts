@@ -240,7 +240,8 @@ export const processProductSync = inngest.createFunction(
         .join(", ");
       await slack.sendOrderMessage(
         SlackChannelEnum.SHOPIFY,
-        `Product ${action}: ${productTitle} (${productId})\nSKUs: ${skus || "none"}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`
+        `Product ${action}: ${productTitle} (${productId})\nSKUs: ${skus || "none"}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`,
+        slack.slackNotificationId(event.id, "product-sync")
       );
     });
 

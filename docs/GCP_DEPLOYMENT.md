@@ -132,6 +132,37 @@ The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
 Cloud Run service account. `DATABASE_URL` remains reserved for local tooling
 and the isolated migration job.
 
+## Slack notifications
+
+Every Slack notification has a stable id built with `slackNotificationId(event.id, purpose, ...parts)`,
+for example `01JB…:backorder-resolved:2`. Retries and replays of the same Inngest event produce the
+same id. Parts distinguish notifications that one event legitimately sends more than once (per retry
+attempt, per fulfillment, per GPS batch).
+
+`SLACK_TRANSPORT` selects how notifications are delivered:
+
+- `webhook` (default): posts directly to the `SLACK_*_CHANNEL` webhooks, unchanged from before.
+  The id is not used.
+- `kafka`: publishes a structured event to `SLACK_NOTIFICATION_TOPIC`
+  (default `battle-bus.slack-notification`). `slack-notification-service` consumes it and posts each
+  id at most once, so a retried step or a replayed run never posts twice.
+
+Kafka transport configuration (no secrets; authentication is keyless as the runtime service account):
+
+- `SLACK_TRANSPORT=kafka`
+- `KAFKA_BOOTSTRAP_SERVERS=bootstrap.<cluster>.asia-east1.managedkafka.battle-bus-509406.cloud.goog:9092`
+- `KAFKA_SASL_MECHANISM=google-oauthbearer` (TLS + SASL OAUTHBEARER for Google Cloud Managed
+  Service for Apache Kafka)
+
+Prerequisites before switching: the Managed Kafka cluster and topic exist, `battle-bus-runtime`
+has `roles/managedkafka.client`, the Cloud Run service has Direct VPC egress to the cluster subnet,
+and slack-notification-service is deployed and consuming. `validateConfig()` rejects
+`SLACK_TRANSPORT=kafka` without brokers. Publishing failures are logged as `[Slack]` errors with
+the notification id and never fail the workflow. Roll back by unsetting `SLACK_TRANSPORT`.
+
+Once the Kafka transport is live, the `SLACK_*_CHANNEL` secrets can be removed from this service.
+slack-notification-service mounts the same Secret Manager secrets.
+
 ## Inngest
 
 Inngest remains the durable workflow control plane. Each successful deployment

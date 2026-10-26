@@ -105,7 +105,8 @@ export const processInventorySync = inngest.createFunction(
       if (!d365Result.success || !gpsResult.success) {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `⚠️ Inventory sync issue for item ${inventoryItemId} at location ${locationId}\nAvailable: ${inventory.available}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`
+          `⚠️ Inventory sync issue for item ${inventoryItemId} at location ${locationId}\nAvailable: ${inventory.available}\nD365: ${d365Result.message}\nGPS: ${gpsResult.message}`,
+          slack.slackNotificationId(event.id, "inventory-sync-issue")
         );
       }
       console.log(

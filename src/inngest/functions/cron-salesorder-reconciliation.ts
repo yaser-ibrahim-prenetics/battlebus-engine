@@ -441,8 +441,11 @@ async function runOneRecon(params: {
   dateTo: string;
   storeCode: string;
   runId: string;
+  /** Triggering event id: keeps Slack notification ids stable when the run is retried. */
+  notificationScope: string;
 }): Promise<ReconResult> {
-  const { type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId } = params;
+  const { type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId, notificationScope } =
+    params;
   const checkId = crypto.randomUUID();
   const trace = runId ? { runId, type } : undefined;
 
@@ -481,7 +484,7 @@ async function runOneRecon(params: {
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
-    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, failMessage);
+    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, failMessage, slack.slackNotificationId(notificationScope, "reconciliation-query-failed", type));
     logFlowEvent({
       level: "error",
       flow: `reconciliation_${type}`,
@@ -592,9 +595,9 @@ async function runOneRecon(params: {
       : `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: Found ${unsyncedOrders.length} ${issueKindLabel}:\n${unsyncedOrders.join("\n")}`;
 
   if (status === "ok") {
-    await slack.sendInfoMessage(SlackChannelEnum.GENERAL, message);
+    await slack.sendInfoMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(notificationScope, "reconciliation-result", type));
   } else {
-    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message);
+    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(notificationScope, "reconciliation-result", type));
   }
 
   logFlowEvent({
@@ -712,7 +715,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
 
     if (!isDatabaseConfigured()) {
       const message = `SalesOrder Reconciliation: Error for store ${storeCode} from ${fromDate} to ${toDate}:\n PostgreSQL is not configured.`;
-      await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message);
+      await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(event?.id ?? runId, "reconciliation-database-not-configured"));
       logFlowEvent({
         level: "error",
         flow: "reconciliation_salesorder",
@@ -748,6 +751,7 @@ export const cronSalesorderReconciliation = inngest.createFunction(
         dateTo: toDate,
         storeCode,
         runId: safeRunId,
+        notificationScope: event?.id ?? safeRunId,
       });
       results.push(item);
     }

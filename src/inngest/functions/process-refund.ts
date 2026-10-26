@@ -622,7 +622,8 @@ export const processRefund = inngest.createFunction(
         await slack
           .sendWarningMessage(
             "dynamics",
-            `[Refund] postReturnOrderInvoice failed for ${d365Order.SalesOrderNumber} (refund ${refundId}): ${errorMsg}`
+            `[Refund] postReturnOrderInvoice failed for ${d365Order.SalesOrderNumber} (refund ${refundId}): ${errorMsg}`,
+            slack.slackNotificationId(event.id, "refund-return-invoice-failed", refundId)
           )
           .catch(() => {});
         return { status: "error", error: errorMsg };
