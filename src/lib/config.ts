@@ -150,13 +150,16 @@ export const config = {
   // Slack Notification Channels
   slack: {
     applicationName: "store",
-    appEnv: "local",
+    appEnv: process.env.APP_ENV || "local",
     integration: "real",
     // "webhook" posts directly to the channel webhooks below (default). "kafka" publishes to
     // slack-notification-service, which posts each notification id to Slack at most once.
-    transport: (process.env.SLACK_TRANSPORT === "kafka" ? "kafka" : "webhook") as
+    transport: (process.env.SLACK_TRANSPORT || "webhook") as
       | "webhook"
-      | "kafka",
+      | "kafka"
+      | "pubsub",
+    publishEnabled: process.env.SLACK_PUBLISH_ENABLED !== "false",
+    pubsubTopic: process.env.SLACK_PUBSUB_TOPIC || "",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
     channel: {
       order: process.env.SLACK_ORDER_CHANNEL,
@@ -380,6 +383,10 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     }
   }
 
+  if (!["webhook", "kafka", "pubsub"].includes(config.slack.transport))
+    errors.push("SLACK_TRANSPORT must be webhook, kafka, or pubsub");
+  if (config.slack.transport === "pubsub" && !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(config.slack.pubsubTopic))
+    errors.push("SLACK_PUBSUB_TOPIC must be a full Pub/Sub topic resource");
   if (config.slack.transport === "kafka") {
     if (config.kafka.brokers.length === 0)
       errors.push("KAFKA_BOOTSTRAP_SERVERS is required when SLACK_TRANSPORT=kafka");

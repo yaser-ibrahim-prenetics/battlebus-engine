@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { publishMessages } from "@/lib/clients/kafka";
 import type { ISlackAttachment } from "../types/slack";
+import {
+  enqueueSlackNotification,
+  drainSlackNotifications,
+} from "@/lib/services/slack-notifications/outbox";
+import { publishSlackToPubSub } from "./slack-pubsub";
 
 // Type for Slack channel keys
 type SlackChannel = keyof typeof config.slack.channel;
@@ -125,6 +130,24 @@ async function publishToKafka(notification: SlackNotification): Promise<void> {
   ]);
 }
 
+export async function drainSlackOutbox() {
+  if (
+    config.slack.transport === "webhook" ||
+    config.slack.integration !== "real" ||
+    !config.slack.publishEnabled
+  ) {
+    return { claimed: 0, published: 0, failed: 0 };
+  }
+  return drainSlackNotifications(publishQueuedNotification);
+}
+
+async function publishQueuedNotification(notification: SlackNotification) {
+  const prepared = { ...notification, summary: notification.summary?.slice(0, MAX_SUMMARY_LENGTH) };
+  if (config.slack.transport === "pubsub") return publishSlackToPubSub(prepared);
+  if (config.slack.transport === "kafka") return publishToKafka(prepared);
+  throw new Error("Unsupported Slack outbox transport");
+}
+
 /**
  * Sends a notification through the configured transport. Never throws: a notification must not
  * fail the business flow, so failures are logged with the notification id instead.
@@ -137,8 +160,10 @@ export async function sendSlackNotification(notification: SlackNotification): Pr
       );
       return;
     }
-    if (config.slack.transport === "kafka") {
-      await publishToKafka(notification);
+    if (config.slack.transport === "kafka" || config.slack.transport === "pubsub") {
+      await enqueueSlackNotification(notification);
+      if (config.slack.publishEnabled)
+        await drainSlackNotifications(publishQueuedNotification, notification.id);
     } else {
       await postToWebhook(notification);
     }
