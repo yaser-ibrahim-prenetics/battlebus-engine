@@ -1,0 +1,1 @@
+DROP INDEX public.slack_notification_outbox_ready_idx;
