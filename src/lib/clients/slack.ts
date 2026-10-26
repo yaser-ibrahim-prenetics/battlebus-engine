@@ -112,10 +112,14 @@ async function postToWebhook(notification: SlackNotification): Promise<void> {
 }
 
 async function publishToKafka(notification: SlackNotification): Promise<void> {
+  const prepared: SlackNotification = {
+    ...notification,
+    summary: notification.summary?.slice(0, MAX_SUMMARY_LENGTH),
+  };
   await publishMessages(config.kafka.slackNotificationTopic, [
     {
       key: notification.channel,
-      value: JSON.stringify(notification),
+      value: JSON.stringify(prepared),
       headers: { "notification-id": notification.id },
     },
   ]);
@@ -126,25 +130,21 @@ async function publishToKafka(notification: SlackNotification): Promise<void> {
  * fail the business flow, so failures are logged with the notification id instead.
  */
 export async function sendSlackNotification(notification: SlackNotification): Promise<void> {
-  const prepared: SlackNotification = {
-    ...notification,
-    summary: notification.summary?.slice(0, MAX_SUMMARY_LENGTH),
-  };
   try {
     if (config.slack.integration !== "real") {
       console.log(
-        `[Slack] [${prepared.severity}] [${prepared.channel}] id=${prepared.id} ${prepared.summary ?? prepared.title}`
+        `[Slack] [${notification.severity}] [${notification.channel}] id=${notification.id} ${notification.summary ?? notification.title}`
       );
       return;
     }
     if (config.slack.transport === "kafka") {
-      await publishToKafka(prepared);
+      await publishToKafka(notification);
     } else {
-      await postToWebhook(prepared);
+      await postToWebhook(notification);
     }
   } catch (e) {
     console.error(
-      `[Slack] Unable to send ${prepared.severity} notification channel=${prepared.channel} id=${prepared.id} transport=${config.slack.transport}:`,
+      `[Slack] Unable to send ${notification.severity} notification channel=${notification.channel} id=${notification.id} transport=${config.slack.transport}:`,
       e
     );
   }
