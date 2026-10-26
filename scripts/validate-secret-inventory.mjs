@@ -31,7 +31,11 @@ for (const file of sourceFiles) {
   const contents = readFileSync(file, "utf8");
   const candidates = [
     ...contents.matchAll(/process\.env\.([A-Z][A-Z0-9_]{2,})/g),
-    ...contents.matchAll(/["'`]([A-Z][A-Z0-9_]{2,})["'`]/g),
+    // Google's Kafka JWT algorithm label is a protocol constant, not a secret name.
+    // Keep process.env references above checked even if they use this name.
+    ...[...contents.matchAll(/["'`]([A-Z][A-Z0-9_]{2,})["'`]/g)].filter(
+      (match) => match[1] !== "GOOG_OAUTH2_TOKEN"
+    ),
   ];
   for (const match of candidates) {
     if (isCredentialName(match[1])) discovered.add(match[1]);
