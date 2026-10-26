@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const publishMessages = vi.fn();
+const enqueue = vi.fn();
+vi.mock("@/lib/services/slack-notifications/outbox", () => ({
+  enqueueSlackNotification: enqueue,
+  drainSlackNotifications: async (publish: (value: unknown) => Promise<void>) => {
+    await publish(enqueue.mock.calls.at(-1)?.[0]);
+  },
+}));
 vi.mock("@/lib/clients/kafka", () => ({ publishMessages }));
 
 describe("Slack notifications", () => {
@@ -8,6 +15,7 @@ describe("Slack notifications", () => {
   afterEach(() => {
     process.env = { ...previous };
     publishMessages.mockReset();
+    enqueue.mockReset();
     vi.unstubAllGlobals();
     vi.resetModules();
   });
@@ -37,6 +45,7 @@ describe("Slack notifications", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(publishMessages).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledTimes(1);
     const [topic, messages] = publishMessages.mock.calls[0];
     expect(topic).toBe("battle-bus.slack-notification");
     expect(messages[0].key).toBe("gps");

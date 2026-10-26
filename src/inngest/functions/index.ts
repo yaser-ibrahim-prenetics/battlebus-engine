@@ -4,6 +4,7 @@
 // Export all Inngest functions for registration
 
 import { config } from "@/lib/config";
+import { drainSlackNotificationOutbox } from "./drain-slack-notifications";
 
 export { processShopifyOrder } from "./process-shopify-order";
 export { processRefund } from "./process-refund";
@@ -92,6 +93,7 @@ const inventoryFunctions = config.features.enableInventoryRuns
   : [];
 
 export const functions = [
+  drainSlackNotificationOutbox,
   processShopifyOrder,
   processRefund,
   processShopifyFulfillment,
