@@ -61,7 +61,8 @@ export const processGpsBatch = inngest.createFunction(
           console.error(`[GPS Batch] Unexpected response for batch ${batchNumber}`);
           await slack.sendErrorMessage(
             SlackChannelEnum.GPS,
-            `[GPS Batch] Unexpected response from GPS for batch ${batchNumber}`
+            `[GPS Batch] Unexpected response from GPS for batch ${batchNumber}`,
+            slack.slackNotificationId(event.id, "gps-batch-unexpected-response", batchNumber)
           );
           continue;
         }
@@ -83,7 +84,8 @@ export const processGpsBatch = inngest.createFunction(
         console.log("[GPS Batch] No GPS orders ready for fulfillment");
         await slack.sendInfoMessage(
           SlackChannelEnum.GPS,
-          `[GPS Batch] Batch ${batchId}: No fulfilled orders found out of ${gpsOrderIds.length} orders`
+          `[GPS Batch] Batch ${batchId}: No fulfilled orders found out of ${gpsOrderIds.length} orders`,
+          slack.slackNotificationId(event.id, "gps-batch-no-fulfilled-orders")
         );
       }
       return allFulfilledOrders;
@@ -159,7 +161,7 @@ export const processGpsBatch = inngest.createFunction(
         `[GPS Batch] Batch ${batchId} completed: ${eventResults.length} fulfilment events triggered for ` +
         `${validOrders.length} fulfilled orders`;
       console.log(message);
-      await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
+      await slack.sendInfoMessage(SlackChannelEnum.GPS, message, slack.slackNotificationId(event.id, "gps-batch-completed"));
     });
 
     logFlowEvent({

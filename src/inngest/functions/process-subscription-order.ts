@@ -278,7 +278,8 @@ export const processSubscriptionOrder = inngest.createFunction(
           await step.run("alert-missing-subscription-tags", async () => {
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
-              `[Subscription] Subscription tag still missing after ${SUBSCRIPTION_TAG_WAIT_MINUTES}min for ${shopifyOrderName} (contract: ${subscriptionContractId || "unknown"}). Proceeding without tag — check Skio webhook delivery.`
+              `[Subscription] Subscription tag still missing after ${SUBSCRIPTION_TAG_WAIT_MINUTES}min for ${shopifyOrderName} (contract: ${subscriptionContractId || "unknown"}). Proceeding without tag — check Skio webhook delivery.`,
+              slack.slackNotificationId(event.id, "subscription-tag-missing")
             );
           });
         }

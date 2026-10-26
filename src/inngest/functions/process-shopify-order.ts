@@ -604,7 +604,8 @@ export const processShopifyOrder = inngest.createFunction(
         );
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `Order ${shopifyOrderName}: excluded ${skuResolution.unresolved.length} shippable line(s) without ItemNumber in Shopify — processing remaining SKUs only. Sample: ${unresolvedSummary}`
+          `Order ${shopifyOrderName}: excluded ${skuResolution.unresolved.length} shippable line(s) without ItemNumber in Shopify — processing remaining SKUs only. Sample: ${unresolvedSummary}`,
+          slack.slackNotificationId(event.id, "order-unresolved-skus-excluded")
         );
 
         currentOrder = { ...currentOrder, line_items: filteredLineItems } as ShopifyOrderPayload;
@@ -878,17 +879,20 @@ export const processShopifyOrder = inngest.createFunction(
       if (validation.status === "failed_validation") {
         await slack.sendErrorMessage(
           SlackChannelEnum.SHOPIFY,
-          `Order ${shopifyOrderName} validation failed: ${validation.reason}`
+          `Order ${shopifyOrderName} validation failed: ${validation.reason}`,
+          slack.slackNotificationId(event.id, "order-validation-failed")
         );
       } else if (validation.status === "skipped" && validation.reason === "High-risk order") {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `Skipping High Risk Order: ${shopifyOrderName}`
+          `Skipping High Risk Order: ${shopifyOrderName}`,
+          slack.slackNotificationId(event.id, "order-high-risk-skipped")
         );
       } else if (validation.status === "fraud_hold") {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Battle Bus] Skip high risk order for ${shopifyOrderId}`
+          `[Battle Bus] Skip high risk order for ${shopifyOrderId}`,
+          slack.slackNotificationId(event.id, "order-fraud-hold")
         );
       } else if (validation.status === "cancelled") {
         const cancelReason =
@@ -897,12 +901,14 @@ export const processShopifyOrder = inngest.createFunction(
         console.log(`[Battle Bus] Order was cancelled due to ${cancelReason}`);
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Battle Bus] Order was cancelled due to ${cancelReason}`
+          `[Battle Bus] Order was cancelled due to ${cancelReason}`,
+          slack.slackNotificationId(event.id, "order-cancelled")
         );
       } else if (validation.status === "risk_order") {
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Battle Bus] Order contain risk: ${validation.message?.join(", ")}`
+          `[Battle Bus] Order contain risk: ${validation.message?.join(", ")}`,
+          slack.slackNotificationId(event.id, "order-risk")
         );
       }
 
@@ -1352,7 +1358,8 @@ export const processShopifyOrder = inngest.createFunction(
               SlackChannelEnum.SHOPIFY,
               isNumberSequenceError
                 ? `⚠️ [D365] Number sequence exceeded for prepayment\nOrder: ${shopifyOrderName} (${salesOrderNo})\nError: ${errorMessage}\nAction Required: Extend number sequence U001-JBN in D365`
-                : `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`
+                : `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`,
+                slack.slackNotificationId(event.id, "order-d365-prepayment-failed")
             );
 
             throw new Error(
@@ -1381,7 +1388,8 @@ export const processShopifyOrder = inngest.createFunction(
         } catch (error) {
           await slack.sendWarningMessage(
             "gps",
-            `Failed to build GPS payload for ${shopifyOrderName}: ${error}`
+            `Failed to build GPS payload for ${shopifyOrderName}: ${error}`,
+            slack.slackNotificationId(event.id, "order-gps-payload-failed")
           );
           await publishStatus("gps.build-payload", "skipped", "No GPS payload required");
         }
@@ -1452,7 +1460,8 @@ export const processShopifyOrder = inngest.createFunction(
                     console.warn(`[Fulfillment Split] Shopify userErrors: ${errorMsg}`);
                     await slack.sendWarningMessage(
                       SlackChannelEnum.SHOPIFY,
-                      `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`
+                      `[Fulfillment Split] ${shopifyOrderName}: split failed — ${errorMsg}`,
+                      slack.slackNotificationId(event.id, "order-fulfillment-split-failed")
                     );
                   } else {
                     const newFOs =
@@ -1464,7 +1473,8 @@ export const processShopifyOrder = inngest.createFunction(
                     await slack.sendOrderMessage(
                       SlackChannelEnum.SHOPIFY,
                       `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
-                        `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`
+                        `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`,
+                        slack.slackNotificationId(event.id, "order-fulfillment-split")
                     );
                   }
                 }
@@ -1475,7 +1485,8 @@ export const processShopifyOrder = inngest.createFunction(
             console.warn(`[Fulfillment Split] Failed for ${shopifyOrderName}: ${errorMsg}`);
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
-              `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`
+              `[Fulfillment Split] ${shopifyOrderName}: split check failed (non-blocking) — ${errorMsg}`,
+              slack.slackNotificationId(event.id, "order-fulfillment-split-check-failed")
             );
           }
         });
@@ -1532,7 +1543,8 @@ export const processShopifyOrder = inngest.createFunction(
                   `Order: ${shopifyOrderName} (${salesOrderNo})\n` +
                   `Warehouse: ${warehouseName}\n` +
                   `Error: ${errorMessage}\n` +
-                  `D365 order created successfully, but GPS sync failed.`
+                  `D365 order created successfully, but GPS sync failed.`,
+                  slack.slackNotificationId(event.id, "order-gps-dispatch-failed")
               );
 
               return { type: "failed" as const, error: errorMessage };
@@ -1750,7 +1762,8 @@ export const processShopifyOrder = inngest.createFunction(
 
           await slack.sendWarningMessage(
             "gpslow",
-            `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`
+            `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`,
+            slack.slackNotificationId(event.id, "order-backorder-existing-d365-oos")
           );
 
           await step.run("emit-backorder-event-existing-d365-oos", async () => {
@@ -1964,7 +1977,8 @@ export const processShopifyOrder = inngest.createFunction(
 
         await slack.sendWarningMessage(
           "gpslow",
-          `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`
+          `[Backorder] ${shopifyOrderName}: ${errorType} - ${oosError}\nSKUs: ${failedSkus.join(", ")}`,
+          slack.slackNotificationId(event.id, "order-backorder-oos")
         );
 
         await step.run("emit-backorder-event", async () => {
@@ -2031,7 +2045,8 @@ export const processShopifyOrder = inngest.createFunction(
         try {
           await slack.sendOrderMessage(
             SlackChannelEnum.SHOPIFY,
-            `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNo}`
+            `Order ${shopifyOrderName} processed successfully. D365: ${salesOrderNo}`,
+            slack.slackNotificationId(event.id, "order-processed")
           );
         } catch (slackErr) {
           console.warn(
@@ -2269,7 +2284,8 @@ export const processShopifyOrder = inngest.createFunction(
 
         await slack.sendWarningMessage(
           "gpslow",
-          `[Backorder] ${shopifyOrderName}: ${inventoryErrorType} - ${errorMsg}`
+          `[Backorder] ${shopifyOrderName}: ${inventoryErrorType} - ${errorMsg}`,
+          slack.slackNotificationId(event.id, "order-backorder-inventory-error")
         );
 
         throw new NonRetriableError(
@@ -2396,7 +2412,8 @@ export const processShopifyOrder = inngest.createFunction(
 
         await slack.sendWarningMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Non-Retryable] ${shopifyOrderName}: ${errorMsg}`
+          `[Non-Retryable] ${shopifyOrderName}: ${errorMsg}`,
+          slack.slackNotificationId(event.id, "order-non-retryable")
         );
 
         return {
@@ -2480,7 +2497,8 @@ export const processShopifyOrder = inngest.createFunction(
       const channel = slack.determineErrorChannel(errorMsg);
       await slack.sendErrorMessage(
         channel,
-        `Process Order parked in sync backorder queue: ${shopifyOrderName} - ${errorMsg}`
+        `Process Order parked in sync backorder queue: ${shopifyOrderName} - ${errorMsg}`,
+        slack.slackNotificationId(event.id, "order-sync-backorder-parked")
       );
       throw new NonRetriableError(
         `[BACKORDER_TERMINAL] ${shopifyOrderName} parked in sync queue due to order sync failure`

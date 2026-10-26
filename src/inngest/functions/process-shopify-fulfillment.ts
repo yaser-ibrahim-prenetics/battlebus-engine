@@ -239,7 +239,8 @@ export const processShopifyFulfillment = inngest.createFunction(
       if ((event.data as any).fromDrain) {
         await slack.sendWarningMessage(
           "dynamics",
-          `[PendingActions] D365 order still not found for ${shopifyOrderName} after drain — fulfillment cannot be synced`
+          `[PendingActions] D365 order still not found for ${shopifyOrderName} after drain — fulfillment cannot be synced`,
+          slack.slackNotificationId(event.id, "fulfillment-d365-order-not-found")
         );
 
         const errorMsg = `D365 order not found after drain — fulfillment permanently skipped`;
@@ -732,7 +733,8 @@ export const processShopifyFulfillment = inngest.createFunction(
 
           await slack.sendErrorMessage(
             isStordFulfillment(fulfillment.location_id || "") ? "stord" : "dynamics",
-            `D365 Fulfillment failed for ${shopifyOrderName}: ${errorMsg}`
+            `D365 Fulfillment failed for ${shopifyOrderName}: ${errorMsg}`,
+            slack.slackNotificationId(event.id, "fulfillment-d365-failed", fulfillment.id)
           );
 
           const invTerminal = isFulfillmentInventoryIssueError(errorMsg);
@@ -827,7 +829,8 @@ export const processShopifyFulfillment = inngest.createFunction(
     if (stordFulfillments.length > 0) {
       await slack.sendInfoMessage(
         "stord",
-        `STORD Fulfillment synced: ${shopifyOrderName} - ${stordFulfillments.length} fulfillment(s)`
+        `STORD Fulfillment synced: ${shopifyOrderName} - ${stordFulfillments.length} fulfillment(s)`,
+        slack.slackNotificationId(event.id, "fulfillment-stord-synced")
       );
     }
 
@@ -1038,7 +1041,8 @@ export const processShopifyFulfillment = inngest.createFunction(
           await slack
             .sendWarningMessage(
               "system",
-              `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`
+              `PayPal tracking sync failed for ${shopifyOrderName}: ${errorMsg}`,
+              slack.slackNotificationId(event.id, "fulfillment-paypal-tracking-failed")
             )
             .catch((error) => {
               console.warn(
@@ -1219,7 +1223,8 @@ export const processShopifyFulfillment = inngest.createFunction(
 
         await slack.sendErrorMessage(
           "dynamics",
-          `[Fulfillment] Uncaught error for ${shopifyOrderName} — moved to fulfilment backorder queue: ${errorMsg}`
+          `[Fulfillment] Uncaught error for ${shopifyOrderName} — moved to fulfilment backorder queue: ${errorMsg}`,
+          slack.slackNotificationId(event.id, "fulfillment-uncaught-error")
         );
       } catch (notifyErr) {
         // If notifying Hub itself crashes, we still need to surface the original

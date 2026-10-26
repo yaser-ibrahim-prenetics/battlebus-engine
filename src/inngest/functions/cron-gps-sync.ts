@@ -88,7 +88,8 @@ export const syncGpsFulfillments = inngest.createFunction(
             `[GPS Exception] ${exc.shopifyOrderName} (GPS: ${exc.gpsOrderId})\n` +
               `Reason: ${exc.exceptionDesc}\n` +
               `Warehouse: ${exc.warehouse}\n` +
-              "→ Routed to fulfilment backorder queue (Hub)"
+              "→ Routed to fulfilment backorder queue (Hub)",
+              slack.slackNotificationId(event.id, "gps-exception-routed", exc.gpsOrderId)
           );
           await inngest.send({
             // Keep one active exception backorder event per GPS order to avoid
@@ -183,7 +184,8 @@ export const syncGpsFulfillments = inngest.createFunction(
     if (totalFulfilled > 0 || totalErrors > 0 || exceptionOrders.length > 0) {
       await slack.sendInfoMessage(
         "gps",
-        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors, ${exceptionOrders.length} exceptions out of ${fulfilledOrders.length + exceptionOrders.length} GPS orders processed.`
+        `GPS Sync: ${totalFulfilled} fulfilled, ${totalErrors} errors, ${exceptionOrders.length} exceptions out of ${fulfilledOrders.length + exceptionOrders.length} GPS orders processed.`,
+        slack.slackNotificationId(event.id, "gps-sync-summary")
       );
     }
 

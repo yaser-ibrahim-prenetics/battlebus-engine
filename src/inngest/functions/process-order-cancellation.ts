@@ -269,12 +269,14 @@ export const processOrderCancellation = inngest.createFunction(
           await shopify.uncancelOrder(shopifyOrderId);
           await slack.sendWarningMessage(
             SlackChannelEnum.GPS,
-            `[Cancellation] Shopify order ${shopifyOrderName} (${shopifyOrderId}) was uncancelled because GPS cancellation failed (likely already shipped/in-flight).`
+            `[Cancellation] Shopify order ${shopifyOrderName} (${shopifyOrderId}) was uncancelled because GPS cancellation failed (likely already shipped/in-flight).`,
+            slack.slackNotificationId(event.id, "cancellation-shopify-uncancelled")
           );
         } catch (uncancelError: any) {
           await slack.sendWarningMessage(
             SlackChannelEnum.GPS,
-            `[Cancellation] GPS cancellation failed and Shopify uncancel also failed for ${shopifyOrderName} (${shopifyOrderId}). Manual intervention required. Error: ${uncancelError.message}`
+            `[Cancellation] GPS cancellation failed and Shopify uncancel also failed for ${shopifyOrderName} (${shopifyOrderId}). Manual intervention required. Error: ${uncancelError.message}`,
+            slack.slackNotificationId(event.id, "cancellation-uncancel-failed")
           );
         }
       });

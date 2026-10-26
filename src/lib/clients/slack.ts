@@ -1,13 +1,65 @@
+import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
-import { ISlackAttachment } from "../types/slack";
+import { publishMessages } from "@/lib/clients/kafka";
+import type { ISlackAttachment } from "../types/slack";
 
 // Type for Slack channel keys
 type SlackChannel = keyof typeof config.slack.channel;
 
-const slackSender = async (
-  channel: keyof typeof config.slack.channel,
-  attachments: ISlackAttachment[]
-) => {
+export type SlackSeverity = "info" | "success" | "warning" | "error" | "critical";
+
+/**
+ * Notification event consumed by slack-notification-service (formatter.BattleBus), which posts
+ * each `id` to Slack at most once.
+ */
+export interface SlackNotification {
+  /** Stable across Inngest retries and replays; build it with slackNotificationId. */
+  id: string;
+  channel: SlackChannel;
+  severity: SlackSeverity;
+  title: string;
+  /** Slack mrkdwn styling is kept; links and mentions are escaped by the service. */
+  summary?: string;
+  fields?: Array<{ label: string; value: string }>;
+  items?: string[];
+  error?: { message: string; code?: string; detail?: string };
+  links?: Array<{ label: string; url: string; style?: "primary" | "danger" }>;
+  mention?: "here" | "channel";
+  occurredAt?: string;
+  environment?: string;
+}
+
+// slack-notification-service rejects longer summaries
+const MAX_SUMMARY_LENGTH = 9000;
+
+/**
+ * Builds a notification id that is stable for one triggering event: Inngest retries and replays
+ * of that event produce the same id, so the notification is posted once. Add parts when one event
+ * can notify several times for the same purpose, e.g. once per order in a batch.
+ */
+export function slackNotificationId(
+  scope: string | undefined | null,
+  purpose: string,
+  ...parts: Array<string | number | undefined | null>
+): string {
+  if (!scope) {
+    // still deliverable, but no longer deduplicated across retries
+    console.warn(`[Slack] notification "${purpose}" has no event scope; using a random id`);
+  }
+  return [
+    scope || `unscoped-${randomUUID()}`,
+    purpose,
+    ...parts.filter((p) => p !== undefined && p !== null && p !== ""),
+  ]
+    .map(String)
+    .join(":");
+}
+
+// ============================================================================
+// TRANSPORTS
+// ============================================================================
+
+const slackSender = async (channel: SlackChannel, attachments: ISlackAttachment[]) => {
   const webhookUrl = config.slack.channel[channel];
   if (!webhookUrl) {
     return;
@@ -29,265 +81,89 @@ const slackSender = async (
   return response;
 };
 
-const sendSlackInfoMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
-  try {
-    await slackSender(type, [
-      {
-        fallback: msg,
-        color: "#36a64f",
-        title: `:white_check_mark: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} info`,
-        text: msg,
-        footer: config.slack.applicationName,
-        footer_icon: undefined,
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ]);
-  } catch (e) {
-    console.error(`Unable to send Slack info message to ${type}:`, e);
-  }
+// Legacy webhook format, kept unchanged while SLACK_TRANSPORT=webhook.
+const WEBHOOK_STYLE: Record<SlackSeverity, { color: string; emoji: string; label: string }> = {
+  info: { color: "#36a64f", emoji: ":white_check_mark:", label: "info" },
+  success: { color: "#36a64f", emoji: ":white_check_mark:", label: "info" },
+  warning: { color: "#ffcc00", emoji: ":warning:", label: "warning" },
+  error: { color: "danger", emoji: ":no_entry_sign:", label: "error" },
+  critical: { color: "danger", emoji: ":no_entry_sign:", label: "error" },
 };
 
-const sendSlackWarningMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
-  try {
-    await slackSender(type, [
-      {
-        fallback: msg,
-        color: "#ffcc00",
-        title: `:warning: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} warning`,
-        text: msg,
-        footer: config.slack.applicationName,
-        footer_icon: undefined,
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ]);
-  } catch (e) {
-    console.error(`Unable to send Slack warning message to ${type}:`, e);
-  }
-};
+async function postToWebhook(notification: SlackNotification): Promise<void> {
+  const style = WEBHOOK_STYLE[notification.severity];
+  const msg = notification.summary ?? notification.title;
+  const title =
+    notification.title === ORDER_TITLE
+      ? `:white_check_mark: Order Placement`
+      : `${style.emoji} [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} ${style.label}`;
 
-const sendSlackErrorMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
-  try {
-    await slackSender(type, [
-      {
-        fallback: msg,
-        color: "danger",
-        title: `:no_entry_sign: [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} error`,
-        text: msg,
-        footer: config.slack.applicationName,
-        footer_icon: undefined,
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ]);
-  } catch (e) {
-    console.error(`Unable to send Slack error message to ${type}:`, e);
-  }
-};
-
-const sendSlackOrderMessage = async (type: keyof typeof config.slack.channel, msg: string) => {
-  try {
-    await slackSender(type, [
-      {
-        fallback: msg,
-        color: "#36a64f",
-        title: `:white_check_mark: Order Placement`,
-        text: msg,
-        footer: config.slack.applicationName,
-        footer_icon: undefined,
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ]);
-  } catch (e) {
-    console.error(`Unable to send Slack order message to ${type}:`, e);
-  }
-};
-
-export const sendInfoMessage =
-  config.slack.integration === "real"
-    ? sendSlackInfoMessage
-    : async (type: keyof typeof config.slack.channel, msg: string) =>
-        console.log(`[INFO][${type}] ${msg}`);
-
-export const sendWarningMessage =
-  config.slack.integration === "real"
-    ? sendSlackWarningMessage
-    : async (type: keyof typeof config.slack.channel, msg: string) =>
-        console.log(`[WARNING][${type}] ${msg}`);
-
-export const sendErrorMessage =
-  config.slack.integration === "real"
-    ? sendSlackErrorMessage
-    : async (type: keyof typeof config.slack.channel, msg: string) =>
-        console.log(`[ERROR][${type}] ${msg}`);
-
-export const sendOrderMessage =
-  config.slack.integration === "real"
-    ? sendSlackOrderMessage
-    : async (type: keyof typeof config.slack.channel, msg: string) =>
-        console.log(`[ORDER][${type}] ${msg}`);
-
-// ============================================================================
-// BATCH NOTIFICATION AGGREGATOR
-// ============================================================================
-// During high-volume bursts (e.g., 1,375 Skio orders), instead of sending
-// 1,375 individual Slack messages, aggregate into periodic summaries.
-
-interface BatchBuffer {
-  messages: string[];
-  channel: keyof typeof config.slack.channel;
-  startedAt: number;
-  timer: ReturnType<typeof setTimeout> | null;
+  await slackSender(notification.channel, [
+    {
+      fallback: msg,
+      color: style.color,
+      title,
+      text: msg,
+      footer: config.slack.applicationName,
+      footer_icon: undefined,
+      ts: Math.floor(Date.now() / 1000),
+    },
+  ]);
 }
 
-const _batchWindowParsed = parseInt(process.env.SLACK_BATCH_WINDOW_MS || "10000", 10);
-const BATCH_WINDOW_MS = Number.isNaN(_batchWindowParsed) ? 10000 : _batchWindowParsed; // 10 seconds
-const _batchMaxSizeParsed = parseInt(process.env.SLACK_BATCH_MAX_SIZE || "50", 10);
-const BATCH_MAX_SIZE = Number.isNaN(_batchMaxSizeParsed) ? 50 : _batchMaxSizeParsed;
-const batchBuffers: Map<string, BatchBuffer> = new Map();
-
-/**
- * Flush a batch buffer, sending an aggregated summary message to Slack.
- */
-async function flushBatch(channelKey: string): Promise<void> {
-  const buffer = batchBuffers.get(channelKey);
-  if (!buffer || buffer.messages.length === 0) {
-    batchBuffers.delete(channelKey);
-    return;
-  }
-
-  if (buffer.timer) {
-    clearTimeout(buffer.timer);
-    buffer.timer = null;
-  }
-
-  const messages = [...buffer.messages];
-  const channel = buffer.channel;
-  batchBuffers.delete(channelKey);
-
-  const total = messages.length;
-  const preview = messages
-    .slice(0, 5)
-    .map((m) => `• ${m}`)
-    .join("\n");
-  const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
-  const summary = `📊 Batch Summary (${total} messages):\n${preview}${suffix}`;
-
-  await sendInfoMessage(channel, summary);
+async function publishToKafka(notification: SlackNotification): Promise<void> {
+  await publishMessages(config.kafka.slackNotificationTopic, [
+    {
+      key: notification.channel,
+      value: JSON.stringify(notification),
+      headers: { "notification-id": notification.id },
+    },
+  ]);
 }
 
 /**
- * Send a message that may be batched during high-volume periods.
- * Messages to the same channel within BATCH_WINDOW_MS are aggregated.
- * Use this for info/success notifications. Error messages should NOT be batched.
+ * Sends a notification through the configured transport. Never throws: a notification must not
+ * fail the business flow, so failures are logged with the notification id instead.
  */
-export async function sendBatchableInfoMessage(
-  channel: keyof typeof config.slack.channel,
-  msg: string
-): Promise<void> {
-  const key = `info:${channel}`;
-  let buffer = batchBuffers.get(key);
-
-  if (!buffer) {
-    buffer = {
-      messages: [],
-      channel,
-      startedAt: Date.now(),
-      timer: null,
-    };
-    batchBuffers.set(key, buffer);
-  }
-
-  buffer.messages.push(msg);
-
-  // Flush immediately if we hit the max batch size
-  if (buffer.messages.length >= BATCH_MAX_SIZE) {
-    await flushBatch(key);
-    return;
-  }
-
-  // Reset the window timer on each new message
-  if (buffer.timer) {
-    clearTimeout(buffer.timer);
-  }
-  buffer.timer = setTimeout(() => {
-    flushBatch(key).catch((err) => console.error(`[Slack] Failed to flush batch for ${key}:`, err));
-  }, BATCH_WINDOW_MS);
-}
-
-/**
- * Send an order placement message that may be batched during high-volume periods.
- * Uses the order message style. Error messages should NOT be batched.
- */
-export async function sendBatchableOrderMessage(
-  channel: keyof typeof config.slack.channel,
-  msg: string
-): Promise<void> {
-  const key = `order:${channel}`;
-  let buffer = batchBuffers.get(key);
-
-  if (!buffer) {
-    buffer = {
-      messages: [],
-      channel,
-      startedAt: Date.now(),
-      timer: null,
-    };
-    batchBuffers.set(key, buffer);
-  }
-
-  buffer.messages.push(msg);
-
-  // Flush immediately if we hit the max batch size
-  if (buffer.messages.length >= BATCH_MAX_SIZE) {
-    const messages = [...buffer.messages];
-    if (buffer.timer) {
-      clearTimeout(buffer.timer);
-      buffer.timer = null;
-    }
-    batchBuffers.delete(key);
-
-    const total = messages.length;
-    const preview = messages
-      .slice(0, 5)
-      .map((m) => `• ${m}`)
-      .join("\n");
-    const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
-    const summary = `📊 Order Batch Summary (${total} orders processed):\n${preview}${suffix}`;
-
-    await sendOrderMessage(channel, summary);
-    return;
-  }
-
-  // Reset the window timer on each new message
-  if (buffer.timer) {
-    clearTimeout(buffer.timer);
-  }
-  buffer.timer = setTimeout(async () => {
-    const buf = batchBuffers.get(key);
-    if (!buf || buf.messages.length === 0) {
-      batchBuffers.delete(key);
+export async function sendSlackNotification(notification: SlackNotification): Promise<void> {
+  const prepared: SlackNotification = {
+    ...notification,
+    summary: notification.summary?.slice(0, MAX_SUMMARY_LENGTH),
+  };
+  try {
+    if (config.slack.integration !== "real") {
+      console.log(
+        `[Slack] [${prepared.severity}] [${prepared.channel}] id=${prepared.id} ${prepared.summary ?? prepared.title}`
+      );
       return;
     }
-
-    const messages = [...buf.messages];
-    if (buf.timer) {
-      clearTimeout(buf.timer);
-      buf.timer = null;
+    if (config.slack.transport === "kafka") {
+      await publishToKafka(prepared);
+    } else {
+      await postToWebhook(prepared);
     }
-    batchBuffers.delete(key);
-
-    const total = messages.length;
-    const preview = messages
-      .slice(0, 5)
-      .map((m) => `• ${m}`)
-      .join("\n");
-    const suffix = total > 5 ? `\n…and ${total - 5} more` : "";
-    const summary = `📊 Order Batch Summary (${total} orders processed):\n${preview}${suffix}`;
-
-    await sendOrderMessage(channel, summary).catch((err) =>
-      console.error(`[Slack] Failed to flush order batch for ${key}:`, err)
+  } catch (e) {
+    console.error(
+      `[Slack] Unable to send ${prepared.severity} notification channel=${prepared.channel} id=${prepared.id} transport=${config.slack.transport}:`,
+      e
     );
-  }, BATCH_WINDOW_MS);
+  }
 }
+
+// ============================================================================
+// MESSAGE HELPERS
+// ============================================================================
+
+const ORDER_TITLE = "Order placement";
+
+const message =
+  (severity: SlackSeverity, title: string) => (channel: SlackChannel, msg: string, id: string) =>
+    sendSlackNotification({ id, channel, severity, title, summary: msg });
+
+export const sendInfoMessage = message("info", "Battle Bus info");
+export const sendWarningMessage = message("warning", "Battle Bus warning");
+export const sendErrorMessage = message("error", "Battle Bus error");
+export const sendOrderMessage = message("success", ORDER_TITLE);
 
 export function determineErrorChannel(
   error: Error | string,

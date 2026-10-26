@@ -220,7 +220,8 @@ export const processBackorder = inngest.createFunction(
           `[Backorder parked - manual retry only] ${shopifyOrderName}\n` +
             `Error: ${errorType} - ${errorMessage}\n` +
             `Warehouse: ${warehouse}\n` +
-            `D365: ${d365OrderNumber}`
+            `D365: ${d365OrderNumber}`,
+            slack.slackNotificationId(event.id, "backorder-parked-manual-only")
         );
       });
 
@@ -324,7 +325,8 @@ export const processBackorder = inngest.createFunction(
               ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
               : paidReplay
                 ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.paid`
-                : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`
+                : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`,
+                slack.slackNotificationId(event.id, "backorder-resolved-manual", manualAttempt)
           );
           const replayDispatchedManual =
             effectiveRetryMode === "fulfillment_replay" ||
@@ -407,7 +409,8 @@ export const processBackorder = inngest.createFunction(
       await step.run("notify-manual-retry-non-inventory-error", async () => {
         await slack.sendErrorMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Backorder] Non-inventory error on manual retry for ${shopifyOrderName}:\n${retryResult.error}`
+          `[Backorder] Non-inventory error on manual retry for ${shopifyOrderName}:\n${retryResult.error}`,
+          slack.slackNotificationId(event.id, "backorder-manual-retry-non-inventory-error", manualAttempt)
         );
       });
 
@@ -430,7 +433,8 @@ export const processBackorder = inngest.createFunction(
           `[Backorder parked - no auto-retry] ${shopifyOrderName}\n` +
             `Error: ${errorType} - ${errorMessage}\n` +
             `Warehouse: ${warehouse}\n` +
-            `D365: ${d365OrderNumber}`
+            `D365: ${d365OrderNumber}`,
+            slack.slackNotificationId(event.id, "backorder-parked-no-retry")
         );
       });
 
@@ -580,7 +584,8 @@ export const processBackorder = inngest.createFunction(
               ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
               : paidReplayLoop
                 ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.paid`
-                : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`
+                : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`,
+                slack.slackNotificationId(event.id, "backorder-resolved", retryCount)
           );
 
           const replayDispatchedAuto =
@@ -639,7 +644,8 @@ export const processBackorder = inngest.createFunction(
         await step.run("notify-non-inventory-error", async () => {
           await slack.sendErrorMessage(
             SlackChannelEnum.SHOPIFY,
-            `[Backorder] Non-inventory error for ${shopifyOrderName} on retry ${retryCount}/${maxRetries}:\n${retryResult.error}`
+            `[Backorder] Non-inventory error for ${shopifyOrderName} on retry ${retryCount}/${maxRetries}:\n${retryResult.error}`,
+            slack.slackNotificationId(event.id, "backorder-non-inventory-error", retryCount)
           );
         });
 
@@ -691,7 +697,8 @@ export const processBackorder = inngest.createFunction(
           `Warehouse: ${warehouse}\n` +
           `D365: ${d365OrderNumber}\n` +
           `Retried ${maxRetries} times over ${maxRetries * retryIntervalHours}h\n` +
-          `Action Required: Manual intervention needed`
+          `Action Required: Manual intervention needed`,
+          slack.slackNotificationId(event.id, "backorder-exhausted")
       );
 
       await csPlatform.sendOrderUpdate(

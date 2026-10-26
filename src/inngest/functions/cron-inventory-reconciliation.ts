@@ -229,7 +229,7 @@ export const cronInventoryReconciliation = inngest.createFunction(
           .filter(Boolean)
           .join("\n");
 
-        await slack.sendInfoMessage("gps", message);
+        await slack.sendInfoMessage("gps", message, slack.slackNotificationId(event.id, "inventory-reconciliation-summary"));
       });
     }
 

@@ -324,7 +324,7 @@ export const processGpsIndividual = inngest.createFunction(
         `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
 
       console.log(message);
-      await slack.sendInfoMessage(SlackChannelEnum.GPS, message);
+      await slack.sendInfoMessage(SlackChannelEnum.GPS, message, slack.slackNotificationId(event.id, "gps-individual-completed"));
     });
 
     // Step 7: Notify Hub of fulfillment with GPS source

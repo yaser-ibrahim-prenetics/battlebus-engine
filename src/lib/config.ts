@@ -152,6 +152,11 @@ export const config = {
     applicationName: "store",
     appEnv: "local",
     integration: "real",
+    // "webhook" posts directly to the channel webhooks below (default). "kafka" publishes to
+    // slack-notification-service, which posts each notification id to Slack at most once.
+    transport: (process.env.SLACK_TRANSPORT === "kafka" ? "kafka" : "webhook") as
+      | "webhook"
+      | "kafka",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
     channel: {
       order: process.env.SLACK_ORDER_CHANNEL,
@@ -169,6 +174,17 @@ export const config = {
       gpslow: process.env.SLACK_GPS_LOW_CHANNEL,
       stord: process.env.SLACK_STORD_CHANNEL,
     },
+  },
+
+  // Kafka (used when SLACK_TRANSPORT=kafka)
+  kafka: {
+    brokers: (process.env.KAFKA_BOOTSTRAP_SERVERS || "")
+      .split(",")
+      .map((broker) => broker.trim())
+      .filter(Boolean),
+    // "google-oauthbearer": keyless TLS + OAUTHBEARER as the runtime service account (GCP Managed Kafka)
+    saslMechanism: (process.env.KAFKA_SASL_MECHANISM || "") as "" | "google-oauthbearer",
+    slackNotificationTopic: process.env.SLACK_NOTIFICATION_TOPIC || "battle-bus.slack-notification",
   },
 
   // Feature Flags
@@ -362,6 +378,13 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
           "signed webhooks until the key is configured (or set DISABLE_LOOP_WEBHOOK_VERIFICATION=true for local dev only)."
       );
     }
+  }
+
+  if (config.slack.transport === "kafka") {
+    if (config.kafka.brokers.length === 0)
+      errors.push("KAFKA_BOOTSTRAP_SERVERS is required when SLACK_TRANSPORT=kafka");
+    if (config.kafka.saslMechanism !== "" && config.kafka.saslMechanism !== "google-oauthbearer")
+      errors.push('KAFKA_SASL_MECHANISM must be empty or "google-oauthbearer"');
   }
 
   return { valid: errors.length === 0, errors };
