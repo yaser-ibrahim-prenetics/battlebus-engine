@@ -57,6 +57,22 @@ describe("Slack notifications", () => {
     expect(event.summary).toHaveLength(9000);
   });
 
+  it("preserves long reconciliation summaries in webhook notifications", async () => {
+    const slack = await load({ SLACK_TRANSPORT: "webhook", SLACK_GPS_CHANNEL: "https://hooks.slack.test/gps" });
+    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const summary = "Unsynced orders:\n" + "#123456789\n".repeat(1000) + "#LAST-ORDER";
+
+    await slack.sendErrorMessage("gps", summary, "evt-5:reconciliation-result");
+
+    expect(publishMessages).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const calls = fetchSpy.mock.calls as unknown as Array<[string, RequestInit]>;
+    const attachment = JSON.parse(String(calls[0][1].body)).attachments[0];
+    expect(attachment.text).toBe(summary);
+    expect(attachment.fallback).toBe(summary);
+  });
+
   it("never throws when publishing fails", async () => {
     const slack = await load({ SLACK_TRANSPORT: "kafka", KAFKA_BOOTSTRAP_SERVERS: "localhost:9092" });
     publishMessages.mockRejectedValueOnce(new Error("broker unavailable"));
