@@ -6,7 +6,7 @@ import { useState } from "react";
 function SimulationPanel() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
-  const [orderName, setOrderName] = useState("IM8-TEST-" + Date.now());
+  const [orderName, setOrderName] = useState(() => "IM8-TEST-" + Date.now());
 
   const simulateOrder = async () => {
     setLoading(true);
