@@ -37,3 +37,25 @@ the durable outbox.
 For validation, run migrations against an isolated database, then set
 `SLACK_TEST_DATABASE_URL` when running the test suite. The PostgreSQL integration
 test verifies immutable payloads, concurrent leases, retries, and published deduplication.
+
+## Administrator test from Battle Hub
+
+`POST /api/integration/slack/test` accepts the existing server-only Battle Bus API
+credential. Battle Hub checks the user's verified Admin or Superadmin role before
+calling it. The request accepts no custom message, channel or identifier.
+
+The endpoint uses the same durable outbox and Pub/Sub publisher as business alerts.
+It rejects tests while publication is disabled, the integration is simulated, or a
+different transport is configured. A fixed `system` notification contains no customer
+data and does not run any order, fulfillment or payment workflow. Tests still work
+when business operations are in dry-run mode.
+
+All callers share one notification ID per UTC minute. Database uniqueness and
+consumer deduplication make repeated clicks and concurrent requests reuse that test.
+A `202` response reports `queued` or `published` (accepted by Pub/Sub), never
+confirmed Slack delivery. Persistence failures, disabled publishing and exhausted
+retries return `503`. Check the configured Slack system channel for the returned
+test ID to confirm delivery; that channel is currently `#battle-bus-test` in GCP.
+
+Deploy this endpoint before the companion Hub test button. No new migrations,
+webhook credentials or notification-service changes are required.
