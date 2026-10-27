@@ -21,7 +21,11 @@ PostgreSQL stores the first decision per store, source, and refund ID, including
 no-hold decisions. Runtime access permits insert and read only. No customer payload
 is stored. Database errors stop the workflow before provider processing. A durable
 Inngest sleep releases processing until the fixed deadline; pending-action replays
-use the same gate. Dry-run and already-completed refunds preserve their early exits.
+use the same gate. After waking, a separate durable step rechecks refund completion
+before any provider access, so the pre-hold cached result cannot conceal a refund
+completed during the wait. That post-hold result is memoized for the same run
+to preserve its later recovery steps. Dry-run and already-completed refunds preserve
+their early exits.
 Loop's existing amount-only synthetic refunds remain amount-only and use a separate
 source namespace.
 

@@ -80,6 +80,57 @@ describe("actual refund workflow hold gate", () => {
       expect(mocks.getOrder).toHaveBeenCalledTimes(1);
     }
   );
+  it.each([false, true])(
+    "skips a refund completed during the hold, including fromDrain=%s",
+    async (fromDrain) => {
+      let release!: () => void;
+      let sleeping!: () => void;
+      const started = new Promise<void>((resolve) => {
+        sleeping = resolve;
+      });
+      const step = steps(
+        vi.fn(() => {
+          sleeping();
+          return new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        })
+      );
+      const pending = run({ event: { data: { ...fixture(), fromDrain } }, step, runId: "held" });
+      await started;
+      expect(mocks.dedupe).toHaveBeenCalledTimes(1);
+      expect(mocks.getOrder).not.toHaveBeenCalled();
+      // Another accepted replay has now created the refund line and its
+      // completion record is visible. The old check remains cached as false.
+      mocks.dedupe.mockResolvedValue(true);
+      release();
+      await expect(pending).resolves.toMatchObject({ status: "already_processed" });
+      expect(mocks.dedupe).toHaveBeenCalledTimes(2);
+      expect(step.run.mock.calls.map(([name]) => name)).toContain("refund-dedupe-after-hold");
+      expect(mocks.getOrder).not.toHaveBeenCalled();
+    }
+  );
+
+  it("memoizes the post-hold check so later retries do not mistake their own work for a duplicate", async () => {
+    const cached = new Map<string, unknown>();
+    const step = steps();
+    step.run.mockImplementation(async (name, fn) => {
+      if (cached.has(name)) return cached.get(name);
+      const result = await fn();
+      cached.set(name, result);
+      return result;
+    });
+    const args = { event: { data: fixture() }, step, runId: "same-run" };
+    await expect(run(args)).rejects.toThrow("provider stage reached");
+    expect(mocks.dedupe).toHaveBeenCalledTimes(2);
+    expect(cached.get("refund-dedupe-after-hold")).toBe(false);
+    // A later execution of this same run restores completed step results.
+    mocks.dedupe.mockResolvedValue(true);
+    await expect(run(args)).rejects.toThrow("provider stage reached");
+    expect(mocks.dedupe).toHaveBeenCalledTimes(2);
+    expect(mocks.getOrder).toHaveBeenCalledTimes(2);
+  });
+
   it("never reaches providers if persistence fails", async () => {
     mocks.decision.mockRejectedValue(new Error("database unavailable"));
     const step = steps();

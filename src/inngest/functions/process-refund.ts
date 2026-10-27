@@ -171,6 +171,25 @@ export const processRefund = inngest.createFunction(
         });
       });
       await step.sleepUntil("wait-refund-hold", hold.holdUntil);
+
+      // The pre-hold check is memoized and may be 24 hours old. Another run
+      // can finish while this one sleeps. Use a separate durable step so a
+      // resuming run sees that completion, but its own later retries keep the
+      // same decision instead of mistaking its own created line for a duplicate.
+      const completedDuringHold = await step.run("refund-dedupe-after-hold", () =>
+        hasCompletedRefundFlowLog(String(refundId))
+      );
+      if (completedDuringHold) {
+        emitRefundConfirmation("already_processed_after_hold", "skipped", {
+          reason: "Refund was processed while this run was on hold",
+        });
+        return {
+          status: "already_processed",
+          refundId,
+          shopifyOrderId,
+          reason: "Refund was processed while this run was on hold",
+        };
+      }
     }
 
     // 1. Get Shopify Order first (needed for order name lookup)
