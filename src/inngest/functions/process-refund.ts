@@ -1,3 +1,4 @@
+import { getRefundHoldDecision } from "@/lib/services/refund-holds/decisions";
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
@@ -156,6 +157,18 @@ export const processRefund = inngest.createFunction(
         shopifyOrderId,
         reason: "Prior completed refund flow log exists for this refundId",
       };
+    }
+
+    // Persist before sleeping: fresh runs and pending-action replays share one deadline.
+    const hold = await step.run("record-refund-hold", () => getRefundHoldDecision(event.data));
+    if (hold.waiting && hold.holdUntil) {
+      await step.run("log-refund-hold", async () => {
+        emitRefundConfirmation("refund_hold", "running", {
+          holdUntil: hold.holdUntil,
+          unfulfilledLineCount: hold.unfulfilledLineCount,
+        });
+      });
+      await step.sleepUntil("wait-refund-hold", hold.holdUntil);
     }
 
     // 1. Get Shopify Order first (needed for order name lookup)
