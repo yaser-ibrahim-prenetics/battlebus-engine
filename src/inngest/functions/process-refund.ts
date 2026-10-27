@@ -177,7 +177,7 @@ export const processRefund = inngest.createFunction(
       // resuming run sees that completion, but its own later retries keep the
       // same decision instead of mistaking its own created line for a duplicate.
       const completedDuringHold = await step.run("refund-dedupe-after-hold", () =>
-        hasCompletedRefundFlowLog(String(refundId))
+        hasCompletedRefundFlowLog(String(refundId), runId)
       );
       if (completedDuringHold) {
         emitRefundConfirmation("already_processed_after_hold", "skipped", {

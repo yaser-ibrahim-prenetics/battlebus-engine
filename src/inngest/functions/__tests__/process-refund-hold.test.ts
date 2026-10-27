@@ -106,6 +106,7 @@ describe("actual refund workflow hold gate", () => {
       release();
       await expect(pending).resolves.toMatchObject({ status: "already_processed" });
       expect(mocks.dedupe).toHaveBeenCalledTimes(2);
+      expect(mocks.dedupe).toHaveBeenLastCalledWith("123", "held");
       expect(step.run.mock.calls.map(([name]) => name)).toContain("refund-dedupe-after-hold");
       expect(mocks.getOrder).not.toHaveBeenCalled();
     }
@@ -129,6 +130,23 @@ describe("actual refund workflow hold gate", () => {
     await expect(run(args)).rejects.toThrow("provider stage reached");
     expect(mocks.dedupe).toHaveBeenCalledTimes(2);
     expect(mocks.getOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it("excludes an older run's own completion when first encountering the new check", async () => {
+    const step = steps();
+    const execute = step.run.getMockImplementation()!;
+    step.run.mockImplementation(async (name, fn) => {
+      // This step was already completed before the code containing the new
+      // post-hold check was deployed. The run has since created its own line.
+      if (name === "refund-dedupe-check") return false;
+      return execute(name, fn);
+    });
+    mocks.dedupe.mockImplementation(async (_refundId, excludeRunId) => excludeRunId !== "old-run");
+    await expect(run({ event: { data: fixture() }, step, runId: "old-run" })).rejects.toThrow(
+      "provider stage reached"
+    );
+    expect(mocks.dedupe).toHaveBeenCalledWith("123", "old-run");
+    expect(mocks.getOrder).toHaveBeenCalledTimes(1);
   });
 
   it("never reaches providers if persistence fails", async () => {

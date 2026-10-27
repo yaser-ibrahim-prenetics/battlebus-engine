@@ -24,7 +24,11 @@ Inngest sleep releases processing until the fixed deadline; pending-action repla
 use the same gate. After waking, a separate durable step rechecks refund completion
 before any provider access, so the pre-hold cached result cannot conceal a refund
 completed during the wait. That post-hold result is memoized for the same run
-to preserve its later recovery steps. Dry-run and already-completed refunds preserve
+to preserve its later recovery steps. The lookup excludes the current run's own
+completion records, allowing older in-flight runs to finish after deployment;
+historical records with no run ID still block other runs. This check retains the
+existing flow-log deduplication behavior; it is not an atomic reservation for
+simultaneous financial writes. Dry-run and already-completed refunds preserve
 their early exits.
 Loop's existing amount-only synthetic refunds remain amount-only and use a separate
 source namespace.

@@ -1,3 +1,4 @@
+import { completedRefundSQL } from "@/lib/sql/flow-logs/refund-completion";
 /**
  * PostgreSQL Flow Logs Drain — Buffered & Non-Blocking
  *
@@ -56,6 +57,7 @@ let _lastPruneAt = 0;
 
 const ENABLED = process.env.FLOW_LOGS_ENABLED !== "false";
 const TABLE = quoteIdentifier(process.env.FLOW_LOGS_TABLE || "flow_logs");
+const REFUND_COMPLETION_SQL = completedRefundSQL(process.env.FLOW_LOGS_TABLE);
 const RETENTION_DAYS = Math.max(
   1,
   Number.isFinite(Number(process.env.FLOW_LOG_RETENTION_DAYS))
@@ -259,10 +261,8 @@ export async function flushAll(): Promise<void> {
 
 /**
  * Return true if the `flow_logs` table already contains a successful refund
- * line emit for this `refundId`. Used as a cross-run idempotency guard so the
- * same Shopify refund can never create a second negative D365 line, even if
- * the same `refundId` arrives via two different events (e.g. Hub action +
- * Shopify webhook race).
+ * line emit for this `refundId`. This is a best-effort cross-run replay check,
+ * not an atomic reservation for concurrent financial mutations.
  *
  * Matches rows where:
  *   - flow = "refund"
@@ -270,9 +270,14 @@ export async function flushAll(): Promise<void> {
  *   - status = "completed"
  *   - payload->>refundId = <refundId>
  *
+ * When checking after a hold, exclude the current run so a run started before
+ * deployment can finish its own existing line even without a cached new check.
  * Returns `false` when PostgreSQL is not configured (best-effort guard).
  */
-export async function hasCompletedRefundFlowLog(refundId: string): Promise<boolean> {
+export async function hasCompletedRefundFlowLog(
+  refundId: string,
+  excludeRunId?: string
+): Promise<boolean> {
   if (!ENABLED) return false;
   if (!refundId) return false;
 
@@ -283,13 +288,8 @@ export async function hasCompletedRefundFlowLog(refundId: string): Promise<boole
 
   try {
     const result = await queryDatabase(
-      `SELECT 1 FROM ${TABLE}
-       WHERE flow = 'refund'
-         AND step = ANY($1::text[])
-         AND status = 'completed'
-         AND payload->>'refundId' = $2
-       LIMIT 1`,
-      [["refund_line_created", "done"], String(refundId)]
+      REFUND_COMPLETION_SQL,
+      [["refund_line_created", "done"], String(refundId), excludeRunId || null]
     );
     return result.rowCount === 1;
   } catch (err) {

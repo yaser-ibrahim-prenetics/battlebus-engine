@@ -55,6 +55,7 @@ describe("hasCompletedRefundFlowLog", () => {
     expect(databaseState.query.mock.calls[0][1]).toEqual([
       ["refund_line_created", "done"],
       "refund-42",
+      null,
     ]);
   });
 
