@@ -344,7 +344,9 @@ jobs:
             --service-account="${MIGRATION_SERVICE_ACCOUNT}" \
             --set-cloudsql-instances="${CLOUD_SQL_INSTANCE}" \
             --set-secrets="DATABASE_URL=${DATABASE_URL_SECRET}:${DATABASE_URL_SECRET_VERSION}" \
-            --set-env-vars="MIGRATION_RELEASE_SHA=${GITHUB_SHA},DATABASE_URL_SECRET_VERSION=${DATABASE_URL_SECRET_VERSION}" \
+            --set-env-vars="MIGRATION_RELEASE_SHA=${GITHUB_SHA},DATABASE_URL_SECRET_VERSION=${DATABASE_URL_SECRET_VERSION},CLOUD_SQL_INSTANCE_CONNECTION_NAME=${CLOUD_SQL_INSTANCE}" \
+            --command=/bin/sh \
+            --args=/usr/local/bin/cloud-run-migrate \
             --tasks=1 \
             --parallelism=1 \
             --max-retries=0 \
