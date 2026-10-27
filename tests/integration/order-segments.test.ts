@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { loadFixture } from "../fixtures";
+vi.mock("@/lib/services/flow-logs", () => ({ logFlowEventSync: vi.fn() }));
+vi.mock("@/inngest/client", () => ({ inngest: { send: vi.fn() } }));
 const mocks = vi.hoisted(() => ({
   pool: vi.fn(),
   query: vi.fn(),
@@ -12,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   prepay: vi.fn(),
   gps: vi.fn(),
   hub: vi.fn(),
+  fulfill: vi.fn(),
+  transport: vi.fn(),
 }));
 vi.mock("@/lib/db/database", () => ({ getDatabasePool: mocks.pool, queryDatabase: mocks.query }));
 vi.mock("@/lib/clients/shopify", () => ({
@@ -25,9 +29,14 @@ vi.mock("@/lib/clients/dynamics", () => ({
   createSalesOrderLine: mocks.line,
   confirmSalesOrder: mocks.confirm,
   createPrepayment: mocks.prepay,
+  createFulfilment: mocks.fulfill,
+  verifyDepositFulfillmentApplied: vi.fn(async () => ({})),
 }));
 vi.mock("@/lib/clients/gps", () => ({ createOutboundOrder: mocks.gps }));
-vi.mock("@/lib/clients/cs-platform", () => ({ sendOrderCreated: mocks.hub }));
+vi.mock("@/lib/clients/cs-platform", () => ({
+  sendOrderCreated: mocks.hub,
+  sendOrderUpdate: mocks.hub,
+}));
 vi.mock("@/lib/services/location-routing", () => ({
   getWarehouseNameForLocation: vi.fn(async () => "GPS Warehouse"),
   getDataAreaIdForLocationAndCountry: vi.fn(async () => "H007"),
@@ -37,6 +46,8 @@ import {
   executeFulfillmentAction,
   ConfirmedActionFailure,
 } from "@/lib/services/fulfillment-actions/ledger";
+import { fulfillOrderSegments } from "@/lib/services/order-segments/fulfillment";
+import { postDurableFulfilment } from "@/lib/clients/dynamics/fulfillment";
 import { readPlan } from "@/lib/services/order-segments/store";
 import { reserveAllocations } from "@/lib/services/order-segments/allocation";
 const shop = "segments-test.myshopify.com";
@@ -66,6 +77,10 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       },
     });
     const clean = async () => {
+      await pool.query(
+        "DELETE FROM public.fulfillment_action_aliases WHERE source_order_id LIKE 'SO-%'"
+      );
+      await pool.query("DELETE FROM public.fulfillment_actions WHERE source_order_id LIKE 'SO-%'");
       await pool.query("DELETE FROM public.order_segment_fulfillments WHERE shop_domain=$1", [
         shop,
       ]);
@@ -112,6 +127,17 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
         },
       ]);
       mocks.graphql.mockImplementation(async (_query, vars) => {
+        if (_query.includes("query FulfillmentSegments"))
+          return {
+            data: {
+              fulfillment: {
+                fulfillmentOrders: {
+                  nodes: [{ id: "gid://shopify/FulfillmentOrder/52" }],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          };
         if (vars.id) {
           const id = vars.id.split("/").pop();
           return { data: { fulfillmentOrder: fo(id, nodes.get(id)!) } };
@@ -140,6 +166,12 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
         lines = 0;
       mocks.header.mockImplementation(async () => ({ SalesOrderNumber: `SO-${++headers}` }));
       mocks.line.mockImplementation(async () => ({ InventoryLotId: `LOT-${++lines}` }));
+      mocks.transport.mockImplementation(async () =>
+        Response.json({ status: 1, Message: "ok", Result: "PS", $id: "1" })
+      );
+      mocks.fulfill.mockImplementation((req) =>
+        postDurableFulfilment(req, { authenticate: async () => "test", fetch: mocks.transport })
+      );
       mocks.confirm.mockResolvedValue({});
       mocks.prepay.mockResolvedValue({});
       mocks.gps.mockImplementation(async (payload) =>
@@ -236,6 +268,60 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       ]);
       expect(allocations.filter((result) => result.status === "fulfilled")).toHaveLength(1);
       expect(allocations.filter((result) => result.status === "rejected")).toHaveLength(1);
+    });
+    it("deduplicates GPS sync-only delivery and the later real Shopify webhook", async () => {
+      await run();
+      const shipment = {
+        id: 991,
+        status: "success",
+        created_at: "2026-10-27T01:00:00Z",
+        tracking_number: "TRACK",
+        line_items: [{ id: 11, quantity: 2 }],
+      } as any;
+      await fulfillOrderSegments({
+        orderId,
+        shopDomain: shop,
+        gpsOrderId: "GPS-#SEGMENT-TEST",
+        fulfillments: [shipment],
+        step,
+      });
+      await fulfillOrderSegments({
+        orderId,
+        shopDomain: shop,
+        fulfillments: [{ ...shipment, id: 992 }],
+        step,
+      });
+      expect(mocks.transport).toHaveBeenCalledTimes(1);
+      const saved = await pool.query(
+        "SELECT completed FROM public.order_segment_fulfillments WHERE shop_domain=$1",
+        [shop]
+      );
+      expect(saved.rows).toEqual([{ completed: true }]);
+      expect((await readPlan(shop, orderId))!.progress["0"].fulfilled).toBe(true);
+    });
+
+    it("posts two partial shipments to their own lots and includes services only once", async () => {
+      await run();
+      const shipment = {
+        id: 991,
+        status: "success",
+        created_at: "2026-10-27T01:00:00Z",
+        tracking_number: "TRACK1",
+        line_items: [{ id: 11, quantity: 1 }],
+      } as any;
+      await fulfillOrderSegments({ orderId, shopDomain: shop, fulfillments: [shipment], step });
+      await fulfillOrderSegments({
+        orderId,
+        shopDomain: shop,
+        fulfillments: [{ ...shipment, id: 992, tracking_number: "TRACK2" }],
+        step,
+      });
+      const requests = mocks.fulfill.mock.calls.map(([request]) => request);
+      expect(requests.map((r) => r.salesOrderNumber)).toEqual(["SO-1", "SO-1"]);
+      expect(requests.map((r) => r.lines[0].quantity)).toEqual([1, 1]);
+      expect(requests[0].lines.length).toBeGreaterThan(1);
+      expect(requests[1].lines).toHaveLength(1);
+      expect(mocks.transport).toHaveBeenCalledTimes(2);
     });
   }
 );

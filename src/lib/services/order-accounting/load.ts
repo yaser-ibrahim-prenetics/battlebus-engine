@@ -1,5 +1,5 @@
 import type { ShopifyOrderPayload } from "@/inngest/events";
-import { getOrderTransactions, shopifyAdminGraphql } from "@/lib/clients/shopify";
+import { getOrder, getOrderTransactions, shopifyAdminGraphql } from "@/lib/clients/shopify";
 import {
   ORDER_ACCOUNTING_API_VERSION,
   orderTransactionsQuery,
@@ -15,7 +15,15 @@ export async function loadOrderAccounting(
   order: ShopifyOrderPayload,
   shopDomain?: string
 ): Promise<OrderAccounting> {
-  const purchasedGiftCards = resolvePurchasedGiftCards(order);
+  // Issuance is asynchronous. Re-read receipts inside this retryable step rather
+  // than repeatedly inspecting the memoized order snapshot from order preparation.
+  const receiptOrder = order.line_items.some((line) => line.gift_card)
+    ? ((await getOrder(String(order.id), shopDomain)) as unknown as ShopifyOrderPayload)
+    : order;
+  const purchasedGiftCards = resolvePurchasedGiftCards({
+    ...order,
+    fulfillments: receiptOrder.fulfillments,
+  });
   const response = await shopifyAdminGraphql<{
     data?: { order?: { transactions: PaymentTransaction[] } };
   }>(
@@ -36,8 +44,27 @@ export async function loadOrderAccounting(
   if (hasGiftCard && giftCardApplications.length === 0) {
     throw new Error("Gift-card payment has no successful receipt yet");
   }
+  const expectedGiftPayments = transactions.filter(
+    (t) =>
+      t.gateway === "gift_card" &&
+      t.status.toUpperCase() === "SUCCESS" &&
+      ["CAPTURE", "SALE"].includes(t.kind.toUpperCase())
+  );
+  if (giftCardApplications.length !== expectedGiftPayments.length)
+    throw new Error("Gift-card receipt list is incomplete");
+  const paymentId = resolvePaymentReference(transactions);
+  const coveredByGiftCards = giftCardApplications
+    .filter((card) => card.currency === order.currency)
+    .reduce((sum, card) => sum + Number(card.amount), 0);
+  if (
+    order.financial_status === "paid" &&
+    Number(order.total_price) > 0 &&
+    !paymentId &&
+    coveredByGiftCards + 0.005 < Number(order.total_price)
+  )
+    throw new Error("Paid order has no successful payment reference yet");
   return {
-    paymentId: resolvePaymentReference(transactions),
+    paymentId,
     giftCardApplications,
     purchasedGiftCards,
   };

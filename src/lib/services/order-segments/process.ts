@@ -2,7 +2,7 @@ import type { ShopifyOrderPayload } from "@/inngest/events";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
-import * as hub from "@/lib/clients/cs-platform";
+import { reportSegmentProgress } from "./reporting";
 import { getFulfillmentOrders, resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
 import {
   getWarehouseNameForLocation,
@@ -25,14 +25,30 @@ import { segmentLineRequests } from "./lines";
 import type { OrderSegment, StepRunner, SegmentProgress, RecordedSegmentLine } from "./types";
 
 /** Returns null for legacy/unsplit orders; a stored plan always wins on replay. */
-export async function processOrderSegments(input: {
+type ProcessSegmentsInput = {
   order: ShopifyOrderPayload;
   shopDomain?: string;
   step: StepRunner;
   accounting?: OrderAccounting;
   testMode?: boolean;
   fallbackDataArea: string;
-}) {
+};
+
+export async function processOrderSegments(input: ProcessSegmentsInput) {
+  try {
+    return await runOrderSegments(input);
+  } catch (error) {
+    const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
+    try {
+      await reportSegmentProgress(shop, input.order, error);
+    } catch {
+      console.error("[OrderSegments] Could not report recovery state");
+    }
+    throw error;
+  }
+}
+
+async function runOrderSegments(input: ProcessSegmentsInput) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync || input.testMode)
     return null;
   const { order, step, accounting } = input;
@@ -93,7 +109,7 @@ export async function processOrderSegments(input: {
   });
   if (!stored) return null;
   const { plan } = stored;
-  await step.run("bind-shopify-segments", () => bindShopifySegments(shop, plan));
+  const bindings = await step.run("bind-shopify-segments", () => bindShopifySegments(shop, plan));
   const results: SegmentProgress[] = [];
   for (const segment of plan.segments) {
     const prefix = `segment-${segment.index}`;
@@ -117,7 +133,7 @@ export async function processOrderSegments(input: {
         segment.dataAreaId,
         accounting
       );
-      header.comment = `${header.comment || ""}\nSplit ${segment.index + 1}/${plan.segments.length}; Shopify fulfillment order ${segment.sourceFulfillmentOrderId}`;
+      header.comment = `${header.comment || ""}\nSplit ${segment.index + 1}/${plan.segments.length}; Shopify fulfillment order ${bindings[segment.index]}`;
       const result = await action("header", header, async () => {
         const result = await dynamics.createSalesOrderHeaderV3(header);
         if (!result.SalesOrderNumber)
@@ -185,22 +201,6 @@ export async function processOrderSegments(input: {
     );
     results.push(result);
   }
-  await step.run("publish-order-segments", async () => {
-    const current = await readPlan(shop, plan.orderId);
-    await hub.sendOrderCreated({
-      ...order,
-      id: String(order.id),
-      shopifyOrderId: String(order.id),
-      d365OrderNumber: results[0]?.salesOrderNumber,
-      gpsOrderId: results[0]?.gpsOrderId,
-      status: "processing",
-      state: {
-        orderSegments: plan.segments.map((segment) => ({
-          ...segment,
-          ...current?.progress[String(segment.index)],
-        })),
-      },
-    });
-  });
+  await step.run("publish-order-segments", () => reportSegmentProgress(shop, order));
   return { status: "segmented", segments: results };
 }
