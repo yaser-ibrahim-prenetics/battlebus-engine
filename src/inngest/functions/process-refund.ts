@@ -160,7 +160,9 @@ export const processRefund = inngest.createFunction(
     }
 
     // Persist before sleeping: fresh runs and pending-action replays share one deadline.
-    const hold = await step.run("record-refund-hold", () => getRefundHoldDecision(event.data));
+    const hold = await step.run("record-refund-hold", () =>
+      getRefundHoldDecision(event.data as ShopifyRefundCreatedEvent["data"])
+    );
     if (hold.waiting && hold.holdUntil) {
       await step.run("log-refund-hold", async () => {
         emitRefundConfirmation("refund_hold", "running", {
