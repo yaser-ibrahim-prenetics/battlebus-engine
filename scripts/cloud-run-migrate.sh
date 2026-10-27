@@ -27,12 +27,37 @@ case "${command_name}" in
     ;;
 esac
 
+if [ -n "${CLOUD_SQL_INSTANCE_CONNECTION_NAME:-}" ]; then
+  if ! printf '%s' "$CLOUD_SQL_INSTANCE_CONNECTION_NAME" | grep -Eq '^[a-z][a-z0-9-]+:[a-z][a-z0-9-]+:[a-z][a-z0-9-]+$'; then
+    echo "Invalid Cloud SQL instance connection name." >&2
+    exit 1
+  fi
+  case "$DATABASE_URL" in
+    postgres://*@*/*|postgresql://*@*/*) ;;
+    *) echo "Unexpected database URL format." >&2; exit 1 ;;
+  esac
+  # The shared migration secret may target a local proxy. Keep its credentials
+  # and database name, but connect through the job's mounted Cloud SQL socket.
+  DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed -E 's#@[^/]+/#@/#; s#\?.*$##')?host=/cloudsql/${CLOUD_SQL_INSTANCE_CONNECTION_NAME}&sslmode=disable"
+  export DATABASE_URL
+fi
+
 echo "Running Battle Bus migration command ${command_name} for release ${MIGRATION_RELEASE_SHA} with database secret version ${DATABASE_URL_SECRET_VERSION}."
 
-/usr/local/bin/migrate \
+# migrate can include its full connection URL in failures. Never send that raw
+# output to Cloud Logging or GitHub logs, which have a wider readership.
+log_file="$(mktemp)"
+trap 'rm -f "$log_file"' EXIT
+if /usr/local/bin/migrate \
   -path /migrations \
   -database "${DATABASE_URL}" \
-  "${command_name}"
+  "${command_name}" >"$log_file" 2>&1; then
+  cat "$log_file"
+else
+  status=$?
+  echo "Migration command failed (exit ${status}); raw database diagnostics withheld to protect credentials." >&2
+  exit "$status"
+fi
 
 if [ "${command_name}" = "up" ]; then
   echo "Battle Bus migrations completed for release ${MIGRATION_RELEASE_SHA}."

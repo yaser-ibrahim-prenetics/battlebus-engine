@@ -1,0 +1,53 @@
+name: Prepare selective release
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: Branch containing the selected commits (not main)
+        required: true
+        type: string
+      commits:
+        description: Ordered comma-separated commit SHAs (maximum 50)
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: selective-release-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Prepare reviewed release
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          SELECTED_COMMITS: ${{ inputs.commits }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="release/selective-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Run the trusted main version even if a selected commit edits scripts.
+          cp scripts/release/selective.py "$RUNNER_TEMP/selective.py"
+          python3 "$RUNNER_TEMP/selective.py" prepare --source "$SOURCE_BRANCH" --commits "$SELECTED_COMMITS" --branch "$branch"
+          python3 "$RUNNER_TEMP/selective.py" verify
+          git push origin "HEAD:refs/heads/$branch"
+          # Do not import modules or PYTHONPATH from selected, unreviewed code.
+          python3 -I - <<'PY' > "$RUNNER_TEMP/release-body.md"
+          import json
+          d=json.load(open('.release/selection.json'))
+          print('Selective release based on `' + d['baseCommit'] + '`.\n\nIncluded source commits:')
+          for sha in d['sourceCommits']: print('- `' + sha + '`')
+          print('\nCI replays this selection and rejects unrelated changes. Merge only after required checks pass.')
+          PY
+          gh pr create --base main --head "$branch" --title "Release selected commits (${GITHUB_RUN_ID})" --body-file "$RUNNER_TEMP/release-body.md" >> "$GITHUB_STEP_SUMMARY"
+          # GITHUB_TOKEN-created PRs do not automatically trigger PR CI.
+          # An explicit dispatch does, on the exact release branch head.
+          gh workflow run ci-deploy-gcp.yml --ref "$branch"
