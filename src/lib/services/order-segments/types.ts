@@ -1,6 +1,7 @@
 import type { WarehouseName } from "@/lib/helpers/warehouse";
 
 export interface SegmentLine {
+  physical: boolean;
   lineItemId: string;
   quantity: number;
 }
@@ -33,6 +34,7 @@ export interface SegmentProgress {
   salesOrderNumber?: string;
   gpsOrderId?: string;
   completed?: boolean;
+  fulfilled?: boolean;
 }
 export interface StoredPlan {
   plan: SegmentPlan;

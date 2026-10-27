@@ -12,6 +12,7 @@
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
+import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
@@ -463,6 +464,16 @@ export const processSubscriptionOrder = inngest.createFunction(
       if (!config.features.enableDynamicsSync || event.data.testMode) return undefined;
       return loadOrderAccounting(order, event.data.shopifyStore);
     });
+
+    const segmented = await processOrderSegments({
+      order,
+      step,
+      accounting,
+      shopDomain: event.data.shopifyStore,
+      testMode: event.data.testMode,
+      fallbackDataArea: dataAreaId,
+    });
+    if (segmented) return segmented;
 
     const existingD365Order = await step.run("check-existing-d365-order", async () => {
       if (!config.features.enableDynamicsSync) return null;

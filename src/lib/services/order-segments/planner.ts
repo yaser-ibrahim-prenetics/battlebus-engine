@@ -7,7 +7,15 @@ type Routing = Pick<OrderSegment, "warehouse" | "dataAreaId">;
 
 export function orderInputHash(order: ShopifyOrderPayload) {
   return fingerprint({
-    lines: order.line_items,
+    lines: order.line_items.map((line) => ({
+      id: line.id,
+      sku: line.sku,
+      quantity: line.quantity,
+      price: line.price,
+      total_discount: line.total_discount,
+      gift_card: line.gift_card,
+      requires_shipping: line.requires_shipping,
+    })),
     currency: order.currency,
     shipping: order.shipping_lines,
     tax: order.total_tax,
@@ -70,7 +78,7 @@ export function planOrderSegments(
         }
         const selected = segment.lines.find((item) => item.lineItemId === String(line.id));
         if (selected) selected.quantity++;
-        else segment.lines.push({ lineItemId: String(line.id), quantity: 1 });
+        else segment.lines.push({ lineItemId: String(line.id), quantity: 1, physical: true });
         value += unit;
       }
     }
@@ -85,7 +93,7 @@ export function planOrderSegments(
     segments[0].lines.push(
       ...order.line_items
         .filter((line) => !byId.has(String(line.id)))
-        .map((line) => ({ lineItemId: String(line.id), quantity: line.quantity }))
+        .map((line) => ({ lineItemId: String(line.id), quantity: line.quantity, physical: false }))
     );
   }
   return {
