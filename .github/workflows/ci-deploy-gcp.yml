@@ -235,24 +235,10 @@ jobs:
               echo "DATABASE_URL_SECRET_VERSION must be a pinned numeric Secret Manager version."
               exit 1
             fi
-            secret_state="$(gcloud secrets versions describe "${DATABASE_URL_SECRET_VERSION}" \
-              --secret="${DATABASE_URL_SECRET}" \
-              --project="${GCP_PROJECT_ID}" \
-              --format='value(state)')"
-            if [ "${secret_state}" != "ENABLED" ]; then
-              echo "${DATABASE_URL_SECRET} version ${DATABASE_URL_SECRET_VERSION} is not enabled."
-              exit 1
-            fi
-            if ! gcloud iam service-accounts describe "${MIGRATION_SERVICE_ACCOUNT}" \
-              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
-              echo "Missing migration service account: ${MIGRATION_SERVICE_ACCOUNT}"
-              exit 1
-            fi
-            if ! gcloud sql instances describe "${CLOUD_SQL_INSTANCE##*:}" \
-              --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
-              echo "Missing Cloud SQL instance: ${CLOUD_SQL_INSTANCE}"
-              exit 1
-            fi
+            # The isolated job validates the pinned secret and database by
+            # connecting as its existing migrator identity. Its required
+            # successful execution gates promotion; the deployer does not need
+            # Secret Manager or Cloud SQL metadata-enumeration permissions.
           fi
 
           service_url="$(jq -r '.status.url // empty' <<<"${service_json}")"
