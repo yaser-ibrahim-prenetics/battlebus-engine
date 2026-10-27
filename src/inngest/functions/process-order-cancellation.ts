@@ -1,5 +1,5 @@
 import { inngest } from "../client";
-import { readPlan } from "@/lib/services/order-segments/store";
+import { cancelOrderSegments } from "@/lib/services/order-segments/cancellation";
 import { config } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
@@ -67,28 +67,10 @@ export const processOrderCancellation = inngest.createFunction(
     }
 
     // 1. Cancel GPS Order (only for GPS orders — no D365 action on cancel)
-    const gpsCancellation = await step.run("cancel-gps-order", async () => {
+    const segmentCancellation = await cancelOrderSegments(shopify.resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain, String(shopifyOrderId), step);
+    const gpsCancellation = segmentCancellation || await step.run("cancel-gps-order", async () => {
       if (!config.features.enableGpsSync) {
         return { status: "skipped", reason: "GPS sync disabled" };
-      }
-
-      const segmented = await readPlan(
-        shopify.resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain,
-        String(shopifyOrderId)
-      );
-      if (segmented) {
-        for (const segment of segmented.plan.segments) {
-          if (!isGpsWarehouse(segment.warehouse)) continue;
-          const id = segmented.progress[String(segment.index)]?.gpsOrderId;
-          if (!id)
-            throw new Error(
-              `GPS segment ${segment.index} has no confirmed order ID; reconcile before cancelling`
-            );
-          const result = await gps.cancelOutboundOrder(id, segment.warehouse);
-          if (!result.success)
-            throw new Error(`GPS cancellation was not confirmed for segment ${segment.index}`);
-        }
-        return { status: "cancelled", reason: "All GPS segments cancelled" };
       }
 
       try {

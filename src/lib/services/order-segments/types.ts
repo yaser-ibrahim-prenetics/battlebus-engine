@@ -34,6 +34,7 @@ export interface SegmentProgress {
   salesOrderNumber?: string;
   gpsOrderId?: string;
   completed?: boolean;
+  cancelled?: boolean;
   fulfilled?: boolean;
 }
 export interface StoredPlan {
