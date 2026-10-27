@@ -89,7 +89,7 @@ describe("Order Creation Flow (Integration)", () => {
 
       const gpsOrder = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
       expect(gpsOrder.whCode).toBe("LHR");
-      expect(gpsOrder.logisticsChannel).toBe("GPS-IM8-STANDARD-UK");
+      expect(gpsOrder.logisticsChannel).toBe("RS-RM-UK");
     });
   });
 

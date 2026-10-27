@@ -1,3 +1,4 @@
+import { getRefundHoldDecision } from "@/lib/services/refund-holds/decisions";
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
@@ -156,6 +157,39 @@ export const processRefund = inngest.createFunction(
         shopifyOrderId,
         reason: "Prior completed refund flow log exists for this refundId",
       };
+    }
+
+    // Persist before sleeping: fresh runs and pending-action replays share one deadline.
+    const hold = await step.run("record-refund-hold", () =>
+      getRefundHoldDecision(event.data as ShopifyRefundCreatedEvent["data"])
+    );
+    if (hold.waiting && hold.holdUntil) {
+      await step.run("log-refund-hold", async () => {
+        emitRefundConfirmation("refund_hold", "running", {
+          holdUntil: hold.holdUntil,
+          unfulfilledLineCount: hold.unfulfilledLineCount,
+        });
+      });
+      await step.sleepUntil("wait-refund-hold", hold.holdUntil);
+
+      // The pre-hold check is memoized and may be 24 hours old. Another run
+      // can finish while this one sleeps. Use a separate durable step so a
+      // resuming run sees that completion, but its own later retries keep the
+      // same decision instead of mistaking its own created line for a duplicate.
+      const completedDuringHold = await step.run("refund-dedupe-after-hold", () =>
+        hasCompletedRefundFlowLog(String(refundId), runId)
+      );
+      if (completedDuringHold) {
+        emitRefundConfirmation("already_processed_after_hold", "skipped", {
+          reason: "Refund was processed while this run was on hold",
+        });
+        return {
+          status: "already_processed",
+          refundId,
+          shopifyOrderId,
+          reason: "Refund was processed while this run was on hold",
+        };
+      }
     }
 
     // 1. Get Shopify Order first (needed for order name lookup)

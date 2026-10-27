@@ -5,7 +5,7 @@ BEGIN
   SELECT array_agg(expected.name ORDER BY expected.name)
   INTO remaining_tables
   FROM unnest(ARRAY[
-    'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
+    'refund_hold_decisions', 'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',

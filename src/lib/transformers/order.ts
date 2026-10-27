@@ -436,7 +436,7 @@ export function toGpsOutboundOrder(
 
   // Get GPS-specific config
   const whCode = getGpsWarehouseCode(warehouseName);
-  const logisticsChannel = getGpsLogisticsChannel(warehouseName);
+  const logisticsChannel = getGpsLogisticsChannel(warehouseName, order.tags);
 
   // Transform address
   const gpsAddress = toGpsOrderAddress({

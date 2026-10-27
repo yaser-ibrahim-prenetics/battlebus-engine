@@ -633,6 +633,7 @@ export interface ShopifyTransaction {
 }
 
 export interface ShopifyRefundPayload {
+  processed_at?: string | null;
   id: number;
   order_id: number;
   created_at: string;
