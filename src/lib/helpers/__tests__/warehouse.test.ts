@@ -280,7 +280,7 @@ describe("Warehouse Routing Helpers", () => {
 
     it("getGpsLogisticsChannel returns correct channels", () => {
       expect(getGpsLogisticsChannel("GPS Warehouse")).toBe("GPS-IM8-STANDARD");
-      expect(getGpsLogisticsChannel("GPS UK Warehouse")).toBe("GPS-IM8-STANDARD-UK");
+      expect(getGpsLogisticsChannel("GPS UK Warehouse")).toBe("RS-RM-UK");
     });
   });
 

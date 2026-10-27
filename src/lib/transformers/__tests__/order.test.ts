@@ -275,8 +275,28 @@ describe("Order Transformers", () => {
       const gpsOrder = toGpsOutboundOrder(order, "H007-SO-200", "GPS UK Warehouse");
 
       expect(gpsOrder.whCode).toBe("LHR");
-      expect(gpsOrder.logisticsChannel).toBe("GPS-IM8-STANDARD-UK");
+      expect(gpsOrder.logisticsChannel).toBe("RS-RM-UK");
       expect(gpsOrder.countryRegionCode).toBe("GB");
+    });
+
+    it.each([
+      ["expedited shipping", "RS-DPDZONE1"],
+      ["subscription,  ExPeDiTeD ShIpPiNg , VIP", "RS-DPDZONE1"],
+      ["not expedited shipping", "RS-RM-UK"],
+      ["expedited shipping extra", "RS-RM-UK"],
+      ["", "RS-RM-UK"],
+      [null, "RS-RM-UK"],
+      [undefined, "RS-RM-UK"],
+    ])("routes UK orders with tags %s through %s", (tags, channel) => {
+      const order = { ...loadFixture("gpsUkOrder"), tags };
+      expect(toGpsOutboundOrder(order, "H007-SO-200", "GPS UK Warehouse").logisticsChannel)
+        .toBe(channel);
+    });
+
+    it("preserves US routing for expedited orders", () => {
+      const order = { ...loadFixture("gpsUsOrder"), tags: "expedited shipping" };
+      expect(toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse").logisticsChannel)
+        .toBe("GPS-IM8-STANDARD");
     });
 
     it("filters out gift card lines and service SKUs", () => {

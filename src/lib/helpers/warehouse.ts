@@ -28,6 +28,7 @@ export interface WarehouseConfig {
   dataAreaId: string;
   gpsCode?: string;
   logisticsChannel?: string;
+  expeditedLogisticsChannel?: string;
   fulfilment: {
     shippingSiteId: string;
     shippingWarehouseId: string;
@@ -406,12 +407,17 @@ export function getGpsWarehouseCode(warehouseName: string): string {
 /**
  * Get GPS logistics channel for API calls
  */
-export function getGpsLogisticsChannel(warehouseName: string): string {
+export function getGpsLogisticsChannel(warehouseName: string, tags?: string | null): string {
   const config = getWarehouseConfig(warehouseName);
   if (!config.logisticsChannel) {
     throw new Error(`Warehouse ${warehouseName} does not have a logistics channel`);
   }
-  return config.logisticsChannel;
+  const expedited = (tags ?? "").split(",").some(
+    (tag) => tag.trim().toLowerCase() === "expedited shipping"
+  );
+  return expedited && config.expeditedLogisticsChannel
+    ? config.expeditedLogisticsChannel
+    : config.logisticsChannel;
 }
 
 // ============================================================================
