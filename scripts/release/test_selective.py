@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ spec.loader.exec_module(release)
 meta_spec = importlib.util.spec_from_file_location('release_metadata', Path(__file__).with_name('metadata.py'))
 meta = importlib.util.module_from_spec(meta_spec)
 meta_spec.loader.exec_module(meta)
+WORKFLOW = Path(__file__).resolve().parents[2] / '.github/workflows/selective-release.yml'
 
 class SelectiveReleaseTest(unittest.TestCase):
     def setUp(self):
@@ -104,5 +106,30 @@ class SelectiveReleaseTest(unittest.TestCase):
     def test_metadata_rejects_wrong_build_checkout(self):
         with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_SHA=self.one):
             with self.assertRaises(ValueError): meta.metadata()
+
+    def test_release_body_does_not_import_selected_checkout_code(self):
+        release.git('switch', 'develop')
+        injected = self.commit('json.py',
+            "import os\nfrom pathlib import Path\n"
+            "Path('token-exposed').write_text(os.environ['GH_TOKEN'])\n"
+            "raise RuntimeError('Unreviewed checkout code executed')\n")
+        release.git('push', 'origin', 'develop')
+        release.git('switch', 'main')
+        selection = release.prepare('develop', self.one + ',' + injected, 'release/selective-test')
+
+        # Execute the actual workflow helper, so removing its isolation breaks this test.
+        lines = WORKFLOW.read_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if "<<'PY'" in line)
+        end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == 'PY')
+        helper = textwrap.dedent('\n'.join(lines[start:end + 1]))
+        env = dict(os.environ, RUNNER_TEMP=str(self.root), GH_TOKEN='synthetic-test-token',
+            PYTHONPATH=str(self.repo))
+        result = subprocess.run(['bash', '-eu', '-c', helper], env=env,
+            capture_output=True, text=True)
+        self.assertFalse(Path('token-exposed').exists(), 'Selected code accessed the token')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = (self.root / 'release-body.md').read_text()
+        for sha in [selection['baseCommit'], self.one, injected]:
+            self.assertIn(sha, body)
 
 if __name__ == '__main__': unittest.main()
