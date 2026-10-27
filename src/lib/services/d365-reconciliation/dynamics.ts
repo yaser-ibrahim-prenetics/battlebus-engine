@@ -52,7 +52,8 @@ async function packingSlipReferences(
 }
 
 export async function dynamicsOrderNames(kind: Kind, window: Window): Promise<CompanyOrders> {
-  const token = await authenticate();
+  const { access_token: token } = await authenticate();
+  if (!token) throw new Error("Dynamics authentication returned no access token");
   const names: CompanyOrders = { U001: new Set(), H007: new Set() };
   for (const company of companies) {
     if (kind === "salesorder") {

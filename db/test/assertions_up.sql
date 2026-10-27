@@ -162,3 +162,6 @@ SELECT count(*) FROM public.orders;
 SELECT count(*) FROM public.inventory;
 
 ROLLBACK;
+
+\ir assertions_up/001_fulfillment_actions.sql
+\ir assertions_up/002_direct_reconciliation.sql

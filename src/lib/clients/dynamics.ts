@@ -8,10 +8,6 @@ import { postDurableFulfilment } from "./dynamics/fulfillment";
 import { config } from "../config";
 import {
   assertDepositShipmentThkInvoiced,
-  assertThkFulfilmentSucceeded,
-  buildThkFulfilmentRequestBody,
-  getThkFulfilmentBlockingIssue,
-  getThkFulfilmentWarningMessage,
   isDepositFulfillmentOrder,
   isSalesOrderFullyInvoiced,
   isSalesOrderPartiallyInvoiced,
@@ -37,7 +33,6 @@ import type {
   D365ThkApiResponse,
   D365SalesOrderHeaderV3Request,
   D365SalesOrderLineRequest,
-  D365FulfilmentLine,
   D365SalesOrderHeaderV3RequestForReturn,
   D365SalesOrderLineForReturn,
   D365ReturnSalesOrderHeadersV3Request,
