@@ -100,6 +100,7 @@ export type ShopifyOrderFulfilledEvent = {
     warehouseWebhookSource?: "gps" | "stord";
     /** GPS polling/webhook paths set this so Hub source attribution remains accurate. */
     fromGpsSync?: boolean;
+    gpsOrderId?: string;
   };
 };
 

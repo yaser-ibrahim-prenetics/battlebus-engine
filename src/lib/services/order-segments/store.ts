@@ -28,3 +28,24 @@ export async function saveProgress(
   ]);
   if (result.rowCount !== 1) throw new Error("Segment plan missing while saving provider result");
 }
+
+export async function findGpsSegment(shop: string, gpsOrderId: string) {
+  const { findGpsSegmentSQL } = await import("@/lib/sql/order-segments/plans");
+  const result = await queryDatabase<StoredPlan & { shopify_order_id: string }>(findGpsSegmentSQL, [
+    shop,
+    gpsOrderId,
+  ]);
+  if (result.rows.length > 1) throw new Error("GPS order ID maps to multiple Shopify orders");
+  const stored = result.rows[0];
+  if (!stored) return null;
+  const matches = stored.plan.segments.filter(
+    (segment) => stored.progress[String(segment.index)]?.gpsOrderId === gpsOrderId
+  );
+  if (matches.length !== 1) throw new Error("GPS order ID maps to multiple segments");
+  const segment = matches[0];
+  return {
+    orderId: stored.plan.orderId,
+    segment,
+    progress: stored.progress[String(segment.index)],
+  };
+}

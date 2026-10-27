@@ -7,6 +7,7 @@ import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 // cron-gps-sync also emits this event with fromGpsSync for the automated GPS ship path.
 
 import { inngest } from "../client";
+import { fulfillOrderSegments } from "@/lib/services/order-segments/fulfillment";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
@@ -218,6 +219,12 @@ export const processShopifyFulfillment = inngest.createFunction(
         sources: fulfillmentSources,
       }));
     }
+
+    const segmented = await fulfillOrderSegments({
+      orderId: String(shopifyOrderId), shopDomain: event.data.shopifyStore, fulfillments, step,
+      gpsOrderId: event.data.fromGpsSync ? event.data.gpsOrderId : undefined,
+    });
+    if (segmented) return segmented;
 
     // Get D365 order (Supabase d365_order_number by Shopify name first — same as refund)
     const d365Order = await step.run("get-d365-order", async () => {
