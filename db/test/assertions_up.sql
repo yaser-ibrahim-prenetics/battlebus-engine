@@ -165,3 +165,5 @@ ROLLBACK;
 
 \ir assertions_up/001_fulfillment_actions.sql
 \ir assertions_up/002_direct_reconciliation.sql
+\ir assertions_up/003_refund_hold_storage.sql
+\ir assertions_up/004_refund_hold_access.sql
