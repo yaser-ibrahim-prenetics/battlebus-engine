@@ -87,9 +87,9 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
     });
     const clean = async () => {
       await pool.query(
-        "DELETE FROM public.fulfillment_action_aliases WHERE source_order_id LIKE 'SO-%'"
+        "DELETE FROM public.fulfillment_action_aliases WHERE source_order_id LIKE 'SEG-TEST-SO-%'"
       );
-      await pool.query("DELETE FROM public.fulfillment_actions WHERE source_order_id LIKE 'SO-%'");
+      await pool.query("DELETE FROM public.fulfillment_actions WHERE source_order_id LIKE 'SEG-TEST-SO-%'");
       await pool.query("DELETE FROM public.order_segment_fulfillments WHERE shop_domain=$1", [
         shop,
       ]);
@@ -176,7 +176,7 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       });
       let headers = 0,
         lines = 0;
-      mocks.header.mockImplementation(async () => ({ SalesOrderNumber: `SO-${++headers}` }));
+      mocks.header.mockImplementation(async () => ({ SalesOrderNumber: `SEG-TEST-SO-${++headers}` }));
       mocks.line.mockImplementation(async () => ({ InventoryLotId: `LOT-${++lines}` }));
       mocks.transport.mockImplementation(async () =>
         Response.json({ status: 1, Message: "ok", Result: "PS", $id: "1" })
@@ -330,7 +330,7 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
         step,
       });
       const requests = mocks.fulfill.mock.calls.map(([request]) => request);
-      expect(requests.map((r) => r.salesOrderNumber)).toEqual(["SO-1", "SO-1"]);
+      expect(requests.map((r) => r.salesOrderNumber)).toEqual(["SEG-TEST-SO-1", "SEG-TEST-SO-1"]);
       expect(requests.map((r) => r.lines[0].quantity)).toEqual([1, 1]);
       expect(requests[0].lines.length).toBeGreaterThan(1);
       expect(requests[1].lines).toHaveLength(1);
