@@ -12,6 +12,8 @@
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
+import { processOrderSegments } from "@/lib/services/order-segments/process";
+import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -458,6 +460,21 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     // STEP 5: Create D365 Sales Order Header (check for existing first)
     // =========================================================================
+    const accounting = await step.run("load-order-accounting", async () => {
+      if (!config.features.enableDynamicsSync || event.data.testMode) return undefined;
+      return loadOrderAccounting(order, event.data.shopifyStore);
+    });
+
+    const segmented = await processOrderSegments({
+      order,
+      step,
+      accounting,
+      shopDomain: event.data.shopifyStore,
+      testMode: event.data.testMode,
+      fallbackDataArea: dataAreaId,
+    });
+    if (segmented) return segmented;
+
     const existingD365Order = await step.run("check-existing-d365-order", async () => {
       if (!config.features.enableDynamicsSync) return null;
       try {
@@ -510,7 +527,7 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped", salesOrderNumber: "" };
       }
 
-      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId, accounting);
 
       const result = await retryWithBackoff(
         () => dynamics.createSalesOrderHeaderV3(headerPayload),
@@ -549,7 +566,8 @@ export const processSubscriptionOrder = inngest.createFunction(
           d365OrderNumber,
           warehouseName,
           true,
-          dataAreaId
+          dataAreaId,
+          accounting
         );
 
         const lineResults = await Promise.all(
@@ -601,7 +619,8 @@ export const processSubscriptionOrder = inngest.createFunction(
           order,
           d365OrderNumber,
           warehouseName,
-          dataAreaId
+          dataAreaId,
+          accounting
         )
           .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
           .map((r) => ({

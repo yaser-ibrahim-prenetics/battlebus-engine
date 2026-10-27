@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/services/order-segments/store", () => ({ findGpsSegment: vi.fn(async () => null) }));
 
 import { config } from "@/lib/config";
 import type { IShopifyFulfillmentOrder } from "@/lib/types/shopify";

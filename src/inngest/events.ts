@@ -100,6 +100,7 @@ export type ShopifyOrderFulfilledEvent = {
     warehouseWebhookSource?: "gps" | "stord";
     /** GPS polling/webhook paths set this so Hub source attribution remains accurate. */
     fromGpsSync?: boolean;
+    gpsOrderId?: string;
   };
 };
 
@@ -498,6 +499,8 @@ export type BattleBusEvents =
 // ============================================================================
 
 export interface ShopifyOrderPayload {
+  fulfillments?: ShopifyFulfillment[];
+  payment_gateway_names?: string[];
   id: number;
   name: string;
   email: string;
@@ -626,6 +629,7 @@ export interface ShopifyTransaction {
    * carries the authoritative FX rate actually applied to the refund.
    */
   receipt?: {
+    gift_card_last_characters?: string;
     balance_transaction?: {
       exchange_rate?: number | string;
     } | null;
@@ -674,6 +678,7 @@ export interface StordFulfilmentPayload {
 }
 
 export interface ShopifyFulfillment {
+  receipt?: { gift_cards?: Array<{ line_item_id: number | string; masked_code: string }> };
   id: number;
   order_id: number;
   status: string;

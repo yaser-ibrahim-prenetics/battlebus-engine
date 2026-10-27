@@ -10,6 +10,8 @@
 // 3. Filter for status 3 (fulfilled) within configured hours
 // 4. For each fulfilled order, create Shopify fulfillment and trigger D365 sync
 
+import { pollGpsSegmentsSQL } from "@/lib/sql/order-segments/plans";
+import { findGpsSegment } from "@/lib/services/order-segments/store";
 import { inngest } from "../client";
 import { config, GPS_STATUS } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
@@ -89,7 +91,7 @@ export const syncGpsFulfillments = inngest.createFunction(
               `Reason: ${exc.exceptionDesc}\n` +
               `Warehouse: ${exc.warehouse}\n` +
               "→ Routed to fulfilment backorder queue (Hub)",
-              slack.slackNotificationId(event.id, "gps-exception-routed", exc.gpsOrderId)
+            slack.slackNotificationId(event.id, "gps-exception-routed", exc.gpsOrderId)
           );
           await inngest.send({
             // Keep one active exception backorder event per GPS order to avoid
@@ -330,6 +332,24 @@ async function getAllFulfilledGpsOrders(): Promise<GpsSyncResult> {
   }
 
   // Fallback to Shopify metafields if PostgreSQL returned nothing
+  if (isDatabaseConfigured()) {
+    const segmented = await queryDatabase<{
+      gpsOrderId: string;
+      warehouse: string;
+      shopifyOrderName: string;
+      shopifyOrderId: string;
+    }>(pollGpsSegmentsSQL, [config.shopify.im8.shopDomain, pollCutoffIso]);
+    for (const row of segmented.rows) {
+      if (
+        !gpsOrderData.some(
+          (existing) =>
+            existing.gpsOrderId === row.gpsOrderId && existing.warehouse === row.warehouse
+        )
+      )
+        gpsOrderData.push(row);
+    }
+  }
+
   if (gpsOrderData.length === 0) {
     console.log(`[GPS Sync] Falling back to Shopify metafield lookup...`);
     const orders = await shopify.getUnfulfilledOrders(250, daysBack);
@@ -581,6 +601,28 @@ async function processFulfilledOrdersBatch(
       }
 
       // Get fulfillment orders from Shopify using the order ID
+      const segment = await findGpsSegment(config.shopify.im8.shopDomain, outboundOrderNo);
+      if (segment) {
+        await inngest.send({
+          id: `gps-segment-shipped-${outboundOrderNo}`,
+          name: "gps/fulfilment.received",
+          data: {
+            gpsOrderId: outboundOrderNo,
+            shopifyOrderId: segment.orderId,
+            trackingNumber: logisticsTrackNo,
+            carrierCode: logisticsCarrier,
+            receivedAt: new Date().toISOString(),
+            fulfilmentJson: {
+              outboundOrderNo,
+              platformOrderNo,
+              outboundTime,
+              warehouseName: warehouse,
+            },
+          },
+        });
+        fulfilled.push(platformOrderNo);
+        continue;
+      }
       const fulfillmentOrders = await shopify.getFulfillmentOrders(parseInt(shopifyOrderId));
       const openFulfillment = fulfillmentOrders.find(
         (fo) => fo.status === "open" || fo.status === "in_progress"

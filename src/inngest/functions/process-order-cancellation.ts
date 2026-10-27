@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { cancelOrderSegments } from "@/lib/services/order-segments/cancellation";
 import { config } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
 import * as shopify from "@/lib/clients/shopify";
@@ -66,7 +67,8 @@ export const processOrderCancellation = inngest.createFunction(
     }
 
     // 1. Cancel GPS Order (only for GPS orders — no D365 action on cancel)
-    const gpsCancellation = await step.run("cancel-gps-order", async () => {
+    const segmentCancellation = await cancelOrderSegments(shopify.resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain, String(shopifyOrderId), step);
+    const gpsCancellation = segmentCancellation || await step.run("cancel-gps-order", async () => {
       if (!config.features.enableGpsSync) {
         return { status: "skipped", reason: "GPS sync disabled" };
       }

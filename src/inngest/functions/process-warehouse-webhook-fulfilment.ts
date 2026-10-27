@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { NonRetriableError } from "inngest";
 
 import { inngest } from "../client";
+import { findGpsSegment } from "@/lib/services/order-segments/store";
+import { fulfillmentOrderIds } from "@/lib/services/order-segments/shopify";
 import { config } from "@/lib/config";
 import * as shopify from "@/lib/clients/shopify";
 import { determineWarehouse, isValidGpsWarehouse } from "@/lib/helpers/warehouse";
@@ -373,11 +375,21 @@ export async function runProcessWarehouseWebhookFulfilment({
     };
   }
 
+  const segmentBinding =
+    fulfilment.source === "gps"
+      ? await step.run("resolve-gps-segment", () =>
+          findGpsSegment(config.shopify.im8.shopDomain, fulfilment.warehouseOrderId)
+        )
+      : null;
   const order = await step.run("resolve-shopify-order", () =>
-    resolveShopifyOrder(fulfilment.shopifyReferenceCandidates)
+    resolveShopifyOrder(
+      segmentBinding ? [segmentBinding.orderId] : fulfilment.shopifyReferenceCandidates
+    )
   );
-  const warehouseName = resolveWarehouseName(fulfilment, order);
+  const warehouseName =
+    segmentBinding?.segment.warehouse || resolveWarehouseName(fulfilment, order);
   const locationId = await step.run("resolve-shopify-location", async () => {
+    if (segmentBinding) return Number(segmentBinding.segment.locationId);
     const dynamicLocationId = await getLocationIdForWarehouse(warehouseName);
     const fallback =
       warehouseName === "GPS UK Warehouse"
@@ -396,11 +408,34 @@ export async function runProcessWarehouseWebhookFulfilment({
     return resolved;
   });
 
-  const existingFulfillment = matchingExistingFulfillment(order, fulfilment.trackingNumber);
+  const existingFulfillment = segmentBinding
+    ? await step.run("find-existing-segment-fulfillment", async () => {
+        for (const candidate of order.fulfillments || []) {
+          if (
+            ![candidate.tracking_number, ...(candidate.tracking_numbers || [])].includes(
+              fulfilment.trackingNumber
+            )
+          )
+            continue;
+          const ids = await fulfillmentOrderIds(config.shopify.im8.shopDomain, candidate.id);
+          if (ids.includes(segmentBinding.progress.fulfillmentOrderId || "")) return candidate;
+        }
+        return null;
+      })
+    : matchingExistingFulfillment(order, fulfilment.trackingNumber);
   const fulfillmentOrder = existingFulfillment
     ? null
     : await step.run("get-shopify-fulfillment-order", async () => {
         const orders = await shopify.getFulfillmentOrders(order.id);
+        if (segmentBinding) {
+          const match = orders.find(
+            (fo) =>
+              String(fo.id) === segmentBinding.progress.fulfillmentOrderId &&
+              ["open", "in_progress"].includes(fo.status)
+          );
+          if (!match) throw new Error("GPS segment fulfillment order is not available");
+          return match;
+        }
         return selectOpenFulfillmentOrder(orders, locationId);
       });
   const lineItems = existingFulfillment?.line_items?.length
@@ -481,6 +516,7 @@ export async function runProcessWarehouseWebhookFulfilment({
       fulfillments: [canonicalFulfillment],
       receivedAt: event.data.receivedAt || new Date().toISOString(),
       fromGpsSync: fulfilment.source === "gps",
+      gpsOrderId: fulfilment.source === "gps" ? fulfilment.warehouseOrderId : undefined,
       fromWarehouseWebhook: true,
       warehouseWebhookSource: fulfilment.source,
     },

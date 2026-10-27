@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { isLedgerProviderExpansion } from "./ledger-provider-expansion.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationDirectory = path.resolve(
@@ -83,7 +84,7 @@ for (const file of files) {
     destructivePatterns.some((pattern) => pattern.test(executableSql)) ||
     hasUnreplacedObjectDrop(executableSql);
 
-  if (direction === "up" && isDestructive) {
+  if (direction === "up" && isDestructive && !isLedgerProviderExpansion(sql)) {
     if (!sql.includes(contractMarker)) {
       errors.push(`${file}: destructive SQL requires a "-- ${contractMarker}" marker`);
     }

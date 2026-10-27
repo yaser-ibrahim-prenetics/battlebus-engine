@@ -317,12 +317,15 @@ export function validateFraudAndCancellation(
  * Check Shopify order risks and return flagged risk messages
  * Returns array of risk messages for risks with score >= 0.8
  */
-export async function checkShopifyOrderRisks(shopifyOrderId: number | string): Promise<string[]> {
+export async function checkShopifyOrderRisks(
+  shopifyOrderId: number | string,
+  shopDomain?: string
+): Promise<string[]> {
   if (!config.slack.enabledRiskCheck) {
     return [];
   }
 
-  const risks = await shopify.getOrderRisks(shopifyOrderId);
+  const risks = await shopify.getOrderRisks(shopifyOrderId, shopDomain);
   if (!risks.length) return [];
 
   const riskMessages: string[] = [];
@@ -377,7 +380,8 @@ export function validateOrderForProcessing(order: ShopifyOrderPayload): {
 export async function validateOrderCompletely(
   order: ShopifyOrderPayload,
   shopifyOrderId: number | string,
-  shopifyOrderName: string
+  shopifyOrderName: string,
+  shopDomain?: string
 ): Promise<{
   valid: boolean;
   skip: boolean;
@@ -439,7 +443,7 @@ export async function validateOrderCompletely(
   }
 
   // 3. Shopify risk check
-  const flaggedRisks = await checkShopifyOrderRisks(shopifyOrderId);
+  const flaggedRisks = await checkShopifyOrderRisks(shopifyOrderId, shopDomain);
   if (flaggedRisks.length > 0) {
     return {
       valid: false,

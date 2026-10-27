@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export interface ActionIdentity {
-  provider: "gps" | "dynamics";
+  provider: "gps" | "dynamics" | "shopify";
   scope: string;
   sourceOrderId: string;
   sourceLineIds: string[];
