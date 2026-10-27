@@ -101,6 +101,7 @@ jobs:
       - name: Test
         env:
           SLACK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
+          REFUND_HOLD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
           FULFILLMENT_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
         id: test
         continue-on-error: true
