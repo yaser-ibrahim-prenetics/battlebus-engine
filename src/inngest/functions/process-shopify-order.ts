@@ -9,6 +9,7 @@
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
+import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -812,10 +813,7 @@ export const processShopifyOrder = inngest.createFunction(
               .filter(Boolean)
           : [];
         const validationMessage =
-          [
-            validation.reason,
-            ...(Array.isArray(validation.message) ? validation.message : []),
-          ]
+          [validation.reason, ...(Array.isArray(validation.message) ? validation.message : [])]
             .filter(Boolean)
             .join("; ") || "Order validation failed";
 
@@ -935,6 +933,11 @@ export const processShopifyOrder = inngest.createFunction(
     const dataAreaId = routingResult.dataAreaId;
     const country_code = routingResult.countryCode;
 
+    const accounting = await step.run("load-order-accounting", async () => {
+      if (!config.features.enableDynamicsSync || event.data.testMode) return undefined;
+      return loadOrderAccounting(order, event.data.shopifyStore);
+    });
+
     let salesOrderNumber: string | undefined;
     /** Captured from D365 line create responses — persisted on Hub `orders.state` for fulfillment Lotid fallback. */
     let d365InventoryLotsBySku: Record<string, string> = {};
@@ -1013,7 +1016,12 @@ export const processShopifyOrder = inngest.createFunction(
         // ── Step: create D365 header ───────────────────────────────────
         await publishStatus("d365.create-header", "running", "Creating D365 sales order header");
         const headerResult = await step.run("d365-create-header", async () => {
-          const headerRequest = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId);
+          const headerRequest = toD365SalesOrderHeaderV3(
+            order,
+            warehouseName,
+            dataAreaId,
+            accounting
+          );
           let d365Header;
           if (skipD365) {
             d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
@@ -1040,7 +1048,8 @@ export const processShopifyOrder = inngest.createFunction(
           salesOrderNo,
           warehouseName,
           true,
-          dataAreaId
+          dataAreaId,
+          accounting
         );
         lineItems.forEach((item) => {
           item.dataAreaId = dataAreaId;
@@ -1145,7 +1154,9 @@ export const processShopifyOrder = inngest.createFunction(
 
           return {
             d365InventoryLotsBySku,
-            skippedItemNumbers: lineResults.filter((r) => r.skipped).map((r) => r.itemNumber.toUpperCase()),
+            skippedItemNumbers: lineResults
+              .filter((r) => r.skipped)
+              .map((r) => r.itemNumber.toUpperCase()),
             skippedServiceLines: skippedServiceLines.map((s) => ({
               itemNumber: s.itemNumber,
               error: "error" in s ? s.error : "",
@@ -1188,7 +1199,8 @@ export const processShopifyOrder = inngest.createFunction(
               order,
               salesOrderNo,
               warehouseName,
-              dataAreaId
+              dataAreaId,
+              accounting
             )
               .filter((r) => !skippedItemNumbers.has(r.d365ItemNumber.toUpperCase()))
               .map((r) => ({
@@ -1330,9 +1342,9 @@ export const processShopifyOrder = inngest.createFunction(
               depositCheck.ok
                 ? `Prepayment created: $${prepaymentAmount.toFixed(2)} (DepositFulfillment=Yes)`
                 : `Prepayment posted but D365 did NOT flip header to deposit fulfillment ` +
-                  `(THK_DepositFulfillment=${depositCheck.depositFulfillment ?? "<empty>"}). ` +
-                  `Invoice will post as Standard, not Prepayment. ` +
-                  `Fix the customer/posting profile in D365 for the ordering account.`,
+                    `(THK_DepositFulfillment=${depositCheck.depositFulfillment ?? "<empty>"}). ` +
+                    `Invoice will post as Standard, not Prepayment. ` +
+                    `Fix the customer/posting profile in D365 for the ordering account.`,
               {
                 amount: prepaymentAmount,
                 depositFulfillment: depositCheck.depositFulfillment,
@@ -1348,18 +1360,23 @@ export const processShopifyOrder = inngest.createFunction(
               errorMessage.includes("Number sequence") &&
               errorMessage.includes("has been exceeded");
 
-            await publishStatus("d365.create-prepayment", "failed", `Prepayment failed: ${errorMessage}`, {
-              amount: prepaymentAmount,
-              error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
-              salesOrderNumber: salesOrderNo,
-            });
+            await publishStatus(
+              "d365.create-prepayment",
+              "failed",
+              `Prepayment failed: ${errorMessage}`,
+              {
+                amount: prepaymentAmount,
+                error: isNumberSequenceError ? "number_sequence_exceeded" : errorMessage,
+                salesOrderNumber: salesOrderNo,
+              }
+            );
 
             await slack.sendWarningMessage(
               SlackChannelEnum.SHOPIFY,
               isNumberSequenceError
                 ? `⚠️ [D365] Number sequence exceeded for prepayment\nOrder: ${shopifyOrderName} (${salesOrderNo})\nError: ${errorMessage}\nAction Required: Extend number sequence U001-JBN in D365`
                 : `⚠️ [D365] Prepayment creation failed for ${shopifyOrderName} (${salesOrderNo}): ${errorMessage}`,
-                slack.slackNotificationId(event.id, "order-d365-prepayment-failed")
+              slack.slackNotificationId(event.id, "order-d365-prepayment-failed")
             );
 
             throw new Error(
@@ -1474,7 +1491,7 @@ export const processShopifyOrder = inngest.createFunction(
                       SlackChannelEnum.SHOPIFY,
                       `[Fulfillment Split] ${shopifyOrderName} split into ${newFOs.length} fulfillment orders ` +
                         `(total=$${orderTotal}, threshold=$${splitDecision.threshold}, country=${countryCode})`,
-                        slack.slackNotificationId(event.id, "order-fulfillment-split")
+                      slack.slackNotificationId(event.id, "order-fulfillment-split")
                     );
                   }
                 }
@@ -1544,7 +1561,7 @@ export const processShopifyOrder = inngest.createFunction(
                   `Warehouse: ${warehouseName}\n` +
                   `Error: ${errorMessage}\n` +
                   `D365 order created successfully, but GPS sync failed.`,
-                  slack.slackNotificationId(event.id, "order-gps-dispatch-failed")
+                slack.slackNotificationId(event.id, "order-gps-dispatch-failed")
               );
 
               return { type: "failed" as const, error: errorMessage };
@@ -1607,7 +1624,8 @@ export const processShopifyOrder = inngest.createFunction(
           reusedSalesOrderNumber,
           warehouseName,
           true,
-          dataAreaId
+          dataAreaId,
+          accounting
         );
         const reusedPrepaymentAmount = calculateOrderCost(
           reusedLines.map((line) => ({
@@ -1645,8 +1663,8 @@ export const processShopifyOrder = inngest.createFunction(
               reusedDepositCheck.ok
                 ? `Prepayment ensured for existing order: $${reusedPrepaymentAmount.toFixed(2)} (DepositFulfillment=Yes)`
                 : `Prepayment posted but THK_DepositFulfillment=${reusedDepositCheck.depositFulfillment ?? "<empty>"} ` +
-                  `— invoice will post as Standard, not Prepayment. ` +
-                  `Fix the customer/posting profile in D365 for the ordering account.`,
+                    `— invoice will post as Standard, not Prepayment. ` +
+                    `Fix the customer/posting profile in D365 for the ordering account.`,
               {
                 amount: reusedPrepaymentAmount,
                 salesOrderNumber: reusedSalesOrderNumber,
@@ -1751,7 +1769,8 @@ export const processShopifyOrder = inngest.createFunction(
 
           const errorType = classifyGpsError(oosError);
           const failedSkus =
-            order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
+            order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) ||
+            [];
 
           await publishStatus(
             "gps.send-order",
@@ -2104,9 +2123,7 @@ export const processShopifyOrder = inngest.createFunction(
                 warehouse: warehouseName,
                 gpsOrderId,
                 gpsUkOrderId:
-                  isGpsUkWarehouse(warehouseName) && gpsOrderId
-                    ? gpsOrderId
-                    : undefined,
+                  isGpsUkWarehouse(warehouseName) && gpsOrderId ? gpsOrderId : undefined,
                 gpsSkipped,
                 orderJson: order,
                 ...(Object.keys(d365InventoryLotsBySku).length > 0
@@ -2125,9 +2142,7 @@ export const processShopifyOrder = inngest.createFunction(
                 warehouse: warehouseName,
                 gpsOrderId,
                 gpsUkOrderId:
-                  isGpsUkWarehouse(warehouseName) && gpsOrderId
-                    ? gpsOrderId
-                    : undefined,
+                  isGpsUkWarehouse(warehouseName) && gpsOrderId ? gpsOrderId : undefined,
                 shopifyOrderCreatedAt: order?.created_at,
                 status: "completed",
                 processingStatus: "completed",
@@ -2344,13 +2359,14 @@ export const processShopifyOrder = inngest.createFunction(
           : "non_retryable_data_error";
         const failedSkus =
           order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
-        const syncFailureSystem = normalizedError.includes("gps") || normalizedError.includes("xlwms")
-          ? "gps"
-          : normalizedError.includes("supabase") ||
-              normalizedError.includes("postgres") ||
-              normalizedError.includes("database")
-            ? "supabase"
-            : "d365";
+        const syncFailureSystem =
+          normalizedError.includes("gps") || normalizedError.includes("xlwms")
+            ? "gps"
+            : normalizedError.includes("supabase") ||
+                normalizedError.includes("postgres") ||
+                normalizedError.includes("database")
+              ? "supabase"
+              : "d365";
 
         await publishResult("failed", {
           error: errorMsg,
@@ -2431,13 +2447,14 @@ export const processShopifyOrder = inngest.createFunction(
       await publishResult("failed", { error: errorMsg });
       const failedSkus =
         order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
-      const syncFailureSystem = normalizedError.includes("gps") || normalizedError.includes("xlwms")
-        ? "gps"
-        : normalizedError.includes("supabase") ||
-            normalizedError.includes("postgres") ||
-            normalizedError.includes("database")
-          ? "supabase"
-          : "d365";
+      const syncFailureSystem =
+        normalizedError.includes("gps") || normalizedError.includes("xlwms")
+          ? "gps"
+          : normalizedError.includes("supabase") ||
+              normalizedError.includes("postgres") ||
+              normalizedError.includes("database")
+            ? "supabase"
+            : "d365";
 
       await step.run("emit-sync-backorder-event-catch-all", async () => {
         await inngest.send({

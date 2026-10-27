@@ -34,16 +34,15 @@ function buildUrl(endpoint: string): string {
 export async function shopifyAdminGraphql<T = any>(
   query: string,
   variables: Record<string, unknown> = {},
-  options: { apiVersion?: string } = {}
+  options: { apiVersion?: string; shopDomain?: string } = {}
 ): Promise<T> {
-  const url = options.apiVersion
-    ? `https://${config.shopify.im8.shopDomain}/admin/api/${options.apiVersion}/graphql.json`
-    : buildUrl(`/graphql.json`);
+  const credentials = resolveShopifyAdminCredentials(options.shopDomain);
+  const url = `https://${credentials.shopDomain}/admin/api/${options.apiVersion || credentials.apiVersion}/graphql.json`;
   const response = await fetch(url, {
     redirect: "error",
     signal: AbortSignal.timeout(30_000),
     method: "POST",
-    headers: getHeaders(),
+    headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
     body: JSON.stringify({ query, variables }),
   });
 
@@ -389,7 +388,8 @@ export async function uncancelOrder(orderId: string | number): Promise<ShopifyOr
  * Get Fulfillment Orders for an Order
  */
 export async function getFulfillmentOrders(
-  orderId: string | number
+  orderId: string | number,
+  shopDomain?: string
 ): Promise<IShopifyFulfillmentOrder[]> {
   if (config.features.enabledShopifyOrderMock) {
     const mockData = await import("../mocks/shopify/fulfillments.json");
@@ -397,11 +397,14 @@ export async function getFulfillmentOrders(
     return mockData.fulfillment_orders;
   }
 
-  const url = buildUrl(`/orders/${orderId}/fulfillment_orders.json`);
+  const credentials = resolveShopifyAdminCredentials(shopDomain);
+  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/fulfillment_orders.json`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
@@ -564,13 +567,17 @@ export async function searchOrdersByName(
  * Get Order Transactions
  */
 export async function getOrderTransactions(
-  orderId: string | number
+  orderId: string | number,
+  shopDomain?: string
 ): Promise<ShopifyTransaction[]> {
-  const url = buildUrl(`/orders/${orderId}/transactions.json`);
+  const credentials = resolveShopifyAdminCredentials(shopDomain);
+  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/transactions.json`;
 
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
@@ -594,7 +601,9 @@ export interface ShopifyOrderEvent {
   subject_id?: number | null;
 }
 
-export async function getOrderEvents(orderId: string | number): Promise<{ events: ShopifyOrderEvent[] }> {
+export async function getOrderEvents(
+  orderId: string | number
+): Promise<{ events: ShopifyOrderEvent[] }> {
   const url = buildUrl(`/orders/${orderId}/events.json`);
 
   const response = await fetch(url, {

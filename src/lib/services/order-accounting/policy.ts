@@ -25,7 +25,12 @@ export function resolveGiftCardApplications(transactions: ShopifyTransaction[]) 
       if (seen.has(String(t.id))) return [];
       seen.add(String(t.id));
       const lastCharacters = t.receipt?.gift_card_last_characters;
-      if (!lastCharacters || !Number.isFinite(Number(t.amount)) || Number(t.amount) < 0) {
+      if (
+        !lastCharacters ||
+        !t.currency ||
+        !Number.isFinite(Number(t.amount)) ||
+        Number(t.amount) < 0
+      ) {
         throw new Error("Successful gift-card payment is missing accounting receipt information");
       }
       return [
