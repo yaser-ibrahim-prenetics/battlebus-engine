@@ -2,15 +2,14 @@ import type { ShopifyFulfillment } from "@/inngest/events";
 import { config } from "@/lib/config";
 import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
 import * as dynamics from "@/lib/clients/dynamics";
-import * as hub from "@/lib/clients/cs-platform";
 import { queryDatabase } from "@/lib/db/database";
-import { completeAllocationSQL, readAllocationsSQL } from "@/lib/sql/order-segments/fulfillments";
+import { completeAllocationSQL } from "@/lib/sql/order-segments/fulfillments";
 import { getFulfilmentConfig } from "@/lib/helpers/warehouse";
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { isDepositFulfillmentOrder } from "@/lib/helpers/d365-thk-fulfilment";
-import { readPlan, findGpsSegment, saveProgress } from "./store";
+import { readPlan, findGpsSegment } from "./store";
 import { fulfillmentOrderIds } from "./shopify";
-import { reserveAllocations, type Allocation } from "./allocation";
+import { reserveAllocations } from "./allocation";
 import type { StepRunner } from "./types";
 
 export async function fulfillOrderSegments(input: {
@@ -24,7 +23,15 @@ export async function fulfillOrderSegments(input: {
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await readPlan(shop, input.orderId);
   if (!stored) return null;
+  const results = [];
+  const physicalIds = new Set(
+    stored.plan.segments.flatMap((segment) =>
+      segment.lines.filter((line) => line.physical).map((line) => line.lineItemId)
+    )
+  );
   for (const fulfillment of input.fulfillments) {
+    const physicalLines = fulfillment.line_items.filter((line) => physicalIds.has(String(line.id)));
+    if (!physicalLines.length) continue;
     if (fulfillment.status && fulfillment.status !== "success") continue;
     const allocations = await input.step.run(`allocate-fulfillment-${fulfillment.id}`, async () => {
       const binding = input.gpsOrderId ? await findGpsSegment(shop, input.gpsOrderId) : null;
@@ -37,7 +44,7 @@ export async function fulfillOrderSegments(input: {
         ? [binding.progress.fulfillmentOrderId!]
         : await fulfillmentOrderIds(shop, fulfillment.id);
       const quantities: Record<string, number> = {};
-      for (const line of fulfillment.line_items)
+      for (const line of physicalLines)
         quantities[String(line.id)] = (quantities[String(line.id)] ?? 0) + line.quantity;
       const matching = stored.plan.segments.filter((segment) =>
         foIds.includes(stored.progress[String(segment.index)]?.fulfillmentOrderId || "")
@@ -51,7 +58,14 @@ export async function fulfillOrderSegments(input: {
         physical.every((line) => quantities[line.sourceLineId] === line.sourceQuantity) &&
         Object.keys(quantities).every((id) => physical.some((line) => line.sourceLineId === id));
       const identity = fullGpsShipment ? `gps:${gpsProgress!.gpsOrderId}` : String(fulfillment.id);
-      return reserveAllocations(shop, stored, identity, foIds, quantities);
+      return reserveAllocations(
+        shop,
+        stored,
+        identity,
+        foIds,
+        quantities,
+        fulfillmentPostingDate(fulfillment.created_at)
+      );
     });
     for (const allocation of allocations) {
       await input.step.run(
@@ -83,7 +97,7 @@ export async function fulfillOrderSegments(input: {
             dataAreaId: segment.dataAreaId,
             salesOrderNumber: progress.salesOrderNumber,
             type: "shipment",
-            confirmedShippedDate: fulfillmentPostingDate(fulfillment.created_at),
+            confirmedShippedDate: allocation.posting_date,
             lines,
           });
           const deposit = await dynamics.verifyDepositFulfillmentApplied(
@@ -111,32 +125,23 @@ export async function fulfillOrderSegments(input: {
         }
       );
     }
-  }
-  await input.step.run("publish-segment-fulfillment", async () => {
-    const { rows } = await queryDatabase<Allocation>(readAllocationsSQL, [shop, input.orderId]);
-    const current = await readPlan(shop, input.orderId);
-    if (!current) throw new Error("Segment plan missing after fulfillment");
-    const segments = [];
-    for (const segment of current.plan.segments) {
-      const progress = current.progress[String(segment.index)];
-      const physical = progress?.lines?.filter((line) => !line.isService) || [];
-      const fulfilled =
-        physical.length > 0 &&
-        physical.every(
-          (line) =>
-            rows
-              .filter((row) => row.completed && row.segment_index === segment.index)
-              .reduce((sum, row) => sum + (row.quantities[line.sourceLineId] || 0), 0) >=
-            line.sourceQuantity
-        );
-      await saveProgress(shop, input.orderId, segment.index, { fulfilled });
-      segments.push({ ...segment, ...progress, fulfilled });
-    }
-    await hub.sendOrderUpdate({
-      id: input.orderId,
-      d365FulfillmentStatus: segments.every((segment) => segment.fulfilled) ? "synced" : "pending",
-      state: { orderSegments: segments },
+    results.push({
+      fulfillmentId: fulfillment.id,
+      status: "success",
+      source: "Direct",
+      trackingNumber: fulfillment.tracking_number,
+      carrier: fulfillment.tracking_company,
     });
-  });
-  return { status: "segments_fulfilled" };
+  }
+  const primary = stored.progress["0"];
+  return {
+    status: "segments_fulfilled",
+    results,
+    d365Order: primary?.salesOrderNumber
+      ? {
+          SalesOrderNumber: primary.salesOrderNumber,
+          dataAreaId: stored.plan.segments[0].dataAreaId,
+        }
+      : null,
+  };
 }

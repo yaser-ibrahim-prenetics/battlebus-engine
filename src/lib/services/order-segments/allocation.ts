@@ -11,6 +11,7 @@ export interface Allocation {
   fulfillment_id: string;
   segment_index: number;
   request_hash: string;
+  posting_date: string;
   quantities: Record<string, number>;
   include_services: boolean;
   completed: boolean;
@@ -22,7 +23,8 @@ export function allocateQuantities(
   foIds: string[],
   quantities: Record<string, number>,
   previous: Allocation[],
-  requestHash: string
+  requestHash: string,
+  postingDate: string
 ): Allocation[] {
   const replay = previous.filter((row) => row.fulfillment_id === fulfillmentId);
   if (replay.length) {
@@ -58,6 +60,7 @@ export function allocateQuantities(
         fulfillment_id: fulfillmentId,
         segment_index: segment.index,
         request_hash: requestHash,
+        posting_date: postingDate,
         quantities: {},
         include_services: !previous.some(
           (row) => row.segment_index === segment.index && row.include_services
@@ -77,7 +80,8 @@ export async function reserveAllocations(
   stored: StoredPlan,
   fulfillmentId: string,
   foIds: string[],
-  quantities: Record<string, number>
+  quantities: Record<string, number>,
+  postingDate: string
 ) {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("Database required for segment fulfillment");
@@ -92,7 +96,15 @@ export async function reserveAllocations(
       stored.plan.orderId,
     ]);
     const hash = fingerprint({ foIds: [...foIds].sort(), quantities });
-    const allocated = allocateQuantities(stored, fulfillmentId, foIds, quantities, rows, hash);
+    const allocated = allocateQuantities(
+      stored,
+      fulfillmentId,
+      foIds,
+      quantities,
+      rows,
+      hash,
+      postingDate
+    );
     if (!rows.some((row) => row.fulfillment_id === fulfillmentId)) {
       for (const allocation of allocated)
         await client.query(reserveAllocationSQL, [
@@ -103,6 +115,7 @@ export async function reserveAllocations(
           hash,
           JSON.stringify(allocation.quantities),
           allocation.include_services,
+          allocation.posting_date,
         ]);
     }
     await client.query("COMMIT");

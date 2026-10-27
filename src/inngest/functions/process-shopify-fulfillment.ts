@@ -7,6 +7,7 @@ import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 // cron-gps-sync also emits this event with fromGpsSync for the automated GPS ship path.
 
 import { inngest } from "../client";
+import { publishSegmentCompletion } from "@/lib/services/order-segments/completion";
 import { fulfillOrderSegments } from "@/lib/services/order-segments/fulfillment";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -32,7 +33,6 @@ import { getFulfilmentConfig, getWarehouseConfigForDataAreaId } from "@/lib/help
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
-  RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   BACKORDER_CONFIGS,
   retryWithBackoff,
@@ -100,10 +100,6 @@ export const processShopifyFulfillment = inngest.createFunction(
         key: "event.data.shopifyOrderId",
       },
     ],
-    rateLimit: {
-      ...RATE_LIMIT_CONFIGS.FULFILLMENT,
-      key: "event.data.shopifyOrderId",
-    },
     triggers: [{ event: "shopify/order.fulfilled" }],
   },
   async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
@@ -224,10 +220,10 @@ export const processShopifyFulfillment = inngest.createFunction(
       orderId: String(shopifyOrderId), shopDomain: event.data.shopifyStore, fulfillments, step,
       gpsOrderId: event.data.fromGpsSync ? event.data.gpsOrderId : undefined,
     });
-    if (segmented) return segmented;
+    if (segmented && !segmented.results.length) return { status: "skipped_nonphysical_receipt" };
 
     // Get D365 order (Supabase d365_order_number by Shopify name first — same as refund)
-    const d365Order = await step.run("get-d365-order", async () => {
+    const d365Order = segmented?.d365Order || await step.run("get-d365-order", async () => {
       const fulfillmentForDataArea =
         fulfillmentSources.find((s: { isGps: boolean }) => !s.isGps) ?? fulfillmentSources[0];
       const preferredDataAreaId =
@@ -346,7 +342,7 @@ export const processShopifyFulfillment = inngest.createFunction(
     // spock-store: PostPrepayment runs only at order create (orders/paid), never at fulfillment.
 
     // Process each fulfillment
-    const fulfillmentResults = await step.run("process-fulfillments", async () => {
+    const fulfillmentResults = segmented?.results || await step.run("process-fulfillments", async () => {
       if (!config.features.enableDynamicsSync) {
         return fulfillments.map((f: ShopifyFulfillment) => ({
           fulfillmentId: f.id,
@@ -1125,6 +1121,9 @@ export const processShopifyFulfillment = inngest.createFunction(
         }
       }
     }
+
+    if (segmented) await step.run("publish-segment-fulfillment", () => publishSegmentCompletion(
+      shopifyClient.resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain, String(shopifyOrderId)));
 
     return {
       status: "success",

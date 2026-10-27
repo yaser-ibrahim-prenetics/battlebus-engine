@@ -4,6 +4,7 @@ CREATE TABLE public.order_segment_fulfillments (
   fulfillment_id text NOT NULL,
   segment_index integer NOT NULL CHECK (segment_index >= 0),
   request_hash text NOT NULL,
+  posting_date date NOT NULL,
   quantities jsonb NOT NULL CHECK (jsonb_typeof(quantities) = 'object'),
   include_services boolean NOT NULL,
   completed boolean NOT NULL DEFAULT false,
