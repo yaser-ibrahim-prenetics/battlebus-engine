@@ -145,6 +145,8 @@ export interface D365FulfilmentLine {
 }
 
 export interface D365FulfilmentRequest {
+  /** Stable source shipment/refund ID; never an execution ID or current timestamp. */
+  fulfillmentId?: string;
   salesOrderNumber: string;
   dataAreaId: string;
   // Spock-store parity: THK fulfilment endpoint uses "shipment" for outbound shipments.

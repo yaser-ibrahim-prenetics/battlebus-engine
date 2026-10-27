@@ -1,3 +1,4 @@
+import { cronD365Reconciliation } from "./cron-d365-reconciliation";
 // ============================================================================
 // INNGEST FUNCTIONS INDEX
 // ============================================================================
@@ -93,6 +94,7 @@ const inventoryFunctions = config.features.enableInventoryRuns
   : [];
 
 export const functions = [
+  cronD365Reconciliation,
   drainSlackNotificationOutbox,
   processShopifyOrder,
   processRefund,

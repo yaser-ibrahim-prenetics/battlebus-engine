@@ -1,3 +1,4 @@
+import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
@@ -234,8 +235,7 @@ export const processGpsIndividual = inngest.createFunction(
         d365Order.SalesOrderNumber,
         dataAreaId
       );
-      const shippedDate =
-        fulfilmentData.shippedAt?.split(" ")[0] || new Date().toISOString().split("T")[0];
+      const shippedDate = fulfillmentPostingDate(fulfilmentData.shippedAt, "source");
 
       const fulfilmentConfig = getFulfilmentConfig(warehouse);
       const buildLines = () =>
@@ -281,6 +281,7 @@ export const processGpsIndividual = inngest.createFunction(
 
       // Create fulfilment (packing slip + Standard invoice on deposit orders)
       const fulfilmentPost = await dynamics.createFulfilment({
+        fulfillmentId: `gps:${fulfilmentData.gpsOrderNo}`,
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
         type: "shipment",

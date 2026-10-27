@@ -33,9 +33,15 @@ function buildUrl(endpoint: string): string {
  */
 export async function shopifyAdminGraphql<T = any>(
   query: string,
-  variables: Record<string, unknown> = {}
+  variables: Record<string, unknown> = {},
+  options: { apiVersion?: string } = {}
 ): Promise<T> {
-  const response = await fetch(buildUrl(`/graphql.json`), {
+  const url = options.apiVersion
+    ? `https://${config.shopify.im8.shopDomain}/admin/api/${options.apiVersion}/graphql.json`
+    : buildUrl(`/graphql.json`);
+  const response = await fetch(url, {
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ query, variables }),

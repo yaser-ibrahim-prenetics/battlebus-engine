@@ -4,6 +4,11 @@ vi.mock("../../services/flow-logs", () => ({
   logFlowEvent: vi.fn(),
 }));
 
+vi.mock("../../services/fulfillment-actions/ledger", () => ({
+  executeFulfillmentAction: vi.fn(async (_identity, _request, execute) => execute()),
+  ConfirmedActionFailure: class extends Error {},
+}));
+
 const tokenResponse = () =>
   new Response(
     JSON.stringify({
@@ -56,6 +61,7 @@ describe("D365 fulfilment guardrails", () => {
 
     await expect(
       createFulfilment({
+        fulfillmentId: "shopify:test-1",
         salesOrderNumber: "H007-SO-119969",
         dataAreaId: "h007",
         type: "shipment",

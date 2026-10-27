@@ -1,0 +1,2 @@
+DROP POLICY fulfillment_action_aliases_runtime ON public.fulfillment_action_aliases;
+REVOKE SELECT, INSERT ON public.fulfillment_action_aliases FROM battle_bus_runtime;
