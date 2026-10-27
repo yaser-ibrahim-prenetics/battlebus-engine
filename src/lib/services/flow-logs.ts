@@ -57,7 +57,7 @@ let _lastPruneAt = 0;
 
 const ENABLED = process.env.FLOW_LOGS_ENABLED !== "false";
 const TABLE = quoteIdentifier(process.env.FLOW_LOGS_TABLE || "flow_logs");
-const REFUND_COMPLETION_SQL = completedRefundSQL(process.env.FLOW_LOGS_TABLE);
+const REFUND_COMPLETION_SQL = completedRefundSQL(process.env.FLOW_LOGS_TABLE || "flow_logs");
 const RETENTION_DAYS = Math.max(
   1,
   Number.isFinite(Number(process.env.FLOW_LOG_RETENTION_DAYS))

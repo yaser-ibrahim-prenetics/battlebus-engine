@@ -59,6 +59,13 @@ describe("hasCompletedRefundFlowLog", () => {
     ]);
   });
 
+  it("uses the default table when FLOW_LOGS_TABLE is empty", async () => {
+    process.env.FLOW_LOGS_TABLE = "";
+    const { hasCompletedRefundFlowLog } = await import("../flow-logs");
+    await hasCompletedRefundFlowLog("refund-empty-config");
+    expect(databaseState.query.mock.calls[0][0]).toContain('FROM "flow_logs"');
+  });
+
   it("returns false when no rows match", async () => {
     const { hasCompletedRefundFlowLog } = await import("../flow-logs");
     expect(await hasCompletedRefundFlowLog("refund-nope")).toBe(false);
