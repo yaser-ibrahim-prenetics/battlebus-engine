@@ -29,7 +29,9 @@ while holding a database transaction. A request fingerprint detects conflicting
 replays; raw GPS addresses, credentials, and request payloads are not stored in
 the ledger. D365 tracking is excluded from its logical request fingerprint, so
 tracking corrections replay the accepted result without another shipment POST;
-quantities, line sets, dimensions and shipment dates still must match. Replaying
+quantities, line sets, dimensions and shipment dates still must match. Posting
+dates come from immutable refund/fulfillment source timestamps; missing or invalid
+timestamps fail closed rather than changing on a later retry. Replaying
 does not update tracking at D365. GPS stores its order identifier and accepted
 shipping channel; D365 stores the minimal THK result
 needed by existing invoice checks. Results are committed before returning.

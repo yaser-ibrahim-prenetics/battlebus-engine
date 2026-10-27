@@ -1,3 +1,4 @@
+import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -544,7 +545,7 @@ export const processRefund = inngest.createFunction(
         salesOrderNumber: d365Order.SalesOrderNumber!,
         dataAreaId,
         type: "return", // Special type for refund/return posting
-        confirmedShippedDate: new Date().toISOString().split("T")[0],
+        confirmedShippedDate: fulfillmentPostingDate(refund.created_at),
         lines: [
           {
             itemNumber: warehouseInfo.refundSku,

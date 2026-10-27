@@ -1,3 +1,4 @@
+import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 // ============================================================================
 // SHOPIFY FULFILLMENT → D365 SYNC
 // ============================================================================
@@ -644,9 +645,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                 dataAreaId,
                 salesOrderNumber: d365Order.SalesOrderNumber!,
                 type: "shipment",
-                confirmedShippedDate: fulfillment.created_at
-                  ? new Date(fulfillment.created_at).toISOString().split("T")[0]
-                  : new Date().toISOString().split("T")[0],
+                confirmedShippedDate: fulfillmentPostingDate(fulfillment.created_at),
                 lines: fulfilmentLinesWithService,
               }),
             {

@@ -1,3 +1,4 @@
+import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import type { D365FulfilmentRequest } from "@/lib/types/dynamics";
@@ -55,6 +56,34 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       ...fulfillment,
       fulfillmentId,
       lines: [{ ...fulfillment.lines[0], trackingNumber }],
+    });
+
+    it("replays a successful refund across UTC midnight using its immutable source date", async () => {
+      const provider = transport();
+      const sourceRefund = { id: "refund-midnight", created_at: "2026-10-26T23:59:00Z" };
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        for (const clock of ["2026-10-26T23:59:30Z", "2026-10-27T00:05:00Z"]) {
+          vi.setSystemTime(new Date(clock));
+          const result = await postFulfillment(
+            {
+              ...fulfillment,
+              fulfillmentId: `refund:${sourceRefund.id}`,
+              type: "return",
+              confirmedShippedDate: fulfillmentPostingDate(sourceRefund.created_at),
+            },
+            provider
+          );
+          expect(result.response.Result).toBe("PS-1");
+        }
+        expect(provider.fetch).toHaveBeenCalledTimes(1);
+        expect(
+          JSON.parse(String(provider.fetch.mock.calls[0][1]?.body))._dataContract
+            .ConfirmedShippedDate
+        ).toBe("2026-10-26");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("replays one fulfillment when tracking is added, corrected, removed, or restored", async () => {
