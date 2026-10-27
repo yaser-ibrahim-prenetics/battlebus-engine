@@ -1,4 +1,7 @@
-import { executeFulfillmentAction, ConfirmedActionFailure } from "../services/fulfillment-actions/ledger";
+import {
+  executeFulfillmentAction,
+  ConfirmedActionFailure,
+} from "../services/fulfillment-actions/ledger";
 // ============================================================================
 // GPS WAREHOUSE API CLIENT
 // ============================================================================
@@ -374,7 +377,11 @@ async function postOms<TResponse>(
             maxAttempts: OMS_MAX_RETRIES,
           },
         });
-        if (allowRetries && attempt < OMS_MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
+        if (
+          allowRetries &&
+          attempt < OMS_MAX_RETRIES &&
+          (response.status === 429 || response.status >= 500)
+        ) {
           await sleep(Math.min(OMS_RETRY_BASE_MS * 2 ** (attempt - 1), 5000));
           continue;
         }
@@ -451,6 +458,20 @@ export async function createOutboundOrder(
   response: GpsCreateOrderResponse;
   request: GpsCreateOrderRequest;
 }> {
+  const logicalRequest = {
+    ...orderData,
+    productList: [...orderData.productList].sort((a, b) => a.sku.localeCompare(b.sku)),
+  };
+  return createOutboundOrderAttempt(orderData, warehouseName, isRetry, logicalRequest);
+}
+
+/** The approved channel fallback is another attempt at the original logical request. */
+async function createOutboundOrderAttempt(
+  orderData: GpsOrderData,
+  warehouseName: GpsWarehouseName,
+  isRetry: boolean,
+  logicalRequest: GpsOrderData
+): Promise<{ response: GpsCreateOrderResponse; request: GpsCreateOrderRequest }> {
   // Validate warehouse exists
   getWarehouseConfig(warehouseName);
   const data: GpsOrderData[] = [orderData];
@@ -494,34 +515,64 @@ export async function createOutboundOrder(
     provider: "gps" as const,
     scope: `${getApiCredentials(warehouseName).baseUrl}:${warehouseName}`,
     sourceOrderId: orderData.platformOrderNo,
-    sourceLineIds: [...new Set(products.map(item => item.sku))],
+    sourceLineIds: [...new Set(products.map((item) => item.sku))],
     action: "create_outbound_order",
   };
   try {
-    const orderNo = await executeFulfillmentAction(identity, { ...orderData, productList: products }, async () => {
+    const accepted = await executeFulfillmentAction(identity, logicalRequest, async () => {
       // No transport retries for mutations: timeouts and 5xx can follow acceptance.
       const result = await postOms<GpsCreateOrderResponse>(
-        "/openapi/v1/outboundOrder/create", data, warehouseName, false
+        "/openapi/v1/outboundOrder/create",
+        data,
+        warehouseName,
+        false
       );
       const order = result.data?.[0];
       if (result.code !== 200 || order?.success === false) {
         const message = order?.msg || result.msg || "GPS rejected order";
         // Only explicit stock/channel rejection establishes that no order was created.
-        if (isGpsInventoryError(message) || /物流渠道|logistics channel|渠道|channel/i.test(message)) {
+        if (
+          isGpsInventoryError(message) ||
+          /物流渠道|logistics channel|渠道|channel/i.test(message)
+        ) {
           throw new ConfirmedActionFailure(message);
         }
         throw new Error("GPS outcome not confirmed");
       }
-      if (order?.success !== true || !order.orderNo?.trim()) throw new Error("GPS result missing order identifier");
-      return order.orderNo;
+      if (order?.success !== true || !order.orderNo?.trim())
+        throw new Error("GPS result missing order identifier");
+      return { orderNo: order.orderNo, logisticsChannel: orderData.logisticsChannel };
     });
-    return { request: payload, response: { code: 200, msg: "SUCCESS", data: [{
-      success: true, orderNo, thirdOrderNo: orderData.thirdOrderNo || "", msg: "SUCCESS"
-    }] } };
+    // Report the accepted channel even when returning a saved fallback result.
+    const acceptedRequest = {
+      ...payload,
+      data: [{ ...orderData, logisticsChannel: accepted.logisticsChannel }],
+    };
+    return {
+      request: acceptedRequest,
+      response: {
+        code: 200,
+        msg: "SUCCESS",
+        data: [
+          {
+            success: true,
+            orderNo: accepted.orderNo,
+            thirdOrderNo: orderData.thirdOrderNo || "",
+            msg: "SUCCESS",
+          },
+        ],
+      },
+    };
   } catch (error) {
     if (error instanceof ConfirmedActionFailure) {
       if (isGpsInventoryError(error.message)) throw new OutOfStockError(error.message);
-      if (!isRetry) return createOutboundOrder({ ...orderData, logisticsChannel: "No_Shipping_Service" }, warehouseName, true);
+      if (!isRetry)
+        return createOutboundOrderAttempt(
+          { ...orderData, logisticsChannel: "No_Shipping_Service" },
+          warehouseName,
+          true,
+          logicalRequest
+        );
     }
     throw error;
   }

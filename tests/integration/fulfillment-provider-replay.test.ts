@@ -137,5 +137,60 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       );
       expect(provider.fetch).toHaveBeenCalledTimes(2);
     });
+    const gpsOrder = {
+      platformOrderNo: "provider-replay-test",
+      thirdOrderNo: "SO-1",
+      whCode: "JFK01W",
+      subOrderType: 1,
+      logisticsChannel: "requested-channel",
+      receiver: "Synthetic",
+      addressOne: "Test",
+      cityName: "Test",
+      countryRegionCode: "US",
+      postCode: "10001",
+      productList: [{ sku: "SKU", quantity: 1 }],
+    };
+
+    it("replays the saved GPS fallback result from the original request", async () => {
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          Response.json({ code: 200, data: [{ success: false, msg: "invalid logistics channel" }] })
+        )
+        .mockResolvedValueOnce(
+          Response.json({ code: 200, data: [{ success: true, orderNo: "GPS-accepted" }] })
+        );
+      const { createOutboundOrder } = await import("@/lib/clients/gps");
+      const first = await createOutboundOrder(gpsOrder);
+      const replay = await createOutboundOrder(gpsOrder);
+      expect(first.response.data[0].orderNo).toBe("GPS-accepted");
+      expect(replay.response).toEqual(first.response);
+      expect(replay.request.data[0].logisticsChannel).toBe("No_Shipping_Service");
+      expect(fetch).toHaveBeenCalledTimes(2); // one rejection, one accepted fallback, no replay POST
+      expect(
+        (
+          await pool.query(
+            "SELECT status, attempts FROM public.fulfillment_actions WHERE source_order_id='provider-replay-test'"
+          )
+        ).rows
+      ).toEqual([{ status: "succeeded", attempts: 2 }]);
+      await expect(
+        createOutboundOrder({ ...gpsOrder, productList: [{ sku: "SKU", quantity: 2 }] })
+      ).rejects.toThrow("requires reconciliation");
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("blocks original-request replay when the GPS fallback outcome is uncertain", async () => {
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          Response.json({ code: 200, data: [{ success: false, msg: "invalid logistics channel" }] })
+        )
+        .mockRejectedValueOnce(new Error("fallback accepted then connection lost"));
+      const { createOutboundOrder } = await import("@/lib/clients/gps");
+      await expect(createOutboundOrder(gpsOrder)).rejects.toThrow("requires reconciliation");
+      await expect(createOutboundOrder(gpsOrder)).rejects.toThrow("requires reconciliation");
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
   }
 );
