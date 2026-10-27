@@ -397,6 +397,11 @@ export type InventoryFullSyncRequestedEvent = {
   };
 };
 
+export type DirectD365ReconciliationEvent = {
+  name: "reconciliation/d365.run";
+  data: { type?: "all" | "salesorder" | "fulfillment"; dateFrom?: string; dateTo?: string };
+};
+
 export type ReconciliationRunEvent = {
   name: "reconciliation/run";
   data: {
@@ -478,6 +483,7 @@ export type BattleBusEvents =
   | ActionOrderFulfillEvent
   | InventorySyncEvent
   | InventoryFullSyncRequestedEvent
+  | DirectD365ReconciliationEvent
   | ReconciliationRunEvent
   | ShopifyOrderRecoverEvent
   | GpsRecoverFulfilmentEvent
