@@ -15,17 +15,23 @@ posting, or cancellation. Dry runs do not reserve production action identities.
 
 The database primary key protects each provider / endpoint-and-company-or-warehouse /
 source order / source line / action identity. GPS source lines are SKUs in its
-aggregated outbound payload; D365 lines are InventoryLotIds. D365 tracking numbers
-provide a shared shipment identity across GPS and Shopify triggers; when absent,
-the caller supplies a stable fulfillment/refund ID. Separate untracked events
-cannot be recognized as the same shipment without a shared identity. Never use an
-execution ID or wall-clock timestamp as the action identity.
+aggregated outbound payload; D365 lines are InventoryLotIds. D365 always requires
+a stable fulfillment/refund ID. Tracking numbers are persisted as lookup aliases
+for GPS and Shopify representations of that shipment; adding or correcting tracking
+never replaces its original action identity. Alias bindings are immutable and
+conflicting histories are blocked. Separate untracked events cannot be recognized
+as the same shipment without a shared identity. Never use an execution ID or
+wall-clock timestamp as the action identity.
 
 A transaction reserves every line in a batch under an order-scoped advisory lock.
 The transaction commits before the HTTP request. There is no provider request
 while holding a database transaction. A request fingerprint detects conflicting
 replays; raw GPS addresses, credentials, and request payloads are not stored in
-the ledger. GPS stores its order identifier; D365 stores the minimal THK result
+the ledger. D365 tracking is excluded from its logical request fingerprint, so
+tracking corrections replay the accepted result without another shipment POST;
+quantities, line sets, dimensions and shipment dates still must match. Replaying
+does not update tracking at D365. GPS stores its order identifier and accepted
+shipping channel; D365 stores the minimal THK result
 needed by existing invoice checks. Results are committed before returning.
 
 | State | Retry behavior |
@@ -37,7 +43,10 @@ needed by existing invoice checks. Results are committed before returning.
 
 GPS HTTP failures, transport errors, malformed responses and missing order IDs
 are uncertain. Only an explicit stock/channel rejection is retryable; the channel
-fallback acquires a new attempt after that rejection. D365 401/403 is a confirmed
+fallback acquires a new attempt after that rejection, retaining the original
+logical request fingerprint. A later retry of the original payload returns the
+saved fallback order and its accepted channel. An uncertain fallback still blocks
+all automatic retries. D365 401/403 is a confirmed
 rejection. Other D365 failures, including partially/fully invoiced and over-quantity
 responses, require reconciliation. Those messages no longer synthesize success
 or trigger another packing-slip POST. This deliberately trades automatic recovery
@@ -114,7 +123,7 @@ run ID and safe error category; interrupted attempts remain `running` for inspec
 
 ## Deployment and tests
 
-Apply additive migrations 9–14 before deploying this revision. They separate
+Apply additive migrations 9–16 before deploying this revision. They separate
 storage, indexes and runtime grants; rollback is for disposable tests only.
 The prior application remains compatible with the expanded schema.
 
@@ -122,6 +131,9 @@ CI runs the real PostgreSQL ledger suite using `FULFILLMENT_TEST_DATABASE_URL`.
 Coverage includes concurrency, replay, confirmed rejection, timeout, abandoned
 pending work, completion persistence failure, overlapping batches, provider
 boundary retries, direct company queries, pagination, and failed-run history.
+Real-database regression tests also cover tracking addition/correction/removal,
+cross-source aliases and their conflicts, concurrent aliases, GPS fallback replay,
+and uncertain fallback outcomes. No live GPS or D365 requests are needed.
 
 Slack is held independently: `SLACK_PUBLISH_ENABLED=false` on Battle Bus and
 `SLACK_DELIVERY=disabled` on the notification service. Keep both disabled until
