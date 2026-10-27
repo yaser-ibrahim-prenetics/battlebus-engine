@@ -35,21 +35,21 @@ export async function loadOrderAccounting(
   if (!Array.isArray(transactions) || transactions.length >= 250) {
     throw new Error("Shopify payment transaction response is missing or truncated");
   }
-  const hasGiftCard =
-    transactions.some((t) => t.gateway === "gift_card") ||
-    order.payment_gateway_names?.includes("gift_card");
-  const giftCardApplications = hasGiftCard
-    ? resolveGiftCardApplications(await getOrderTransactions(order.id, shopDomain))
-    : [];
-  if (hasGiftCard && giftCardApplications.length === 0) {
-    throw new Error("Gift-card payment has no successful receipt yet");
-  }
   const expectedGiftPayments = transactions.filter(
     (t) =>
       t.gateway === "gift_card" &&
       t.status.toUpperCase() === "SUCCESS" &&
       ["CAPTURE", "SALE"].includes(t.kind.toUpperCase())
   );
+  const hasGiftCard = expectedGiftPayments.length > 0;
+  const giftCardApplications = hasGiftCard
+    ? resolveGiftCardApplications(
+        await getOrderTransactions(order.id, shopDomain, { inShopCurrency: true })
+      )
+    : [];
+  if (hasGiftCard && giftCardApplications.length === 0) {
+    throw new Error("Gift-card payment has no successful receipt yet");
+  }
   if (giftCardApplications.length !== expectedGiftPayments.length)
     throw new Error("Gift-card receipt list is incomplete");
   const paymentId = resolvePaymentReference(transactions);

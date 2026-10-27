@@ -16,13 +16,9 @@ describe("accounting readiness", () => {
       { ...order.line_items[0], id: 11, gift_card: true, requires_shipping: false },
     ];
     order.fulfillments = [];
-    shopify.getOrder
-      .mockResolvedValueOnce({ fulfillments: [] })
-      .mockResolvedValueOnce({
-        fulfillments: [
-          { receipt: { gift_cards: [{ line_item_id: 11, masked_code: "****1234" }] } },
-        ],
-      });
+    shopify.getOrder.mockResolvedValueOnce({ fulfillments: [] }).mockResolvedValueOnce({
+      fulfillments: [{ receipt: { gift_cards: [{ line_item_id: 11, masked_code: "****1234" }] } }],
+    });
     shopify.shopifyAdminGraphql.mockResolvedValue({
       data: {
         order: {
@@ -89,5 +85,57 @@ describe("accounting readiness", () => {
     const accounting = await loadOrderAccounting(order);
     expect(accounting.paymentId).toBeUndefined();
     expect(accounting.giftCardApplications).toHaveLength(1);
+  });
+  it("ignores a failed gift-card attempt followed by successful card payment", async () => {
+    const order = loadFixture("multiLineOrder");
+    order.line_items = [];
+    order.payment_gateway_names = ["gift_card", "shopify_payments"];
+    shopify.shopifyAdminGraphql.mockResolvedValue({
+      data: {
+        order: {
+          transactions: [
+            { id: "1", kind: "SALE", status: "FAILURE", gateway: "gift_card" },
+            {
+              id: "2",
+              kind: "SALE",
+              status: "SUCCESS",
+              gateway: "shopify_payments",
+              paymentId: "paid",
+            },
+          ],
+        },
+      },
+    });
+    expect((await loadOrderAccounting(order)).paymentId).toBe("paid");
+    expect(shopify.getOrderTransactions).not.toHaveBeenCalled();
+  });
+  it("requests shop-currency receipts for fully gift-card funded international orders", async () => {
+    const order = loadFixture("multiLineOrder");
+    order.line_items = [];
+    order.financial_status = "paid";
+    order.total_price = "100";
+    order.currency = "USD";
+    order.presentment_currency = "GBP";
+    shopify.shopifyAdminGraphql.mockResolvedValue({
+      data: {
+        order: {
+          transactions: [{ id: "1", kind: "SALE", status: "SUCCESS", gateway: "gift_card" }],
+        },
+      },
+    });
+    shopify.getOrderTransactions.mockImplementation(async (_id, _shop, options) => [
+      {
+        id: 1,
+        kind: "sale",
+        status: "success",
+        gateway: "gift_card",
+        amount: options?.inShopCurrency ? "100" : "80",
+        currency: options?.inShopCurrency ? "USD" : "GBP",
+        receipt: { gift_card_last_characters: "1234" },
+      },
+    ]);
+    expect((await loadOrderAccounting(order, "store")).giftCardApplications[0].currency).toBe(
+      "USD"
+    );
   });
 });
