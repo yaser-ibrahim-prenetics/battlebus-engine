@@ -640,6 +640,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           const fulfilmentPost = await retryWithBackoff(
             () =>
               dynamics.createFulfilment({
+        fulfillmentId: `shopify:${fulfillment.id}`,
                 dataAreaId,
                 salesOrderNumber: d365Order.SalesOrderNumber!,
                 type: "shipment",

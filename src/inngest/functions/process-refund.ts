@@ -540,6 +540,7 @@ export const processRefund = inngest.createFunction(
       const dataAreaId = d365Order.dataAreaId || config.dynamics.dataAreaId;
 
       await dynamics.createFulfilment({
+        fulfillmentId: `refund:${refund.id}`,
         salesOrderNumber: d365Order.SalesOrderNumber!,
         dataAreaId,
         type: "return", // Special type for refund/return posting

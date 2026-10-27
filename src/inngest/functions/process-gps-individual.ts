@@ -281,6 +281,7 @@ export const processGpsIndividual = inngest.createFunction(
 
       // Create fulfilment (packing slip + Standard invoice on deposit orders)
       const fulfilmentPost = await dynamics.createFulfilment({
+        fulfillmentId: `gps:${fulfilmentData.gpsOrderNo}`,
         salesOrderNumber: d365Order.SalesOrderNumber,
         dataAreaId,
         type: "shipment",
