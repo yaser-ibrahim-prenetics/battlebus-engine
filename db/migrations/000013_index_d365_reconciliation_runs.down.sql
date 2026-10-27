@@ -1,0 +1,2 @@
+DROP INDEX public.d365_reconciliation_runs_workflow;
+DROP INDEX public.d365_reconciliation_runs_window;
