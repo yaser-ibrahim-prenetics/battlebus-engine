@@ -1,3 +1,5 @@
+import type { OrderAccounting } from "@/lib/services/order-accounting/types";
+import { accountingComment } from "@/lib/services/order-accounting/policy";
 // ============================================================================
 // ORDER TRANSFORMERS
 // ============================================================================
@@ -65,7 +67,8 @@ const GpsOrderType = {
 export function toD365SalesOrderHeaderV3(
   order: ShopifyOrderPayload,
   warehouseName?: string,
-  dataAreaIdOverride?: string
+  dataAreaIdOverride?: string,
+  accounting?: OrderAccounting
 ): D365SalesOrderHeaderV3Request {
   const warehouse =
     warehouseName ||
@@ -100,7 +103,8 @@ export function toD365SalesOrderHeaderV3(
     shopifyReference: order.name,
     shippingAddress: shippingAddress ? toSalesOrderHeadersV3Address(shippingAddress) : undefined,
     billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
-    comment: buildOrderComment(order),
+    comment: buildOrderComment(order, accounting),
+    paymentId: accounting?.paymentId,
     currency: order.currency,
     // spock-store: DefaultShippingWarehouseId is NOT set on header — warehouse
     // is applied per product line via ShippingWarehouseId on SalesOrderLines only.
@@ -113,20 +117,20 @@ export function toD365SalesOrderHeaderV3(
  * Build order comment for D365
  * Includes gift card info, associated orders, etc.
  */
-function buildOrderComment(order: ShopifyOrderPayload): string {
-  const parts: string[] = [];
+function buildOrderComment(order: ShopifyOrderPayload, accounting?: OrderAccounting): string {
+  const parts: string[] = accounting ? [accountingComment(order, accounting)] : [];
 
   // Add gift card purchase info
   const lineItems = getLineItems(order);
   const giftCardItems = lineItems.filter((item) => item.gift_card === true);
-  if (giftCardItems.length > 0) {
+  if (!accounting && giftCardItems.length > 0) {
     for (const gc of giftCardItems) {
       parts.push(`Gift Card Purchase: ${gc.sku || gc.title || "Unknown"} x ${gc.quantity}`);
     }
   }
 
   // Add gift card discount codes applied to order
-  if (order.discount_codes?.length > 0) {
+  if (!accounting && order.discount_codes?.length > 0) {
     const giftCardDiscounts = order.discount_codes.filter((d: any) => d.type === "gift_card");
     for (const gcd of giftCardDiscounts) {
       parts.push(`Gift Card Applied: ${gcd.code} - $${parseFloat(gcd.amount || "0").toFixed(2)}`);
@@ -192,7 +196,8 @@ export function toD365SalesOrderLines(
   salesOrderNumber: string,
   warehouseName: string,
   includeShippingAndTax: boolean = true,
-  dataAreaIdOverride?: string
+  dataAreaIdOverride?: string,
+  accounting?: OrderAccounting
 ): D365SalesOrderLineRequest[] {
   const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
     ? (dataAreaIdOverride || "").toUpperCase()
@@ -222,11 +227,12 @@ export function toD365SalesOrderLines(
   }
 
   for (const item of lineItems) {
-    if (item.gift_card) continue;
+    if (item.gift_card && !accounting) continue;
     const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
     if (!rawSku) {
       // Some Shopify app-generated lines (insurance/fees/etc.) can be non-shippable and have no SKU.
       // They cannot be represented as D365 item lines, so we skip them.
+      if (item.gift_card) throw new Error(`Gift-card line ${item.id} requires a D365 SKU`);
       if (item.requires_shipping === false) {
         console.warn(
           `[Transformers] Skipping non-shippable line without SKU for ${order.name}: ` +
@@ -259,6 +265,10 @@ export function toD365SalesOrderLines(
       discountCodes,
       countryCode
     );
+    if (item.gift_card) {
+      line.giftCardNumber = accounting?.purchasedGiftCards[String(item.id)];
+      if (!line.giftCardNumber || !rawSku) throw new Error(`Gift-card accounting is incomplete for line ${item.id}`);
+    }
     const transformedLine = skuTransformer(line);
     const withWarehouse: D365SalesOrderLineRequest =
       lineShippingWarehouseId && !isServiceSku(transformedLine.itemNumber)
@@ -334,7 +344,8 @@ export function toOrderLineRecords(
   order: ShopifyOrderPayload,
   salesOrderNumber: string,
   warehouseName: string,
-  dataAreaIdOverride?: string
+  dataAreaIdOverride?: string,
+  accounting?: OrderAccounting
 ): D365OrderLineRecord[] {
   const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
     ? (dataAreaIdOverride || "").toUpperCase()
@@ -350,7 +361,7 @@ export function toOrderLineRecords(
   const lineItems = getLineItems(order);
 
   for (const item of lineItems) {
-    if (item.gift_card) continue;
+    if (item.gift_card && !accounting) continue;
     const rawSku = typeof item.sku === "string" ? item.sku.trim() : "";
     if (!rawSku) {
       if (item.requires_shipping === false) continue;
