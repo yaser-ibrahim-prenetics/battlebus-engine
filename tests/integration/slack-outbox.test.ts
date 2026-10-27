@@ -1,7 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
-const { query } = vi.hoisted(() => ({ query: vi.fn() }));
+const { query, publish } = vi.hoisted(() => ({ query: vi.fn(), publish: vi.fn() }));
 vi.mock("@/lib/db/database", () => ({ queryDatabase: query }));
+vi.mock("@/lib/config", () => ({
+  config: {
+    slack: { integration: "real", transport: "pubsub", publishEnabled: true, appEnv: "test" },
+  },
+}));
+vi.mock("@/lib/clients/slack-pubsub", () => ({ publishSlackToPubSub: publish }));
+import { queueSlackTest } from "@/lib/services/slack-notifications/test-notification";
 import {
   enqueueSlackNotification,
   drainSlackNotifications,
@@ -66,5 +73,27 @@ describe.skipIf(!process.env.SLACK_TEST_DATABASE_URL)("Slack outbox PostgreSQL c
     expect(calls).toBe(2);
     await enqueueSlackNotification(notification);
     expect((await drainSlackNotifications(success, notification.id)).claimed).toBe(0);
+  });
+
+  it("concurrent admin tests publish once and repeated clicks return the persisted status", async () => {
+    const now = Date.parse("2026-10-27T09:00:00Z");
+    const id = `hub-slack-test:${Math.floor(now / 60_000)}`;
+    await pool.query("DELETE FROM public.slack_notification_outbox WHERE notification_id=$1", [id]);
+    publish.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const results = await Promise.all([queueSlackTest(now), queueSlackTest(now + 1000)]);
+    expect(results.every((result) => result.enabled && result.notificationId === id)).toBe(true);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(await queueSlackTest(now + 2000)).toMatchObject({
+      notificationId: id,
+      status: "published",
+    });
+    expect(publish).toHaveBeenCalledTimes(1);
+    const { rows } = await pool.query(
+      "SELECT attempts FROM public.slack_notification_outbox WHERE notification_id=$1",
+      [id]
+    );
+    expect(rows).toEqual([{ attempts: 1 }]);
   });
 });
