@@ -21,7 +21,8 @@ import { inngest } from "../client";
 import { readPlan } from "@/lib/services/order-segments/store";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
-import { resolveShopifyAdminCredentials, getOrder } from "@/lib/clients/shopify";
+import { loadEligibleRecoveryOrder } from "@/lib/services/order-segments/recovery";
+import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -94,9 +95,9 @@ export const processBackorder = inngest.createFunction(
       const shop = resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain;
       const segmented = await readPlan(shop, String(shopifyOrderId));
       if (segmented && isManualRetryRequest) {
-        const latest = await step.run("reload-segment-order", () =>
-          getOrder(String(shopifyOrderId), shop)
-        );
+        const ensureEligible = () =>
+          loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
+        const latest = await ensureEligible();
         const accounting = await step.run("reload-segment-accounting", () =>
           loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
         );
@@ -106,6 +107,7 @@ export const processBackorder = inngest.createFunction(
           accounting,
           shopDomain: shop,
           fallbackDataArea: segmented.plan.segments[0].dataAreaId,
+          ensureEligible,
         });
       }
       if (segmented)

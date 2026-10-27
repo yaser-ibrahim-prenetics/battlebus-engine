@@ -568,10 +568,11 @@ export async function searchOrdersByName(
  */
 export async function getOrderTransactions(
   orderId: string | number,
-  shopDomain?: string
+  shopDomain?: string,
+  options: { inShopCurrency?: boolean } = {}
 ): Promise<ShopifyTransaction[]> {
   const credentials = resolveShopifyAdminCredentials(shopDomain);
-  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/transactions.json`;
+  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/transactions.json${options.inShopCurrency ? "?in_shop_currency=true" : ""}`;
 
   const response = await fetch(url, {
     method: "GET",
@@ -921,7 +922,10 @@ export async function getUnfulfilledGpsOrders(
 /**
  * Get Order Risk
  */
-export async function getOrderRisks(orderId: string | number): Promise<ShopifyFraudAnalysis[]> {
+export async function getOrderRisks(
+  orderId: string | number,
+  shopDomain?: string
+): Promise<ShopifyFraudAnalysis[]> {
   if (!config.features.enabledShopifyRiskCheck) return [];
 
   if (config.features.enabledShopifyRiskMock) {
@@ -930,10 +934,13 @@ export async function getOrderRisks(orderId: string | number): Promise<ShopifyFr
     return mockData.risks;
   }
 
-  const url = buildUrl(`/latest/orders/${orderId}/risks.json`);
+  const credentials = resolveShopifyAdminCredentials(shopDomain);
+  const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/risks.json`;
   const response = await fetch(url, {
     method: "GET",
-    headers: getHeaders(),
+    headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {

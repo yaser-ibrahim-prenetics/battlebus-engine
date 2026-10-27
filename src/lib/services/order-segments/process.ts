@@ -4,11 +4,7 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import { reportSegmentProgress } from "./reporting";
 import { getFulfillmentOrders, resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
-import {
-  getWarehouseNameForLocation,
-  getDataAreaIdForLocationAndCountry,
-} from "../location-routing";
-import { getWarehouseConfig, type WarehouseName } from "@/lib/helpers/warehouse";
+import { resolveSegmentRouting } from "./routing";
 import { shouldSplitFulfillmentOrder, isDomesticOrder } from "@/lib/helpers/split";
 import {
   calculateOrderCost,
@@ -32,6 +28,7 @@ type ProcessSegmentsInput = {
   accounting?: OrderAccounting;
   testMode?: boolean;
   fallbackDataArea: string;
+  ensureEligible?: () => Promise<unknown>;
 };
 
 export async function processOrderSegments(input: ProcessSegmentsInput) {
@@ -91,12 +88,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       )
         continue;
       const location = String(fo.assigned_location_id);
-      const warehouse = await getWarehouseNameForLocation(location);
-      const dataAreaId = await getDataAreaIdForLocationAndCountry(location, country);
-      if (!warehouse || !dataAreaId)
-        throw new Error(`Incomplete routing for segment location ${location}`);
-      getWarehouseConfig(warehouse as WarehouseName);
-      routing[location] = { warehouse: warehouse as WarehouseName, dataAreaId };
+      routing[location] = await resolveSegmentRouting(order, fo, country);
     }
     const plan = planOrderSegments(
       order,
@@ -105,6 +97,10 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       routing
     );
     if (plan.segments.length < 2) return null;
+    if (new Set(plan.segments.map((segment) => segment.dataAreaId.toUpperCase())).size > 1)
+      throw new Error(
+        "Mixed-company split orders require a refund allocation plan before provider writes"
+      );
     return reservePlan(shop, plan);
   });
   if (!stored) return null;
@@ -112,6 +108,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   const bindings = await step.run("bind-shopify-segments", () => bindShopifySegments(shop, plan));
   const results: SegmentProgress[] = [];
   for (const segment of plan.segments) {
+    await input.ensureEligible?.();
     const prefix = `segment-${segment.index}`;
     const projected = segmentOrder(order, plan, segment.index);
     const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
@@ -181,6 +178,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       );
     }
     const gpsOrderId = await step.run(`${prefix}-gps`, async () => {
+      await input.ensureEligible?.();
       if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
         return undefined;
       const payload = toGpsOutboundOrder(projected, salesOrderNumber, segment.warehouse);
