@@ -89,7 +89,7 @@ describe("fulfillment mutation boundaries", () => {
     }
   });
 
-  it("shares the shipment identity across source event IDs when tracking matches", async () => {
+  it("keeps stable source IDs distinct and supplies a shared tracking alias", async () => {
     const { postDurableFulfilment } = await import("../dynamics/fulfillment");
     const fetch = vi
       .fn<typeof globalThis.fetch>()
@@ -105,7 +105,8 @@ describe("fulfillment mutation boundaries", () => {
       { ...tracked, fulfillmentId: "gps:2" },
       { authenticate: async () => "token", fetch }
     );
-    expect(execute.mock.calls[0][0]).toEqual(execute.mock.calls[1][0]);
+    expect(execute.mock.calls[0][0].action).not.toEqual(execute.mock.calls[1][0].action);
+    expect(execute.mock.calls[0][0].aliases).toEqual(execute.mock.calls[1][0].aliases);
     expect(execute.mock.calls[0][1]).toEqual(execute.mock.calls[1][1]);
   });
 });

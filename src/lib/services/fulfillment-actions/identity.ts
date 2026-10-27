@@ -6,6 +6,8 @@ export interface ActionIdentity {
   sourceOrderId: string;
   sourceLineIds: string[];
   action: string;
+  /** Additional names for the same operation; bound once under the order lock. */
+  aliases?: string[];
 }
 
 function canonical(value: unknown): unknown {
@@ -30,6 +32,7 @@ export function actionKeys(identity: ActionIdentity): string[] {
   const parts = [identity.provider, identity.scope, identity.sourceOrderId, identity.action];
   if (
     parts.some((p) => !p?.trim()) ||
+    identity.aliases?.some((alias) => !alias?.trim()) ||
     !identity.sourceLineIds.length ||
     identity.sourceLineIds.some((p) => !p?.trim()) ||
     new Set(identity.sourceLineIds).size !== identity.sourceLineIds.length

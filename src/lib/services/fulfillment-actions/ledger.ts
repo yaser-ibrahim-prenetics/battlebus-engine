@@ -1,3 +1,5 @@
+import type { PoolClient } from "pg";
+import { readAliasesSQL, bindAliasSQL } from "@/lib/sql/fulfillment-actions/aliases";
 import { randomUUID } from "node:crypto";
 import { getDatabasePool } from "@/lib/db/database";
 import {
@@ -19,6 +21,7 @@ export class UncertainActionError extends Error {
 
 type Row<T> = {
   action_key: string;
+  action_name: string;
   request_hash: string;
   attempt_id: string;
   status: "pending" | "succeeded" | "failed" | "uncertain";
@@ -28,8 +31,20 @@ type Reservation<T> =
   | { keys: string[]; attemptId: string; replay: false }
   | { replay: true; result: T };
 
+async function bindAliases(client: PoolClient, identity: ActionIdentity, aliases: string[]) {
+  for (const alias of aliases) {
+    await client.query(bindAliasSQL, [
+      identity.provider,
+      identity.scope,
+      identity.sourceOrderId,
+      alias,
+      identity.action,
+    ]);
+  }
+}
+
 async function reserve<T>(identity: ActionIdentity, request: unknown): Promise<Reservation<T>> {
-  const keys = actionKeys(identity);
+  let keys = actionKeys(identity);
   const hash = fingerprint(request);
   const pool = await getDatabasePool();
   if (!pool) throw new Error("A database is required before executing a fulfillment action");
@@ -40,18 +55,36 @@ async function reserve<T>(identity: ActionIdentity, request: unknown): Promise<R
     await client.query(lockOrderSQL, [
       JSON.stringify([identity.provider, identity.scope, identity.sourceOrderId]),
     ]);
+    // Resolve both stable source IDs and optional cross-source tracking aliases.
+    // Alias bindings never change; conflicting histories require investigation.
+    const aliases = [...new Set([identity.action, ...(identity.aliases || [])])];
+    const known = await client.query<{ action_name: string }>(readAliasesSQL, [
+      identity.provider,
+      identity.scope,
+      identity.sourceOrderId,
+      aliases,
+    ]);
+    const actions = new Set(known.rows.map((row) => row.action_name));
+    if (actions.size > 1) throw new UncertainActionError(keys);
+    identity = { ...identity, action: known.rows[0]?.action_name || identity.action };
+    keys = actionKeys(identity);
     const { rows } = await client.query<Row<T>>(readActionsSQL, [
       identity.provider,
       identity.scope,
       identity.sourceOrderId,
       identity.sourceLineIds,
+      identity.action,
     ]);
+    // A stable operation cannot silently become a different line batch on replay.
+    if (rows.some((row) => row.action_name === identity.action && !keys.includes(row.action_key)))
+      throw new UncertainActionError(keys);
     const matching = rows.filter((row) => keys.includes(row.action_key));
     if (matching.some((row) => row.status !== "failed" && row.request_hash !== hash))
       throw new UncertainActionError(keys);
     if (matching.length === keys.length && matching.every((row) => row.status === "succeeded")) {
       if (new Set(matching.map((row) => row.attempt_id)).size !== 1)
         throw new UncertainActionError(keys);
+      await bindAliases(client, identity, aliases);
       await client.query("COMMIT");
       return { replay: true, result: matching[0].result as T };
     }
@@ -78,6 +111,7 @@ async function reserve<T>(identity: ActionIdentity, request: unknown): Promise<R
       ]);
       if (result.rowCount !== 1) throw new UncertainActionError(keys);
     }
+    await bindAliases(client, identity, aliases);
     await client.query("COMMIT");
     return { keys, attemptId, replay: false };
   } catch (error) {

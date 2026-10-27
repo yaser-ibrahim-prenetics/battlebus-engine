@@ -1,3 +1,4 @@
+import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
 import { config } from "@/lib/config";
 import {
   assertThkFulfilmentSucceeded,
@@ -28,14 +29,20 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
       } as D365ThkApiResponse,
     };
 
-  // Tracking provides a shared identity for Shopify and GPS representations of a
-  // shipment. Without tracking callers must supply their stable source event ID.
+  // The source ID remains stable when tracking is added or corrected. Tracking
+  // is an immutable lookup alias, never a replacement identity on replay.
+  const shipment = req.fulfillmentId?.trim();
+  if (!shipment) throw new Error("D365 fulfillment requires a stable fulfillmentId");
   const tracking = [
     ...new Set(lines.map((line) => line.trackingNumber?.trim()).filter(Boolean)),
   ].sort();
-  const shipment = tracking.length ? `tracking:${JSON.stringify(tracking)}` : req.fulfillmentId;
-  if (!shipment)
-    throw new Error("D365 fulfillment requires a stable fulfillmentId when tracking is absent");
+  const aliases = tracking.length ? [`${req.type}:tracking:${fingerprint(tracking)}`] : [];
+  // Tracking correction must not invalidate an already accepted shipment. All
+  // quantities, source lines, dimensions and the shipment date remain protected.
+  const logicalRequest = buildThkFulfilmentRequestBody({
+    ...req,
+    lines: lines.map((line) => ({ ...line, trackingNumber: undefined })),
+  });
   const token = await transport.authenticate();
   const result = await executeFulfillmentAction(
     {
@@ -44,8 +51,9 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
       sourceOrderId: req.salesOrderNumber,
       sourceLineIds: lines.map((line) => line.lotId!),
       action: `${req.type}:${shipment}`,
+      aliases,
     },
-    body,
+    logicalRequest,
     async () => {
       const response = await transport.fetch(
         `${config.dynamics.baseUrl}/api/services/THK_APISyncServiceGroup/THK_APISyncService_Shopify/fulfilment`,

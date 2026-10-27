@@ -25,6 +25,7 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)("PostgreSQL fulfillm
   });
   beforeEach(async () => {
     getPool.mockResolvedValue(pool);
+    await pool.query("DELETE FROM public.fulfillment_action_aliases WHERE scope='fixture'");
     await pool.query("DELETE FROM public.fulfillment_actions WHERE scope='fixture'");
   });
   afterAll(async () => {
