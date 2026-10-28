@@ -10,6 +10,7 @@ import {
   shopifyWebhookSecretSource,
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
+import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
@@ -522,6 +523,9 @@ export async function POST(request: NextRequest) {
               source: "shopify",
               destination: "dynamics",
               payload: {
+                inventoryKey: canonicalInventoryKey({
+                  inventoryItemId: String(payload.inventory_item_id),
+                }),
                 inventoryItemId: String(payload.inventory_item_id),
                 locationId: String(payload.location_id),
                 available: payload.available,
@@ -540,6 +544,9 @@ export async function POST(request: NextRequest) {
               source: "shopify",
               destination: "gps",
               payload: {
+                inventoryKey: canonicalInventoryKey({
+                  inventoryItemId: String(payload.inventory_item_id),
+                }),
                 inventoryItemId: String(payload.inventory_item_id),
                 locationId: String(payload.location_id),
                 available: payload.available,

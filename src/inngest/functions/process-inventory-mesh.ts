@@ -25,6 +25,7 @@ import { sendHubWebhook } from "@/lib/clients/hub-transport";
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
 interface InventorySyncPayload {
+  inventoryKey: string;
   sku?: string;
   inventoryItemId?: string;
   variantId?: string;
@@ -91,7 +92,7 @@ export const processInventoryMesh = inngest.createFunction(
     id: "process-inventory-mesh",
     name: "Process Inventory Sync Mesh",
     retries: RETRY_CONFIGS.DEFAULT,
-    concurrency: [{ limit: 1, key: "event.data.payload.sku" }],
+    concurrency: [{ limit: 1, key: "event.data.payload.inventoryKey" }],
     triggers: [{ event: "inventory/sync" }],
   },
   async ({ event, step }: { event: any; step: any }) => {
