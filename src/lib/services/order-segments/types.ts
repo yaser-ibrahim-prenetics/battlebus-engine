@@ -1,4 +1,5 @@
 import type { WarehouseName } from "@/lib/helpers/warehouse";
+import type { AssociatedOrderLink } from "@/lib/helpers/order-linkage";
 
 export interface SegmentLine {
   physical: boolean;
@@ -18,6 +19,7 @@ export interface SegmentPlan {
   orderId: string;
   orderName: string;
   inputHash: string;
+  associatedOrder?: AssociatedOrderLink;
   segments: OrderSegment[];
 }
 export interface RecordedSegmentLine {

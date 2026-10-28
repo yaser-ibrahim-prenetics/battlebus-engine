@@ -34,6 +34,16 @@ function fixture() {
 }
 
 describe("quantity-based segment planning", () => {
+  it("retains associated-order metadata for every segmented Hub snapshot", () => {
+    const { order, fos, routing } = fixture();
+    order.tags = "replacement-im8-1234";
+
+    expect(planOrderSegments(order, fos, 250, routing).associatedOrder).toEqual({
+      orderName: "IM8-1234",
+      relationship: "replacement",
+    });
+  });
+
   it("splits a single SKU's quantity and conserves every unit and discount cent", () => {
     const { order, fos, routing } = fixture();
     const plan = planOrderSegments(order, fos, 250, routing);
