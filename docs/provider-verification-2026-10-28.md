@@ -18,9 +18,9 @@ Read-only verification performed after renewing Google Cloud authentication. No 
 
 The original Shopify readiness probe rejected the configured hostname because Shopify returns a different canonical hostname. The probe now accepts an explicitly pinned immutable shop ID and rejects any different identity even if its hostname matches. The deployment pins the verified test-store ID. Changing environments requires reviewing that pin; it is not auto-discovered or silently replaced.
 
-The deployed Bus remains in `SHOPIFY_STORE_MODE=test`, `DRY_RUN_MODE=true`, with D365/GPS writes disabled. It currently has no D365 or GPS environment bindings. Its runtime identity has no accessor grant on the five existing Hub D365 secrets. Therefore, successful D365 probes using Hub credentials **do not prove Bus runtime connectivity**.
+The deployed Bus remains in `SHOPIFY_STORE_MODE=test`, `DRY_RUN_MODE=true`, with D365/GPS writes disabled. It currently has no D365 or GPS environment bindings. The owner approved secret-scoped access, and its runtime identity now has verified accessor grants on the five existing Hub D365 secrets. Therefore, successful D365 probes using Hub credentials **do not prove Bus runtime connectivity**.
 
-Proposed version-1 references, pending explicit access approval before adding them to the deployment workflow:
+Approved version-1 references included in the proposed deployment workflow:
 
 - `battle-hub-d365-base-url`
 - `battle-hub-d365-client-id`
@@ -28,7 +28,7 @@ Proposed version-1 references, pending explicit access approval before adding th
 - `battle-hub-d365-tenant-id`
 - `battle-hub-d365-data-area-id`
 
-Before deployment, explicitly approve and grant `roles/secretmanager.secretAccessor` on those five secrets only to `battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com`. Do not grant project-wide secret access. After access approval, add the references to the existing deployment pipeline; attachment would occur only after a separately authorized merge/deployment. Automatic approval review blocked publishing the proposed secret bindings before that approval, so they are not included in the workflow. Existing write switches stay disabled.
+On 28 October, the owner approved and we applied `roles/secretmanager.secretAccessor` separately on those five secrets to `battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com`. Each resulting policy was checked for the intended binding. No project-wide secret access was granted and no secret values were exposed. The PR now includes the pinned references; attachment occurs only after a separately authorized merge/deployment. Existing write switches stay disabled.
 
 GPS verification requires approved US/UK endpoint and credential references or an approved protected configuration file. Do not paste credential values into PRs or chat. Do not enable GPS writes merely to test connectivity.
 
