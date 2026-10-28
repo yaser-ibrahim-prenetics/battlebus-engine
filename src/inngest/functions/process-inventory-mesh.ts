@@ -149,7 +149,7 @@ export const processInventoryMesh = inngest.createFunction(
     switch (destination) {
       case "shopify":
         result = await step.run("sync-to-shopify", async () => {
-          return syncToShopify(inventory, source);
+          return syncToShopify(inventory, source, String(event.id));
         });
         break;
 
@@ -166,7 +166,7 @@ export const processInventoryMesh = inngest.createFunction(
             console.log(`[InventoryMesh] 🔄 Auto-triggering D365 → Shopify sync for SKU: ${sku}`);
             const { syncD365ToShopify } = await import("@/lib/services/inventory-sync");
             const dataAreaId = result.data?.dataAreaId || config.dynamics.dataAreaId;
-            const syncResult = await syncD365ToShopify(sku, dataAreaId);
+            const syncResult = await syncD365ToShopify(sku, dataAreaId, String(event.id));
             console.log(`[InventoryMesh] ✅ D365 → Shopify sync result: ${syncResult.message}`);
             return syncResult;
           });
@@ -251,7 +251,8 @@ export const processInventoryMesh = inngest.createFunction(
 
 async function syncToShopify(
   inventory: InventorySyncPayload,
-  source: Platform
+  source: Platform,
+  operationId: string
 ): Promise<{ success: boolean; message: string; data?: any }> {
   console.log(`[InventoryMesh] Syncing to Shopify from ${source}`);
 
@@ -276,6 +277,7 @@ async function syncToShopify(
           locationId,
           quantity,
           referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(inventory.sku)}`,
+          idempotencyToken: operationId,
         })
       : await (async () => {
           await setInventoryItemAtLocation({
@@ -283,6 +285,7 @@ async function syncToShopify(
             locationId,
             quantity,
             referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(String(inventory.inventoryItemId))}`,
+            idempotencyToken: operationId,
           });
           return { updated: 1, inventoryItemIds: [String(inventory.inventoryItemId)] };
         })();

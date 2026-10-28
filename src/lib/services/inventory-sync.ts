@@ -526,7 +526,8 @@ export async function syncGpsToD365(sku: string, warehouseName: string): Promise
  */
 export async function syncD365ToShopify(
   sku: string,
-  dataAreaId: string = config.dynamics.dataAreaId
+  dataAreaId: string,
+  operationId: string
 ): Promise<SyncResult> {
   console.log(`[InventorySync] Syncing D365 -> Shopify: ${sku}`);
 
@@ -607,6 +608,7 @@ export async function syncD365ToShopify(
       locationId,
       quantity: d365Level.available,
       referenceDocumentUri: `gid://battle-bus/D365Inventory/${encodeURIComponent(dataAreaId)}-${encodeURIComponent(sku)}`,
+      idempotencyToken: operationId,
     });
 
     return {
@@ -694,7 +696,8 @@ export async function calculateDiscrepancies(
 async function performReconciliation(
   skus: string[],
   warehouseName?: string,
-  autoSync: boolean = false
+  autoSync: boolean = false,
+  workflowRunId = "manual"
 ): Promise<ReconciliationResult> {
   console.log(
     `[InventorySync] Running reconciliation for ${skus.length} SKUs (autoSync=${autoSync})`
@@ -740,7 +743,11 @@ async function performReconciliation(
 
       // D365 -> Shopify sync if D365 has newer data
       if (diff.d365ToShopifyDiff !== null && diff.d365ToShopifyDiff !== 0) {
-        const syncResult = await syncD365ToShopify(diff.sku);
+        const syncResult = await syncD365ToShopify(
+          diff.sku,
+          config.dynamics.dataAreaId,
+          `${workflowRunId}:${diff.sku}`
+        );
         result.syncActions.push(syncResult);
 
         if (!syncResult.success && syncResult.error) {
@@ -774,7 +781,7 @@ export async function runReconciliation(
       kind: "inventory",
       scope: `${config.shopify.im8.shopDomain}:${warehouseName ?? "all"}`,
     },
-    () => performReconciliation(skus, warehouseName, autoSync),
+    () => performReconciliation(skus, warehouseName, autoSync, workflowRunId),
     (result) => ({
       status:
         result.errors.length || result.syncActions.some((action) => !action.success)

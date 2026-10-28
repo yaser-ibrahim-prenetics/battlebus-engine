@@ -422,7 +422,9 @@ export const syncSkuInventory = inngest.createFunction(
       });
     } else if (source === "d365" && destination === "shopify") {
       result = await step.run("sync-d365-to-shopify", async () => {
-        return inventorySync.syncD365ToShopify(sku);
+        const mapping = await inventorySync.getWarehouseMapping(warehouse || "GPS Warehouse");
+        const dataAreaId = mapping?.d365DataAreaId || config.dynamics.dataAreaId;
+        return inventorySync.syncD365ToShopify(sku, dataAreaId, `${String(event.id)}:direct`);
       });
     } else {
       result = {
@@ -438,7 +440,9 @@ export const syncSkuInventory = inngest.createFunction(
     // Chain syncs: if GPS -> D365 succeeded, also sync D365 -> Shopify
     if (result.success && source === "gps" && destination === "d365") {
       const shopifyResult = await step.run("chain-d365-to-shopify", async () => {
-        return inventorySync.syncD365ToShopify(sku);
+        const mapping = await inventorySync.getWarehouseMapping(warehouse || "GPS Warehouse");
+        const dataAreaId = mapping?.d365DataAreaId || config.dynamics.dataAreaId;
+        return inventorySync.syncD365ToShopify(sku, dataAreaId, `${String(event.id)}:chain`);
       });
 
       logFlowEvent({
