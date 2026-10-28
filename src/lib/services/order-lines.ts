@@ -432,10 +432,13 @@ export async function markServiceLinesFulfilled(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(
+    console.error(
       `[OrderLines] Failed to mark service lines fulfilled for ${shopifyOrderId}: ${message}`
     );
-    return;
+    throw new Error(
+      `Could not persist supplemental fulfillment state for ${shopifyOrderId}: ${message}`,
+      { cause: error }
+    );
   }
   console.log(
     `[OrderLines] Marked ${shopifyLineItemIds.length} service lines fulfilled for ${shopifyOrderId}: ${shopifyLineItemIds.join(", ")}`

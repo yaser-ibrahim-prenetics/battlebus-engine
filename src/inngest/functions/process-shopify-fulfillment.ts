@@ -98,6 +98,9 @@ export const processShopifyFulfillment = inngest.createFunction(
     concurrency: [
       {
         ...CONCURRENCY_CONFIGS.FULFILLMENT,
+        // Supplemental shipping/tax/reward rows are claimed per order after a successful post.
+        // Serialize the order so two distinct fulfillment webhooks cannot both append them.
+        limit: 1,
         key: "event.data.shopifyOrderId",
       },
     ],
