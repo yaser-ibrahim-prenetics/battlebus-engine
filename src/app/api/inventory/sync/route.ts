@@ -13,6 +13,7 @@
 // based on the 'from' and 'to' query parameters or request body
 
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
@@ -84,7 +85,32 @@ export async function POST(request: NextRequest) {
       .map((p) => p.trim()) as Platform[] | null;
 
     const body: InventorySyncPayload = await request.json();
-    const resolvedSku = await resolveShopifyInventorySku(body);
+
+    const sourceOperationId = request.headers.get("idempotency-key")?.trim();
+    if (!sourceOperationId || sourceOperationId.length > 200) {
+      return NextResponse.json(
+        { error: "Idempotency-Key header is required and must be at most 200 characters" },
+        { status: 400 }
+      );
+    }
+
+    if (!body.sku && !body.inventoryItemId && !body.variantId) {
+      return NextResponse.json(
+        { error: "sku, inventoryItemId, or variantId is required" },
+        { status: 400 }
+      );
+    }
+
+    let resolvedSku: string;
+    try {
+      resolvedSku = await resolveShopifyInventorySku(body);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/has no SKU|requires inventoryItemId or variantId/i.test(message)) {
+        return NextResponse.json({ error: message }, { status: 422 });
+      }
+      throw error;
+    }
     body.sku = resolvedSku;
 
     // Determine source platform: from query param, body, or infer from payload
@@ -101,14 +127,6 @@ export async function POST(request: NextRequest) {
       destinations = ["shopify", "dynamics", "gps"].filter((p) => p !== source) as Platform[];
     }
 
-    // Validate required fields
-    if (!body.sku && !body.inventoryItemId && !body.variantId) {
-      return NextResponse.json(
-        { error: "sku, inventoryItemId, or variantId is required" },
-        { status: 400 }
-      );
-    }
-
     if (body.action === "delete" && !body.productId && !body.variantId) {
       return NextResponse.json(
         { error: "productId or variantId is required for delete action" },
@@ -116,8 +134,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique event ID for idempotency
-    const eventId = `inventory-sync-${source}-${body.sku || body.inventoryItemId || body.variantId}-${body.locationId || "default"}-${Date.now()}`;
+    // The caller's source-operation key survives HTTP response loss and retries.
+    // Hash it before using it in externally visible event identifiers.
+    const operationDigest = crypto
+      .createHash("sha256")
+      .update(`${source}:${sourceOperationId}`)
+      .digest("hex");
+    const eventId = `inventory-sync-${source}-${operationDigest}`;
 
     // Send Inngest event for each destination
     // Use Promise.allSettled to ensure all promises complete even if some fail
@@ -242,6 +265,9 @@ export async function GET(request: NextRequest) {
           from: "Source platform (shopify, dynamics, gps, etc.)",
           to: "Comma-separated destination platforms",
         },
+        headers: {
+          "Idempotency-Key": "Required stable identifier for the source operation",
+        },
         body: {
           sku: "Product SKU",
           inventoryItemId: "Shopify inventory item ID",
@@ -258,6 +284,7 @@ export async function GET(request: NextRequest) {
         {
           description: "Sync inventory from Shopify to Dynamics and GPS",
           url: "/api/inventory/sync?from=shopify&to=dynamics,gps",
+          headers: { "Idempotency-Key": "shopify-inventory-operation-123" },
           body: {
             sku: "PROD-123",
             quantity: 100,
@@ -268,6 +295,7 @@ export async function GET(request: NextRequest) {
         {
           description: "Sync inventory from warehouse to Shopify",
           url: "/api/inventory/sync?from=warehouse&to=shopify",
+          headers: { "Idempotency-Key": "warehouse-inventory-operation-456" },
           body: {
             sku: "PROD-123",
             available: 50,
