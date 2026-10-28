@@ -36,6 +36,9 @@ export interface InventoryLevel {
 
 export interface InventoryDiff {
   sku: string;
+  warehouseName: string;
+  dataAreaId: string;
+  shopifyLocationId: string;
   gpsLevel: number | null;
   d365Level: number | null;
   shopifyLevel: number | null;
@@ -649,36 +652,50 @@ export async function calculateDiscrepancies(
 
   const diffs: InventoryDiff[] = [];
 
-  // Query all three systems in parallel
-  const [gpsInventory, d365Inventory, shopifyInventory] = await Promise.all([
-    warehouseName ? queryGpsWarehouseInventory(warehouseName, skus) : queryGpsInventory(skus),
-    queryD365Inventory(skus),
-    queryShopifyInventory(skus),
-  ]);
+  const mappings = warehouseName
+    ? [await getWarehouseMapping(warehouseName)].filter(
+        (mapping): mapping is WarehouseMapping => Boolean(mapping)
+      )
+    : await getWarehouseMappings();
+  if (mappings.length === 0) throw new Error(`Unknown warehouse: ${warehouseName}`);
 
-  for (const sku of skus) {
-    const gpsLevel = gpsInventory.get(sku)?.available ?? null;
-    const d365Level = d365Inventory.get(sku)?.available ?? null;
-    const shopifyLevel = shopifyInventory.get(sku)?.available ?? null;
+  for (const mapping of mappings) {
+    if (!mapping.shopifyLocationId) {
+      throw new Error(`No Shopify location is configured for warehouse ${mapping.gpsName}`);
+    }
+    const [gpsInventory, d365Inventory, shopifyInventory] = await Promise.all([
+      queryGpsWarehouseInventory(mapping.gpsName, skus),
+      queryD365Inventory(skus, mapping.d365DataAreaId),
+      queryShopifyInventory(skus, mapping.shopifyLocationId),
+    ]);
 
-    const gpsToD365Diff = gpsLevel !== null && d365Level !== null ? gpsLevel - d365Level : null;
+    for (const sku of skus) {
+      const gpsLevel = gpsInventory.get(sku)?.available ?? null;
+      const d365Level = d365Inventory.get(sku)?.available ?? null;
+      const shopifyLevel = shopifyInventory.get(sku)?.available ?? null;
 
-    const d365ToShopifyDiff =
-      d365Level !== null && shopifyLevel !== null ? d365Level - shopifyLevel : null;
+      const gpsToD365Diff = gpsLevel !== null && d365Level !== null ? gpsLevel - d365Level : null;
 
-    const needsSync =
-      (gpsToD365Diff !== null && gpsToD365Diff !== 0) ||
-      (d365ToShopifyDiff !== null && d365ToShopifyDiff !== 0);
+      const d365ToShopifyDiff =
+        d365Level !== null && shopifyLevel !== null ? d365Level - shopifyLevel : null;
 
-    diffs.push({
-      sku,
-      gpsLevel,
-      d365Level,
-      shopifyLevel,
-      gpsToD365Diff,
-      d365ToShopifyDiff,
-      needsSync,
-    });
+      const needsSync =
+        (gpsToD365Diff !== null && gpsToD365Diff !== 0) ||
+        (d365ToShopifyDiff !== null && d365ToShopifyDiff !== 0);
+
+      diffs.push({
+        sku,
+        warehouseName: mapping.gpsName,
+        dataAreaId: mapping.d365DataAreaId,
+        shopifyLocationId: mapping.shopifyLocationId,
+        gpsLevel,
+        d365Level,
+        shopifyLevel,
+        gpsToD365Diff,
+        d365ToShopifyDiff,
+        needsSync,
+      });
+    }
   }
 
   const discrepancies = diffs.filter((d) => d.needsSync);
@@ -713,6 +730,7 @@ async function performReconciliation(
 
   try {
     const diffs = await calculateDiscrepancies(skus, warehouseName);
+    result.skusChecked = diffs.length;
     const incomplete = diffs.filter(
       (d) => d.gpsLevel === null || d.d365Level === null || d.shopifyLevel === null
     );
@@ -733,7 +751,7 @@ async function performReconciliation(
     for (const diff of discrepancies) {
       // GPS -> D365 sync if GPS has newer data
       if (diff.gpsToD365Diff !== null && diff.gpsToD365Diff !== 0) {
-        const syncResult = await syncGpsToD365(diff.sku, warehouseName || "GPS Warehouse");
+        const syncResult = await syncGpsToD365(diff.sku, diff.warehouseName);
         result.syncActions.push(syncResult);
 
         if (!syncResult.success && syncResult.error) {
@@ -745,8 +763,8 @@ async function performReconciliation(
       if (diff.d365ToShopifyDiff !== null && diff.d365ToShopifyDiff !== 0) {
         const syncResult = await syncD365ToShopify(
           diff.sku,
-          config.dynamics.dataAreaId,
-          `${workflowRunId}:${diff.sku}`
+          diff.dataAreaId,
+          `${workflowRunId}:${diff.dataAreaId}:${diff.sku}`
         );
         result.syncActions.push(syncResult);
 
