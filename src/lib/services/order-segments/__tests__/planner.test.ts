@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadFixture } from "../../../../../tests/fixtures";
 import type { IShopifyFulfillmentOrder } from "@/lib/types/shopify";
 import { planOrderSegments, segmentOrder } from "../planner";
+import { segmentLineRequests } from "../lines";
 import {
   toD365SalesOrderLines,
   calculateOrderCost,
@@ -42,6 +43,29 @@ describe("quantity-based segment planning", () => {
       orderName: "IM8-1234",
       relationship: "replacement",
     });
+  });
+
+  it("gives each segmented subscription reward a stable synthetic identity", () => {
+    const { order, fos, routing } = fixture();
+    order.tags = "Subscription order 3";
+    order.line_items[0].sku = "IM8-FG-000035";
+    const plan = planOrderSegments(order, fos, 250, routing);
+    const accounting = { giftCardApplications: [], purchasedGiftCards: {} };
+
+    const rewards = plan.segments.map((segment) => {
+      const projected = segmentOrder(order, plan, segment.index);
+      return segmentLineRequests(projected, segment, `SO-${segment.index}`, accounting).filter(
+        (line) => line.isSubscriptionReward
+      );
+    });
+
+    expect(rewards.map((lines) => lines.map((line) => line.sourceLineId))).toEqual([
+      ["subscription-reward:IM8-FG-000022:segment:0"],
+      ["subscription-reward:IM8-FG-000022:segment:1"],
+      ["subscription-reward:IM8-FG-000022:segment:2"],
+    ]);
+    expect(rewards.map((lines) => lines[0].request.quantity)).toEqual([2, 2, 1]);
+    expect(rewards.every((lines) => lines[0].isService)).toBe(true);
   });
 
   it("splits a single SKU's quantity and conserves every unit and discount cent", () => {

@@ -29,6 +29,7 @@ export interface RecordedSegmentLine {
   quantity: number;
   lotId: string;
   isService: boolean;
+  isSubscriptionReward?: boolean;
 }
 export interface SegmentProgress {
   /** Original D365 amount, before refunds; retained for future refund capacity. */

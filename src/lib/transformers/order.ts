@@ -203,6 +203,32 @@ export function toD365SalesOrderLine(
   };
 }
 
+export function toD365SubscriptionRewardLines(
+  order: ShopifyOrderPayload,
+  salesOrderNumber: string,
+  warehouseName: string,
+  dataAreaIdOverride?: string
+): D365SalesOrderLineRequest[] {
+  const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
+    ? (dataAreaIdOverride || "").toUpperCase()
+    : getWarehouseConfig(warehouseName).dataAreaId;
+  const whConfig = (dataAreaIdOverride || "").toUpperCase()
+    ? getWarehouseConfigForDataAreaId((dataAreaIdOverride || "").toUpperCase())
+    : getWarehouseConfig(warehouseName);
+  const shippingWarehouseId = whConfig.fulfilment.shippingWarehouseId;
+  const currency = order.currency || "USD";
+
+  return getSubscriptionRewards(order).map((reward) => ({
+    salesOrderNumber,
+    dataAreaId,
+    itemNumber: reward.sku,
+    quantity: reward.quantity,
+    price: 0,
+    currency,
+    ...(shippingWarehouseId ? { shippingWarehouseId } : {}),
+  }));
+}
+
 /**
  * Create all D365 sales order lines from Shopify order
  * Includes shipping and tax lines
@@ -213,7 +239,8 @@ export function toD365SalesOrderLines(
   warehouseName: string,
   includeShippingAndTax: boolean = true,
   dataAreaIdOverride?: string,
-  accounting?: OrderAccounting
+  accounting?: OrderAccounting,
+  includeSubscriptionRewards: boolean = true
 ): D365SalesOrderLineRequest[] {
   const dataAreaId = (dataAreaIdOverride || "").toUpperCase()
     ? (dataAreaIdOverride || "").toUpperCase()
@@ -298,16 +325,10 @@ export function toD365SalesOrderLines(
   lines.length = 0;
   lines.push(...explodedLines);
 
-  for (const reward of getSubscriptionRewards(order)) {
-    lines.push({
-      salesOrderNumber,
-      dataAreaId,
-      itemNumber: reward.sku,
-      quantity: reward.quantity,
-      price: 0,
-      currency,
-      ...(lineShippingWarehouseId ? { shippingWarehouseId: lineShippingWarehouseId } : {}),
-    });
+  if (includeSubscriptionRewards) {
+    lines.push(
+      ...toD365SubscriptionRewardLines(order, salesOrderNumber, warehouseName, dataAreaIdOverride)
+    );
   }
 
   // Add service lines (shipping/tax) using warehouse-config service SKUs.
