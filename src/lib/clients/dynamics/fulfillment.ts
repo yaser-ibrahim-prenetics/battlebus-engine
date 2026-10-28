@@ -78,7 +78,21 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
         Result: result.Result,
         $id: result.$id,
       };
-    }
+    },
+    req.type === "shipment"
+      ? {
+          version: 1,
+          kind: "d365_shipment",
+          company: req.dataAreaId.toUpperCase(),
+          salesOrderNumber: req.salesOrderNumber,
+          postingDate: req.confirmedShippedDate,
+          lines: lines.map((line) => ({
+            lotId: line.lotId!,
+            itemNumber: line.itemNumber,
+            quantity: line.quantity,
+          })),
+        }
+      : undefined
   );
   return { request: body, response: result };
 }

@@ -150,6 +150,7 @@ function getCredentials(region: "US" | "UK" = "UK"): {
  * @param pageSize - Items per page
  */
 export async function queryOmsInventory(options: {
+  strict?: boolean;
   region?: "US" | "UK";
   sku?: string;
   page?: number;
@@ -201,6 +202,7 @@ export async function queryOmsInventory(options: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (!response.ok) {
@@ -215,7 +217,9 @@ export async function queryOmsInventory(options: {
 
       if (result.code === 0 || result.code === 200 || result.success) {
         console.log(`[GPS-Inventory] Successfully queried via ${endpoint}`);
-        return result.data?.list || result.data || [];
+        const rows = result.data?.list ?? result.data;
+        if (options.strict && !Array.isArray(rows)) throw new Error("Incomplete GPS inventory evidence");
+        return rows || [];
       }
 
       console.log(`[GPS-Inventory] Endpoint ${endpoint} error: ${result.msg || result.message}`);
@@ -235,6 +239,7 @@ export async function queryOmsInventory(options: {
     durationMs: Date.now() - _start,
     payload: { region, sku },
   });
+  if (options.strict) throw new Error("GPS inventory authenticated probe failed");
   return [];
 }
 

@@ -1,3 +1,4 @@
+import { refundOrderSegments } from "@/lib/services/order-segments/refunds/process";
 import { getRefundHoldDecision } from "@/lib/services/refund-holds/decisions";
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
@@ -194,7 +195,7 @@ export const processRefund = inngest.createFunction(
 
     // 1. Get Shopify Order first (needed for order name lookup)
     const shopifyOrder = await step.run("get-shopify-order", async () => {
-      const order = await shopify.getOrder(shopifyOrderId);
+      const order = await shopify.getOrder(shopifyOrderId, event.data.shopifyStore);
       logRefundTraceLifecycle({
         ...refundTrace,
         phase: "shopify_order_loaded",
@@ -242,6 +243,41 @@ export const processRefund = inngest.createFunction(
             "Shopify refunds/create for Loop-backed refunds ignored — same as spock-store isLoopRefund (D365 line expected from Loop return.closed webhook).",
         };
       }
+    }
+
+    const segmentedRefund = await refundOrderSegments(
+      shopifyOrder,
+      refund,
+      event.data.shopifyStore,
+      step
+    );
+    if (segmentedRefund) {
+      const amount =
+        segmentedRefund.segments.reduce((sum, segment) => sum + segment.amountCents, 0) / 100;
+      await step.run("report-segment-refund-completion", async () => {
+        await csPlatform.sendOrderRefunded({
+          orderId: shopifyOrderId,
+          shopifyOrderName: shopifyOrder.name || shopifyOrderId,
+          amount: String(amount),
+          reason: "Refund processed",
+          shopifyFinancialStatus: shopifyOrder.financial_status,
+          refundType: amount >= Number(shopifyOrder.total_price || 0) ? "full" : "partial",
+        });
+        await logFlowEvent({
+          flow: "refund",
+          step: "done",
+          status: "completed",
+          runId,
+          shopifyOrderId: String(shopifyOrderId),
+          shopifyOrderName: shopifyOrder.name,
+          payload: {
+            refundId: String(refundId),
+            refundAmountUsd: amount,
+            segments: segmentedRefund.segments,
+          },
+        });
+      });
+      return segmentedRefund;
     }
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
@@ -452,7 +488,9 @@ export const processRefund = inngest.createFunction(
       refundLineItemsCount: Array.isArray(refund.refund_line_items)
         ? refund.refund_line_items.length
         : 0,
-      adjustmentsCount: Array.isArray(refund.order_adjustments) ? refund.order_adjustments.length : 0,
+      adjustmentsCount: Array.isArray(refund.order_adjustments)
+        ? refund.order_adjustments.length
+        : 0,
     });
 
     if (refundAmountUsd <= 0) {

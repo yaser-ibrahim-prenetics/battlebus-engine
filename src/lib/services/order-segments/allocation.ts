@@ -36,26 +36,28 @@ export function allocateQuantities(
   for (const [lineId, quantity] of Object.entries(quantities)) {
     if (!Number.isSafeInteger(quantity) || quantity <= 0)
       throw new Error("Invalid shipment quantity");
-    const candidates = stored.plan.segments.flatMap((segment) => {
-      if (!foIds.includes(stored.progress[String(segment.index)]?.fulfillmentOrderId || ""))
-        return [];
-      const line = segment.lines.find((line) => line.lineItemId === lineId);
-      if (!line) return [];
-      const used = previous
-        .filter((row) => row.segment_index === segment.index)
-        .reduce((sum, row) => sum + (row.quantities[lineId] ?? 0), 0);
-      return line.quantity > used ? [{ segment, remaining: line.quantity - used }] : [];
-    });
+    const candidates = [...stored.plan.segments]
+      .sort((a, b) => a.index - b.index)
+      .flatMap((segment) => {
+        if (!foIds.includes(stored.progress[String(segment.index)]?.fulfillmentOrderId || ""))
+          return [];
+        const line = segment.lines.find((line) => line.lineItemId === lineId);
+        if (!line) return [];
+        const used = previous
+          .filter((row) => row.segment_index === segment.index)
+          .reduce((sum, row) => sum + (row.quantities[lineId] ?? 0), 0);
+        return line.quantity > used ? [{ segment, remaining: line.quantity - used }] : [];
+      });
     const remaining = candidates.reduce((sum, item) => sum + item.remaining, 0);
-    if (
-      !candidates.length ||
-      quantity > remaining ||
-      (candidates.length > 1 && quantity !== remaining)
-    )
+    if (!candidates.length || quantity > remaining)
       throw new Error(
         `Shipment quantity cannot be safely assigned to a segment for line ${lineId}`
       );
+    // Stable segment order is the allocation policy for a combined shipment.
+    // Reservations (including unfinished attempts) consume capacity on retries.
+    let unallocated = quantity;
     for (const { segment, remaining: available } of candidates) {
+      if (!unallocated) break;
       const allocation = result.get(segment.index) ?? {
         fulfillment_id: fulfillmentId,
         segment_index: segment.index,
@@ -67,7 +69,9 @@ export function allocateQuantities(
         ),
         completed: false,
       };
-      allocation.quantities[lineId] = candidates.length === 1 ? quantity : available;
+      const assigned = Math.min(unallocated, available);
+      allocation.quantities[lineId] = assigned;
+      unallocated -= assigned;
       result.set(segment.index, allocation);
     }
   }

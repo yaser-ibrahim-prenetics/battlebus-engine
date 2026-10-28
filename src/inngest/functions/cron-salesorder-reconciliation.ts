@@ -39,6 +39,8 @@ import { SlackChannelEnum } from "@/lib/types/slack";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
 import { shopifyAdminGraphql } from "@/lib/clients/shopify";
 
+import { recordReconciliation } from "@/lib/services/reconciliation-history/record";
+
 type ReconType = "salesorder" | "gps_us" | "gps_uk" | "fulfillment";
 
 type OrderRow = {
@@ -173,7 +175,10 @@ function getPreviousUtcDayRange(now: Date): {
 }
 
 /** Inclusive `[fromYmd, toYmd]` in UTC calendar days → UTC bounds. */
-function utcInclusiveRangeToUtcBounds(fromYmd: string, toYmd: string): {
+function utcInclusiveRangeToUtcBounds(
+  fromYmd: string,
+  toYmd: string
+): {
   fromIso: string;
   dateEndExclusiveIso: string;
   fromDate: string;
@@ -279,10 +284,13 @@ async function fetchShopifyWindowOrders(params: {
 
   while (hasNextPage) {
     pageIndex += 1;
-    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(query, {
-      query: shopifyQuery,
-      after: cursor,
-    });
+    const res: ShopifyOrdersQueryResponse = await shopifyAdminGraphql<ShopifyOrdersQueryResponse>(
+      query,
+      {
+        query: shopifyQuery,
+        after: cursor,
+      }
+    );
 
     const edges = res?.data?.orders?.edges || [];
     const pageInfo = res?.data?.orders?.pageInfo;
@@ -312,7 +320,8 @@ async function fetchShopifyWindowOrders(params: {
         totalPrice: amount != null && amount !== "" ? String(amount) : null,
       });
     }
-    const endCursor = pageInfo?.endCursor || (edges.length > 0 ? edges[edges.length - 1]?.cursor : null) || null;
+    const endCursor =
+      pageInfo?.endCursor || (edges.length > 0 ? edges[edges.length - 1]?.cursor : null) || null;
     cursor = endCursor;
     hasNextPage = Boolean(pageInfo?.hasNextPage && cursor);
   }
@@ -444,8 +453,16 @@ async function runOneRecon(params: {
   /** Triggering event id: keeps Slack notification ids stable when the run is retried. */
   notificationScope: string;
 }): Promise<ReconResult> {
-  const { type, dateFromIso, dateEndExclusiveIso, dateFrom, dateTo, storeCode, runId, notificationScope } =
-    params;
+  const {
+    type,
+    dateFromIso,
+    dateEndExclusiveIso,
+    dateFrom,
+    dateTo,
+    storeCode,
+    runId,
+    notificationScope,
+  } = params;
   const checkId = crypto.randomUUID();
   const trace = runId ? { runId, type } : undefined;
 
@@ -484,7 +501,11 @@ async function runOneRecon(params: {
 
   if (error) {
     const failMessage = `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: ${error.message}`;
-    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, failMessage, slack.slackNotificationId(notificationScope, "reconciliation-query-failed", type));
+    await slack.sendErrorMessage(
+      SlackChannelEnum.GENERAL,
+      failMessage,
+      slack.slackNotificationId(notificationScope, "reconciliation-query-failed", type)
+    );
     logFlowEvent({
       level: "error",
       flow: `reconciliation_${type}`,
@@ -493,7 +514,14 @@ async function runOneRecon(params: {
       runId,
       errorType: "reconciliation_query_error",
       errorMessage: error.message,
-      payload: { type, checkId, store: storeCode, dateFrom, dateTo, shopifyOrderCount: shopifyNames.length },
+      payload: {
+        type,
+        checkId,
+        store: storeCode,
+        dateFrom,
+        dateTo,
+        shopifyOrderCount: shopifyNames.length,
+      },
     });
     if (trace) {
       reconTrace(trace.runId, trace.type, "recon_failed", {
@@ -545,8 +573,7 @@ async function runOneRecon(params: {
       const r = dbByName.get(name);
       if (!r) continue; // missing-row is salesorder recon's concern, not GPS.
       if (String(r.warehouse || "") !== wh) continue;
-      const gpsOrderNoForWarehouse =
-        type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
+      const gpsOrderNoForWarehouse = type === "gps_uk" ? r.gps_uk_order_no : r.gps_order_no;
       const hasGpsId = Boolean(String(gpsOrderNoForWarehouse || "").trim());
       const gpsStatus = String(r.gps_sync_status || "").toLowerCase();
       const gpsFailed = gpsStatus === "failed";
@@ -573,9 +600,7 @@ async function runOneRecon(params: {
         missingShopifyFulfillments.push(o.name);
       }
     }
-    unsyncedOrders = Array.from(
-      new Set([...missingDbFulfillments, ...missingShopifyFulfillments])
-    );
+    unsyncedOrders = Array.from(new Set([...missingDbFulfillments, ...missingShopifyFulfillments]));
     unsyncedOrderIds = [...missingDbFulfillmentIds];
   }
 
@@ -595,9 +620,17 @@ async function runOneRecon(params: {
       : `${typeLabel(type)}: Error for store ${storeCode} from ${dateFrom} to ${dateTo}:\n ${checkId}: Found ${unsyncedOrders.length} ${issueKindLabel}:\n${unsyncedOrders.join("\n")}`;
 
   if (status === "ok") {
-    await slack.sendInfoMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(notificationScope, "reconciliation-result", type));
+    await slack.sendInfoMessage(
+      SlackChannelEnum.GENERAL,
+      message,
+      slack.slackNotificationId(notificationScope, "reconciliation-result", type)
+    );
   } else {
-    await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(notificationScope, "reconciliation-result", type));
+    await slack.sendErrorMessage(
+      SlackChannelEnum.GENERAL,
+      message,
+      slack.slackNotificationId(notificationScope, "reconciliation-result", type)
+    );
   }
 
   logFlowEvent({
@@ -715,7 +748,11 @@ export const cronSalesorderReconciliation = inngest.createFunction(
 
     if (!isDatabaseConfigured()) {
       const message = `SalesOrder Reconciliation: Error for store ${storeCode} from ${fromDate} to ${toDate}:\n PostgreSQL is not configured.`;
-      await slack.sendErrorMessage(SlackChannelEnum.GENERAL, message, slack.slackNotificationId(event?.id ?? runId, "reconciliation-database-not-configured"));
+      await slack.sendErrorMessage(
+        SlackChannelEnum.GENERAL,
+        message,
+        slack.slackNotificationId(event?.id ?? runId, "reconciliation-database-not-configured")
+      );
       logFlowEvent({
         level: "error",
         flow: "reconciliation_salesorder",
@@ -736,23 +773,41 @@ export const cronSalesorderReconciliation = inngest.createFunction(
     }
 
     const types: ReconType[] =
-      requestedType === "all"
-        ? ["salesorder", "gps_us", "gps_uk", "fulfillment"]
-        : [requestedType];
+      requestedType === "all" ? ["salesorder", "gps_us", "gps_uk", "fulfillment"] : [requestedType];
     const results: ReconResult[] = [];
     for (const type of types) {
       // Keep deterministic per-check order in run result payload and modal rendering.
 
-      const item = await runOneRecon({
-        type,
-        dateFromIso: fromIso,
-        dateEndExclusiveIso,
-        dateFrom: fromDate,
-        dateTo: toDate,
-        storeCode,
-        runId: safeRunId,
-        notificationScope: event?.id ?? safeRunId,
-      });
+      const item = await recordReconciliation(
+        {
+          workflowRunId: safeRunId,
+          kind: type,
+          scope: config.shopify.im8.shopDomain,
+          start: fromIso,
+          end: dateEndExclusiveIso,
+        },
+        () =>
+          runOneRecon({
+            type,
+            dateFromIso: fromIso,
+            dateEndExclusiveIso,
+            dateFrom: fromDate,
+            dateTo: toDate,
+            storeCode,
+            runId: safeRunId,
+            notificationScope: event?.id ?? safeRunId,
+          }),
+        (result) => ({
+          status: result.status === "ok" ? "matched" : "discrepancies",
+          result: {
+            checkId: result.checkId,
+            totalOrders: result.totalOrders,
+            unsyncedOrders: result.unsyncedOrders,
+            unsyncedOrderIds: result.unsyncedOrderIds,
+            missingDbFulfillmentIds: result.missingDbFulfillmentIds ?? [],
+          },
+        })
+      );
       results.push(item);
     }
 

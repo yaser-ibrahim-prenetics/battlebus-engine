@@ -1,3 +1,4 @@
+import { processAdministrativeRecovery } from "./process-administrative-recovery";
 import { cronD365Reconciliation } from "./cron-d365-reconciliation";
 // ============================================================================
 // INNGEST FUNCTIONS INDEX
@@ -94,6 +95,7 @@ const inventoryFunctions = config.features.enableInventoryRuns
   : [];
 
 export const functions = [
+  processAdministrativeRecovery,
   cronD365Reconciliation,
   drainSlackNotificationOutbox,
   processShopifyOrder,

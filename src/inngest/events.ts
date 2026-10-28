@@ -441,6 +441,8 @@ export type ShopifyOrderRecoverEvent = {
     shopifyStore?: string;
     /** If true, dispatch recovery even if Hub already has the order row. */
     force?: boolean;
+    /** Durable administrative request identity; permits one intentional guarded replay. */
+    recoveryRequestId?: string;
     requestedAt?: string;
     requestedBy?: string;
     triggeredByUserId?: string;
@@ -754,3 +756,9 @@ export interface ShopifyInventoryLevelPayload {
   available: number | null;
   updated_at: string;
 }
+
+/** Administrative events reference an authenticated, durable command; never carry raw provider payloads. */
+export type AdministrativeRecoveryEvent = {
+  name: "operations/recovery.requested";
+  data: { requestId: string };
+};

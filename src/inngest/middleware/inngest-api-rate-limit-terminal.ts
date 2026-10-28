@@ -1,3 +1,4 @@
+import { WorkflowObservationMiddleware } from "./workflow-observation";
 import { Middleware, NonRetriableError, type Inngest } from "inngest";
 
 const MAX_ATTEMPTS = 5;
@@ -18,7 +19,7 @@ function isInngestApiRateLimitError(err: unknown): boolean {
 /**
  * @public — registered on the Inngest client; no need to import elsewhere.
  */
-export class InngestApiRateLimitTerminalMiddleware extends Middleware.BaseMiddleware {
+export class InngestApiRateLimitTerminalMiddleware extends WorkflowObservationMiddleware {
   readonly id = "battle-bus:inngest-api-rate-limit-terminal";
 
   constructor({ client }: { client: Inngest.Any }) {
@@ -28,9 +29,9 @@ export class InngestApiRateLimitTerminalMiddleware extends Middleware.BaseMiddle
   async wrapFunctionHandler(
     args: Middleware.WrapFunctionHandlerArgs
   ): Promise<unknown> {
-    const { ctx, next } = args;
+    const { ctx } = args;
     try {
-      return await next();
+      return await super.wrapFunctionHandler(args);
     } catch (err) {
       if (isInngestApiRateLimitError(err) && ctx.attempt >= TERMINAL_FUNCTION_ATTEMPT_INDEX) {
         const original = err instanceof Error ? err.message : String(err);

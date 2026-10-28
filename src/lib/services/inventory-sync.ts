@@ -13,6 +13,7 @@
 //   - D365 -> Shopify: When D365 inventory changes (ERP adjustments)
 //   - Reconciliation: Periodic check to align all three systems
 
+import { recordReconciliation } from "./reconciliation-history/record";
 import { config } from "../config";
 import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
@@ -248,7 +249,8 @@ export async function queryD365Inventory(
   for (const item of items) {
     const d365Sku = item.ItemNumber;
     // Map back to original SKU for consistency
-    const originalSku = skus.find((s) => mapShopifySkuToDynamicsForOrderLine(s) === d365Sku) || d365Sku;
+    const originalSku =
+      skus.find((s) => mapShopifySkuToDynamicsForOrderLine(s) === d365Sku) || d365Sku;
 
     result.set(originalSku, {
       sku: originalSku,
@@ -686,7 +688,7 @@ export async function calculateDiscrepancies(
  * Run full inventory reconciliation
  * Queries all systems and syncs any discrepancies
  */
-export async function runReconciliation(
+async function performReconciliation(
   skus: string[],
   warehouseName?: string,
   autoSync: boolean = false
@@ -705,6 +707,13 @@ export async function runReconciliation(
 
   try {
     const diffs = await calculateDiscrepancies(skus, warehouseName);
+    const incomplete = diffs.filter(
+      (d) => d.gpsLevel === null || d.d365Level === null || d.shopifyLevel === null
+    );
+    if (incomplete.length) {
+      result.errors.push("Incomplete provider inventory evidence");
+      return result;
+    }
 
     const discrepancies = diffs.filter((d) => d.needsSync);
     result.discrepanciesFound = discrepancies.length;
@@ -747,4 +756,43 @@ export async function runReconciliation(
   }
 
   return result;
+}
+
+/** Persist both scheduled and manual attempts; provider failures never become matches. */
+export async function runReconciliation(
+  skus: string[],
+  warehouseName?: string,
+  autoSync = false,
+  workflowRunId = "manual"
+): Promise<ReconciliationResult> {
+  return recordReconciliation(
+    {
+      workflowRunId,
+      kind: "inventory",
+      scope: `${config.shopify.im8.shopDomain}:${warehouseName ?? "all"}`,
+    },
+    () => performReconciliation(skus, warehouseName, autoSync),
+    (result) => ({
+      status:
+        result.errors.length || result.syncActions.some((action) => !action.success)
+          ? "failed"
+          : result.discrepanciesFound
+            ? "discrepancies"
+            : "matched",
+      errorCode: result.errors.length ? "inventory_evidence_or_sync_failure" : undefined,
+      result: {
+        skusChecked: result.skusChecked,
+        discrepanciesFound: result.discrepanciesFound,
+        errorCount: result.errors.length,
+        autoSync,
+        dryRun: config.features.dryRunMode,
+        syncActions: result.syncActions.map(({ sku, source, destination, success }) => ({
+          sku,
+          source,
+          destination,
+          success,
+        })),
+      },
+    })
+  );
 }

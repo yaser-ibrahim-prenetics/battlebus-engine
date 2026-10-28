@@ -97,108 +97,118 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       routing
     );
     if (plan.segments.length < 2) return null;
-    if (new Set(plan.segments.map((segment) => segment.dataAreaId.toUpperCase())).size > 1)
-      throw new Error(
-        "Mixed-company split orders require a refund allocation plan before provider writes"
-      );
     return reservePlan(shop, plan);
   });
   if (!stored) return null;
   const { plan } = stored;
   const bindings = await step.run("bind-shopify-segments", () => bindShopifySegments(shop, plan));
-  const results: SegmentProgress[] = [];
-  for (const segment of plan.segments) {
-    await input.ensureEligible?.();
-    const prefix = `segment-${segment.index}`;
-    const projected = segmentOrder(order, plan, segment.index);
-    const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
-      executeFulfillmentAction(
-        {
-          provider: "dynamics",
-          scope: `${config.dynamics.baseUrl}:${segment.dataAreaId}:${shop}`,
-          sourceOrderId: String(order.id),
-          sourceLineIds: [`segment:${segment.index}:${phase}`],
-          action: `${prefix}:${phase}`,
-        },
-        request,
-        execute
-      );
-    const salesOrderNumber = await step.run(`${prefix}-header`, async () => {
-      const header = toD365SalesOrderHeaderV3(
-        projected,
-        segment.warehouse,
-        segment.dataAreaId,
-        accounting
-      );
-      header.comment = `${header.comment || ""}\nSplit ${segment.index + 1}/${plan.segments.length}; Shopify fulfillment order ${bindings[segment.index]}`;
-      const result = await action("header", header, async () => {
-        const result = await dynamics.createSalesOrderHeaderV3(header);
-        if (!result.SalesOrderNumber)
-          throw new Error("D365 header response missing sales order number");
-        return result.SalesOrderNumber;
-      });
-      await saveProgress(shop, plan.orderId, segment.index, { salesOrderNumber: result });
-      return result;
-    });
-    const requests = segmentLineRequests(projected, segment, salesOrderNumber, accounting);
-    const recordedLines: RecordedSegmentLine[] = [];
-    for (const [index, line] of requests.entries()) {
-      const lotId = await step.run(`${prefix}-line-${index}`, () =>
-        action(`line:${index}`, line.request, async () => {
-          const result = await dynamics.createSalesOrderLine(line.request);
-          if (!result.InventoryLotId)
-            throw new Error("D365 line response missing inventory lot ID");
-          return result.InventoryLotId;
-        })
-      );
-      recordedLines.push({
-        sourceLineId: line.sourceLineId,
-        sourceQuantity: line.sourceQuantity,
-        itemNumber: line.request.itemNumber,
-        quantity: line.request.quantity,
-        lotId,
-        isService: line.isService,
-      });
-    }
-    await step.run(`${prefix}-save-lines`, () =>
-      saveProgress(shop, plan.orderId, segment.index, { lines: recordedLines })
-    );
-    await step.run(`${prefix}-confirm`, () =>
-      action("confirm", { salesOrderNumber }, async () => {
-        await dynamics.confirmSalesOrder(salesOrderNumber, segment.dataAreaId);
-        return { confirmed: true };
-      })
-    );
-    if (calculateOrderCost(requests.map((line) => line.request)) > 0) {
-      await step.run(`${prefix}-prepayment`, () =>
-        action("prepayment", { salesOrderNumber }, async () => {
-          await dynamics.createPrepayment(salesOrderNumber, segment.dataAreaId);
-          return { posted: true };
-        })
-      );
-    }
-    const gpsOrderId = await step.run(`${prefix}-gps`, async () => {
+  const outcomes = await Promise.allSettled(
+    plan.segments.map(async (segment): Promise<SegmentProgress> => {
       await input.ensureEligible?.();
-      if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
-        return undefined;
-      const payload = toGpsOutboundOrder(projected, salesOrderNumber, segment.warehouse);
-      payload.platformOrderNo = segment.index === 0 ? order.name : `${order.name}-${segment.index}`;
-      if (!payload.productList.length) return undefined;
-      const result = await gps.createOutboundOrder(
-        payload,
-        segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+      const prefix = `segment-${segment.index}`;
+      const projected = segmentOrder(order, plan, segment.index);
+      const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
+        executeFulfillmentAction(
+          {
+            provider: "dynamics",
+            scope: `${config.dynamics.baseUrl}:${segment.dataAreaId}:${shop}`,
+            sourceOrderId: String(order.id),
+            sourceLineIds: [`segment:${segment.index}:${phase}`],
+            action: `${prefix}:${phase}`,
+          },
+          request,
+          execute
+        );
+      const salesOrderNumber = await step.run(`${prefix}-header`, async () => {
+        const header = toD365SalesOrderHeaderV3(
+          projected,
+          segment.warehouse,
+          segment.dataAreaId,
+          accounting
+        );
+        header.comment = `${header.comment || ""}\nSplit ${segment.index + 1}/${plan.segments.length}; Shopify fulfillment order ${bindings[segment.index]}`;
+        const result = await action("header", header, async () => {
+          const result = await dynamics.createSalesOrderHeaderV3(header);
+          if (!result.SalesOrderNumber)
+            throw new Error("D365 header response missing sales order number");
+          return result.SalesOrderNumber;
+        });
+        await saveProgress(shop, plan.orderId, segment.index, { salesOrderNumber: result });
+        return result;
+      });
+      const requests = segmentLineRequests(projected, segment, salesOrderNumber, accounting);
+      const recordedLines: RecordedSegmentLine[] = [];
+      for (const [index, line] of requests.entries()) {
+        const lotId = await step.run(`${prefix}-line-${index}`, () =>
+          action(`line:${index}`, line.request, async () => {
+            const result = await dynamics.createSalesOrderLine(line.request);
+            if (!result.InventoryLotId)
+              throw new Error("D365 line response missing inventory lot ID");
+            return result.InventoryLotId;
+          })
+        );
+        recordedLines.push({
+          sourceLineId: line.sourceLineId,
+          sourceQuantity: line.sourceQuantity,
+          itemNumber: line.request.itemNumber,
+          quantity: line.request.quantity,
+          lotId,
+          isService: line.isService,
+        });
+      }
+      await step.run(`${prefix}-save-lines`, () =>
+        saveProgress(shop, plan.orderId, segment.index, {
+          lines: recordedLines,
+          postedAmountCents: Math.round(
+            calculateOrderCost(requests.map((line) => line.request)) * 100
+          ),
+        })
       );
-      const id = result.response.data?.[0]?.orderNo;
-      if (!id) throw new Error("GPS response missing segment order ID");
-      await saveProgress(shop, plan.orderId, segment.index, { gpsOrderId: id });
-      return id;
-    });
-    const result = { salesOrderNumber, gpsOrderId, completed: true };
-    await step.run(`${prefix}-complete`, () =>
-      saveProgress(shop, plan.orderId, segment.index, result)
-    );
-    results.push(result);
-  }
+      await step.run(`${prefix}-confirm`, () =>
+        action("confirm", { salesOrderNumber }, async () => {
+          await dynamics.confirmSalesOrder(salesOrderNumber, segment.dataAreaId);
+          return { confirmed: true };
+        })
+      );
+      if (calculateOrderCost(requests.map((line) => line.request)) > 0) {
+        await step.run(`${prefix}-prepayment`, () =>
+          action("prepayment", { salesOrderNumber }, async () => {
+            await dynamics.createPrepayment(salesOrderNumber, segment.dataAreaId);
+            return { posted: true };
+          })
+        );
+      }
+      const gpsOrderId = await step.run(`${prefix}-gps`, async () => {
+        await input.ensureEligible?.();
+        if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
+          return undefined;
+        const payload = toGpsOutboundOrder(projected, salesOrderNumber, segment.warehouse);
+        payload.platformOrderNo =
+          segment.index === 0 ? order.name : `${order.name}-${segment.index}`;
+        if (!payload.productList.length) return undefined;
+        const result = await gps.createOutboundOrder(
+          payload,
+          segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+        );
+        const id = result.response.data?.[0]?.orderNo;
+        if (!id) throw new Error("GPS response missing segment order ID");
+        await saveProgress(shop, plan.orderId, segment.index, { gpsOrderId: id });
+        return id;
+      });
+      const result = { salesOrderNumber, gpsOrderId, completed: true };
+      await step.run(`${prefix}-complete`, () =>
+        saveProgress(shop, plan.orderId, segment.index, result)
+      );
+      return result;
+    })
+  );
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  // Await every independent segment before surfacing an error; successful work is
+  // durably checkpointed and reused when this workflow retries the failed segment.
+  if (failure?.status === "rejected") throw failure.reason;
+  const results = outcomes.flatMap((outcome) =>
+    outcome.status === "fulfilled" ? [outcome.value] : []
+  );
   await step.run("publish-order-segments", () => reportSegmentProgress(shop, order));
   return { status: "segmented", segments: results };
 }

@@ -89,7 +89,9 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       await pool.query(
         "DELETE FROM public.fulfillment_action_aliases WHERE source_order_id LIKE 'SEG-TEST-SO-%'"
       );
-      await pool.query("DELETE FROM public.fulfillment_actions WHERE source_order_id LIKE 'SEG-TEST-SO-%'");
+      await pool.query(
+        "DELETE FROM public.fulfillment_actions WHERE source_order_id LIKE 'SEG-TEST-SO-%'"
+      );
       await pool.query("DELETE FROM public.order_segment_fulfillments WHERE shop_domain=$1", [
         shop,
       ]);
@@ -176,7 +178,9 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       });
       let headers = 0,
         lines = 0;
-      mocks.header.mockImplementation(async () => ({ SalesOrderNumber: `SEG-TEST-SO-${++headers}` }));
+      mocks.header.mockImplementation(async () => ({
+        SalesOrderNumber: `SEG-TEST-SO-${++headers}`,
+      }));
       mocks.line.mockImplementation(async () => ({ InventoryLotId: `LOT-${++lines}` }));
       mocks.transport.mockImplementation(async () =>
         Response.json({ status: 1, Message: "ok", Result: "PS", $id: "1" })
@@ -229,8 +233,10 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
       expect(result?.segments).toHaveLength(3);
       expect(mocks.header).toHaveBeenCalledTimes(3);
       expect(mocks.graphql).toHaveBeenCalledTimes(4);
-      expect(gpsPosts).toEqual(["#SEGMENT-TEST", "#SEGMENT-TEST-1", "#SEGMENT-TEST-2"]);
-      const quantities = mocks.gps.mock.calls.map(([payload]) => payload.productList[0].quantity);
+      expect([...gpsPosts].sort()).toEqual(["#SEGMENT-TEST", "#SEGMENT-TEST-1", "#SEGMENT-TEST-2"]);
+      const quantities = [...mocks.gps.mock.calls]
+        .sort(([a], [b]) => a.platformOrderNo.localeCompare(b.platformOrderNo))
+        .map(([payload]) => payload.productList[0].quantity);
       expect(quantities).toEqual([2, 2, 1]);
       expect(
         mocks.header.mock.calls.every(([header]) => header.paymentId === "actual-payment")
@@ -251,12 +257,12 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
     it("resumes only unfinished work after a rejected second shipment", async () => {
       rejectSecondGps = true;
       await expect(run()).rejects.toThrow("inventory unavailable");
-      expect(gpsPosts).toEqual(["#SEGMENT-TEST"]);
+      expect([...gpsPosts].sort()).toEqual(["#SEGMENT-TEST", "#SEGMENT-TEST-2"]);
       rejectSecondGps = false;
       order.line_items[0].fulfillment_status = "fulfilled"; // volatile Shopify state must not regroup the plan
       await run();
       expect(mocks.header).toHaveBeenCalledTimes(3);
-      expect(gpsPosts).toEqual(["#SEGMENT-TEST", "#SEGMENT-TEST-1", "#SEGMENT-TEST-2"]);
+      expect([...gpsPosts].sort()).toEqual(["#SEGMENT-TEST", "#SEGMENT-TEST-1", "#SEGMENT-TEST-2"]);
     });
 
     it("blocks ambiguous Shopify mutation outcomes before finance", async () => {
@@ -330,7 +336,13 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
         step,
       });
       const requests = mocks.fulfill.mock.calls.map(([request]) => request);
-      expect(requests.map((r) => r.salesOrderNumber)).toEqual(["SEG-TEST-SO-1", "SEG-TEST-SO-1"]);
+      const binding = (await readPlan(shop, orderId))!.progress["0"];
+      expect(requests.map((r) => r.salesOrderNumber)).toEqual([
+        binding.salesOrderNumber,
+        binding.salesOrderNumber,
+      ]);
+      const productLot = binding.lines!.find((line) => line.sourceLineId === "11")!.lotId;
+      expect(requests.map((r) => r.lines[0].lotId)).toEqual([productLot, productLot]);
       expect(requests.map((r) => r.lines[0].quantity)).toEqual([1, 1]);
       expect(requests[0].lines.length).toBeGreaterThan(1);
       expect(requests[1].lines).toHaveLength(1);
@@ -397,7 +409,7 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
     it("stops before later provider writes when recovery eligibility changes", async () => {
       let checks = 0;
       const ensureEligible = vi.fn(async () => {
-        if (++checks === 3) throw new Error("cancelled");
+        if (++checks >= 3) throw new Error("cancelled");
       });
       await expect(
         processOrderSegments({
@@ -413,11 +425,16 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
           },
         })
       ).rejects.toThrow("cancelled");
-      expect(mocks.header).toHaveBeenCalledTimes(1);
-      expect(gpsPosts).toEqual(["#SEGMENT-TEST"]);
+      expect(mocks.header).toHaveBeenCalledTimes(2);
+      expect(gpsPosts).toEqual([]);
     });
 
-    it("rejects a mixed-company plan before Shopify or financial mutations", async () => {
+    it("executes a mixed-company plan with independent durable provider orders", async () => {
+      nodes = new Map([
+        ["51", 3],
+        ["52", 2],
+      ]);
+      sequence = 52;
       mocks.area.mockImplementation(async (location) => (location === "71" ? "H007" : "U001"));
       mocks.fos.mockResolvedValue([
         {
@@ -433,10 +450,17 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
           line_items: [{ id: 82, line_item_id: 11, fulfillable_quantity: 2 }],
         },
       ]);
-      await expect(run()).rejects.toThrow("Mixed-company");
-      expect(mocks.header).not.toHaveBeenCalled();
-      expect(mocks.graphql).not.toHaveBeenCalled();
-      expect(await readPlan(shop, orderId)).toBeNull();
+      await run();
+      expect(mocks.header.mock.calls.map((call) => call[0].dataAreaId).sort()).toEqual([
+        "H007",
+        "H007",
+        "U001",
+      ]);
+      const saved = await readPlan(shop, orderId);
+      expect(saved?.plan.segments).toHaveLength(3);
+      expect(Object.values(saved!.progress).every((progress) => progress.completed)).toBe(true);
+      await run();
+      expect(mocks.header).toHaveBeenCalledTimes(3);
     });
 
     it("serializes completion publication so stale snapshots cannot overwrite completion", async () => {
