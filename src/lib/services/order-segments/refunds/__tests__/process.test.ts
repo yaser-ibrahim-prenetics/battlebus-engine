@@ -44,7 +44,7 @@ import { refundOrderSegments } from "../process";
 import { loadFixture } from "../../../../../../tests/fixtures";
 it("refreshes incomplete progress on retry and checkpoints the successful refund/report", async () => {
   const stored = {
-    plan: { segments: [{ index: 0, warehouse: "GPS Warehouse", dataAreaId: "U001" }] },
+    plan: { segments: [{ index: 0, warehouse: "GPS Warehouse", dataAreaId: "U001", lines: [] }] },
     progress: {},
   };
   read

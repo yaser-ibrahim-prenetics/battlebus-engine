@@ -1,3 +1,5 @@
+import { loadOrderAccounting } from "../../order-accounting/load";
+import { refundProjectionOrder, requiresRefundAccounting } from "./allocation";
 import { saveRefundOrderLine } from "../../order-lines";
 import type { RefundOrder } from "./allocation";
 import type { ShopifyRefundPayload } from "@/inngest/events";
@@ -39,8 +41,12 @@ export async function refundOrderSegments(
       throw new Error("Refund requires a verified currency conversion");
     const amount = Math.round(resolution.refundAmountUsd * 100);
     if (!Number.isSafeInteger(amount) || amount < 0) throw new Error("Invalid refund amount");
+    const needsAccounting = requiresRefundAccounting(stored, order);
+    const accounting = needsAccounting
+      ? await loadOrderAccounting(refundProjectionOrder(order), shop)
+      : undefined;
     return {
-      ...(await reserveSegmentRefund(shop, stored, order, refund, amount)),
+      ...(await reserveSegmentRefund(shop, stored, order, refund, amount, accounting)),
       conversion: resolution.exchangeRateInfo,
     };
   });

@@ -1,3 +1,4 @@
+import type { OrderAccounting } from "../../order-accounting/types";
 import type { ShopifyRefundPayload } from "@/inngest/events";
 import { getDatabasePool } from "@/lib/db/database";
 import { lockRefundsSQL, readRefundsSQL, reserveRefundSQL } from "@/lib/sql/order-segments/refunds";
@@ -19,7 +20,8 @@ export async function reserveSegmentRefund(
   stored: StoredPlan,
   order: RefundOrder,
   refund: ShopifyRefundPayload,
-  amountCents: number
+  amountCents: number,
+  accounting?: OrderAccounting
 ) {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("Refund allocation requires the database");
@@ -40,7 +42,8 @@ export async function reserveSegmentRefund(
         order,
         refund,
         amountCents,
-        rows.flatMap((row) => row.allocations)
+        rows.flatMap((row) => row.allocations),
+        accounting
       ),
       completed: false,
     };

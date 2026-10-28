@@ -176,3 +176,55 @@ it("uses posted shipping discounts, duties and cumulative discount cents for cap
     "remaining segment balances"
   );
 });
+
+it("retains purchased gift-card value and uses original posted capacity when available", () => {
+  const giftOrder = {
+    ...order,
+    currency: "USD",
+    tax_lines: [],
+    total_tax: "0",
+    shipping_lines: [],
+    line_items: [
+      { ...line, id: 1, quantity: 2, price: "10.00", total_discount: "0" },
+      {
+        ...line,
+        id: 2,
+        quantity: 1,
+        price: "100.00",
+        total_discount: "0",
+        gift_card: true,
+        requires_shipping: false,
+      },
+    ],
+  };
+  const giftPlan = {
+    ...stored,
+    plan: {
+      ...stored.plan,
+      segments: stored.plan.segments.map((segment) => ({
+        ...segment,
+        lines: [
+          { lineItemId: "1", quantity: 1, physical: true },
+          ...(segment.index ? [] : [{ lineItemId: "2", quantity: 1, physical: false }]),
+        ],
+      })),
+    },
+  };
+  const amountOnly = { ...refund, refund_line_items: [] };
+  const accounting = { giftCardApplications: [], purchasedGiftCards: { "2": "1234" } };
+  expect(
+    allocateSegmentRefund(giftPlan, giftOrder, amountOnly, 12000, [], accounting).map(
+      (row) => row.amountCents
+    )
+  ).toEqual([11000, 1000]);
+  expect(() => allocateSegmentRefund(giftPlan, giftOrder, amountOnly, 12000, [])).toThrow(
+    "gift-card accounting"
+  );
+  const posted = {
+    ...giftPlan,
+    progress: { "0": { postedAmountCents: 11000 }, "1": { postedAmountCents: 1000 } },
+  };
+  expect(
+    allocateSegmentRefund(posted, giftOrder, amountOnly, 12000, []).map((row) => row.amountCents)
+  ).toEqual([11000, 1000]);
+});

@@ -157,7 +157,12 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         });
       }
       await step.run(`${prefix}-save-lines`, () =>
-        saveProgress(shop, plan.orderId, segment.index, { lines: recordedLines })
+        saveProgress(shop, plan.orderId, segment.index, {
+          lines: recordedLines,
+          postedAmountCents: Math.round(
+            calculateOrderCost(requests.map((line) => line.request)) * 100
+          ),
+        })
       );
       await step.run(`${prefix}-confirm`, () =>
         action("confirm", { salesOrderNumber }, async () => {

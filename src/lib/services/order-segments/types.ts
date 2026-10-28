@@ -29,6 +29,8 @@ export interface RecordedSegmentLine {
   isService: boolean;
 }
 export interface SegmentProgress {
+  /** Original D365 amount, before refunds; retained for future refund capacity. */
+  postedAmountCents?: number;
   lines?: RecordedSegmentLine[];
   fulfillmentOrderId?: string;
   salesOrderNumber?: string;

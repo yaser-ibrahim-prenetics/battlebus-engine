@@ -1,3 +1,4 @@
+import type { OrderAccounting } from "../../order-accounting/types";
 import { segmentOrder } from "../planner";
 import { toD365SalesOrderLines, calculateOrderCost } from "@/lib/transformers/order";
 import type { ShopifyOrderPayload, ShopifyRefundPayload } from "@/inngest/events";
@@ -9,6 +10,26 @@ export type RefundOrder = Omit<ShopifyOrderPayload, OptionalMetadata> &
     presentment_currency?: string;
     transactions?: ShopifyRefundPayload["transactions"];
   };
+
+export function refundProjectionOrder(order: RefundOrder): ShopifyOrderPayload {
+  return {
+    ...order,
+    cancel_reason: order.cancel_reason ?? null,
+    source_name: order.source_name ?? null,
+    app_id: order.app_id ?? null,
+    note_attributes: order.note_attributes ?? [],
+  };
+}
+
+export function requiresRefundAccounting(stored: StoredPlan, order: RefundOrder) {
+  return stored.plan.segments.some(
+    (segment) =>
+      stored.progress[String(segment.index)]?.postedAmountCents == null &&
+      segment.lines.some((selected) =>
+        order.line_items.some((line) => String(line.id) === selected.lineItemId && line.gift_card)
+      )
+  );
+}
 
 export interface SegmentRefundAllocation {
   segmentIndex: number;
@@ -54,7 +75,8 @@ export function allocateSegmentRefund(
   order: RefundOrder,
   refund: ShopifyRefundPayload,
   amountCents: number,
-  previous: SegmentRefundAllocation[]
+  previous: SegmentRefundAllocation[],
+  accounting?: OrderAccounting
 ): SegmentRefundAllocation[] {
   const segments = [...stored.plan.segments].sort((a, b) => a.index - b.index);
   const allocations = segments.map((segment) => ({
@@ -95,28 +117,23 @@ export function allocateSegmentRefund(
   // Allocation values and remaining balances are in the D365 USD posting currency.
   if ((order.currency || "USD").toUpperCase() !== "USD")
     throw new Error("Segment refund allocation requires USD shop-money evidence");
-  const remainingBalances = segments.map((segment) =>
-    Math.round(
-      calculateOrderCost(
-        toD365SalesOrderLines(
-          segmentOrder(
-            {
-              ...order,
-              cancel_reason: order.cancel_reason ?? null,
-              source_name: order.source_name ?? null,
-              app_id: order.app_id ?? null,
-              note_attributes: order.note_attributes ?? [],
-            },
-            stored.plan,
-            segment.index
-          ),
-          "refund-capacity",
-          segment.warehouse,
-          true,
-          segment.dataAreaId
-        )
-      ) * 100
-    )
+  if (!accounting && requiresRefundAccounting(stored, order))
+    throw new Error("Original gift-card accounting is required for refund capacity");
+  const remainingBalances = segments.map(
+    (segment) =>
+      stored.progress[String(segment.index)]?.postedAmountCents ??
+      Math.round(
+        calculateOrderCost(
+          toD365SalesOrderLines(
+            segmentOrder(refundProjectionOrder(order), stored.plan, segment.index),
+            "refund-capacity",
+            segment.warehouse,
+            true,
+            segment.dataAreaId,
+            accounting
+          )
+        ) * 100
+      )
   );
   for (const [index, segment] of segments.entries()) {
     remainingBalances[index] = Math.max(
