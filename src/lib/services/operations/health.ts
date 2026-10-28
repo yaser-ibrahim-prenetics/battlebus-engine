@@ -57,7 +57,9 @@ export async function deepReadiness() {
       unknown_wait: boolean;
     }>(staleWorkflowsSQL)
   ).rows;
-  const workflows: Array<(typeof candidates)[number] & { status: string; providerStatus?: string }> = [];
+  const workflows: Array<
+    (typeof candidates)[number] & { status: string; providerStatus?: string }
+  > = [];
   for (let offset = 0; offset < Math.min(candidates.length, 25); offset += 5) {
     await Promise.all(
       candidates.slice(offset, Math.min(offset + 5, 25)).map(async (candidate) => {

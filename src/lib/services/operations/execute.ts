@@ -1,3 +1,4 @@
+import { cancelStuckWorkflow, closeStaleReconciliation } from "./stalled";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { queryDatabase } from "@/lib/db/database";
@@ -7,6 +8,9 @@ import type { RecoveryCommand } from "./commands";
 
 export async function executeRecoveryCommand(command: RecoveryCommand) {
   const operation = command.parameters;
+  if (operation.operation === "cancel_stuck_run") return cancelStuckWorkflow(operation.runId);
+  if (operation.operation === "close_stale_reconciliation")
+    return closeStaleReconciliation(operation.attemptId);
   if (operation.operation === "reconcile_action")
     return reconcileFulfillmentAttempt(operation.attemptId);
   if (operation.operation === "replay_inbox") {
@@ -38,6 +42,7 @@ export async function executeRecoveryCommand(command: RecoveryCommand) {
       data: {
         shopifyOrderIds: [operation.orderId],
         force: true,
+        recoveryRequestId: command.id,
         shopifyStore: config.shopify.im8.shopDomain,
         requestedBy: command.actor_email,
         triggeredByUserId: command.actor_id,

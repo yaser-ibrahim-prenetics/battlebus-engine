@@ -1,3 +1,4 @@
+import { logRecoveryFailure } from "@/lib/services/operations/diagnostics";
 import { NextRequest, NextResponse } from "next/server";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
 import { queryDatabase } from "@/lib/db/database";
@@ -30,7 +31,8 @@ export async function GET(request: NextRequest) {
       view === "history" ? [50] : []
     );
     return NextResponse.json({ rows: result.rows }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
+  } catch (error) {
+    logRecoveryFailure({ view }, error);
     return NextResponse.json({ error: "Operational evidence unavailable" }, { status: 503 });
   }
 }
@@ -53,6 +55,7 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(saved, { status: 202 });
   } catch (error) {
+    if (!(error instanceof ZodError)) logRecoveryFailure({ operation: "reserve_command" }, error);
     return NextResponse.json(
       {
         error:

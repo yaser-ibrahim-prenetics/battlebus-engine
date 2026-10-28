@@ -8,6 +8,7 @@ type RecoverInput = {
   shopifyOrderNames?: string[];
   shopifyStore?: string;
   force?: boolean;
+  recoveryRequestId?: string;
   requestedBy?: string;
   source?: "reconciliation" | "manual";
 };
@@ -117,6 +118,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
     let requestedIds = normalizeTokens(data.shopifyOrderIds);
     const requestedNames = normalizeTokens(data.shopifyOrderNames);
     const force = Boolean(data.force);
+    if (data.recoveryRequestId && !/^[a-f0-9-]{36}$/i.test(data.recoveryRequestId)) throw new Error("Invalid recovery request ID");
     const shopDomainHint = String(data.shopifyStore || "").trim() || null;
 
     if (source === "reconciliation") {
@@ -228,7 +230,8 @@ export const processShopifyOrderRecover = inngest.createFunction(
           id: `order-recovery:${event.id || runId}:${shopifyOrderId}`,
           name: replayEventName,
           data: {
-            shopifyOrderId,
+            shopifyOrderId: data.recoveryRequestId ? `${shopifyOrderId}-rerun-${data.recoveryRequestId}` : shopifyOrderId,
+            ...(data.recoveryRequestId ? { originalShopifyOrderId: shopifyOrderId } : {}),
             shopifyOrderName,
             shopifyStore: shopDomainHint || config.shopify.im8.shopDomain,
             orderJson: order as unknown,

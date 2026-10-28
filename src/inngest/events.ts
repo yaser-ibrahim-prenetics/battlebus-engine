@@ -441,6 +441,8 @@ export type ShopifyOrderRecoverEvent = {
     shopifyStore?: string;
     /** If true, dispatch recovery even if Hub already has the order row. */
     force?: boolean;
+    /** Durable administrative request identity; permits one intentional guarded replay. */
+    recoveryRequestId?: string;
     requestedAt?: string;
     requestedBy?: string;
     triggeredByUserId?: string;

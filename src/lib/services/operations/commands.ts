@@ -4,6 +4,13 @@ import { createCommandSQL, readCommandSQL } from "@/lib/sql/operations/commands"
 import { fingerprint } from "../fulfillment-actions/identity";
 import { reconciliationWindow } from "../d365-reconciliation/window";
 const parameters = z.discriminatedUnion("operation", [
+  z
+    .object({
+      operation: z.literal("cancel_stuck_run"),
+      runId: z.string().regex(/^[A-Za-z0-9-]{10,80}$/),
+    })
+    .strict(),
+  z.object({ operation: z.literal("close_stale_reconciliation"), attemptId: z.uuid() }).strict(),
   z.object({ operation: z.literal("reconcile_action"), attemptId: z.uuid() }).strict(),
   z.object({ operation: z.literal("replay_inbox"), inboxId: z.uuid() }).strict(),
   z
@@ -43,7 +50,7 @@ export interface RecoveryCommand {
   reason: string;
   operation: string;
   parameters: RecoveryRequest["parameters"];
-  status: "queued" | "succeeded" | "failed";
+  status: "queued" | "dispatched" | "succeeded" | "blocked" | "failed";
 }
 export async function reserveRecoveryRequest(input: unknown) {
   const request = recoveryCommandSchema.parse(input);
