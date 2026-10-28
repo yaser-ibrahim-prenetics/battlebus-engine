@@ -55,16 +55,18 @@ describe("Shopify inventory client", () => {
         data: {
           productVariants: {
             nodes: [
-              { sku: "IM8-1", inventoryItem: { id: "gid://shopify/InventoryItem/1" } },
+              {
+                sku: "IM8-1",
+                inventoryItem: {
+                  id: "gid://shopify/InventoryItem/1",
+                  inventoryLevel: {
+                    isActive: true,
+                    quantities: [{ name: "available", quantity: 7 }],
+                  },
+                },
+              },
               { sku: "IM8-1", inventoryItem: { id: "gid://shopify/InventoryItem/2" } },
             ],
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          inventoryActivate: {
-            userErrors: [{ message: "Inventory item is already active at this location" }],
           },
         },
       })
@@ -86,12 +88,12 @@ describe("Shopify inventory client", () => {
     const activation = mocks.graphql.mock.calls[1];
     expect(activation[0]).toContain("@idempotent");
     expect(activation[1]).toMatchObject({
-      inventoryItemId: "gid://shopify/InventoryItem/1",
+      inventoryItemId: "gid://shopify/InventoryItem/2",
       locationId: "gid://shopify/Location/99",
     });
     expect(activation[1].idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
 
-    const setQuantities = mocks.graphql.mock.calls[3];
+    const setQuantities = mocks.graphql.mock.calls[2];
     expect(setQuantities[0]).toContain("@idempotent");
     expect(setQuantities[1]).toMatchObject({
       input: {
@@ -102,13 +104,13 @@ describe("Shopify inventory client", () => {
             inventoryItemId: "gid://shopify/InventoryItem/1",
             locationId: "gid://shopify/Location/99",
             quantity: 12,
-            changeFromQuantity: null,
+            changeFromQuantity: 7,
           },
           {
             inventoryItemId: "gid://shopify/InventoryItem/2",
             locationId: "gid://shopify/Location/99",
             quantity: 12,
-            changeFromQuantity: null,
+            changeFromQuantity: 0,
           },
         ],
       },
@@ -127,6 +129,56 @@ describe("Shopify inventory client", () => {
         referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-MISSING",
       })
     ).rejects.toThrow("SKU MISSING was not found in Shopify");
+  });
+
+  it("re-reads and retries when Shopify reports a stale quantity", async () => {
+    const inventoryItem = (quantity: number) => ({
+      data: {
+        productVariants: {
+          nodes: [
+            {
+              sku: "IM8-1",
+              inventoryItem: {
+                id: "gid://shopify/InventoryItem/1",
+                inventoryLevel: {
+                  isActive: true,
+                  quantities: [{ name: "available", quantity }],
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+    mocks.graphql
+      .mockResolvedValueOnce(inventoryItem(5))
+      .mockResolvedValueOnce({
+        data: {
+          inventorySetQuantities: {
+            userErrors: [
+              {
+                code: "CHANGE_FROM_QUANTITY_STALE",
+                message: "Available quantity changed",
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValueOnce(inventoryItem(6))
+      .mockResolvedValueOnce({ data: { inventorySetQuantities: { userErrors: [] } } });
+
+    await setSkuInventoryAtLocation({
+      sku: "IM8-1",
+      locationId: "99",
+      quantity: 12,
+      referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+    });
+
+    expect(mocks.graphql.mock.calls[1][1].input.quantities[0].changeFromQuantity).toBe(5);
+    expect(mocks.graphql.mock.calls[3][1].input.quantities[0].changeFromQuantity).toBe(6);
+    expect(mocks.graphql.mock.calls[1][1].idempotencyKey).not.toBe(
+      mocks.graphql.mock.calls[3][1].idempotencyKey
+    );
   });
 
   it("does not issue inventory mutations in global dry-run mode", async () => {

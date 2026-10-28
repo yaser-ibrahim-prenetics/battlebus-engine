@@ -13,8 +13,7 @@
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import {
-  activateInventoryAtLocation,
-  setInventoryQuantities,
+  setInventoryItemAtLocation,
   setSkuInventoryAtLocation,
 } from "@/lib/clients/shopify-inventory";
 import * as dynamics from "@/lib/clients/dynamics";
@@ -277,10 +276,10 @@ async function syncToShopify(
           referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(inventory.sku)}`,
         })
       : await (async () => {
-          await activateInventoryAtLocation(String(inventory.inventoryItemId), locationId);
-          await setInventoryQuantities({
+          await setInventoryItemAtLocation({
+            inventoryItemId: String(inventory.inventoryItemId),
             locationId,
-            quantities: [{ inventoryItemId: String(inventory.inventoryItemId), quantity }],
+            quantity,
             referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(String(inventory.inventoryItemId))}`,
           });
           return { updated: 1, inventoryItemIds: [String(inventory.inventoryItemId)] };
