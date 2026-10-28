@@ -16,10 +16,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
+import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
 interface InventorySyncPayload {
+  inventoryKey?: string;
   // Product/Variant identification
   sku?: string;
   inventoryItemId?: string;
@@ -126,6 +128,7 @@ export async function POST(request: NextRequest) {
             destination,
             payload: {
               ...body,
+              inventoryKey: body.inventoryKey || canonicalInventoryKey(body),
               source,
               destination,
               timestamp: body.timestamp || new Date().toISOString(),

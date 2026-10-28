@@ -355,6 +355,7 @@ export type InventorySyncEvent = {
     source: string;
     destination: string;
     payload: {
+      inventoryKey: string;
       sku?: string;
       inventoryItemId?: string;
       variantId?: string;
