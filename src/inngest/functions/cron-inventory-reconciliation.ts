@@ -158,7 +158,8 @@ export const cronInventoryReconciliation = inngest.createFunction(
             const result = await inventorySync.runReconciliation(
               MONITORED_SKUS,
               warehouse,
-              config.features.enableInventorySync // when false: discrepancy report only, no writes
+              config.features.enableInventorySync, // when false: discrepancy report only, no writes
+              _runId
             );
             return result;
           } catch (error) {
@@ -229,7 +230,11 @@ export const cronInventoryReconciliation = inngest.createFunction(
           .filter(Boolean)
           .join("\n");
 
-        await slack.sendInfoMessage("gps", message, slack.slackNotificationId(event.id, "inventory-reconciliation-summary"));
+        await slack.sendInfoMessage(
+          "gps",
+          message,
+          slack.slackNotificationId(event.id, "inventory-reconciliation-summary")
+        );
       });
     }
 
@@ -304,7 +309,7 @@ export const triggerInventoryReconciliation = inngest.createFunction(
 
     // Run reconciliation
     const result = await step.run("run-reconciliation", async () => {
-      return inventorySync.runReconciliation(skusToCheck, warehouse, effectiveAutoSync);
+      return inventorySync.runReconciliation(skusToCheck, warehouse, effectiveAutoSync, _runId);
     });
 
     // Calculate discrepancies for reporting

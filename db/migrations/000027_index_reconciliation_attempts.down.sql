@@ -1,0 +1,2 @@
+DROP INDEX public.reconciliation_attempts_running;
+DROP INDEX public.reconciliation_attempts_recent;
