@@ -7,8 +7,8 @@ import type { OrderSegment, SegmentPlan } from "./types";
 
 type Routing = Pick<OrderSegment, "warehouse" | "dataAreaId">;
 
-export function orderInputHash(order: ShopifyOrderPayload) {
-  return fingerprint({
+function orderInputFingerprint(order: ShopifyOrderPayload) {
+  return {
     lines: order.line_items.map((line) => ({
       id: line.id,
       sku: line.sku,
@@ -26,11 +26,45 @@ export function orderInputHash(order: ShopifyOrderPayload) {
     discounts: order.discount_codes,
     address: order.shipping_address,
     billing: order.billing_address,
+  };
+}
+
+/** Fingerprint used by plans written before tag-derived behavior was introduced. */
+export function legacyOrderInputHash(order: ShopifyOrderPayload) {
+  return fingerprint(orderInputFingerprint(order));
+}
+
+export function orderInputHash(order: ShopifyOrderPayload) {
+  return fingerprint({
+    ...orderInputFingerprint(order),
     tagDerivedBehavior: {
       associatedOrder: getAssociatedOrderLink(order),
       subscriptionRewards: getSubscriptionRewards(order),
     },
   });
+}
+
+/**
+ * Version 1 plans are safe to resume when the financial/routing fingerprint
+ * still matches and the order does not activate behavior unknown to that plan.
+ */
+export function assertSegmentPlanReplayCompatible(
+  plan: SegmentPlan,
+  order: ShopifyOrderPayload
+): void {
+  if (plan.version === 1) {
+    if (plan.inputHash !== legacyOrderInputHash(order))
+      throw new Error("Order changed after segment planning; reconcile before replay");
+    if (getAssociatedOrderLink(order) || getSubscriptionRewards(order).length > 0) {
+      throw new Error(
+        "Legacy segment plan has tag-derived behavior; reconcile before replay"
+      );
+    }
+    return;
+  }
+  if (plan.version !== 2) throw new Error(`Unsupported segment plan version: ${plan.version}`);
+  if (plan.inputHash !== orderInputHash(order))
+    throw new Error("Order changed after segment planning; reconcile before replay");
 }
 
 /** Split quantities, not array positions. One oversized unit is never divided. */

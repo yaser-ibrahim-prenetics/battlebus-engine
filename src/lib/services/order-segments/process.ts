@@ -14,7 +14,11 @@ import {
 } from "@/lib/transformers/order";
 import { executeFulfillmentAction } from "../fulfillment-actions/ledger";
 import type { OrderAccounting } from "../order-accounting/types";
-import { orderInputHash, planOrderSegments, segmentOrder } from "./planner";
+import {
+  assertSegmentPlanReplayCompatible,
+  planOrderSegments,
+  segmentOrder,
+} from "./planner";
 import { readPlan, reservePlan, saveProgress } from "./store";
 import { bindShopifySegments } from "./shopify";
 import { segmentLineRequests } from "./lines";
@@ -56,10 +60,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   const stored = await step.run("plan-order-segments", async () => {
     const existing = await readPlan(shop, String(order.id));
     if (existing) {
-      if (existing.plan.version !== 2)
-        throw new Error("Legacy segment plan requires explicit reconciliation before replay");
-      if (existing.plan.inputHash !== orderInputHash(order))
-        throw new Error("Order changed after segment planning; reconcile before replay");
+      assertSegmentPlanReplayCompatible(existing.plan, order);
       return existing;
     }
     // Never split an aggregate order already accepted by the old processing path.
