@@ -276,6 +276,12 @@ export const config = {
       process.env.RECONCILIATION_VERBOSE_LOG === "true",
   },
 
+  inventory: {
+    // Kept separate from legacy order REST calls so inventory mutations can use
+    // Shopify's current CAS and idempotency contract without a global API bump.
+    shopifyApiVersion: process.env.SHOPIFY_INVENTORY_API_VERSION || "2026-07",
+  },
+
   // Backorder Queue Configuration
   backorder: {
     enabled: process.env.BACKORDER_RETRY_ENABLED !== "false",

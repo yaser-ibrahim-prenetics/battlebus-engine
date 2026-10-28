@@ -12,7 +12,11 @@
 
 import { inngest } from "../client";
 import { config } from "@/lib/config";
-import * as shopify from "@/lib/clients/shopify";
+import {
+  activateInventoryAtLocation,
+  setInventoryQuantities,
+  setSkuInventoryAtLocation,
+} from "@/lib/clients/shopify-inventory";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
@@ -65,12 +69,12 @@ async function notifyBattleHub(
 
   try {
     const response = await sendHubWebhook("/api/webhooks/inventory", {
-        sku,
-        system,
-        quantity,
-        syncStatus,
-        timestamp: new Date().toISOString(),
-        ...(error && { error }),
+      sku,
+      system,
+      quantity,
+      syncStatus,
+      timestamp: new Date().toISOString(),
+      ...(error && { error }),
     });
 
     if (!response.ok) {
@@ -88,7 +92,7 @@ export const processInventoryMesh = inngest.createFunction(
     id: "process-inventory-mesh",
     name: "Process Inventory Sync Mesh",
     retries: RETRY_CONFIGS.DEFAULT,
-    concurrency: [{ limit: 5 }],
+    concurrency: [{ limit: 1, key: "event.data.payload.sku" }],
     triggers: [{ event: "inventory/sync" }],
   },
   async ({ event, step }: { event: any; step: any }) => {
@@ -251,70 +255,36 @@ async function syncToShopify(
   console.log(`[InventoryMesh] Syncing to Shopify from ${source}`);
 
   try {
-    // Handle product deletion
+    // Inventory sync never owns catalog deletion. Treat a delete notification as zero stock.
     if (inventory.action === "delete") {
-      // TODO: Implement product deletion in Shopify
-      console.log(`[InventoryMesh] Product deletion not yet implemented for Shopify`);
-      return {
-        success: true,
-        message: "Product deletion placeholder - not yet implemented",
-      };
+      inventory.quantity = 0;
     }
 
     // For inventory updates, we need inventory_item_id and location_id
     if (!inventory.inventoryItemId || !inventory.locationId) {
-      // Try to resolve from SKU
-      if (inventory.sku) {
-        // TODO: Lookup inventory_item_id from SKU
-        console.log(`[InventoryMesh] Need to resolve inventory_item_id from SKU: ${inventory.sku}`);
-        return {
-          success: false,
-          message: "inventory_item_id resolution from SKU not yet implemented",
-        };
+      if (!inventory.sku || !inventory.locationId) {
+        return { success: false, message: "sku and locationId are required for Shopify sync" };
       }
-
-      return {
-        success: false,
-        message: "inventory_item_id and location_id are required for Shopify sync",
-      };
     }
 
     const quantity = inventory.quantity ?? inventory.available ?? 0;
-
-    // Update inventory level in Shopify
-    const shopDomain = config.shopify.im8.shopDomain;
-    const accessToken = config.shopify.im8.accessToken;
-    const apiVersion = config.shopify.im8.apiVersion;
-
-    if (!shopDomain || !accessToken) {
-      return {
-        success: false,
-        message: "Shopify configuration missing",
-      };
-    }
-
-    const response = await fetch(
-      `https://${shopDomain}/admin/api/${apiVersion}/inventory_levels/set.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({
-          location_id: Number(inventory.locationId),
-          inventory_item_id: Number(inventory.inventoryItemId),
-          available: quantity,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Shopify API error: ${response.status} - ${error}`);
-    }
-
-    const result = await response.json();
+    const locationId = String(inventory.locationId);
+    const result = inventory.sku
+      ? await setSkuInventoryAtLocation({
+          sku: inventory.sku,
+          locationId,
+          quantity,
+          referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(inventory.sku)}`,
+        })
+      : await (async () => {
+          await activateInventoryAtLocation(String(inventory.inventoryItemId), locationId);
+          await setInventoryQuantities({
+            locationId,
+            quantities: [{ inventoryItemId: String(inventory.inventoryItemId), quantity }],
+            referenceDocumentUri: `gid://battle-bus/InventoryMesh/${encodeURIComponent(source)}-${encodeURIComponent(String(inventory.inventoryItemId))}`,
+          });
+          return { updated: 1, inventoryItemIds: [String(inventory.inventoryItemId)] };
+        })();
 
     console.log(
       `[InventoryMesh] ✅ Synced to Shopify: ${quantity} units at location ${inventory.locationId}`
@@ -451,10 +421,10 @@ async function syncToWarehouse(
       };
     }
 
-    // TODO: Add other warehouse systems (e.g. Stord-specific mesh rules)
+    // No write adapter is configured for other warehouse providers. Fail closed.
     return {
       success: false,
-      message: `Warehouse sync for ${destination} not yet implemented`,
+      message: `Warehouse inventory adjustment provider is not configured for ${destination}`,
     };
   } catch (error) {
     console.error(`[InventoryMesh] ❌ Error syncing to warehouse:`, error);

@@ -17,8 +17,9 @@ import { recordReconciliation } from "./reconciliation-history/record";
 import { config } from "../config";
 import * as gpsInventory from "../clients/gps-inventory";
 import * as dynamics from "../clients/dynamics";
-import * as shopify from "../clients/shopify";
-import { mapShopifySkuToDynamicsForOrderLine, mapDynamicsSkuToShopify } from "../transformers/sku";
+import { shopifyAdminGraphql } from "../clients/shopify";
+import { setSkuInventoryAtLocation, shopifyGid } from "../clients/shopify-inventory";
+import { mapShopifySkuToDynamicsForOrderLine } from "../transformers/sku";
 import { getLocationIdForWarehouse } from "./location-routing";
 
 // ============================================================================
@@ -61,6 +62,28 @@ export interface ReconciliationResult {
   syncActions: SyncResult[];
   errors: string[];
 }
+
+type ShopifyInventoryQueryResult = {
+  data?: {
+    productVariants?: {
+      edges?: Array<{
+        node: {
+          sku?: string | null;
+          inventoryItem?: {
+            inventoryLevels?: {
+              edges?: Array<{
+                node: {
+                  location: { id: string };
+                  quantities?: Array<{ name: string; quantity?: number | null }>;
+                };
+              }>;
+            };
+          } | null;
+        };
+      }>;
+    };
+  };
+};
 
 // ============================================================================
 // WAREHOUSE MAPPINGS
@@ -283,7 +306,7 @@ export async function queryShopifyInventory(
   const skuQuery = skus.map((sku) => `sku:${sku}`).join(" OR ");
 
   const query = `
-    query getInventoryLevels($query: String!, $locationId: ID) {
+    query getInventoryLevels($query: String!) {
       productVariants(first: 100, query: $query) {
         edges {
           node {
@@ -311,38 +334,15 @@ export async function queryShopifyInventory(
   `;
 
   const variables: Record<string, unknown> = { query: skuQuery };
-  if (locationId) {
-    variables.locationId = locationId;
-  }
 
   if (config.features.dryRunMode) {
     console.log("[InventorySync] DRY RUN - Would query Shopify inventory");
     return new Map();
   }
 
-  const response = await fetch(
-    `https://${config.shopify.im8.shopDomain}/admin/api/${config.shopify.im8.apiVersion}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": config.shopify.im8.accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    }
-  );
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Shopify inventory query failed: ${response.status} - ${error}`);
-  }
-
-  const data = await response.json();
-
-  if (data.errors) {
-    console.error("[InventorySync] Shopify GraphQL errors:", data.errors);
-    throw new Error(`Shopify GraphQL error: ${JSON.stringify(data.errors)}`);
-  }
+  const data = await shopifyAdminGraphql<ShopifyInventoryQueryResult>(query, variables, {
+    apiVersion: config.inventory.shopifyApiVersion,
+  });
 
   const result = new Map<string, InventoryLevel>();
   const variants = data.data?.productVariants?.edges || [];
@@ -358,7 +358,7 @@ export async function queryShopifyInventory(
 
     for (const { node: level } of variant.inventoryItem?.inventoryLevels?.edges || []) {
       // Filter by location if specified
-      if (locationId && level.location.id !== locationId) continue;
+      if (locationId && level.location.id !== shopifyGid("Location", locationId)) continue;
 
       for (const qty of level.quantities || []) {
         switch (qty.name) {
@@ -463,10 +463,6 @@ export async function syncGpsToD365(sku: string, warehouseName: string): Promise
 
     console.log(`[InventorySync] D365 adjustment needed: ${adjustment} for ${d365Sku}`);
 
-    // TODO: Create D365 inventory adjustment journal
-    // This requires THK custom API or Inventory Adjustment Journal posting
-    // For now, log the adjustment that would be made
-
     if (config.features.dryRunMode) {
       console.log(`[InventorySync] DRY RUN - Would adjust D365 inventory by ${adjustment}`);
       return {
@@ -480,12 +476,30 @@ export async function syncGpsToD365(sku: string, warehouseName: string): Promise
       };
     }
 
-    // Placeholder for actual D365 adjustment
-    console.log(`[InventorySync] D365 inventory adjustment not yet implemented`);
+    const providerResult = await dynamics.syncInventoryLevel({
+      inventoryItemId: d365Sku,
+      locationId: mapping.d365WarehouseId,
+      available: gpsLevel.available,
+      sku: d365Sku,
+      dataAreaId: mapping.d365DataAreaId,
+    });
+
+    if (!providerResult.success) {
+      return {
+        success: false,
+        message: providerResult.message,
+        sku,
+        source: "gps",
+        destination: "d365",
+        previousLevel,
+        newLevel: gpsLevel.available,
+        error: "D365_INVENTORY_ADJUSTMENT_UNAVAILABLE",
+      };
+    }
 
     return {
       success: true,
-      message: `Adjustment of ${adjustment} recorded for D365`,
+      message: providerResult.message,
       sku,
       source: "gps",
       destination: "d365",
@@ -544,9 +558,14 @@ export async function syncD365ToShopify(
     }
 
     const allMappings = await getWarehouseMappings();
-    const warehouseMapping = allMappings.find((m) => m.d365DataAreaId === dataAreaId);
+    const warehouseMapping = allMappings.find(
+      (m) => m.d365DataAreaId.toUpperCase() === dataAreaId.toUpperCase()
+    );
 
     const locationId = warehouseMapping?.shopifyLocationId;
+    if (!locationId) {
+      throw new Error(`No Shopify location is mapped to D365 data area ${dataAreaId}`);
+    }
 
     // Get current Shopify level for comparison
     const shopifyInventoryMap = await queryShopifyInventory([sku], locationId);
@@ -583,32 +602,16 @@ export async function syncD365ToShopify(
       };
     }
 
-    // Use Shopify REST API to update inventory
-    // This requires the inventory_item_id which we need to look up
-    // For now, use GraphQL mutation
-
-    const mutation = `
-      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-        inventorySetQuantities(input: $input) {
-          inventoryAdjustmentGroup {
-            reason
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    // Note: This requires inventoryItemId lookup first
-    // For production, we'd maintain a SKU -> inventoryItemId mapping
-
-    console.log(`[InventorySync] Shopify inventory update pending full implementation`);
+    const updated = await setSkuInventoryAtLocation({
+      sku,
+      locationId,
+      quantity: d365Level.available,
+      referenceDocumentUri: `gid://battle-bus/D365Inventory/${encodeURIComponent(dataAreaId)}-${encodeURIComponent(sku)}`,
+    });
 
     return {
       success: true,
-      message: `Adjustment of ${adjustment} recorded for Shopify`,
+      message: `Set ${updated.updated} Shopify variant(s) to ${d365Level.available}`,
       sku,
       source: "d365",
       destination: "shopify",
