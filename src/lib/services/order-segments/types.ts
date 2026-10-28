@@ -15,7 +15,7 @@ export interface OrderSegment {
   lines: SegmentLine[];
 }
 export interface SegmentPlan {
-  version: 1;
+  version: 1 | 2;
   orderId: string;
   orderName: string;
   inputHash: string;

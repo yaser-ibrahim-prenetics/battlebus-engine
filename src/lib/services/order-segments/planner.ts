@@ -2,6 +2,7 @@ import type { ShopifyOrderPayload } from "@/inngest/events";
 import type { IShopifyFulfillmentOrder } from "@/lib/types/shopify";
 import { fingerprint } from "../fulfillment-actions/identity";
 import { getAssociatedOrderLink } from "@/lib/helpers/order-linkage";
+import { getSubscriptionRewards } from "@/lib/helpers/subscription-rewards";
 import type { OrderSegment, SegmentPlan } from "./types";
 
 type Routing = Pick<OrderSegment, "warehouse" | "dataAreaId">;
@@ -25,6 +26,10 @@ export function orderInputHash(order: ShopifyOrderPayload) {
     discounts: order.discount_codes,
     address: order.shipping_address,
     billing: order.billing_address,
+    tagDerivedBehavior: {
+      associatedOrder: getAssociatedOrderLink(order),
+      subscriptionRewards: getSubscriptionRewards(order),
+    },
   });
 }
 
@@ -98,7 +103,7 @@ export function planOrderSegments(
     );
   }
   return {
-    version: 1,
+    version: 2,
     orderId: String(order.id),
     orderName: order.name,
     inputHash: orderInputHash(order),

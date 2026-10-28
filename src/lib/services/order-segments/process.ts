@@ -56,6 +56,8 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   const stored = await step.run("plan-order-segments", async () => {
     const existing = await readPlan(shop, String(order.id));
     if (existing) {
+      if (existing.plan.version !== 2)
+        throw new Error("Legacy segment plan requires explicit reconciliation before replay");
       if (existing.plan.inputHash !== orderInputHash(order))
         throw new Error("Order changed after segment planning; reconcile before replay");
       return existing;
