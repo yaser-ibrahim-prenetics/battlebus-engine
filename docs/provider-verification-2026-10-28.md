@@ -12,7 +12,7 @@ Read-only verification performed after renewing Google Cloud authentication. No 
 | Shopify identity | Shop ID `69493719272`; configured host `testing-im8store.myshopify.com`; canonical host `im8health.myshopify.com`; primary host `testing.im8health.com` | Existing test-store credential version 1, actual PR probe |
 | Inngest | Authenticated read succeeded | Existing Bus signing-key reference |
 | D365 U001 and H007 | Company-scoped header and all selected reconciliation schemas readable | Existing **Hub** credentials against `https://p-uat.sandbox.operations.dynamics.com` |
-| GPS US/UK | AWS production Parameter Store references found; provider authentication not yet verified | No GPS secrets or runtime bindings in GCP |
+| GPS US/UK | Both authenticated inventory probes passed using development AWS parameters | Actual PR probe; no GPS secrets or runtime bindings in GCP |
 
 ## Corrections and rollout prerequisites
 
@@ -44,6 +44,27 @@ Read-only AWS console inspection confirmed account `672278963259`, role `ap-sout
 
 These are **production account metadata**, not verified test-environment credentials. The GPS-name search did not show a separate UK app-secret parameter. Do not assume the US secret is shared: the deployed template mapping still needs verification. Parameter values were not revealed, downloaded or copied into GCP; no GPS provider requests were made. The connected AWS API account is development and was not used to infer production settings.
 
-Before attaching GPS credentials to the staging Bus, confirm the intended GPS environment and complete authenticated, read-only probes with the matching US/UK settings. Do not paste credential values into PRs or chat or enable GPS writes merely to test connectivity.
+### Approved development verification
 
-These checks establish credential/environment and schema access, not historical business parity or successful execution of PR #22 on Cloud Run. The PR remains draft until runtime access and missing-provider verification are resolved.
+The owner selected **development AWS** for GPS verification. STS confirmed account `729553012309` and role `ap-southeast-1-dev-admin`; all parameter reads used `ap-southeast-1`. The development inventory includes separate US and UK signing secrets, resolving the UK reference question for the selected environment.
+
+| Battle Bus setting | Development Parameter Store reference | Verified version |
+| --- | --- | --- |
+| `GPS_BASE_URL` | `/secrets/GPS_BASEURL` | 1 |
+| `GPS_API_KEY` | `/secrets/GPS_APP_KEY` | 1 |
+| `GPS_API_SECRET` | `/secrets/GPS_APP_SECRET` | 1 |
+| `GPS_WAREHOUSE_CODE` | `/secrets/GPS_WAREHOUSE_CODE` | 1 |
+| `GPS_UK_BASE_URL` | `/secrets/GPS_UK_BASEURL` | 1 |
+| `GPS_UK_API_KEY` | `/secrets/GPS_UK_APP_KEY` | 1 |
+| `GPS_UK_API_SECRET` | `/secrets/GPS_UK_APP_SECRET` | 2 |
+| `GPS_UK_WAREHOUSE_CODE` | `/secrets/GPS_UK_WAREHOUSE_CODE` | 3 |
+
+Values were resolved only in process memory and passed to a child process running the PR's actual probe. No plaintext credential files, provider records, raw errors or secret values were printed. No values were copied to GCP.
+
+The original probe failed for both regions because its legacy inventory helper used a different signing algorithm and speculative endpoint paths. The corrected probe reuses the main GPS client's Spock-derived signing function and its `integratedInventory/pageOpen` endpoint. It requests page 1 with size 1 for the configured warehouse, requires a successful response with a records array, uses HTTPS without redirects, and applies a 10-second timeout. It performs a real read even when business writes are in dry-run mode.
+
+US and UK authenticated reads passed in 573 ms and 390 ms respectively. Nine regression tests verify regional credentials/signatures, bounded requests, failure handling and URL protections. The four Shopify identity tests, full lint gate and production build also passed. This proves access with development-sourced credentials, not independent proof of the provider account's sandbox isolation or business-data parity.
+
+Runtime provisioning remains separate: GPS Secret Manager copies, scoped runtime grants and pinned deployment bindings have not been created. No GPS writes, merge or deployment were performed. Do not enable writes merely to test connectivity.
+
+These checks establish credential/environment and schema access, not historical business parity or successful execution of PR #22 on Cloud Run. The PR remains draft pending GPS runtime provisioning and separately authorized deployment verification.
