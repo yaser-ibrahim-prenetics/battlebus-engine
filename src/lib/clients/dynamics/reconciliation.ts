@@ -39,18 +39,19 @@ async function rows<T extends { dataAreaId: string }>(
   company: Company,
   entity: string,
   filter: string,
-  select: string
+  select: string,
+  limit?: number
 ): Promise<T[]> {
   const { access_token } = await authenticate();
   if (!access_token) throw new Error("Dynamics authentication returned no access token");
   const result: T[] = [];
-  for await (const row of odataRows<T>(
-    dynamicsQuery(config.dynamics.baseUrl, entity, company, filter, select),
-    access_token
-  )) {
+  const url = dynamicsQuery(config.dynamics.baseUrl, entity, company, filter, select);
+  if (limit) url.searchParams.set("$top", String(limit));
+  for await (const row of odataRows<T>(url, access_token)) {
     if (row.dataAreaId?.toUpperCase() !== company)
       throw new Error("Dynamics evidence company mismatch");
     result.push(row);
+    if (limit && result.length >= limit) break;
   }
   return result;
 }
@@ -83,8 +84,17 @@ export const readSlipEvidence = (company: Company, order: string) =>
     slipEvidenceFields
   );
 
-/** An empty response is acceptable: OData still validates the selected schema and permission. */
+/** Require a company-scoped header plus schema access; empty/unknown companies fail closed. */
 export async function probeDynamicsEvidence(company: Company) {
+  const headers = await rows<HeaderEvidence>(
+    company,
+    "SalesOrderHeadersV3",
+    "1 eq 1",
+    headerEvidenceFields,
+    1
+  );
+  if (!headers[0]?.SalesOrderNumber)
+    throw new Error("Dynamics company identity has no verifiable order evidence");
   for (const [entity, select] of [
     ["SalesOrderHeadersV3", headerEvidenceFields],
     ["SalesOrderLines", lineEvidenceFields],

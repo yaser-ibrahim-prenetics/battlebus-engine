@@ -116,9 +116,13 @@ export async function reconcileFulfillmentAttempt(attemptId: string) {
     client.release();
   }
 }
-export async function reconcileUncertainFulfillments() {
+export async function listUncertainFulfillmentAttempts() {
   const { rows } = await queryDatabase<{ attempt_id: string }>(uncertainAttemptsSQL, [100]);
+  return rows.map((row) => row.attempt_id);
+}
+export async function reconcileUncertainFulfillments() {
+  const ids = await listUncertainFulfillmentAttempts();
   const results = [];
-  for (const row of rows) results.push(await reconcileFulfillmentAttempt(row.attempt_id));
+  for (const id of ids) results.push(await reconcileFulfillmentAttempt(id));
   return results;
 }

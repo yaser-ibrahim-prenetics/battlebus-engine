@@ -1,3 +1,4 @@
+import { recordReconciliation } from "@/lib/services/reconciliation-history/record";
 // ============================================================================
 // INVENTORY RECONCILIATION (Scheduled)
 // ============================================================================
@@ -60,9 +61,9 @@ export const cronInventoryReconciliation = inngest.createFunction(
     throttle: THROTTLE_CONFIGS.CRON,
     triggers: [{ cron: `*/${config.gps.inventorySyncIntervalMinutes || 120} * * * *` }],
   },
-  async ({ step, event }: { step: any; event: any }) => {
+  async ({ step, event, runId }: { step: any; event: any; runId: string }) => {
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = runId;
 
     logFlowEvent({
       flow: "inventory_reconciliation",
@@ -79,6 +80,13 @@ export const cronInventoryReconciliation = inngest.createFunction(
     // Dedicated cron switch so we can freeze scheduled product inventory sync
     // without disabling manual reconciliation tooling.
     if (!config.features.enableProductInventorySyncCron) {
+      await step.run("record-inventory-skip-product_inventory_sync_cron_disabled", () =>
+        recordReconciliation(
+          { workflowRunId: _runId, kind: "inventory", scope: "configured_warehouses" },
+          async () => ({ reason: "product_inventory_sync_cron_disabled" }),
+          (result) => ({ status: "skipped", result })
+        )
+      );
       console.log("[InventoryReconciliation] Product inventory sync cron disabled, skipping");
       logFlowEvent({
         flow: "inventory_reconciliation",
@@ -103,6 +111,13 @@ export const cronInventoryReconciliation = inngest.createFunction(
 
     // Check if inventory sync is enabled
     if (!config.features.enableGpsSync) {
+      await step.run("record-inventory-skip-gps_sync_disabled", () =>
+        recordReconciliation(
+          { workflowRunId: _runId, kind: "inventory", scope: "configured_warehouses" },
+          async () => ({ reason: "gps_sync_disabled" }),
+          (result) => ({ status: "skipped", result })
+        )
+      );
       console.log("[InventoryReconciliation] GPS sync disabled, skipping");
       logFlowEvent({
         flow: "inventory_reconciliation",
@@ -122,6 +137,13 @@ export const cronInventoryReconciliation = inngest.createFunction(
 
     // Check if GPS credentials are configured
     if (!config.gps.apiKey || !config.gpsUk.apiKey) {
+      await step.run("record-inventory-skip-gps_credentials_missing", () =>
+        recordReconciliation(
+          { workflowRunId: _runId, kind: "inventory", scope: "configured_warehouses" },
+          async () => ({ reason: "gps_credentials_missing" }),
+          (result) => ({ status: "skipped", result })
+        )
+      );
       console.log("[InventoryReconciliation] GPS credentials not configured, skipping");
       logFlowEvent({
         flow: "inventory_reconciliation",
@@ -280,9 +302,9 @@ export const triggerInventoryReconciliation = inngest.createFunction(
     name: "Trigger Inventory Reconciliation",
     triggers: [{ event: "inventory/reconciliation.requested" }],
   },
-  async ({ step, event }: { step: any; event: any }) => {
+  async ({ step, event, runId }: { step: any; event: any; runId: string }) => {
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = runId;
     const { skus, warehouse, autoSync = false } = event.data;
     const effectiveAutoSync = Boolean(autoSync && config.features.enableInventorySync);
 
@@ -352,9 +374,9 @@ export const syncSkuInventory = inngest.createFunction(
     concurrency: { limit: 2 },
     triggers: [{ event: "inventory/sku.sync.requested" }],
   },
-  async ({ step, event }: { step: any; event: any }) => {
+  async ({ step, event, runId }: { step: any; event: any; runId: string }) => {
     const _flowStart = Date.now();
-    const _runId = (event as any).id;
+    const _runId = runId;
     const { sku, source, destination, warehouse } = event.data;
 
     logFlowEvent({
