@@ -8,4 +8,3 @@ CREATE TABLE public.workflow_observations (
   unknown_wait boolean NOT NULL DEFAULT false,
   completed_at timestamptz
 );
-CREATE INDEX workflow_observations_active ON public.workflow_observations(last_seen_at) WHERE completed_at IS NULL;

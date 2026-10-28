@@ -10,6 +10,6 @@ CREATE TABLE public.reconciliation_attempts (
   error_code text,
   started_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
-  CHECK ((range_start IS NULL AND range_end IS NULL) OR (range_start IS NOT NULL AND range_end > range_start)),
+  CHECK ((range_start IS NULL AND range_end IS NULL) OR (range_start IS NOT NULL AND range_end IS NOT NULL AND range_end > range_start)),
   CHECK ((status = 'running') = (completed_at IS NULL))
 );

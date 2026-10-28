@@ -169,3 +169,6 @@ ROLLBACK;
 \ir assertions_up/004_refund_hold_access.sql
 \ir assertions_up/005_order_segment_storage.sql
 \ir assertions_up/006_order_segment_access.sql
+\ir assertions_up/007_operational_history.sql
+\ir assertions_up/008_refund_allocation.sql
+\ir assertions_up/009_recovery_audit.sql
