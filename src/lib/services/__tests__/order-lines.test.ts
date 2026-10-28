@@ -1,4 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+
+const database = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock("@/lib/db/database", () => ({
+  isDatabaseConfigured: () => true,
+  queryDatabase: database.query,
+  quoteIdentifier: (value: string) => `"${value}"`,
+}));
 import {
   SHOPIFY_SHIPPING_LINE_ITEM_ID,
   SHOPIFY_TAX_LINE_ITEM_ID,
@@ -7,10 +14,12 @@ import {
   getLotFromSavedOrderLineByShopifyLineItemId,
   filterUnfulfilledServiceLines,
   filterUnfulfilledSupplementalLines,
+  markServiceLinesFulfilled,
   type SavedOrderLine,
 } from "../order-lines";
 
 describe("order-lines (unit)", () => {
+  beforeEach(() => database.query.mockReset());
   const baseProductLine: SavedOrderLine = {
     id: "pid1",
     shopify_order_id: "1001",
@@ -151,5 +160,12 @@ describe("order-lines (unit)", () => {
       "shipping",
       "subscription-reward:IM8-FG-000022",
     ]);
+  });
+
+  it("fails the durable fulfillment step when supplemental state cannot be persisted", async () => {
+    database.query.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(markServiceLinesFulfilled("1001", ["subscription-reward:IM8-FG-000022"]))
+      .rejects.toThrow("Could not persist supplemental fulfillment state");
   });
 });
