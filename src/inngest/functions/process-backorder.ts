@@ -37,6 +37,28 @@ import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { advanceRunSequence } from "@/lib/services/run-sequence";
 
+async function buildBackorderGpsPayload(params: {
+  order: ShopifyOrderPayload;
+  shopifyOrderId: string;
+  shopifyStore?: string;
+  d365OrderNumber: string;
+  warehouse: string;
+}) {
+  const shortAddress =
+    params.order.shipping_address?.country_code === "SA"
+      ? getIm8ShortAddressFromMetafields(
+          await getOrderMetafields(params.shopifyOrderId, params.shopifyStore)
+        )
+      : "";
+
+  return toGpsOutboundOrder(
+    params.order,
+    params.d365OrderNumber,
+    params.warehouse,
+    shortAddress
+  );
+}
+
 export const processBackorder = inngest.createFunction(
   {
     id: "process-backorder",
@@ -331,18 +353,13 @@ export const processBackorder = inngest.createFunction(
             return { success: true, replayDispatched: true };
           }
 
-          const saudiShortAddress =
-            order.shipping_address?.country_code === "SA"
-              ? getIm8ShortAddressFromMetafields(
-                  await getOrderMetafields(shopifyOrderId, event.data.shopifyStore)
-                )
-              : "";
-          const gpsPayload = toGpsOutboundOrder(
+          const gpsPayload = await buildBackorderGpsPayload({
             order,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyStore: event.data.shopifyStore,
             d365OrderNumber,
             warehouse,
-            saudiShortAddress
-          );
+          });
           const result = await gps.createOutboundOrder(
             gpsPayload,
             warehouse as "GPS Warehouse" | "GPS UK Warehouse"
@@ -592,18 +609,13 @@ export const processBackorder = inngest.createFunction(
           }
 
           // Rebuild GPS payload
-          const saudiShortAddress =
-            order.shipping_address?.country_code === "SA"
-              ? getIm8ShortAddressFromMetafields(
-                  await getOrderMetafields(shopifyOrderId, event.data.shopifyStore)
-                )
-              : "";
-          const gpsPayload = toGpsOutboundOrder(
+          const gpsPayload = await buildBackorderGpsPayload({
             order,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyStore: event.data.shopifyStore,
             d365OrderNumber,
             warehouse,
-            saudiShortAddress
-          );
+          });
           const result = await gps.createOutboundOrder(
             gpsPayload,
             warehouse as "GPS Warehouse" | "GPS UK Warehouse"
