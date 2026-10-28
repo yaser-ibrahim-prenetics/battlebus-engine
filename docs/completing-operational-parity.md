@@ -43,8 +43,10 @@ Deep operational checks are separate from the deployment liveness endpoint. They
 
 ## Validation evidence and outstanding release gate
 
-Local PostgreSQL 16 migration up/down/up checks passed through migration 039, including RLS, immutable audit fields and concurrency assertions. Final local Bus suite: 609 tests passed, 16 environment-dependent tests skipped. Hub: 16 access tests passed. Production builds and the Bus lint gate passed; Hub operations files pass ESLint. Repository-wide Bus `tsc --noEmit` still reports pre-existing test-fixture typing errors; application builds pass.
+Local PostgreSQL 16 migration up/down/up checks passed through migration 039, including RLS, immutable audit fields and concurrency assertions. Final local Bus suite with all CI database suites enabled: 619 tests passed, 6 environment-dependent tests skipped. Hub: 16 access tests passed. Production builds and the Bus lint gate passed; Hub operations files pass ESLint. Repository-wide Bus `tsc --noEmit` still reports pre-existing test-fixture typing errors; application builds pass.
 
 The standards and specification reviews found financial ownership, original-capacity, gift-card, partial-progress and retry-checkpoint defects; all were corrected with regression tests. No remaining actionable findings were reported in the final follow-ups.
 
 Live provider environment verification is **pending**: the Google Cloud CLI session expired and browser sign-in was requested. No deployment or production provider writes were performed for this phase. Before marking the Bus PR ready, complete sign-in, inspect the deployed environment metadata, execute the authenticated read-only health probes, and record Shopify identity, D365 origin/company/schema results and GPS/Inngest/Hub probe outcomes. Do not interpret local mocks or configuration presence as production parity. Keep the PR in draft until this evidence is recorded.
+
+CI follow-up corrected a test that assumed sequential D365 order-number assignment. It now verifies persisted segment/order/lot bindings under independent execution. The companion Hub page formatting was also corrected.

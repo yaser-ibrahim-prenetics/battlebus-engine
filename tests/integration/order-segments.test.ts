@@ -336,7 +336,13 @@ describe.skipIf(!process.env.FULFILLMENT_TEST_DATABASE_URL)(
         step,
       });
       const requests = mocks.fulfill.mock.calls.map(([request]) => request);
-      expect(requests.map((r) => r.salesOrderNumber)).toEqual(["SEG-TEST-SO-1", "SEG-TEST-SO-1"]);
+      const binding = (await readPlan(shop, orderId))!.progress["0"];
+      expect(requests.map((r) => r.salesOrderNumber)).toEqual([
+        binding.salesOrderNumber,
+        binding.salesOrderNumber,
+      ]);
+      const productLot = binding.lines!.find((line) => line.sourceLineId === "11")!.lotId;
+      expect(requests.map((r) => r.lines[0].lotId)).toEqual([productLot, productLot]);
       expect(requests.map((r) => r.lines[0].quantity)).toEqual([1, 1]);
       expect(requests[0].lines.length).toBeGreaterThan(1);
       expect(requests[1].lines).toHaveLength(1);
