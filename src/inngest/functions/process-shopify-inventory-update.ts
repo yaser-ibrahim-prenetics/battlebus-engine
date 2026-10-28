@@ -20,6 +20,11 @@ type ShopifyInventoryUpdateData = {
   shopifyStore: string;
 };
 
+type ShopifyInventoryStep = {
+  run<T>(id: string, callback: () => Promise<T>): Promise<T>;
+  sendEvent(id: string, event: Record<string, unknown>): Promise<unknown>;
+};
+
 export const processShopifyInventoryUpdate = inngest.createFunction(
   {
     id: "process-shopify-inventory-update",
@@ -28,7 +33,13 @@ export const processShopifyInventoryUpdate = inngest.createFunction(
     concurrency: [{ limit: 1, key: "event.data.inventoryItemId" }],
     triggers: [{ event: "shopify/inventory.updated" }],
   },
-  async ({ event, step }: { event: { data: ShopifyInventoryUpdateData }; step: any }) => {
+  async ({
+    event,
+    step,
+  }: {
+    event: { data: ShopifyInventoryUpdateData };
+    step: ShopifyInventoryStep;
+  }) => {
     if (!config.features.enableInventorySync) {
       return { status: "skipped", reason: "Inventory sync disabled" };
     }
