@@ -1,3 +1,4 @@
+import type { FulfillmentRecoveryContext } from "./recovery-context";
 import type { PoolClient } from "pg";
 import { readAliasesSQL, bindAliasSQL } from "@/lib/sql/fulfillment-actions/aliases";
 import { randomUUID } from "node:crypto";
@@ -43,7 +44,11 @@ async function bindAliases(client: PoolClient, identity: ActionIdentity, aliases
   }
 }
 
-async function reserve<T>(identity: ActionIdentity, request: unknown): Promise<Reservation<T>> {
+async function reserve<T>(
+  identity: ActionIdentity,
+  request: unknown,
+  recoveryContext?: FulfillmentRecoveryContext
+): Promise<Reservation<T>> {
   let keys = actionKeys(identity);
   const hash = fingerprint(request);
   const pool = await getDatabasePool();
@@ -108,6 +113,7 @@ async function reserve<T>(identity: ActionIdentity, request: unknown): Promise<R
         identity.action,
         hash,
         attemptId,
+        recoveryContext ? JSON.stringify(recoveryContext) : null,
       ]);
       if (result.rowCount !== 1) throw new UncertainActionError(keys);
     }
@@ -155,9 +161,10 @@ async function finish(
 export async function executeFulfillmentAction<T>(
   identity: ActionIdentity,
   request: unknown,
-  execute: () => Promise<T>
+  execute: () => Promise<T>,
+  recoveryContext?: FulfillmentRecoveryContext
 ): Promise<T> {
-  const reservation = await reserve<T>(identity, request);
+  const reservation = await reserve<T>(identity, request, recoveryContext);
   if (reservation.replay) return reservation.result;
   const { keys, attemptId } = reservation;
   let result: T;

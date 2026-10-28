@@ -1,0 +1,2 @@
+DROP POLICY fulfillment_evidence_claims_runtime ON public.fulfillment_evidence_claims;
+REVOKE SELECT, INSERT ON public.fulfillment_evidence_claims FROM battle_bus_runtime;
