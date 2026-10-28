@@ -12,7 +12,7 @@ Read-only verification performed after renewing Google Cloud authentication. No 
 | Shopify identity | Shop ID `69493719272`; configured host `testing-im8store.myshopify.com`; canonical host `im8health.myshopify.com`; primary host `testing.im8health.com` | Existing test-store credential version 1, actual PR probe |
 | Inngest | Authenticated read succeeded | Existing Bus signing-key reference |
 | D365 U001 and H007 | Company-scoped header and all selected reconciliation schemas readable | Existing **Hub** credentials against `https://p-uat.sandbox.operations.dynamics.com` |
-| GPS US/UK | Both authenticated inventory probes passed using development AWS parameters | Actual PR probe; no GPS secrets or runtime bindings in GCP |
+| GPS US/UK | Both authenticated inventory probes passed using development AWS parameters | Actual PR probe with development AWS settings and their pinned GCP copies; runtime deployment pending |
 
 ## Corrections and rollout prerequisites
 
@@ -59,12 +59,31 @@ The owner selected **development AWS** for GPS verification. STS confirmed accou
 | `GPS_UK_API_SECRET` | `/secrets/GPS_UK_APP_SECRET` | 2 |
 | `GPS_UK_WAREHOUSE_CODE` | `/secrets/GPS_UK_WAREHOUSE_CODE` | 3 |
 
-Values were resolved only in process memory and passed to a child process running the PR's actual probe. No plaintext credential files, provider records, raw errors or secret values were printed. No values were copied to GCP.
+Values were resolved only in process memory and passed to a child process running the PR's actual probe. No plaintext credential files, provider records, raw errors or secret values were printed. No values were copied during that verification; the separately approved transfer is recorded below.
 
 The original probe failed for both regions because its legacy inventory helper used a different signing algorithm and speculative endpoint paths. The corrected probe reuses the main GPS client's Spock-derived signing function and its `integratedInventory/pageOpen` endpoint. It requests page 1 with size 1 for the configured warehouse, requires a successful response with a records array, uses HTTPS without redirects, and applies a 10-second timeout. It performs a real read even when business writes are in dry-run mode.
 
 US and UK authenticated reads passed in 573 ms and 390 ms respectively. Nine regression tests verify regional credentials/signatures, bounded requests, failure handling and URL protections. The four Shopify identity tests, full lint gate and production build also passed. This proves access with development-sourced credentials, not independent proof of the provider account's sandbox isolation or business-data parity.
 
-Runtime provisioning remains separate: GPS Secret Manager copies, scoped runtime grants and pinned deployment bindings have not been created. No GPS writes, merge or deployment were performed. Do not enable writes merely to test connectivity.
+### Approved GCP secret provisioning
 
-These checks establish credential/environment and schema access, not historical business parity or successful execution of PR #22 on Cloud Run. The PR remains draft pending GPS runtime provisioning and separately authorized deployment verification.
+The owner separately approved copying the eight development settings into GCP project `battle-bus-509406`, granting the Bus runtime access and adding pinned PR references. All destination names were checked to be absent before creation; no existing secrets were overwritten. Source versions are the verified versions in the table above.
+
+| Runtime setting | New GCP secret, pinned version 1 |
+| --- | --- |
+| `GPS_BASE_URL` | `battle-bus-gps-dev-base-url` |
+| `GPS_API_KEY` | `battle-bus-gps-dev-api-key` |
+| `GPS_API_SECRET` | `battle-bus-gps-dev-api-secret` |
+| `GPS_WAREHOUSE_CODE` | `battle-bus-gps-dev-warehouse-code` |
+| `GPS_UK_BASE_URL` | `battle-bus-gps-dev-uk-base-url` |
+| `GPS_UK_API_KEY` | `battle-bus-gps-dev-uk-api-key` |
+| `GPS_UK_API_SECRET` | `battle-bus-gps-dev-uk-api-secret` |
+| `GPS_UK_WAREHOUSE_CODE` | `battle-bus-gps-dev-uk-warehouse-code` |
+
+All eight version-1 copies were byte-compared in memory with the pinned source values and verified enabled. Each secret's resource policy grants only `roles/secretmanager.secretAccessor` to `battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com`; no project-wide grant or other identity grant was added. Values passed through process memory and stdin only, without plaintext files, command arguments, logs or Git content.
+
+The actual PR probes were repeated using the GCP version-1 copies: both US and UK authenticated reads passed (1818 ms and 335 ms). These were local read-only probes using the operator's secret access; runtime IAM bindings were policy-verified, but deployed Cloud Run access has not yet been exercised.
+
+The deployment workflow now pins all eight references to version 1. Existing GPS/provider write switches remain disabled and dry-run mode remains enabled. Seven rollout/traffic tests and the credential inventory check passed. No GPS writes, merge or deployment were performed.
+
+These checks establish credential/environment and schema access, not historical business parity or successful execution of PR #22 on Cloud Run. Provider configuration prerequisites are prepared. The PR remains draft pending separately authorized deployment verification; secret provisioning alone does not establish runtime or historical business parity.
