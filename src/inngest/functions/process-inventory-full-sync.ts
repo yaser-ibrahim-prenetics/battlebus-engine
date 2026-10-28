@@ -343,83 +343,91 @@ export const processInventoryFullSync = inngest.createFunction(
         timestamp: new Date().toISOString(),
       });
 
-      // Run the actual sync in a step (idempotent computation only)
-      const shopifyResult = await step.run("sync-shopify", async () => {
-        const startTime = Date.now();
-        let candidateCount = 0;
-
-        try {
-          const requestedSkus = Array.isArray(skus) ? skus.map((sku) => String(sku)) : [];
-          const candidates: Array<{ sku: string; dataAreaId: string }> =
-            inventory.size > 0
-              ? Array.from(inventory.values()).map(({ sku, dataAreaId }) => ({ sku, dataAreaId }))
-              : requestedSkus.flatMap((sku) =>
-                  GPS_REGIONS.map(({ dataAreaId }) => ({ sku, dataAreaId }))
-                );
-          const uniqueCandidates = Array.from(
-            new Map(
-              candidates.map((candidate) => [
-                regionalInventoryKey(candidate.dataAreaId, candidate.sku),
-                candidate,
-              ])
-            ).values()
-          );
-          candidateCount = uniqueCandidates.length;
-          if (uniqueCandidates.length === 0) {
-            throw new Error("Shopify sync requires SKUs or a completed GPS inventory step");
-          }
-
-          if (dryRun) {
-            return {
-              step: "shopify" as const,
-              success: true,
-              itemsProcessed: uniqueCandidates.length,
-              itemsSucceeded: uniqueCandidates.length,
-              itemsFailed: 0,
-              message: `DRY RUN - Would sync ${uniqueCandidates.length} regional SKU record(s) from D365 to Shopify`,
-              error: undefined as string | undefined,
-              durationMs: Date.now() - startTime,
-            };
-          }
-
-          let succeeded = 0;
-          const failures: Array<{ sku: string; dataAreaId: string; error: string }> = [];
-          for (const { sku, dataAreaId } of uniqueCandidates) {
-            const result = await syncD365ToShopify(
-              sku,
-              dataAreaId,
-              `${syncId}:${dataAreaId}:${sku}`
+      const startTime = Date.now();
+      const requestedSkus = Array.isArray(skus) ? skus.map((sku) => String(sku)) : [];
+      const candidates: Array<{ sku: string; dataAreaId: string }> =
+        inventory.size > 0
+          ? Array.from(inventory.values()).map(({ sku, dataAreaId }) => ({ sku, dataAreaId }))
+          : requestedSkus.flatMap((sku) =>
+              GPS_REGIONS.map(({ dataAreaId }) => ({ sku, dataAreaId }))
             );
-            if (result.success) succeeded += 1;
-            else failures.push({ sku, dataAreaId, error: result.error || result.message });
-          }
+      const uniqueCandidates = Array.from(
+        new Map(
+          candidates.map((candidate) => [
+            regionalInventoryKey(candidate.dataAreaId, candidate.sku),
+            candidate,
+          ])
+        ).values()
+      );
+      if (uniqueCandidates.length === 0) {
+        throw new Error("Shopify sync requires SKUs or a completed GPS inventory step");
+      }
 
-          return {
-            step: "shopify" as const,
-            success: failures.length === 0,
+      let shopifyResult: StepResult;
+      if (dryRun) {
+        shopifyResult = {
+          step: "shopify",
+          success: true,
+          itemsProcessed: uniqueCandidates.length,
+          itemsSucceeded: uniqueCandidates.length,
+          itemsFailed: 0,
+          message: `DRY RUN - Would sync ${uniqueCandidates.length} regional SKU record(s) from D365 to Shopify`,
+          durationMs: Date.now() - startTime,
+        };
+      } else {
+        // Each regional write is its own checkpoint. Successful writes remain
+        // memoized while failed writes are retried by the enclosing function.
+        const outcomes = await Promise.allSettled(
+          uniqueCandidates.map(({ sku, dataAreaId }, index) =>
+            step.run(`sync-shopify-${index}-${dataAreaId}`, async () => {
+              const result = await syncD365ToShopify(
+                sku,
+                dataAreaId,
+                `${syncId}:${dataAreaId}:${sku}`
+              );
+              if (!result.success) throw new Error(result.error || result.message);
+              return result;
+            })
+          )
+        );
+        const failures = outcomes.flatMap((outcome, index) =>
+          outcome.status === "rejected"
+            ? [
+                {
+                  ...uniqueCandidates[index],
+                  error:
+                    outcome.reason instanceof Error
+                      ? outcome.reason.message
+                      : String(outcome.reason),
+                },
+              ]
+            : []
+        );
+        if (failures.length > 0) {
+          const error = JSON.stringify(failures);
+          await publishToRealtime(ch.status, {
+            syncId,
+            step: "shopify",
+            status: "failed",
             itemsProcessed: uniqueCandidates.length,
-            itemsSucceeded: succeeded,
+            itemsSucceeded: uniqueCandidates.length - failures.length,
             itemsFailed: failures.length,
-            message: `Synced ${succeeded} regional SKU record(s) from D365 to Shopify`,
-            error: failures.length > 0 ? JSON.stringify(failures) : undefined,
-            durationMs: Date.now() - startTime,
-          };
-        } catch (error: unknown) {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          console.error("[InventoryFullSync] Shopify sync failed:", errMsg);
-
-          return {
-            step: "shopify" as const,
-            success: false,
-            itemsProcessed: candidateCount,
-            itemsSucceeded: 0,
-            itemsFailed: candidateCount,
-            message: "Shopify sync failed",
-            error: errMsg,
-            durationMs: Date.now() - startTime,
-          };
+            message: "Shopify regional sync failed; retrying failed checkpoints",
+            error,
+            timestamp: new Date().toISOString(),
+          });
+          throw new Error(`Shopify regional sync failed: ${error}`);
         }
-      });
+        shopifyResult = {
+          step: "shopify",
+          success: true,
+          itemsProcessed: uniqueCandidates.length,
+          itemsSucceeded: uniqueCandidates.length,
+          itemsFailed: 0,
+          message: `Synced ${uniqueCandidates.length} regional SKU record(s) from D365 to Shopify`,
+          durationMs: Date.now() - startTime,
+        };
+      }
 
       // Publish completion status AFTER the step
       await publishToRealtime(ch.status, {
