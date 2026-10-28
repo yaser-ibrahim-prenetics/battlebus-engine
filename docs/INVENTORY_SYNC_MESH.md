@@ -343,7 +343,13 @@ x-shopify-api-version: <api-version>
 
 - **Event Sent**: `shopify/product.deleted`
 - **Inngest Function**: `process-product-sync`
-- **Sync Destinations**: Dynamics 365, GPS Warehouse (deletion)
+- **Sync Destinations**: Dynamics 365 and GPS Warehouse (absolute quantity `0`)
+- **Behavior**: Provider catalog records are retained. Battle Bus resolves every variant/location
+  from `public.stocks`, falling back to variants retained in the Shopify deletion payload, then
+  durably emits serialized `inventory/sync` events with `action: "delete"` and quantity `0`.
+- **Safety**: The workflow fails closed when no retained variant identity is available. D365/GPS
+  events also fail closed until an approved inventory-adjustment provider adapter is configured;
+  they must never report a placeholder deletion as successful.
 - **Payload Example**:
 
 ```json
@@ -487,8 +493,9 @@ Processes Shopify product create/update/delete events.
 
 1. Shopify webhook fires: `products/delete`
 2. Webhook handler sends `shopify/product.deleted` event
-3. Product sync function processes deletion
-4. Product is deleted from Dynamics and GPS
+3. Product sync function resolves retained variant/location identities
+4. It durably queues zero-stock inventory events for Dynamics and GPS
+5. Provider catalog records are retained; missing identity or adjustment adapters fail closed
 
 ## Configuration
 
