@@ -312,14 +312,16 @@ describe("Order Transformers", () => {
       [undefined, "RS-RM-UK"],
     ])("routes UK orders with tags %s through %s", (tags, channel) => {
       const order = { ...loadFixture("gpsUkOrder"), tags };
-      expect(toGpsOutboundOrder(order, "H007-SO-200", "GPS UK Warehouse").logisticsChannel)
-        .toBe(channel);
+      expect(toGpsOutboundOrder(order, "H007-SO-200", "GPS UK Warehouse").logisticsChannel).toBe(
+        channel
+      );
     });
 
     it("preserves US routing for expedited orders", () => {
       const order = { ...loadFixture("gpsUsOrder"), tags: "expedited shipping" };
-      expect(toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse").logisticsChannel)
-        .toBe("GPS-IM8-STANDARD");
+      expect(toGpsOutboundOrder(order, "U001-SO-100", "GPS Warehouse").logisticsChannel).toBe(
+        "GPS-IM8-STANDARD"
+      );
     });
 
     it("filters out gift card lines and service SKUs", () => {
