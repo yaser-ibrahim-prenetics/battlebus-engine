@@ -11,6 +11,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
+import { enqueueOpenAiAdsConversion } from "@/lib/services/openai-ads-conversions";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -254,6 +255,23 @@ export const processShopifyOrder = inngest.createFunction(
     // - runId is the internal run ID for /runs/ URLs (e.g., "01KGWWR0AKZMSTNYJ6VWJMR7DD")
     const inngestIdempotencyKey = event.id;
     const inngestRunId = runId;
+
+    const enqueueOpenAiAdsConversionIfEnabled = async () => {
+      if (!config.openAiAds.enabled) return null;
+      return step.run("enqueue-openai-ads-conversion", async () => {
+        const conversion = await enqueueOpenAiAdsConversion({
+          shopifyOrderId,
+          shopifyOrderName,
+          occurredAt: order.processed_at || order.created_at,
+        });
+        await inngest.send({
+          id: `openai-ads-${conversion.eventId}`,
+          name: "openai.ads/conversion.queued",
+          data: { eventId: conversion.eventId },
+        });
+        return conversion;
+      });
+    };
 
     const _orderProcessingStart = Date.now();
 
@@ -1783,6 +1801,8 @@ export const processShopifyOrder = inngest.createFunction(
           warehouse: warehouseName,
         });
 
+        const openAiAdsConversion = await enqueueOpenAiAdsConversionIfEnabled();
+
         await step.run("notify-hub-already-exists-synced", async () => {
           await Promise.all([
             csPlatform.sendOrderCreated(
@@ -1796,6 +1816,7 @@ export const processShopifyOrder = inngest.createFunction(
                 gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
                 gpsSkipped: gpsRetryResult.type === "skipped",
                 orderJson: order,
+                ...(openAiAdsConversion ? { state: { openAiAdsConversion } } : {}),
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -1816,7 +1837,10 @@ export const processShopifyOrder = inngest.createFunction(
                 lastError: gpsRetryResult.type === "failed" ? gpsRetryResult.error : null,
                 lastErrorType: gpsRetryResult.type === "failed" ? "gps_error" : null,
                 retryAt: null,
-                state: { failureContext: null },
+                state: {
+                  ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
+                  failureContext: null,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -2019,6 +2043,8 @@ export const processShopifyOrder = inngest.createFunction(
         });
       }
 
+      const openAiAdsConversion = await enqueueOpenAiAdsConversionIfEnabled();
+
       if (!routedToBackorder) {
         await step.run("notify-hub-order-created-and-synced", async () => {
           await Promise.all([
@@ -2035,8 +2061,15 @@ export const processShopifyOrder = inngest.createFunction(
                   isGpsUkWarehouse(warehouseName) && gpsOrderId ? gpsOrderId : undefined,
                 gpsSkipped,
                 orderJson: order,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku } }
+                ...(Object.keys(d365InventoryLotsBySku).length > 0 || openAiAdsConversion
+                  ? {
+                      state: {
+                        ...(Object.keys(d365InventoryLotsBySku).length > 0
+                          ? { d365InventoryLotsBySku }
+                          : {}),
+                        ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
+                      },
+                    }
                   : {}),
               },
               { inngestIdempotencyKey, inngestRunId }
@@ -2061,9 +2094,13 @@ export const processShopifyOrder = inngest.createFunction(
                 lastError: null,
                 lastErrorType: null,
                 retryAt: null,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0
-                  ? { state: { d365InventoryLotsBySku, failureContext: null } }
-                  : { state: { failureContext: null } }),
+                state: {
+                  ...(Object.keys(d365InventoryLotsBySku).length > 0
+                    ? { d365InventoryLotsBySku }
+                    : {}),
+                  ...(openAiAdsConversion ? { openAiAdsConversion } : {}),
+                  failureContext: null,
+                },
               },
               { inngestIdempotencyKey, inngestRunId }
             ),

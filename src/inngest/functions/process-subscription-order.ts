@@ -14,6 +14,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
+import { enqueueOpenAiAdsConversion } from "@/lib/services/openai-ads-conversions";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -782,6 +783,22 @@ export const processSubscriptionOrder = inngest.createFunction(
     // =========================================================================
     // STEP 10: Notify CS Platform
     // =========================================================================
+    const openAiAdsConversion = config.openAiAds.enabled
+      ? await step.run("enqueue-openai-ads-conversion", async () => {
+          const conversion = await enqueueOpenAiAdsConversion({
+            shopifyOrderId,
+            shopifyOrderName,
+            occurredAt: order.processed_at || order.created_at,
+          });
+          await inngest.send({
+            id: `openai-ads-${conversion.eventId}`,
+            name: "openai.ads/conversion.queued",
+            data: { eventId: conversion.eventId },
+          });
+          return conversion;
+        })
+      : null;
+
     await step.run("notify-cs-platform", async () => {
       try {
         const finalStatus = gpsResult.status === "backorder" ? "backorder" : "completed";
@@ -793,6 +810,7 @@ export const processSubscriptionOrder = inngest.createFunction(
             status: finalStatus,
             warehouse: warehouseName,
             subscriptionContractId,
+            state: openAiAdsConversion ? { openAiAdsConversion } : undefined,
           },
           {
             inngestIdempotencyKey,

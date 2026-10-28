@@ -134,7 +134,8 @@ export const config = {
 
   // CS Platform (Battle Hub) Configuration
   csPlatform: {
-    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_HUB_URL || process.env.BATTLE_CS_URL || "",
+    baseUrl:
+      process.env.CS_PLATFORM_URL || process.env.BATTLE_HUB_URL || process.env.BATTLE_CS_URL || "",
     webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "",
     enabled: process.env.CS_PLATFORM_ENABLED !== "false",
   },
@@ -147,6 +148,13 @@ export const config = {
     enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
   },
 
+  openAiAds: {
+    enabled: process.env.OPENAI_ADS_ENABLED === "true",
+    pixelId: process.env.OPENAI_ADS_PIXEL_ID || "",
+    conversionsApiKey: process.env.OPENAI_ADS_CONVERSIONS_API_KEY || "",
+    sourceUrl: process.env.OPENAI_ADS_SOURCE_URL || "",
+  },
+
   // Slack Notification Channels
   slack: {
     applicationName: "store",
@@ -154,10 +162,7 @@ export const config = {
     integration: "real",
     // "webhook" posts directly to the channel webhooks below (default). "kafka" publishes to
     // slack-notification-service, which posts each notification id to Slack at most once.
-    transport: (process.env.SLACK_TRANSPORT || "webhook") as
-      | "webhook"
-      | "kafka"
-      | "pubsub",
+    transport: (process.env.SLACK_TRANSPORT || "webhook") as "webhook" | "kafka" | "pubsub",
     publishEnabled: process.env.SLACK_PUBLISH_ENABLED !== "false",
     pubsubTopic: process.env.SLACK_PUBSUB_TOPIC || "",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
@@ -227,8 +232,7 @@ export const config = {
      * Controls the scheduled product inventory reconciliation cron only.
      * Manual inventory reconciliation endpoints/events remain available.
      */
-    enableProductInventorySyncCron:
-      process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
+    enableProductInventorySyncCron: process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
     enabledGpsOutboundMock: false,
     /**
      * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
@@ -367,14 +371,19 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     errors.push(`${modeVar} is required (active SHOPIFY_STORE_MODE="${config.shopify.storeMode}")`);
   }
 
+  if (config.openAiAds.enabled) {
+    if (!config.openAiAds.pixelId) errors.push("OPENAI_ADS_PIXEL_ID is required when enabled");
+    if (!config.openAiAds.conversionsApiKey)
+      errors.push("OPENAI_ADS_CONVERSIONS_API_KEY is required when enabled");
+    if (!config.openAiAds.sourceUrl) errors.push("OPENAI_ADS_SOURCE_URL is required when enabled");
+  }
+
   if (config.csPlatform.enabled) {
     if (!config.csPlatform.baseUrl) {
       errors.push("CS_PLATFORM_URL or BATTLE_CS_URL is required when CS Platform is enabled");
     }
     if (!config.csPlatform.webhookSecret) {
-      console.warn(
-        "CS_PLATFORM_WEBHOOK_SECRET is not set - Battle Hub callbacks will fail closed"
-      );
+      console.warn("CS_PLATFORM_WEBHOOK_SECRET is not set - Battle Hub callbacks will fail closed");
     }
   }
 
@@ -389,7 +398,12 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
 
   if (!["webhook", "kafka", "pubsub"].includes(config.slack.transport))
     errors.push("SLACK_TRANSPORT must be webhook, kafka, or pubsub");
-  if (config.slack.transport === "pubsub" && !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(config.slack.pubsubTopic))
+  if (
+    config.slack.transport === "pubsub" &&
+    !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(
+      config.slack.pubsubTopic
+    )
+  )
     errors.push("SLACK_PUBSUB_TOPIC must be a full Pub/Sub topic resource");
   if (config.slack.transport === "kafka") {
     if (config.kafka.brokers.length === 0)
