@@ -69,7 +69,8 @@ export function toD365SalesOrderHeaderV3(
   order: ShopifyOrderPayload,
   warehouseName?: string,
   dataAreaIdOverride?: string,
-  accounting?: OrderAccounting
+  accounting?: OrderAccounting,
+  shortAddress?: string
 ): D365SalesOrderHeaderV3Request {
   const warehouse =
     warehouseName ||
@@ -102,7 +103,12 @@ export function toD365SalesOrderHeaderV3(
       ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
       : formatAddressName(shippingAddress),
     shopifyReference: order.name,
-    shippingAddress: shippingAddress ? toSalesOrderHeadersV3Address(shippingAddress) : undefined,
+    shippingAddress: shippingAddress
+      ? toSalesOrderHeadersV3Address(
+          shippingAddress,
+          shippingAddress.country_code === "SA" ? shortAddress : undefined
+        )
+      : undefined,
     billingAddress: billingAddress ? toSalesOrderHeadersV3Address(billingAddress) : undefined,
     comment: buildOrderComment(order, accounting),
     paymentId: accounting?.paymentId,
@@ -273,7 +279,8 @@ export function toD365SalesOrderLines(
     );
     if (item.gift_card) {
       line.giftCardNumber = accounting?.purchasedGiftCards[String(item.id)];
-      if (!line.giftCardNumber || !rawSku) throw new Error(`Gift-card accounting is incomplete for line ${item.id}`);
+      if (!line.giftCardNumber || !rawSku)
+        throw new Error(`Gift-card accounting is incomplete for line ${item.id}`);
     }
     const transformedLine = skuTransformer(line);
     const withWarehouse: D365SalesOrderLineRequest =
@@ -290,9 +297,8 @@ export function toD365SalesOrderLines(
   // Add service lines (shipping/tax) using warehouse-config service SKUs.
   // Mirrors spock-store behavior: tax line is derived from order-level tax (+ duties).
   if (includeShippingAndTax) {
-    const { listTotal: shippingList, discountTotal: shippingDiscount } = calculateShippingListAndDiscount(
-      order
-    );
+    const { listTotal: shippingList, discountTotal: shippingDiscount } =
+      calculateShippingListAndDiscount(order);
     if (shippingList > 0) {
       lines.push({
         salesOrderNumber,
@@ -443,7 +449,8 @@ export function toOrderLineRecords(
 export function toGpsOutboundOrder(
   order: ShopifyOrderPayload,
   d365SalesOrderNumber: string,
-  warehouseName: string = "GPS Warehouse"
+  warehouseName: string = "GPS Warehouse",
+  shortAddress?: string
 ): GpsOrderData {
   const shippingAddress = order.shipping_address || order.billing_address;
 
@@ -456,10 +463,13 @@ export function toGpsOutboundOrder(
   const logisticsChannel = getGpsLogisticsChannel(warehouseName, order.tags);
 
   // Transform address
-  const gpsAddress = toGpsOrderAddress({
-    ...shippingAddress,
-    email: order.email,
-  });
+  const gpsAddress = toGpsOrderAddress(
+    {
+      ...shippingAddress,
+      email: order.email,
+    },
+    shortAddress
+  );
 
   // Transform line items (filter and merge duplicates)
   const lineItems = getLineItems(order);
@@ -503,14 +513,12 @@ export function toGpsOutboundOrder(
  * Shipping list price and discount, matching spock-store `calculateShippingCost` on `shipping_lines`.
  * D365 `SalesPrice` uses list `price`; `LineDiscountAmount` uses `price - discounted_price` per line.
  */
-export function calculateShippingListAndDiscount(
-  order: ShopifyOrderPayload
-): { listTotal: number; discountTotal: number } {
+export function calculateShippingListAndDiscount(order: ShopifyOrderPayload): {
+  listTotal: number;
+  discountTotal: number;
+} {
   if (!order.shipping_lines?.length) return { listTotal: 0, discountTotal: 0 };
-  const listTotal = order.shipping_lines.reduce(
-    (t, line) => t + (parseFloat(line.price) || 0),
-    0
-  );
+  const listTotal = order.shipping_lines.reduce((t, line) => t + (parseFloat(line.price) || 0), 0);
   const afterDiscount = order.shipping_lines.reduce((t, line) => {
     const d =
       line.discounted_price != null && line.discounted_price !== ""

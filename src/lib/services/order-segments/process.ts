@@ -28,6 +28,7 @@ type ProcessSegmentsInput = {
   accounting?: OrderAccounting;
   testMode?: boolean;
   fallbackDataArea: string;
+  shortAddress?: string;
   ensureEligible?: () => Promise<unknown>;
 };
 
@@ -128,7 +129,8 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         projected,
         segment.warehouse,
         segment.dataAreaId,
-        accounting
+        accounting,
+        input.shortAddress
       );
       header.comment = `${header.comment || ""}\nSplit ${segment.index + 1}/${plan.segments.length}; Shopify fulfillment order ${bindings[segment.index]}`;
       const result = await action("header", header, async () => {
@@ -181,7 +183,12 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       await input.ensureEligible?.();
       if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
         return undefined;
-      const payload = toGpsOutboundOrder(projected, salesOrderNumber, segment.warehouse);
+      const payload = toGpsOutboundOrder(
+        projected,
+        salesOrderNumber,
+        segment.warehouse,
+        input.shortAddress
+      );
       payload.platformOrderNo = segment.index === 0 ? order.name : `${order.name}-${segment.index}`;
       if (!payload.productList.length) return undefined;
       const result = await gps.createOutboundOrder(

@@ -11,6 +11,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
+import { loadSaudiShortAddress } from "@/lib/services/saudi-short-address";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -929,6 +930,12 @@ export const processShopifyOrder = inngest.createFunction(
     const warehouseName = routingResult.warehouseName;
     const dataAreaId = routingResult.dataAreaId;
     const country_code = routingResult.countryCode;
+    const saudiShortAddress = await loadSaudiShortAddress({
+      step,
+      order,
+      shopifyOrderId,
+      shopifyStore,
+    });
 
     const accounting = await step.run("load-order-accounting", async () => {
       if (!config.features.enableDynamicsSync || event.data.testMode) return undefined;
@@ -942,6 +949,7 @@ export const processShopifyOrder = inngest.createFunction(
       shopDomain: event.data.shopifyStore,
       testMode: event.data.testMode,
       fallbackDataArea: dataAreaId,
+      shortAddress: saudiShortAddress,
     });
     if (segmented) return segmented;
 
@@ -1027,7 +1035,8 @@ export const processShopifyOrder = inngest.createFunction(
             order,
             warehouseName,
             dataAreaId,
-            accounting
+            accounting,
+            saudiShortAddress
           );
           let d365Header;
           if (skipD365) {
@@ -1398,7 +1407,12 @@ export const processShopifyOrder = inngest.createFunction(
           shouldSendToGps(order, warehouseName) && config.features.enableGpsSync;
         let gpsOrderPayload: ReturnType<typeof toGpsOutboundOrder> | null = null;
         try {
-          gpsOrderPayload = toGpsOutboundOrder(order, salesOrderNo, warehouseName);
+          gpsOrderPayload = toGpsOutboundOrder(
+            order,
+            salesOrderNo,
+            warehouseName,
+            saudiShortAddress
+          );
           const itemCount = gpsOrderPayload?.productList?.length || 0;
           await publishStatus(
             "gps.build-payload",
@@ -1624,7 +1638,8 @@ export const processShopifyOrder = inngest.createFunction(
             const gpsOrderPayload = toGpsOutboundOrder(
               order,
               reusedSalesOrderNumber,
-              warehouseName
+              warehouseName,
+              saudiShortAddress
             );
             const result = await gps.createOutboundOrder(
               gpsOrderPayload,
@@ -1798,7 +1813,14 @@ export const processShopifyOrder = inngest.createFunction(
                 gpsOrderId: gpsRetryResult.type === "real" ? gpsRetryResult.gpsOrderNo : undefined,
                 gpsSkipped: gpsRetryResult.type === "skipped",
                 orderJson: order,
-                ...(associatedOrder ? { state: { associatedOrder } } : {}),
+                ...(associatedOrder || saudiShortAddress
+                  ? {
+                      state: {
+                        ...(associatedOrder ? { associatedOrder } : {}),
+                        ...(saudiShortAddress ? { saudiShortAddress } : {}),
+                      },
+                    }
+                  : {}),
               },
               { inngestIdempotencyKey, inngestRunId }
             ),
@@ -1821,6 +1843,7 @@ export const processShopifyOrder = inngest.createFunction(
                 retryAt: null,
                 state: {
                   ...(associatedOrder ? { associatedOrder } : {}),
+                  ...(saudiShortAddress ? { saudiShortAddress } : {}),
                   failureContext: null,
                 },
               },
@@ -2042,13 +2065,16 @@ export const processShopifyOrder = inngest.createFunction(
                   isGpsUkWarehouse(warehouseName) && gpsOrderId ? gpsOrderId : undefined,
                 gpsSkipped,
                 orderJson: order,
-                ...(Object.keys(d365InventoryLotsBySku).length > 0 || associatedOrder
+                ...(Object.keys(d365InventoryLotsBySku).length > 0 ||
+                associatedOrder ||
+                saudiShortAddress
                   ? {
                       state: {
                         ...(Object.keys(d365InventoryLotsBySku).length > 0
                           ? { d365InventoryLotsBySku }
                           : {}),
                         ...(associatedOrder ? { associatedOrder } : {}),
+                        ...(saudiShortAddress ? { saudiShortAddress } : {}),
                       },
                     }
                   : {}),
@@ -2080,6 +2106,7 @@ export const processShopifyOrder = inngest.createFunction(
                     ? { d365InventoryLotsBySku }
                     : {}),
                   ...(associatedOrder ? { associatedOrder } : {}),
+                  ...(saudiShortAddress ? { saudiShortAddress } : {}),
                   failureContext: null,
                 },
               },
