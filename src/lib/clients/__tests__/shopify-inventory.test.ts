@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ graphql: vi.fn() }));
 
@@ -11,10 +11,18 @@ import {
   setSkuInventoryAtLocation,
   shopifyGid,
 } from "../shopify-inventory";
+import { config } from "@/lib/config";
 
 describe("Shopify inventory client", () => {
+  const originalDryRunMode = config.features.dryRunMode;
+
   beforeEach(() => {
     mocks.graphql.mockReset();
+    config.features.dryRunMode = false;
+  });
+
+  afterEach(() => {
+    config.features.dryRunMode = originalDryRunMode;
   });
 
   it("normalizes Shopify global IDs", () => {
@@ -119,5 +127,31 @@ describe("Shopify inventory client", () => {
         referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-MISSING",
       })
     ).rejects.toThrow("SKU MISSING was not found in Shopify");
+  });
+
+  it("does not issue inventory mutations in global dry-run mode", async () => {
+    config.features.dryRunMode = true;
+    mocks.graphql.mockResolvedValueOnce({
+      data: {
+        productVariants: {
+          nodes: [{ sku: "IM8-1", inventoryItem: { id: "gid://shopify/InventoryItem/1" } }],
+        },
+      },
+    });
+
+    await expect(
+      setSkuInventoryAtLocation({
+        sku: "IM8-1",
+        locationId: "99",
+        quantity: 12,
+        referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+      })
+    ).resolves.toEqual({
+      updated: 1,
+      inventoryItemIds: ["gid://shopify/InventoryItem/1"],
+    });
+
+    expect(mocks.graphql).toHaveBeenCalledTimes(1);
+    expect(mocks.graphql.mock.calls[0][0]).toContain("query InventoryItemsBySku");
   });
 });

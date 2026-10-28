@@ -63,6 +63,13 @@ export async function activateInventoryAtLocation(
   inventoryItemId: string,
   locationId: string
 ): Promise<void> {
+  if (config.features.dryRunMode) {
+    console.log(
+      `[ShopifyInventory] DRY RUN - Would activate ${inventoryItemId} at ${locationId}`
+    );
+    return;
+  }
+
   const modern = usesModernInventoryContract(inventoryApiVersion);
   const mutation = modern
     ? `
@@ -107,6 +114,13 @@ export async function setInventoryQuantities(params: {
   referenceDocumentUri: string;
 }): Promise<void> {
   if (params.quantities.length === 0) return;
+  if (config.features.dryRunMode) {
+    console.log(
+      `[ShopifyInventory] DRY RUN - Would set ${params.quantities.length} inventory item(s) at ${params.locationId}`
+    );
+    return;
+  }
+
   const modern = usesModernInventoryContract(inventoryApiVersion);
   const mutation = modern
     ? `
