@@ -446,6 +446,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    ```bash
    curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics" \
      -H "Content-Type: application/json" \
+     -H "Idempotency-Key: e2e-shopify-dynamics-001" \
      -d '{
        "sku": "TEST-SKU-001",
        "inventoryItemId": "123456789",
@@ -460,6 +461,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    ```bash
    curl -X POST "http://localhost:7000/api/inventory/sync?from=warehouse&to=shopify" \
      -H "Content-Type: application/json" \
+     -H "Idempotency-Key: e2e-warehouse-shopify-001" \
      -d '{
        "sku": "TEST-SKU-001",
        "available": 75,
@@ -472,6 +474,7 @@ curl -X GET "https://<gps-url>/openapi/v1/outboundOrder/get?orderId=<gps-order-i
    ```bash
    curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics,gps" \
      -H "Content-Type: application/json" \
+     -H "Idempotency-Key: e2e-shopify-multi-001" \
      -d '{
        "sku": "TEST-SKU-001",
        "quantity": 200,
@@ -922,6 +925,7 @@ wait
 for i in {1..50}; do
   curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics" \
     -H "Content-Type: application/json" \
+    -H "Idempotency-Key: load-inventory-$i" \
     -d "{\"sku\": \"TEST-$i\", \"quantity\": $i}" &
 done
 wait

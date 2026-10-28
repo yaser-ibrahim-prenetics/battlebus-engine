@@ -58,7 +58,11 @@ The mesh acts as the "brain" that:
 
 ```
 Content-Type: application/json
+Idempotency-Key: <stable-source-operation-id>
 ```
+
+`Idempotency-Key` is required. Generate one key for each source adjustment and reuse that same
+key when retrying after a timeout or lost response.
 
 **Request Body Schema**:
 
@@ -164,6 +168,7 @@ When Inngest is not available (e.g., in local dev without dev server):
 # Example 1: Sync from Shopify to Dynamics and GPS
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: shopify-adjustment-123" \
   -d '{
     "sku": "PROD-123",
     "inventoryItemId": "123456789",
@@ -177,6 +182,7 @@ curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps"
 # Example 2: Sync from warehouse to Shopify
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=warehouse&to=shopify" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: warehouse-adjustment-123" \
   -d '{
     "sku": "PROD-123",
     "available": 50,
@@ -189,6 +195,7 @@ curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=warehouse&to=shopify" \
 # Example 3: Sync from Dynamics to all platforms (default behavior)
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=dynamics" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: dynamics-adjustment-456" \
   -d '{
     "sku": "PROD-456",
     "quantity": 200,
@@ -199,6 +206,7 @@ curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=dynamics" \
 # Example 4: Product deletion sync
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: shopify-delete-999888777" \
   -d '{
     "productId": "999888777",
     "sku": "PROD-DELETE",
@@ -209,6 +217,7 @@ curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics,gps"
 # Example 5: Using body for source/destination (alternative to query params)
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: shopify-adjustment-789" \
   -d '{
     "sku": "PROD-789",
     "quantity": 75,
@@ -363,8 +372,8 @@ x-shopify-api-version: <api-version>
 
 **`inventory_levels/update`** - Inventory level changed
 
-- **Event Sent**: `inventory/sync` (via mesh)
-- **Inngest Function**: `process-inventory-mesh`
+- **Event Sent**: `shopify/inventory.updated` (raw, after durable inbox persistence)
+- **Inngest Functions**: `process-shopify-inventory-update`, then `process-inventory-mesh`
 - **Sync Destinations**: Dynamics 365, GPS Warehouse
 - **Payload Example**:
 
@@ -383,7 +392,8 @@ x-shopify-api-version: <api-version>
 2. Webhook handler verifies HMAC signature
 3. Handler sends Inngest event based on topic:
    - Product events → `shopify/product.*` events
-   - Inventory events → `inventory/sync` events (via mesh)
+   - Inventory events → durable `shopify/inventory.updated`; the consumer resolves the canonical
+     SKU in a retryable step, then emits serialized `inventory/sync` mesh events
 4. Inngest functions process events and sync to destinations
 
 **Webhook Verification**:
@@ -478,9 +488,10 @@ Processes Shopify product create/update/delete events.
 ### Example 1: Shopify Inventory Update → Dynamics & GPS
 
 1. Shopify webhook fires: `inventory_levels/update`
-2. Webhook handler sends `inventory/sync` event to mesh
-3. Mesh routes to Dynamics and GPS
-4. Each platform syncs the inventory level
+2. Webhook handler persists and sends `shopify/inventory.updated`
+3. The resolver obtains the canonical SKU and emits `inventory/sync` events
+4. Mesh routes to Dynamics and GPS
+5. Each platform syncs the inventory level
 
 ### Example 2: Warehouse Inventory Update → Shopify
 
@@ -743,6 +754,7 @@ curl "http://localhost:7000/api/inventory/sync?docs=true"
 # 3. Test inventory sync (Shopify → Dynamics)
 curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: local-shopify-test-123" \
   -d '{
     "sku": "TEST-123",
     "inventoryItemId": "123456789",
@@ -756,6 +768,7 @@ curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics"
 # 4. Test multi-destination sync
 curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: local-shopify-test-456" \
   -d '{
     "sku": "TEST-456",
     "quantity": 100,
@@ -766,6 +779,7 @@ curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics,
 # 5. Test product deletion
 curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics,gps" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: local-shopify-delete-test" \
   -d '{
     "productId": "999888777",
     "sku": "TEST-DELETE",
@@ -775,6 +789,7 @@ curl -X POST "http://localhost:7000/api/inventory/sync?from=shopify&to=dynamics,
 # 6. Test warehouse → Shopify sync
 curl -X POST "http://localhost:7000/api/inventory/sync?from=warehouse&to=shopify" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: local-warehouse-test-789" \
   -d '{
     "sku": "TEST-789",
     "available": 75,
@@ -789,6 +804,7 @@ curl -X POST "http://localhost:7000/api/inventory/sync?from=warehouse&to=shopify
 # Test against production
 curl -X POST "${BATTLE_BUS_URL}/api/inventory/sync?from=shopify&to=dynamics" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: production-shopify-adjustment-123" \
   -d '{
     "sku": "PROD-123",
     "quantity": 100,
