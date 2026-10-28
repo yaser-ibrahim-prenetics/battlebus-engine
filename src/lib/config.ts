@@ -263,7 +263,7 @@ export const config = {
 
   /** Daily/manual reconciliation windows use UTC calendar days. */
   reconciliation: {
-    directD365Enabled: process.env.ENABLE_D365_RECONCILIATION === "true",
+    directD365Enabled: process.env.ENABLE_D365_RECONCILIATION !== "false",
     shopifyApiVersion: process.env.RECONCILIATION_SHOPIFY_API_VERSION || "2026-07",
     orderPrefix: process.env.RECONCILIATION_ORDER_PREFIX || "IM8-",
     storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "UTC",

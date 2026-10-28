@@ -1,3 +1,4 @@
+import { reconcileUncertainFulfillments } from "@/lib/services/fulfillment-actions/recovery";
 import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { reconciliationWindow } from "@/lib/services/d365-reconciliation/window";
@@ -26,6 +27,10 @@ export const cronD365Reconciliation = inngest.createFunction(
     const results = [];
     for (const kind of kinds)
       results.push(await step.run(`reconcile-${kind}`, () => reconcileD365(kind, window, runId)));
-    return { window, results };
+    const recovery = await step.run(
+      "reconcile-uncertain-fulfillments",
+      reconcileUncertainFulfillments
+    );
+    return { window, results, recovery };
   }
 );
