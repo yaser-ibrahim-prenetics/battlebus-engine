@@ -12,7 +12,7 @@ Read-only verification performed after renewing Google Cloud authentication. No 
 | Shopify identity | Shop ID `69493719272`; configured host `testing-im8store.myshopify.com`; canonical host `im8health.myshopify.com`; primary host `testing.im8health.com` | Existing test-store credential version 1, actual PR probe |
 | Inngest | Authenticated read succeeded | Existing Bus signing-key reference |
 | D365 U001 and H007 | Company-scoped header and all selected reconciliation schemas readable | Existing **Hub** credentials against `https://p-uat.sandbox.operations.dynamics.com` |
-| GPS US/UK | Not verified: no credential references configured | No GPS secrets found in this GCP project |
+| GPS US/UK | AWS production Parameter Store references found; provider authentication not yet verified | No GPS secrets or runtime bindings in GCP |
 
 ## Corrections and rollout prerequisites
 
@@ -30,6 +30,20 @@ Approved version-1 references included in the proposed deployment workflow:
 
 On 28 October, the owner approved and we applied `roles/secretmanager.secretAccessor` separately on those five secrets to `battle-bus-runtime@battle-bus-509406.iam.gserviceaccount.com`. Each resulting policy was checked for the intended binding. No project-wide secret access was granted and no secret values were exposed. The PR now includes the pinned references; attachment occurs only after a separately authorized merge/deployment. Existing write switches stay disabled.
 
-GPS verification requires approved US/UK endpoint and credential references or an approved protected configuration file. Do not paste credential values into PRs or chat. Do not enable GPS writes merely to test connectivity.
+## GPS configuration discovery
+
+Spock `develop` loads GPS settings from `src/resource/api.json` through `API.gps`. Its GPS client reads a shared `gps.baseUrl` and warehouse-specific `authentication.appKey` / `authentication.appSecret`. The Kubernetes manifest mounts `spock-store-service-api.json` into the runtime configuration path.
+
+Read-only AWS console inspection confirmed account `672278963259`, role `ap-southeast-1-prod-admin`, region `ap-southeast-1`. Parameter Store contains these references:
+
+| Purpose | Existing AWS parameter names |
+| --- | --- |
+| US endpoint and authentication | `/secrets/GPS_BASEURL`, `/secrets/GPS_APP_KEY`, `/secrets/GPS_APP_SECRET` |
+| UK endpoint and app key | `/secrets/GPS_UK_BASEURL`, `/secrets/GPS_UK_APP_KEY` |
+| Warehouse configuration | `/secrets/GPS_LOCATION_ID`, `/secrets/GPS_UK_LOCATION_ID`, `/secrets/GPS_UK_WAREHOUSE_CODE` |
+
+These are **production account metadata**, not verified test-environment credentials. The GPS-name search did not show a separate UK app-secret parameter. Do not assume the US secret is shared: the deployed template mapping still needs verification. Parameter values were not revealed, downloaded or copied into GCP; no GPS provider requests were made. The connected AWS API account is development and was not used to infer production settings.
+
+Before attaching GPS credentials to the staging Bus, confirm the intended GPS environment and complete authenticated, read-only probes with the matching US/UK settings. Do not paste credential values into PRs or chat or enable GPS writes merely to test connectivity.
 
 These checks establish credential/environment and schema access, not historical business parity or successful execution of PR #22 on Cloud Run. The PR remains draft until runtime access and missing-provider verification are resolved.
