@@ -97,10 +97,6 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       routing
     );
     if (plan.segments.length < 2) return null;
-    if (new Set(plan.segments.map((segment) => segment.dataAreaId.toUpperCase())).size > 1)
-      throw new Error(
-        "Mixed-company split orders require a refund allocation plan before provider writes"
-      );
     return reservePlan(shop, plan);
   });
   if (!stored) return null;

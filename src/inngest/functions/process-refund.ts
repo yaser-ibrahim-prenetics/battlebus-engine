@@ -1,3 +1,4 @@
+import { refundOrderSegments } from "@/lib/services/order-segments/refunds/process";
 import { getRefundHoldDecision } from "@/lib/services/refund-holds/decisions";
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
@@ -243,6 +244,9 @@ export const processRefund = inngest.createFunction(
         };
       }
     }
+
+    const segmentedRefund = await refundOrderSegments(shopifyOrder, refund, step);
+    if (segmentedRefund) return segmentedRefund;
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
     // THK_ShopifyReference is set from Shopify order `name` at header creation (see toD365SalesOrderHeaderV3).

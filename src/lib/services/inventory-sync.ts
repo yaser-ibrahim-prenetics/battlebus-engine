@@ -676,13 +676,6 @@ export async function calculateDiscrepancies(
     });
   }
 
-  const incomplete = diffs.filter(
-    (d) => d.gpsLevel === null || d.d365Level === null || d.shopifyLevel === null
-  );
-  if (incomplete.length) {
-    result.errors.push("Incomplete provider inventory evidence");
-    return result;
-  }
   const discrepancies = diffs.filter((d) => d.needsSync);
   console.log(
     `[InventorySync] Found ${discrepancies.length} discrepancies out of ${skus.length} SKUs`
@@ -714,6 +707,13 @@ async function performReconciliation(
 
   try {
     const diffs = await calculateDiscrepancies(skus, warehouseName);
+    const incomplete = diffs.filter(
+      (d) => d.gpsLevel === null || d.d365Level === null || d.shopifyLevel === null
+    );
+    if (incomplete.length) {
+      result.errors.push("Incomplete provider inventory evidence");
+      return result;
+    }
 
     const discrepancies = diffs.filter((d) => d.needsSync);
     result.discrepanciesFound = discrepancies.length;
