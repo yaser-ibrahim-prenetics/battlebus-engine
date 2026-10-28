@@ -2346,8 +2346,8 @@ export async function getAllInventory(
 }
 
 /**
- * Sync inventory levels from Shopify to D365
- * TODO: Implement actual D365 inventory adjustment via InventoryOnHandEntities or Adjustment Journals
+ * Sync inventory levels to D365.
+ * Fails closed until a tenant-specific adjustment journal/custom API is configured.
  */
 export async function syncInventoryLevel(inventory: {
   inventoryItemId: string;
@@ -2366,23 +2366,15 @@ export async function syncInventoryLevel(inventory: {
     console.log(
       `[D365] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId} to ${dataAreaId}`
     );
-    return { success: true, message: `DRY RUN - Inventory sync placeholder (${dataAreaId})` };
+    return { success: true, message: `DRY RUN - Would adjust D365 inventory (${dataAreaId})` };
   }
 
-  // TODO: Map Shopify inventory → D365 On-hand inventory
-  // Example approaches:
-  //   1. POST /data/InventoryOnHandEntities - direct on-hand update
-  //   2. Use D365 Inventory Adjustment Journals for auditable changes
-  //   3. Call THK custom API if one exists for inventory sync
-  // Steps:
-  //   1. Map Shopify inventory_item_id → D365 ItemNumber (via SKU lookup)
-  //   2. Map Shopify location_id → D365 Warehouse/Site using dataAreaId
-  //   3. Compare current D365 on-hand vs Shopify available
-  //   4. Create adjustment if different
-  console.log(`[D365] ⚠️  Inventory sync not yet implemented - placeholder only (${dataAreaId})`);
+  console.error(
+    `[D365] Inventory adjustment rejected: no tenant adjustment journal or custom API is configured (${dataAreaId})`
+  );
   return {
-    success: true,
-    message: `Placeholder - D365 inventory sync not yet implemented (${dataAreaId})`,
+    success: false,
+    message: `D365 inventory adjustment provider is not configured (${dataAreaId})`,
   };
 }
 
