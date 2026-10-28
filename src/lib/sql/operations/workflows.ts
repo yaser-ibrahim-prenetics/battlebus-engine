@@ -3,6 +3,8 @@ export const observeWorkflowSQL = `INSERT INTO public.workflow_observations (run
 export const waitWorkflowSQL = `UPDATE public.workflow_observations SET
   waiting_until=GREATEST(waiting_until,$2::timestamptz), unknown_wait=unknown_wait OR $3,
   last_seen_at=now() WHERE run_id=$1`;
+export const clearWorkflowWaitSQL = `UPDATE public.workflow_observations SET
+  waiting_until=NULL, unknown_wait=false, last_seen_at=now() WHERE run_id=$1`;
 export const completeWorkflowSQL = `UPDATE public.workflow_observations SET completed_at=now(),last_seen_at=now()
   WHERE run_id=$1 AND completed_at IS NULL`;
 export const staleWorkflowsSQL = `SELECT run_id,function_id,event_id,last_seen_at,waiting_until,unknown_wait

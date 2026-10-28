@@ -22,10 +22,11 @@ import { reserveSegmentRefund } from "./store";
 export async function refundOrderSegments(
   order: RefundOrder,
   refund: ShopifyRefundPayload,
+  shopDomain: string,
   step: Pick<GetStepTools<typeof inngest>, "run">
 ) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
-  const shop = resolveShopifyAdminCredentials(undefined).shopDomain;
+  const shop = resolveShopifyAdminCredentials(shopDomain).shopDomain;
   const stored = await step.run("read-refund-segment-plan", () => readPlan(shop, String(order.id)));
   if (!stored) return null;
   const reservation = await step.run("reserve-segment-refund", async () => {
@@ -54,7 +55,6 @@ export async function refundOrderSegments(
   if (!reservation.completed) {
     const outcomes = await Promise.allSettled(
       reservation.allocations.map(async (allocation) => {
-        if (!allocation.amountCents) return;
         const segment = stored.plan.segments.find(
           (segment) => segment.index === allocation.segmentIndex
         )!;
@@ -68,6 +68,15 @@ export async function refundOrderSegments(
             return progress.salesOrderNumber;
           }
         );
+        if (!allocation.amountCents) {
+          await step.run(`refund-${refund.id}-segment-${segment.index}-zero-amount`, async () => ({
+            status: "no_financial_posting",
+            salesOrderNumber,
+            segmentIndex: segment.index,
+            quantities: allocation.quantities,
+          }));
+          return;
+        }
         const itemNumber = resolveRefundSkuAudit(segment.warehouse, segment.dataAreaId).refundSku;
         const identity = (action: string) => ({
           provider: "dynamics" as const,

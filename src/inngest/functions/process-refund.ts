@@ -195,7 +195,7 @@ export const processRefund = inngest.createFunction(
 
     // 1. Get Shopify Order first (needed for order name lookup)
     const shopifyOrder = await step.run("get-shopify-order", async () => {
-      const order = await shopify.getOrder(shopifyOrderId);
+      const order = await shopify.getOrder(shopifyOrderId, event.data.shopifyStore);
       logRefundTraceLifecycle({
         ...refundTrace,
         phase: "shopify_order_loaded",
@@ -245,7 +245,12 @@ export const processRefund = inngest.createFunction(
       }
     }
 
-    const segmentedRefund = await refundOrderSegments(shopifyOrder, refund, step);
+    const segmentedRefund = await refundOrderSegments(
+      shopifyOrder,
+      refund,
+      event.data.shopifyStore,
+      step
+    );
     if (segmentedRefund) {
       const amount =
         segmentedRefund.segments.reduce((sum, segment) => sum + segment.amountCents, 0) / 100;
