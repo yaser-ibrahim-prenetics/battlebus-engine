@@ -14,7 +14,25 @@ export async function probeShopifyEnvironment() {
     {},
     { shopDomain: expected, apiVersion: config.reconciliation.shopifyApiVersion }
   );
-  if (!response.data?.shop?.id || response.data.shop.myshopifyDomain?.toLowerCase() !== expected)
+  const shop = response.data?.shop;
+  const pin = config.reconciliation.expectedShopId;
+  const expectedId = pin && /^\d+$/.test(pin) ? `gid://shopify/Shop/${pin}` : pin;
+  if (
+    !shop?.id ||
+    !/^gid:\/\/shopify\/Shop\/\d+$/.test(shop.id) ||
+    !shop.myshopifyDomain ||
+    !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop.myshopifyDomain)
+  )
+    throw new Error("Shopify environment identity is incomplete");
+  // A renamed hostname can differ from Shopify's canonical hostname. A configured
+  // immutable shop ID is authoritative; never let a hostname match override it.
+  if (expectedId ? shop.id !== expectedId : shop.myshopifyDomain.toLowerCase() !== expected)
     throw new Error("Shopify environment identity mismatch");
-  return { shopDomain: expected, identity: "verified" as const };
+  return {
+    shopDomain: expected,
+    canonicalShopDomain: shop.myshopifyDomain.toLowerCase(),
+    shopId: shop.id,
+    identity: "verified" as const,
+    matchedBy: expectedId ? "shop_id" : "hostname",
+  };
 }

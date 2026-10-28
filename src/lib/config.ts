@@ -265,6 +265,7 @@ export const config = {
   reconciliation: {
     directD365Enabled: process.env.ENABLE_D365_RECONCILIATION !== "false",
     shopifyApiVersion: process.env.RECONCILIATION_SHOPIFY_API_VERSION || "2026-07",
+    expectedShopId: process.env.RECONCILIATION_SHOPIFY_EXPECTED_SHOP_ID?.trim() || "",
     orderPrefix: process.env.RECONCILIATION_ORDER_PREFIX || "IM8-",
     storeTimeZone: process.env.RECONCILIATION_STORE_TIME_ZONE?.trim() || "UTC",
     /** When true: `reconciliation_trace` flow_logs + richer Shopify/DB stats on stdout (set RECONCILIATION_VERBOSE_LOG). */
