@@ -1,10 +1,14 @@
+import { segmentOrder } from "../planner";
+import { toD365SalesOrderLines, calculateOrderCost } from "@/lib/transformers/order";
 import type { ShopifyOrderPayload, ShopifyRefundPayload } from "@/inngest/events";
 import type { StoredPlan } from "../types";
 
-export type RefundOrder = Pick<
-  ShopifyOrderPayload,
-  "id" | "line_items" | "shipping_lines" | "total_tax" | "currency"
-> & { presentment_currency?: string; transactions?: ShopifyRefundPayload["transactions"] };
+type OptionalMetadata = "cancel_reason" | "source_name" | "app_id" | "note_attributes";
+export type RefundOrder = Omit<ShopifyOrderPayload, OptionalMetadata> &
+  Partial<Pick<ShopifyOrderPayload, OptionalMetadata>> & {
+    presentment_currency?: string;
+    transactions?: ShopifyRefundPayload["transactions"];
+  };
 
 export interface SegmentRefundAllocation {
   segmentIndex: number;
@@ -21,7 +25,10 @@ export function allocateCents(total: number, weights: number[]): number[] {
   )
     throw new Error("Invalid monetary allocation");
   const sum = weights.reduce((a, b) => a + BigInt(b), BigInt(0));
-  if (!sum) throw new Error("Refund allocation has no financial basis");
+  if (!sum) {
+    if (!total) return weights.map(() => 0);
+    throw new Error("Refund allocation has no financial basis");
+  }
   const fractions = weights.map((weight, index) => ({
     index,
     numerator: BigInt(total) * BigInt(weight),
@@ -78,33 +85,67 @@ export function allocateSegmentRefund(
     }
     if (remaining) throw new Error("Refund quantity exceeds unrefunded segment quantity");
     const values = allocateCents(
-      cents(line.subtotal) + cents(line.total_tax),
+      cents(line.subtotal),
       allocations.map((row) => row.quantities[id] ?? 0)
     );
     values.forEach((value, index) => (weights[index] += value));
+    weights[0] += cents(line.total_tax);
   }
-  // Amount-only adjustments follow the original segment net merchandise values.
-  // Freight, tax and nonphysical lines are owned by segment zero in the persisted plan.
+  // Original monetary ownership mirrors segmentOrder: tax and freight belong to zero.
+  // Allocation values and remaining balances are in the D365 USD posting currency.
+  if ((order.currency || "USD").toUpperCase() !== "USD")
+    throw new Error("Segment refund allocation requires USD shop-money evidence");
+  const remainingBalances = segments.map((segment) =>
+    Math.round(
+      calculateOrderCost(
+        toD365SalesOrderLines(
+          segmentOrder(
+            {
+              ...order,
+              cancel_reason: order.cancel_reason ?? null,
+              source_name: order.source_name ?? null,
+              app_id: order.app_id ?? null,
+              note_attributes: order.note_attributes ?? [],
+            },
+            stored.plan,
+            segment.index
+          ),
+          "refund-capacity",
+          segment.warehouse,
+          true,
+          segment.dataAreaId
+        )
+      ) * 100
+    )
+  );
+  for (const [index, segment] of segments.entries()) {
+    remainingBalances[index] = Math.max(
+      0,
+      remainingBalances[index] -
+        previous
+          .filter((row) => row.segmentIndex === segment.index)
+          .reduce((sum, row) => sum + row.amountCents, 0)
+    );
+  }
   if (!refund.refund_line_items.length || weights.every((weight) => weight === 0)) {
-    for (const [index, segment] of segments.entries()) {
-      for (const line of segment.lines) {
-        const source = order.line_items.find((item) => String(item.id) === line.lineItemId);
-        if (!source || source.quantity <= 0) throw new Error("Refund source line missing");
-        weights[index] += Math.max(
-          0,
-          Math.round(
-            ((cents(source.price) * source.quantity - cents(source.total_discount || "0")) *
-              line.quantity) /
-              source.quantity
-          )
-        );
-      }
-    }
-    weights[0] +=
-      (order.shipping_lines ?? []).reduce((sum, line) => sum + cents(line.price), 0) +
-      cents(order.total_tax || "0");
+    const shippingOnly =
+      refund.order_adjustments?.length &&
+      refund.order_adjustments.every((row) => row.kind === "shipping_refund");
+    weights.splice(
+      0,
+      weights.length,
+      ...remainingBalances.map((balance, index) => (shippingOnly && index !== 0 ? 0 : balance))
+    );
+    if (amountCents > weights.reduce((sum, amount) => sum + amount, 0))
+      throw new Error("Refund amount exceeds remaining segment balances");
+  } else {
+    // Non-line adjustments (including freight) belong to the segment-zero header.
+    const lineTotal = weights.reduce((sum, amount) => sum + amount, 0);
+    if (amountCents > lineTotal) weights[0] += amountCents - lineTotal;
   }
   const amounts = allocateCents(amountCents, weights);
+  if (amounts.some((amount, index) => amount > remainingBalances[index]))
+    throw new Error("Refund amount exceeds remaining segment balances");
   allocations.forEach((row, index) => (row.amountCents = amounts[index]));
   // Keep quantity reservations even when currency rounding gives a zero-cent segment.
   return allocations.filter((row) => row.amountCents > 0 || Object.keys(row.quantities).length > 0);

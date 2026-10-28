@@ -246,7 +246,34 @@ export const processRefund = inngest.createFunction(
     }
 
     const segmentedRefund = await refundOrderSegments(shopifyOrder, refund, step);
-    if (segmentedRefund) return segmentedRefund;
+    if (segmentedRefund) {
+      const amount =
+        segmentedRefund.segments.reduce((sum, segment) => sum + segment.amountCents, 0) / 100;
+      await step.run("report-segment-refund-completion", async () => {
+        await csPlatform.sendOrderRefunded({
+          orderId: shopifyOrderId,
+          shopifyOrderName: shopifyOrder.name || shopifyOrderId,
+          amount: String(amount),
+          reason: "Refund processed",
+          shopifyFinancialStatus: shopifyOrder.financial_status,
+          refundType: amount >= Number(shopifyOrder.total_price || 0) ? "full" : "partial",
+        });
+        await logFlowEvent({
+          flow: "refund",
+          step: "done",
+          status: "completed",
+          runId,
+          shopifyOrderId: String(shopifyOrderId),
+          shopifyOrderName: shopifyOrder.name,
+          payload: {
+            refundId: String(refundId),
+            refundAmountUsd: amount,
+            segments: segmentedRefund.segments,
+          },
+        });
+      });
+      return segmentedRefund;
+    }
 
     // 2. Get D365 Order to confirm it exists and get SalesOrderNumber
     // THK_ShopifyReference is set from Shopify order `name` at header creation (see toD365SalesOrderHeaderV3).
@@ -456,7 +483,9 @@ export const processRefund = inngest.createFunction(
       refundLineItemsCount: Array.isArray(refund.refund_line_items)
         ? refund.refund_line_items.length
         : 0,
-      adjustmentsCount: Array.isArray(refund.order_adjustments) ? refund.order_adjustments.length : 0,
+      adjustmentsCount: Array.isArray(refund.order_adjustments)
+        ? refund.order_adjustments.length
+        : 0,
     });
 
     if (refundAmountUsd <= 0) {

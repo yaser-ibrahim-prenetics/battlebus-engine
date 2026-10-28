@@ -74,3 +74,105 @@ describe("cross-company refunds", () => {
       ).toThrow();
   });
 });
+
+it("credits tax and freight to segment zero and excludes exhausted balances", () => {
+  const financialOrder = {
+    ...order,
+    currency: "USD",
+    total_tax: "10.00",
+    shipping_lines: [{ price: "10.00" }],
+    line_items: [
+      { ...line, id: 1, price: "100.00", quantity: 1, total_discount: "0" },
+      { ...line, id: 2, price: "100.00", quantity: 1, total_discount: "0" },
+    ],
+  };
+  const financialPlan = {
+    ...stored,
+    plan: {
+      ...stored.plan,
+      segments: stored.plan.segments.map((segment, index) => ({
+        ...segment,
+        lines: [{ lineItemId: String(index + 1), quantity: 1, physical: true }],
+      })),
+    },
+  };
+  const second = {
+    ...refund,
+    refund_line_items: [
+      {
+        ...refund.refund_line_items[0],
+        line_item_id: 2,
+        quantity: 1,
+        subtotal: "100.00",
+        total_tax: "10.00",
+      },
+    ],
+  };
+  expect(
+    allocateSegmentRefund(financialPlan, financialOrder as typeof order, second, 12000, []).map(
+      (row) => row.amountCents
+    )
+  ).toEqual([2000, 10000]);
+  const amountOnly = { ...refund, refund_line_items: [] };
+  const prior = [{ segmentIndex: 0, amountCents: 12000, quantities: { "1": 1 } }];
+  expect(
+    allocateSegmentRefund(financialPlan, financialOrder as typeof order, amountOnly, 10000, prior)
+  ).toEqual([{ segmentIndex: 1, amountCents: 10000, quantities: {} }]);
+  expect(() =>
+    allocateSegmentRefund(financialPlan, financialOrder as typeof order, amountOnly, 10001, prior)
+  ).toThrow("remaining segment balances");
+});
+
+it("uses posted shipping discounts, duties and cumulative discount cents for capacity", () => {
+  const financialOrder = {
+    ...order,
+    currency: "USD",
+    total_tax: "0",
+    tax_lines: [],
+    shipping_lines: [{ ...order.shipping_lines[0], price: "10.00", discounted_price: "0.00" }],
+    line_items: [{ ...line, id: 1, price: "100.00", quantity: 2, total_discount: "0" }],
+  };
+  const financialPlan = {
+    ...stored,
+    plan: {
+      ...stored.plan,
+      segments: stored.plan.segments.map((segment) => ({
+        ...segment,
+        lines: [{ lineItemId: "1", quantity: 1, physical: true }],
+      })),
+    },
+  };
+  const amountOnly = { ...refund, refund_line_items: [] };
+  expect(
+    allocateSegmentRefund(financialPlan, financialOrder, amountOnly, 20000, []).map(
+      (row) => row.amountCents
+    )
+  ).toEqual([10000, 10000]);
+  const withDuty = {
+    ...financialOrder,
+    current_total_duties_set: { shop_money: { amount: "10.00", currency_code: "USD" } },
+  };
+  expect(
+    allocateSegmentRefund(financialPlan, withDuty, amountOnly, 21000, []).map(
+      (row) => row.amountCents
+    )
+  ).toEqual([11000, 10000]);
+  const discounted = {
+    ...financialOrder,
+    shipping_lines: [],
+    line_items: [{ ...line, id: 1, price: "1.00", quantity: 3, total_discount: "0.01" }],
+  };
+  const three = {
+    ...financialPlan,
+    plan: {
+      ...financialPlan.plan,
+      segments: [0, 1, 2].map((index) => ({ ...financialPlan.plan.segments[0], index })),
+    },
+  };
+  expect(
+    allocateSegmentRefund(three, discounted, amountOnly, 299, []).map((row) => row.amountCents)
+  ).toEqual([100, 99, 100]);
+  expect(() => allocateSegmentRefund(three, discounted, amountOnly, 300, [])).toThrow(
+    "remaining segment balances"
+  );
+});

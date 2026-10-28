@@ -11,11 +11,7 @@
 //   'tax'      → combined tax + duty line
 //   any other  → real Shopify line_item.id
 
-import {
-  isDatabaseConfigured,
-  queryDatabase,
-  quoteIdentifier,
-} from "@/lib/db/database";
+import { isDatabaseConfigured, queryDatabase, quoteIdentifier } from "@/lib/db/database";
 
 export const SHOPIFY_SHIPPING_LINE_ITEM_ID = "shipping";
 export const SHOPIFY_TAX_LINE_ITEM_ID = "tax";
@@ -180,6 +176,8 @@ export interface RefundOrderLineRecord {
   shopify_order_name?: string | null;
   /** Shopify refund.id (Numeric-ish string). Used to build the synthetic line item id. */
   refund_id: string;
+  /** Independent segment identity; preserves the original Shopify refund ID. */
+  segment_index?: number;
   /** D365 refund service SKU (e.g. IM8-SER-000005). */
   refund_sku: string;
   d365_sales_order_number?: string | null;
@@ -228,7 +226,9 @@ export async function saveRefundOrderLine(
     };
   }
 
-  const lineItemId = buildRefundLineItemId(refundId);
+  const lineItemId =
+    buildRefundLineItemId(refundId) +
+    (record.segment_index == null ? "" : `:segment:${record.segment_index}`);
   const fulfilled = Boolean(record.is_fulfilled_to_dynamics);
 
   const baseRow = {
