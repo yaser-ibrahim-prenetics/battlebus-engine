@@ -21,7 +21,6 @@ export {
   processActionFulfill,
 } from "./process-hub-actions";
 export { processProductSync } from "./process-product-sync";
-export { processInventorySync } from "./process-inventory-sync";
 export { processInventoryMesh } from "./process-inventory-mesh";
 export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
@@ -58,7 +57,6 @@ import {
   processActionFulfill,
 } from "./process-hub-actions";
 import { processProductSync } from "./process-product-sync";
-import { processInventorySync } from "./process-inventory-sync";
 import { processInventoryMesh } from "./process-inventory-mesh";
 import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
@@ -83,7 +81,6 @@ const inventoryFunctions = config.features.enableInventoryRuns
   ? [
       // Product & Inventory Sync
       processProductSync,
-      processInventorySync,
       processInventoryMesh,
       processInventoryFullSync,
       processShopifyInventoryUpdate,

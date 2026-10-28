@@ -373,38 +373,32 @@
 
 ## Inventory Management Functions
 
-### 6. `process-inventory-sync`
+### 6. `process-shopify-inventory-update`
 
-**Function ID**: `process-inventory-sync`  
+**Function ID**: `process-shopify-inventory-update`
 **Trigger Event**: `shopify/inventory.updated`
 
-**Purpose**: Sync inventory level changes from Shopify to D365 and GPS
+**Purpose**: Resolve a durably captured Shopify inventory item to its canonical SKU, then queue
+serialized mesh events for D365 and GPS.
 
 **Workflow**:
 
 ```
-1. Debounce (10s)
-   └─ Avoid processing rapid-fire updates
-
-2. Sync to D365
-   └─ Update inventory level
-
-3. Sync to GPS
-   └─ Update warehouse inventory
-
-4. Log Results
-   └─ Slack notification on errors
+1. Resolve inventory item ID to canonical SKU in a retryable step
+2. Queue an `inventory/sync` event for D365
+3. Queue an `inventory/sync` event for GPS
+4. Reuse the source webhook operation ID for derived-event idempotency
 ```
 
 **Technical Details**:
 
-- **Debounce**: 10s period, keyed by `inventoryItemId + locationId`
-- **Retries**: 5 attempts
-- **Concurrency**: 5 simultaneous syncs
+- **Durability**: Raw event is persisted to `webhook_inbox` before this function runs
+- **Retries**: Default inventory retry policy
+- **Concurrency**: 1 per Shopify inventory item during SKU resolution
 
 **Output Events**:
 
-- Slack warnings on sync failures
+- Canonical `inventory/sync` events for D365 and GPS
 
 ---
 

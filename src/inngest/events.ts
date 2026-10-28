@@ -168,11 +168,12 @@ export type ShopifyProductDeletedEvent = {
 export type ShopifyInventoryUpdatedEvent = {
   name: "shopify/inventory.updated";
   data: {
+    sourceOperationId: string;
     inventoryItemId: string;
     locationId: string;
+    available: number;
+    updatedAt: string;
     shopifyStore: string;
-    inventoryJson: ShopifyInventoryLevelPayload;
-    receivedAt: string;
   };
 };
 
@@ -749,13 +750,6 @@ export interface ShopifyVariantPayload {
   barcode: string | null;
   requires_shipping: boolean;
   taxable: boolean;
-}
-
-export interface ShopifyInventoryLevelPayload {
-  inventory_item_id: number;
-  location_id: number;
-  available: number | null;
-  updated_at: string;
 }
 
 /** Administrative events reference an authenticated, durable command; never carry raw provider payloads. */
