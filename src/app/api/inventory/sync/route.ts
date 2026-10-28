@@ -17,6 +17,7 @@ import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
 import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
+import { resolveShopifyInventorySku } from "@/lib/clients/shopify-inventory";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
@@ -83,6 +84,8 @@ export async function POST(request: NextRequest) {
       .map((p) => p.trim()) as Platform[] | null;
 
     const body: InventorySyncPayload = await request.json();
+    const resolvedSku = await resolveShopifyInventorySku(body);
+    body.sku = resolvedSku;
 
     // Determine source platform: from query param, body, or infer from payload
     const source: Platform = fromPlatform || body.source || "shopify";
@@ -128,7 +131,7 @@ export async function POST(request: NextRequest) {
             destination,
             payload: {
               ...body,
-              inventoryKey: body.inventoryKey || canonicalInventoryKey(body),
+              inventoryKey: canonicalInventoryKey({ sku: resolvedSku }),
               source,
               destination,
               timestamp: body.timestamp || new Date().toISOString(),

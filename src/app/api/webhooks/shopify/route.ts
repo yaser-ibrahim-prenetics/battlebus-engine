@@ -11,6 +11,7 @@ import {
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
+import { resolveShopifyInventorySku } from "@/lib/clients/shopify-inventory";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
@@ -515,6 +516,10 @@ export async function POST(request: NextRequest) {
           );
         } else {
           console.log(`[Webhook] [${requestId}] 📤 Queuing events: inventory/sync (via mesh)`);
+          const inventorySku = await resolveShopifyInventorySku(
+            { inventoryItemId: String(payload.inventory_item_id) },
+            effectiveShopDomain
+          );
           // Use the mesh API pattern - send to mesh which routes to destinations
           eventsToSend.push({
             id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
@@ -523,9 +528,8 @@ export async function POST(request: NextRequest) {
               source: "shopify",
               destination: "dynamics",
               payload: {
-                inventoryKey: canonicalInventoryKey({
-                  inventoryItemId: String(payload.inventory_item_id),
-                }),
+                inventoryKey: canonicalInventoryKey({ sku: inventorySku }),
+                sku: inventorySku,
                 inventoryItemId: String(payload.inventory_item_id),
                 locationId: String(payload.location_id),
                 available: payload.available,
@@ -544,9 +548,8 @@ export async function POST(request: NextRequest) {
               source: "shopify",
               destination: "gps",
               payload: {
-                inventoryKey: canonicalInventoryKey({
-                  inventoryItemId: String(payload.inventory_item_id),
-                }),
+                inventoryKey: canonicalInventoryKey({ sku: inventorySku }),
+                sku: inventorySku,
                 inventoryItemId: String(payload.inventory_item_id),
                 locationId: String(payload.location_id),
                 available: payload.available,
