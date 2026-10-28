@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { loadFixture } from "../../../../../tests/fixtures";
 import type { IShopifyFulfillmentOrder } from "@/lib/types/shopify";
-import { orderInputHash, planOrderSegments, segmentOrder } from "../planner";
+import {
+  assertSegmentPlanReplayCompatible,
+  legacyOrderInputHash,
+  orderInputHash,
+  planOrderSegments,
+  segmentOrder,
+} from "../planner";
 import { segmentLineRequests } from "../lines";
 import {
   toD365SalesOrderLines,
@@ -57,6 +63,26 @@ describe("quantity-based segment planning", () => {
         line_items: [{ ...order.line_items[0], sku: "IM8-FG-000035" }],
       })
     ).not.toBe(original);
+  });
+
+  it("resumes safe version 1 plans but blocks behavior they never fingerprinted", () => {
+    const { order, fos, routing } = fixture();
+    const plan = {
+      ...planOrderSegments(order, fos, 250, routing),
+      version: 1 as const,
+      inputHash: legacyOrderInputHash(order),
+    };
+
+    expect(() => assertSegmentPlanReplayCompatible(plan, order)).not.toThrow();
+    expect(() =>
+      assertSegmentPlanReplayCompatible(plan, { ...order, tags: "replacement-im8-1234" })
+    ).toThrow("tag-derived behavior");
+    expect(() =>
+      assertSegmentPlanReplayCompatible(plan, {
+        ...order,
+        line_items: [{ ...order.line_items[0], quantity: 4 }],
+      })
+    ).toThrow("Order changed");
   });
 
   it("gives each segmented subscription reward a stable synthetic identity", () => {
