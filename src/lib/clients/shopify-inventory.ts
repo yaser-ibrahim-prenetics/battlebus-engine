@@ -271,6 +271,7 @@ export async function setInventoryQuantities(params: {
     changeFromQuantity: number;
   }>;
   referenceDocumentUri: string;
+  idempotencyToken: string;
 }): Promise<void> {
   if (params.quantities.length === 0) return;
   if (config.features.dryRunMode) {
@@ -315,6 +316,7 @@ export async function setInventoryQuantities(params: {
   if (modern) {
     variables.idempotencyKey = idempotencyKey([
       "inventorySetQuantities",
+      params.idempotencyToken,
       params.referenceDocumentUri,
       quantities,
     ]);
@@ -325,15 +327,18 @@ export async function setInventoryQuantities(params: {
   assertNoUserErrors("inventorySetQuantities", payload.data?.inventorySetQuantities?.userErrors);
 }
 
-export async function setSkuInventoryAtLocation(params: {
-  sku: string;
+async function reconcileInventoryAtLocation<Result>(params: {
   locationId: string;
   quantity: number;
   referenceDocumentUri: string;
-}): Promise<{ updated: number; inventoryItemIds: string[] }> {
+  idempotencyToken: string;
+  loadItems: () => Promise<ShopifyInventoryItem[]>;
+  missingItemMessage: string;
+  toResult: (items: ShopifyInventoryItem[]) => Result;
+}): Promise<Result> {
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const items = await findInventoryItemsBySkuAtLocation(params.sku, params.locationId);
-    if (items.length === 0) throw new Error(`SKU ${params.sku} was not found in Shopify`);
+    const items = await params.loadItems();
+    if (items.length === 0) throw new Error(params.missingItemMessage);
     await Promise.all(
       items
         .filter((item) => !item.activeAtLocation)
@@ -343,18 +348,37 @@ export async function setSkuInventoryAtLocation(params: {
       await setInventoryQuantities({
         locationId: params.locationId,
         referenceDocumentUri: params.referenceDocumentUri,
+        idempotencyToken: params.idempotencyToken,
         quantities: items.map((item) => ({
           inventoryItemId: item.inventoryItemId,
           quantity: params.quantity,
           changeFromQuantity: item.availableQuantity ?? 0,
         })),
       });
-      return { updated: items.length, inventoryItemIds: items.map((item) => item.inventoryItemId) };
+      return params.toResult(items);
     } catch (error) {
       if (!isStaleQuantityError(error) || attempt === 3) throw error;
     }
   }
-  throw new Error(`Could not reconcile Shopify inventory for SKU ${params.sku}`);
+  throw new Error("Could not reconcile Shopify inventory after 3 attempts");
+}
+
+export async function setSkuInventoryAtLocation(params: {
+  sku: string;
+  locationId: string;
+  quantity: number;
+  referenceDocumentUri: string;
+  idempotencyToken: string;
+}): Promise<{ updated: number; inventoryItemIds: string[] }> {
+  return reconcileInventoryAtLocation({
+    ...params,
+    loadItems: () => findInventoryItemsBySkuAtLocation(params.sku, params.locationId),
+    missingItemMessage: `SKU ${params.sku} was not found in Shopify`,
+    toResult: (items) => ({
+      updated: items.length,
+      inventoryItemIds: items.map((item) => item.inventoryItemId),
+    }),
+  });
 }
 
 export async function setInventoryItemAtLocation(params: {
@@ -362,27 +386,14 @@ export async function setInventoryItemAtLocation(params: {
   locationId: string;
   quantity: number;
   referenceDocumentUri: string;
+  idempotencyToken: string;
 }): Promise<void> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const item = await getInventoryItemAtLocation(params.inventoryItemId, params.locationId);
-    if (!item.activeAtLocation) {
-      await activateInventoryAtLocation(item.inventoryItemId, params.locationId);
-    }
-    try {
-      await setInventoryQuantities({
-        locationId: params.locationId,
-        referenceDocumentUri: params.referenceDocumentUri,
-        quantities: [
-          {
-            inventoryItemId: item.inventoryItemId,
-            quantity: params.quantity,
-            changeFromQuantity: item.availableQuantity ?? 0,
-          },
-        ],
-      });
-      return;
-    } catch (error) {
-      if (!isStaleQuantityError(error) || attempt === 3) throw error;
-    }
-  }
+  return reconcileInventoryAtLocation({
+    ...params,
+    loadItems: async () => [
+      await getInventoryItemAtLocation(params.inventoryItemId, params.locationId),
+    ],
+    missingItemMessage: `Inventory item ${params.inventoryItemId} was not found in Shopify`,
+    toResult: () => undefined,
+  });
 }

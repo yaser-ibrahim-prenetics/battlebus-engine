@@ -9,6 +9,7 @@ vi.mock("@/lib/clients/shopify", () => ({
 import {
   findInventoryItemsBySku,
   resolveShopifyInventorySku,
+  setInventoryQuantities,
   setSkuInventoryAtLocation,
   shopifyGid,
 } from "../shopify-inventory";
@@ -89,6 +90,7 @@ describe("Shopify inventory client", () => {
         locationId: "99",
         quantity: 12.9,
         referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+        idempotencyToken: "operation-1",
       })
     ).resolves.toEqual({
       updated: 2,
@@ -137,6 +139,7 @@ describe("Shopify inventory client", () => {
         locationId: "99",
         quantity: 1,
         referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-MISSING",
+        idempotencyToken: "operation-2",
       })
     ).rejects.toThrow("SKU MISSING was not found in Shopify");
   });
@@ -182,12 +185,37 @@ describe("Shopify inventory client", () => {
       locationId: "99",
       quantity: 12,
       referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+      idempotencyToken: "operation-3",
     });
 
     expect(mocks.graphql.mock.calls[1][1].input.quantities[0].changeFromQuantity).toBe(5);
     expect(mocks.graphql.mock.calls[3][1].input.quantities[0].changeFromQuantity).toBe(6);
     expect(mocks.graphql.mock.calls[1][1].idempotencyKey).not.toBe(
       mocks.graphql.mock.calls[3][1].idempotencyKey
+    );
+  });
+
+  it("does not suppress a later stock cycle with the same absolute quantities", async () => {
+    mocks.graphql.mockResolvedValue({
+      data: { inventorySetQuantities: { userErrors: [] } },
+    });
+    const common = {
+      locationId: "99",
+      referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+      quantities: [
+        {
+          inventoryItemId: "gid://shopify/InventoryItem/1",
+          quantity: 12,
+          changeFromQuantity: 7,
+        },
+      ],
+    };
+
+    await setInventoryQuantities({ ...common, idempotencyToken: "operation-a" });
+    await setInventoryQuantities({ ...common, idempotencyToken: "operation-b" });
+
+    expect(mocks.graphql.mock.calls[0][1].idempotencyKey).not.toBe(
+      mocks.graphql.mock.calls[1][1].idempotencyKey
     );
   });
 
@@ -207,6 +235,7 @@ describe("Shopify inventory client", () => {
         locationId: "99",
         quantity: 12,
         referenceDocumentUri: "gid://battle-bus/D365Inventory/U001-IM8-1",
+        idempotencyToken: "operation-4",
       })
     ).resolves.toEqual({
       updated: 1,
