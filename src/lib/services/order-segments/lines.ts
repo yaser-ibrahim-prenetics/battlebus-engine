@@ -1,7 +1,11 @@
 import type { ShopifyOrderPayload } from "@/inngest/events";
 import type { OrderAccounting } from "../order-accounting/types";
 import type { OrderSegment } from "./types";
-import { toD365SalesOrderLines } from "@/lib/transformers/order";
+import {
+  toD365SalesOrderLines,
+  toD365SubscriptionRewardLines,
+} from "@/lib/transformers/order";
+import { subscriptionRewardSegmentLineItemId } from "@/lib/helpers/subscription-rewards";
 
 /** Preserve the source line identity even when bundles expand to several D365 lines. */
 export function segmentLineRequests(
@@ -17,7 +21,8 @@ export function segmentLineRequests(
       segment.warehouse,
       false,
       segment.dataAreaId,
-      accounting
+      accounting,
+      false
     ).map((request) => ({
       sourceLineId: String(line.id),
       sourceQuantity: line.quantity,
@@ -31,12 +36,25 @@ export function segmentLineRequests(
     segment.warehouse,
     true,
     segment.dataAreaId,
-    accounting
+    accounting,
+    false
   ).map((request, index) => ({
     sourceLineId: `service:${index}`,
     sourceQuantity: 1,
     isService: true,
     request,
   }));
-  return [...productLines, ...serviceLines];
+  const rewardLines = toD365SubscriptionRewardLines(
+    order,
+    salesOrderNumber,
+    segment.warehouse,
+    segment.dataAreaId
+  ).map((request) => ({
+    sourceLineId: subscriptionRewardSegmentLineItemId(request.itemNumber, segment.index),
+    sourceQuantity: request.quantity,
+    isService: true,
+    isSubscriptionReward: true,
+    request,
+  }));
+  return [...productLines, ...serviceLines, ...rewardLines];
 }

@@ -19,6 +19,7 @@ import { readPlan, reservePlan, saveProgress } from "./store";
 import { bindShopifySegments } from "./shopify";
 import { segmentLineRequests } from "./lines";
 import type { OrderSegment, StepRunner, SegmentProgress, RecordedSegmentLine } from "./types";
+import { saveOrderLines } from "@/lib/services/order-lines";
 
 /** Returns null for legacy/unsplit orders; a stored plan always wins on replay. */
 type ProcessSegmentsInput = {
@@ -156,6 +157,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
           quantity: line.request.quantity,
           lotId,
           isService: line.isService,
+          isSubscriptionReward: line.isSubscriptionReward,
         });
       }
       await step.run(`${prefix}-save-lines`, () =>
@@ -166,6 +168,27 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
           ),
         })
       );
+      await step.run(`${prefix}-save-reward-lines`, async () => {
+        const rewards = recordedLines.filter((line) => line.isSubscriptionReward);
+        if (!rewards.length) return { ok: true as const, upsertedRowCount: 0 };
+        const saved = await saveOrderLines(
+          rewards.map((line) => ({
+            shopify_order_id: String(order.id),
+            shopify_order_name: order.name,
+            shopify_line_item_id: line.sourceLineId,
+            shopify_sku: line.itemNumber,
+            d365_item_number: line.itemNumber,
+            d365_sales_order_number: salesOrderNumber,
+            data_area_id: segment.dataAreaId,
+            quantity: line.quantity,
+            price: 0,
+            dynamics_inventory_lot_id: line.lotId,
+            is_service_line: false,
+          }))
+        );
+        if (!saved.ok) throw new Error(`Could not persist segmented subscription rewards: ${saved.reason}`);
+        return saved;
+      });
       await step.run(`${prefix}-confirm`, () =>
         action("confirm", { salesOrderNumber }, async () => {
           await dynamics.confirmSalesOrder(salesOrderNumber, segment.dataAreaId);

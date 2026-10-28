@@ -50,6 +50,10 @@ export function subscriptionRewardLineItemId(sku: string): string {
   return `${SHOPIFY_SUBSCRIPTION_REWARD_LINE_ITEM_PREFIX}${String(sku).trim().toUpperCase()}`;
 }
 
+export function subscriptionRewardSegmentLineItemId(sku: string, segmentIndex: number): string {
+  return `${subscriptionRewardLineItemId(sku)}:segment:${segmentIndex}`;
+}
+
 export function isSubscriptionRewardLineItemId(value: string | null | undefined): boolean {
   return String(value || "").startsWith(SHOPIFY_SUBSCRIPTION_REWARD_LINE_ITEM_PREFIX);
 }
