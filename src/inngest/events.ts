@@ -754,3 +754,9 @@ export interface ShopifyInventoryLevelPayload {
   available: number | null;
   updated_at: string;
 }
+
+/** Administrative events reference an authenticated, durable command; never carry raw provider payloads. */
+export type AdministrativeRecoveryEvent = {
+  name: "operations/recovery.requested";
+  data: { requestId: string };
+};

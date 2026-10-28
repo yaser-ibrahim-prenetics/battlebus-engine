@@ -27,6 +27,9 @@ export async function compareOrderDetails(names: Set<string>, kind: Kind, window
             if (
               line.SalesOrderNumber !== header.SalesOrderNumber ||
               !line.CurrencyCode ||
+              line.OrderedSalesQuantity == null ||
+              line.SalesPrice == null ||
+              line.LineDiscountAmount == null ||
               !Number.isFinite(Number(line.OrderedSalesQuantity)) ||
               !Number.isFinite(Number(line.SalesPrice)) ||
               !Number.isFinite(Number(line.LineDiscountAmount))
@@ -48,7 +51,11 @@ export async function compareOrderDetails(names: Set<string>, kind: Kind, window
           }
         } else {
           for (const line of await readSlipEvidence(company, header.SalesOrderNumber)) {
-            if (line.SalesId !== header.SalesOrderNumber || !Number.isFinite(Number(line.Qty)))
+            if (
+              line.SalesId !== header.SalesOrderNumber ||
+              line.Qty == null ||
+              !Number.isFinite(Number(line.Qty))
+            )
               throw new Error("Incomplete D365 packing-slip evidence");
             if (!inWindow(line.DeliveryDate, window) || Number(line.Qty) <= 0) continue;
             actual.push({

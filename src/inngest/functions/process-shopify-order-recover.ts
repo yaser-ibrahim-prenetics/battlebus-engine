@@ -111,7 +111,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
     triggers: [{ event: "shopify/order.recover" }],
     retries: 1,
   },
-  async ({ event, step }) => {
+  async ({ event, step, runId }) => {
     const data = (event.data || {}) as RecoverInput;
     const source = data.source === "reconciliation" ? "reconciliation" : "manual";
     let requestedIds = normalizeTokens(data.shopifyOrderIds);
@@ -225,6 +225,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
 
         const replayEventName = resolveReplayEventName(order);
         const result = await inngest.send({
+          id: `order-recovery:${event.id || runId}:${shopifyOrderId}`,
           name: replayEventName,
           data: {
             shopifyOrderId,
