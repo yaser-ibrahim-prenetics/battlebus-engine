@@ -1143,8 +1143,8 @@ export async function syncProduct(
 }
 
 /**
- * Sync inventory levels from Shopify to GPS warehouse
- * TODO: Implement actual GPS inventory adjustment
+ * Sync inventory levels to GPS warehouse.
+ * Fails closed until GPS exposes and configures an approved inventory-adjustment API.
  */
 export async function syncInventoryLevel(inventory: {
   inventoryItemId: string;
@@ -1159,22 +1159,13 @@ export async function syncInventoryLevel(inventory: {
 
   if (config.features.dryRunMode) {
     console.log(`[GPS] DRY RUN - Would sync inventory for item ${inventory.inventoryItemId}`);
-    return { success: true, message: "DRY RUN - GPS inventory sync placeholder" };
+    return { success: true, message: "DRY RUN - Would adjust GPS inventory" };
   }
 
-  // TODO: GPS inventory adjustment API
-  // Steps:
-  //   1. Map Shopify inventory_item_id → GPS SKU
-  //   2. Map Shopify location_id → GPS warehouse code
-  //   3. Query current GPS stock level
-  //   4. Create adjustment if different
-  // May involve:
-  //   POST /openapi/v1/inventory/adjust (if GPS supports it)
-  //   or a manual stock count update via GPS API
-  console.log(`[GPS] ⚠️  Inventory sync not yet implemented - placeholder only`);
+  console.error("[GPS] Inventory adjustment rejected: no approved GPS adjustment API is configured");
   return {
-    success: true,
-    message: "Placeholder - GPS inventory sync not yet implemented",
+    success: false,
+    message: "GPS inventory adjustment provider is not configured",
   };
 }
 
