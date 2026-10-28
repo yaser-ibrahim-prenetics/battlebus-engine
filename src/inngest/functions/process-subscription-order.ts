@@ -14,6 +14,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
+import { loadSaudiShortAddress } from "@/lib/services/saudi-short-address";
 import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
@@ -456,6 +457,12 @@ export const processSubscriptionOrder = inngest.createFunction(
     });
 
     const { dataAreaId, warehouseName, country_code } = warehouseInfo;
+    const saudiShortAddress = await loadSaudiShortAddress({
+      step,
+      order,
+      shopifyOrderId,
+      shopifyStore,
+    });
 
     // =========================================================================
     // STEP 5: Create D365 Sales Order Header (check for existing first)
@@ -472,6 +479,7 @@ export const processSubscriptionOrder = inngest.createFunction(
       shopDomain: event.data.shopifyStore,
       testMode: event.data.testMode,
       fallbackDataArea: dataAreaId,
+      shortAddress: saudiShortAddress,
     });
     if (segmented) return segmented;
 
@@ -527,7 +535,13 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped", salesOrderNumber: "" };
       }
 
-      const headerPayload = toD365SalesOrderHeaderV3(order, warehouseName, dataAreaId, accounting);
+      const headerPayload = toD365SalesOrderHeaderV3(
+        order,
+        warehouseName,
+        dataAreaId,
+        accounting,
+        saudiShortAddress
+      );
 
       const result = await retryWithBackoff(
         () => dynamics.createSalesOrderHeaderV3(headerPayload),
@@ -718,7 +732,12 @@ export const processSubscriptionOrder = inngest.createFunction(
         return { status: "skipped" as const, reason: "Not a GPS warehouse", gpsOrderId: undefined };
 
       try {
-        const gpsOrder = toGpsOutboundOrder(order, d365OrderNumber, warehouseName);
+        const gpsOrder = toGpsOutboundOrder(
+          order,
+          d365OrderNumber,
+          warehouseName,
+          saudiShortAddress
+        );
         const result = await gps.createOutboundOrder(
           gpsOrder,
           warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -793,6 +812,7 @@ export const processSubscriptionOrder = inngest.createFunction(
             status: finalStatus,
             warehouse: warehouseName,
             subscriptionContractId,
+            state: saudiShortAddress ? { saudiShortAddress } : undefined,
           },
           {
             inngestIdempotencyKey,
