@@ -175,6 +175,7 @@ export const processInventoryMesh = inngest.createFunction(
           if (shopifyResult) {
             result = {
               ...result,
+              success: result.success && shopifyResult.success,
               message: `${result.message} → Shopify: ${shopifyResult.message}`,
               data: {
                 ...result.data,
