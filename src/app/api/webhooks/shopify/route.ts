@@ -10,8 +10,6 @@ import {
   shopifyWebhookSecretSource,
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
-import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
-import { resolveShopifyInventorySku } from "@/lib/clients/shopify-inventory";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
@@ -515,49 +513,22 @@ export async function POST(request: NextRequest) {
             `[Webhook] [${requestId}] ⏭️  inventory_levels/update ignored (ENABLE_INVENTORY_SYNC=false)`
           );
         } else {
-          console.log(`[Webhook] [${requestId}] 📤 Queuing events: inventory/sync (via mesh)`);
-          const inventorySku = await resolveShopifyInventorySku(
-            { inventoryItemId: String(payload.inventory_item_id) },
-            effectiveShopDomain
+          console.log(
+            `[Webhook] [${requestId}] 📤 Queuing durable SKU resolution: shopify/inventory.updated`
           );
-          // Use the mesh API pattern - send to mesh which routes to destinations
+          const sourceOperationId =
+            webhookId ||
+            `${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at || payload.available}`;
           eventsToSend.push({
-            id: `inventory-sync-shopify-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-            name: "inventory/sync",
+            id: `shopify-inventory-updated-${sourceOperationId}`,
+            name: "shopify/inventory.updated",
             data: {
-              source: "shopify",
-              destination: "dynamics",
-              payload: {
-                inventoryKey: canonicalInventoryKey({ sku: inventorySku }),
-                sku: inventorySku,
-                inventoryItemId: String(payload.inventory_item_id),
-                locationId: String(payload.location_id),
-                available: payload.available,
-                quantity: payload.available,
-                action: "update",
-                source: "shopify",
-                timestamp: payload.updated_at || new Date().toISOString(),
-              },
-            },
-          });
-          // Also sync to GPS warehouse
-          eventsToSend.push({
-            id: `inventory-sync-shopify-gps-${payload.inventory_item_id}-${payload.location_id}-${payload.updated_at}`,
-            name: "inventory/sync",
-            data: {
-              source: "shopify",
-              destination: "gps",
-              payload: {
-                inventoryKey: canonicalInventoryKey({ sku: inventorySku }),
-                sku: inventorySku,
-                inventoryItemId: String(payload.inventory_item_id),
-                locationId: String(payload.location_id),
-                available: payload.available,
-                quantity: payload.available,
-                action: "update",
-                source: "shopify",
-                timestamp: payload.updated_at || new Date().toISOString(),
-              },
+              sourceOperationId,
+              inventoryItemId: String(payload.inventory_item_id),
+              locationId: String(payload.location_id),
+              available: Number(payload.available || 0),
+              updatedAt: payload.updated_at || new Date().toISOString(),
+              shopifyStore: effectiveShopDomain,
             },
           });
         }

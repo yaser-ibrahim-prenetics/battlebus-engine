@@ -24,6 +24,7 @@ export { processProductSync } from "./process-product-sync";
 export { processInventorySync } from "./process-inventory-sync";
 export { processInventoryMesh } from "./process-inventory-mesh";
 export { processInventoryFullSync } from "./process-inventory-full-sync";
+export { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
 export { processLocationSync } from "./process-location-sync";
 export { processBackorder } from "./process-backorder";
 export { drainPendingActions } from "./drain-pending-actions";
@@ -60,6 +61,7 @@ import { processProductSync } from "./process-product-sync";
 import { processInventorySync } from "./process-inventory-sync";
 import { processInventoryMesh } from "./process-inventory-mesh";
 import { processInventoryFullSync } from "./process-inventory-full-sync";
+import { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
 import { processLocationSync } from "./process-location-sync";
 import { processBackorder } from "./process-backorder";
 import { drainPendingActions } from "./drain-pending-actions";
@@ -84,6 +86,7 @@ const inventoryFunctions = config.features.enableInventoryRuns
       processInventorySync,
       processInventoryMesh,
       processInventoryFullSync,
+      processShopifyInventoryUpdate,
       // Location sync and cache refresh are inventory-adjacent flows.
       processLocationSync,
       refreshLocationConfigCache,
