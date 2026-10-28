@@ -59,6 +59,7 @@ import { type ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
+import { getAssociatedOrderLink } from "@/lib/helpers/order-linkage";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -804,6 +805,7 @@ export const processSubscriptionOrder = inngest.createFunction(
     await step.run("notify-cs-platform", async () => {
       try {
         const finalStatus = gpsResult.status === "backorder" ? "backorder" : "completed";
+        const associatedOrder = getAssociatedOrderLink(order);
         await csPlatform.sendOrderUpdate(
           {
             shopifyOrderId,
@@ -812,7 +814,13 @@ export const processSubscriptionOrder = inngest.createFunction(
             status: finalStatus,
             warehouse: warehouseName,
             subscriptionContractId,
-            state: saudiShortAddress ? { saudiShortAddress } : undefined,
+            state:
+              associatedOrder || saudiShortAddress
+                ? {
+                    ...(associatedOrder ? { associatedOrder } : {}),
+                    ...(saudiShortAddress ? { saudiShortAddress } : {}),
+                  }
+                : undefined,
           },
           {
             inngestIdempotencyKey,
