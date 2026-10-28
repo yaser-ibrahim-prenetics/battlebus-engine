@@ -16,6 +16,63 @@ import * as shopify from "@/lib/clients/shopify";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { canonicalInventoryKey } from "@/lib/helpers/inventory-identity";
+
+type DeletedProductInventoryTarget = {
+  sku?: string;
+  inventoryItemId?: string;
+  variantId?: string;
+  locationId?: string;
+  warehouseName?: string;
+};
+
+export async function resolveDeletedProductInventoryTargets(
+  productId: string,
+  product: ShopifyProductPayload
+): Promise<DeletedProductInventoryTarget[]> {
+  if (isDatabaseConfigured()) {
+    try {
+      const retained = await queryDatabase<{
+        sku: string;
+        shopify_inventory_item_id: string | number | null;
+        shopify_variant_id: string | number | null;
+        location_id: string | null;
+        warehouse: string | null;
+      }>(
+        `SELECT sku, shopify_inventory_item_id, shopify_variant_id, location_id, warehouse
+         FROM public.stocks
+         WHERE shopify_product_id = $1`,
+        [productId]
+      );
+      if (retained.rows.length > 0) {
+        return retained.rows.map((row) => ({
+          sku: row.sku,
+          inventoryItemId: row.shopify_inventory_item_id
+            ? String(row.shopify_inventory_item_id)
+            : undefined,
+          variantId: row.shopify_variant_id ? String(row.shopify_variant_id) : undefined,
+          locationId: row.location_id || undefined,
+          warehouseName: row.warehouse || undefined,
+        }));
+      }
+    } catch (error) {
+      console.warn(
+        `[ProductSync] Could not load retained stock for deleted product ${productId}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return (product.variants || [])
+    .map((variant) => ({
+      sku: variant.sku || undefined,
+      inventoryItemId: variant.inventory_item_id
+        ? String(variant.inventory_item_id)
+        : undefined,
+      variantId: variant.id ? String(variant.id) : undefined,
+    }))
+    .filter((target) => target.sku || target.inventoryItemId || target.variantId);
+}
 
 export const processProductSync = inngest.createFunction(
   {
@@ -53,29 +110,48 @@ export const processProductSync = inngest.createFunction(
 
     // Handle deletion
     if (event.name === "shopify/product.deleted") {
-      console.log(`[ProductSync] Product deletion detected - syncing to D365 and GPS`);
+      console.log(`[ProductSync] Product deletion detected - zeroing retained inventory`);
+      const targets = await step.run("resolve-deleted-product-inventory", () =>
+        resolveDeletedProductInventoryTargets(String(productId), product)
+      );
+      if (targets.length === 0) {
+        throw new Error(`No retained variants found for deleted Shopify product ${productId}`);
+      }
 
-      // Step 1: Delete from D365
-      const d365Result = await step.run("delete-product-from-d365", async () => {
-        console.log(`[ProductSync] Deleting product from D365...`);
-        // TODO: Implement actual D365 product deletion
-        return {
-          success: true,
-          message: "Placeholder - D365 product deletion not yet implemented",
-        };
-      });
+      for (const [index, target] of targets.entries()) {
+        for (const destination of ["dynamics", "gps"] as const) {
+          await step.sendEvent(`zero-deleted-product-${index}-${destination}`, {
+            id: `product-delete-zero-${productId}-${target.locationId || "all"}-${target.sku || target.inventoryItemId || target.variantId}-${destination}`,
+            name: "inventory/sync" as const,
+            data: {
+              source: "shopify",
+              destination,
+              payload: {
+                inventoryKey: canonicalInventoryKey(target),
+                ...target,
+                quantity: 0,
+                available: 0,
+                action: "delete" as const,
+                source: "shopify",
+                destination,
+                reason: "shopify_product_deleted",
+                timestamp: event.data.receivedAt || new Date().toISOString(),
+              },
+            },
+          });
+        }
+      }
 
-      // Step 2: Delete from GPS
-      const gpsResult = await step.run("delete-product-from-gps", async () => {
-        console.log(`[ProductSync] Deleting product from GPS...`);
-        // TODO: Implement actual GPS product deletion
-        return {
-          success: true,
-          message: "Placeholder - GPS product deletion not yet implemented",
-        };
-      });
+      const d365Result = {
+        success: true,
+        message: `Queued ${targets.length} zero-stock update(s) for D365`,
+      };
+      const gpsResult = {
+        success: true,
+        message: `Queued ${targets.length} zero-stock update(s) for GPS`,
+      };
 
-      // Step 3: Notify Battle Hub
+      // Notify Battle Hub only after every durable zero-stock event is queued.
       await step.run("notify-battle-hub-product-deleted", async () => {
         console.log(`[ProductSync] Notifying Battle Hub of product deletion...`);
         await csPlatform.sendProductDeleted({
