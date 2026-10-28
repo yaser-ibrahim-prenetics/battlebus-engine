@@ -19,6 +19,7 @@ export async function reportSegmentProgress(
     }));
     const completed = !error && segments.every((segment) => segment.completed);
     const first = segments[0];
+    const associatedOrder = stored.plan.associatedOrder;
     const errorMessage = error
       ? "Segment processing requires recovery; inspect the durable provider action ledger before replay"
       : null;
@@ -31,7 +32,10 @@ export async function reportSegmentProgress(
       warehouse: first.warehouse,
       d365OrderNumber: first.salesOrderNumber,
       gpsOrderId: first.gpsOrderId,
-      state: { orderSegments: segments },
+      state: {
+        orderSegments: segments,
+        ...(associatedOrder ? { associatedOrder } : {}),
+      },
     });
     await hub.sendOrderUpdate({
       id: String(order.id),
@@ -43,6 +47,7 @@ export async function reportSegmentProgress(
       lastErrorType: error ? "segment_recovery" : null,
       state: {
         orderSegments: segments,
+        ...(associatedOrder ? { associatedOrder } : {}),
         failureContext: error
           ? { retryMode: "gps_outbound", failureStage: "order_creation" }
           : null,

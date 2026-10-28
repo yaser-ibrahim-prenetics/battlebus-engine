@@ -37,7 +37,10 @@ export async function publishSegmentCompletion(shop: string, orderId: string) {
     await hub.sendOrderUpdate({
       id: orderId,
       d365FulfillmentStatus: segments.every((segment) => segment.fulfilled) ? "synced" : "pending",
-      state: { orderSegments: segments },
+      state: {
+        orderSegments: segments,
+        ...(stored.plan.associatedOrder ? { associatedOrder: stored.plan.associatedOrder } : {}),
+      },
     });
   });
 }
