@@ -111,7 +111,7 @@ key when retrying after a timeout or lost response.
   "message": "Inventory sync initiated from shopify to dynamics, gps",
   "source": "shopify",
   "destinations": ["dynamics", "gps"],
-  "eventId": "inventory-sync-shopify-PROD-123-79527313640-1736284800000"
+  "eventId": "inventory-sync-shopify-<source-operation-sha256>"
 }
 ```
 
@@ -124,7 +124,7 @@ When Inngest is not available (e.g., in local dev without dev server):
   "message": "Inventory sync queued from shopify to dynamics (1 event(s) failed - check Inngest dev server)",
   "source": "shopify",
   "destinations": ["dynamics"],
-  "eventId": "inventory-sync-shopify-PROD-123-79527313640-1736284800000",
+  "eventId": "inventory-sync-shopify-<source-operation-sha256>",
   "warnings": [
     {
       "destination": "dynamics",
@@ -516,7 +516,7 @@ The system maps locations between platforms:
 
 ```typescript
 // Shopify Location ID → Dynamics dataAreaId
-"79527313640" → "H007" // GPS US
+"79527313640" → "U001" // GPS US
 "82997936360" → "H007" // GPS UK
 
 // Shopify Location ID → GPS Warehouse Name
@@ -538,6 +538,8 @@ shopify: {
   }
 },
 dynamics: {
+  // Fallback for non-regional flows only. Reconciliation uses the warehouse
+  // mapping above: GPS US → U001 and GPS UK → H007.
   dataAreaId: "H007",
 },
 ```
