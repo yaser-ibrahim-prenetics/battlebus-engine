@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadFixture } from "../../../../../tests/fixtures";
 import type { IShopifyFulfillmentOrder } from "@/lib/types/shopify";
-import { planOrderSegments, segmentOrder } from "../planner";
+import { orderInputHash, planOrderSegments, segmentOrder } from "../planner";
 import { segmentLineRequests } from "../lines";
 import {
   toD365SalesOrderLines,
@@ -43,6 +43,20 @@ describe("quantity-based segment planning", () => {
       orderName: "IM8-1234",
       relationship: "replacement",
     });
+  });
+
+  it("fingerprints tag-derived linkage and subscription rewards", () => {
+    const { order } = fixture();
+    const original = orderInputHash(order);
+
+    expect(orderInputHash({ ...order, tags: "replacement-im8-1234" })).not.toBe(original);
+    expect(
+      orderInputHash({
+        ...order,
+        tags: "Subscription order 3",
+        line_items: [{ ...order.line_items[0], sku: "IM8-FG-000035" }],
+      })
+    ).not.toBe(original);
   });
 
   it("gives each segmented subscription reward a stable synthetic identity", () => {
