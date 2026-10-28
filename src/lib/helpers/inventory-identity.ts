@@ -10,9 +10,5 @@ export function canonicalInventoryKey(input: InventoryIdentityInput): string {
     .trim()
     .toUpperCase();
   if (sku) return `sku:${sku}`;
-  const inventoryItemId = String(input.inventoryItemId || "").trim();
-  if (inventoryItemId) return `shopify-inventory-item:${inventoryItemId}`;
-  const variantId = String(input.variantId || "").trim();
-  if (variantId) return `shopify-variant:${variantId}`;
-  throw new Error("sku, inventoryItemId, or variantId is required for inventory identity");
+  throw new Error("A resolved SKU is required for canonical inventory identity");
 }

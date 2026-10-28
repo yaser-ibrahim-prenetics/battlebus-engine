@@ -8,6 +8,7 @@ vi.mock("@/lib/clients/shopify", () => ({
 
 import {
   findInventoryItemsBySku,
+  resolveShopifyInventorySku,
   setSkuInventoryAtLocation,
   shopifyGid,
 } from "../shopify-inventory";
@@ -47,6 +48,15 @@ describe("Shopify inventory client", () => {
     await expect(findInventoryItemsBySku("IM8-1")).resolves.toEqual([
       { sku: "IM8-1", inventoryItemId: "gid://shopify/InventoryItem/1" },
     ]);
+  });
+
+  it("resolves an inventory item to the SKU used for concurrency", async () => {
+    mocks.graphql.mockResolvedValueOnce({ data: { inventoryItem: { sku: "IM8-1" } } });
+
+    await expect(resolveShopifyInventorySku({ inventoryItemId: "123" })).resolves.toBe("IM8-1");
+    expect(mocks.graphql.mock.calls[0][1]).toEqual({
+      id: "gid://shopify/InventoryItem/123",
+    });
   });
 
   it("activates variants and performs an idempotent absolute quantity update", async () => {

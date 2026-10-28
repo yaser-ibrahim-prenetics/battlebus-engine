@@ -6,13 +6,11 @@ describe("canonical inventory identity", () => {
     expect(canonicalInventoryKey({ sku: " im8-1 ", inventoryItemId: "2" })).toBe("sku:IM8-1");
   });
 
-  it("serializes Shopify webhooks by their one-to-one inventory item", () => {
-    expect(canonicalInventoryKey({ inventoryItemId: "123" })).toBe(
-      "shopify-inventory-item:123"
-    );
+  it("rejects unresolved Shopify inventory identifiers", () => {
+    expect(() => canonicalInventoryKey({ inventoryItemId: "123" })).toThrow("resolved SKU");
   });
 
   it("fails closed without a product identity", () => {
-    expect(() => canonicalInventoryKey({})).toThrow("inventory identity");
+    expect(() => canonicalInventoryKey({})).toThrow("canonical inventory identity");
   });
 });

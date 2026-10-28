@@ -37,8 +37,39 @@ function isStaleQuantityError(error: unknown): boolean {
   );
 }
 
-export function shopifyGid(kind: "InventoryItem" | "Location", value: string): string {
+export function shopifyGid(
+  kind: "InventoryItem" | "Location" | "ProductVariant",
+  value: string
+): string {
   return value.startsWith("gid://shopify/") ? value : `gid://shopify/${kind}/${value}`;
+}
+
+export async function resolveShopifyInventorySku(
+  input: { sku?: string; inventoryItemId?: string; variantId?: string },
+  shopDomain?: string
+): Promise<string> {
+  const suppliedSku = String(input.sku || "").trim();
+  if (suppliedSku) return suppliedSku;
+
+  const inventoryItemId = String(input.inventoryItemId || "").trim();
+  const variantId = String(input.variantId || "").trim();
+  if (!inventoryItemId && !variantId) {
+    throw new Error("SKU resolution requires inventoryItemId or variantId");
+  }
+  const query = inventoryItemId
+    ? `query ResolveInventorySku($id: ID!) { inventoryItem(id: $id) { sku } }`
+    : `query ResolveVariantSku($id: ID!) { productVariant(id: $id) { sku } }`;
+  const id = inventoryItemId
+    ? shopifyGid("InventoryItem", inventoryItemId)
+    : shopifyGid("ProductVariant", variantId);
+  const payload = await shopifyAdminGraphql<{
+    data?: { inventoryItem?: { sku?: string | null }; productVariant?: { sku?: string | null } };
+  }>(query, { id }, { apiVersion: inventoryApiVersion, shopDomain });
+  const resolved = String(
+    payload.data?.inventoryItem?.sku || payload.data?.productVariant?.sku || ""
+  ).trim();
+  if (!resolved) throw new Error(`Shopify inventory identity ${id} has no SKU`);
+  return resolved;
 }
 
 function usesModernInventoryContract(apiVersion: string): boolean {
