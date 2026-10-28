@@ -27,6 +27,7 @@ export function segmentLineRequests(
       sourceLineId: String(line.id),
       sourceQuantity: line.quantity,
       isService: Boolean(line.gift_card || !line.requires_shipping),
+      isSubscriptionReward: false,
       request,
     }))
   );
@@ -42,6 +43,7 @@ export function segmentLineRequests(
     sourceLineId: `service:${index}`,
     sourceQuantity: 1,
     isService: true,
+    isSubscriptionReward: false,
     request,
   }));
   const rewardLines = toD365SubscriptionRewardLines(
