@@ -1,13 +1,18 @@
-export interface ISlackAttachment {
-  fallback: string;
-  color: string;
-  title: string;
-  text: string;
-  footer: string;
-  footer_icon?: string;
-  ts: number;
-  fields?: Array<{ title: string; value: string; short?: boolean }>;
-}
+export type SlackChannel =
+  | "order"
+  | "general"
+  | "europa"
+  | "system"
+  | "shopify"
+  | "shopifylow"
+  | "prive"
+  | "loop"
+  | "dynamics"
+  | "circledna"
+  | "circlednaorder"
+  | "gps"
+  | "gpslow"
+  | "stord";
 
 export enum SlackChannelEnum {
   ORDER = "order",

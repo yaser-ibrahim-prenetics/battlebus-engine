@@ -30,9 +30,11 @@ WHERE notification_id = '<reviewed-notification-id>' AND status='dead_letter';
 
 Retain the original ID and payload. The consumer deduplicates an uncertain publication
 that actually succeeded. Consumer `unknown` or stale `sending` outcomes must be checked
-in Slack before any deliberate resend. Direct webhook mode remains available for
-existing installations; it does not use this outbox. Kafka publication also uses
-the durable outbox.
+in Slack before any deliberate resend. Direct webhook mode is no longer supported. Pub/Sub is the default; configure
+`SLACK_PUBSUB_TOPIC` explicitly. Kafka publication also uses the durable outbox.
+Remove legacy `SLACK_*_CHANNEL` credentials from Battle Bus; routing and formatting
+are owned exclusively by slack-notification-service. Shopify customer notification
+flags remain Shopify operations, not internal notification emails.
 
 For validation, run migrations against an isolated database, then set
 `SLACK_TEST_DATABASE_URL` when running the test suite. The PostgreSQL integration
