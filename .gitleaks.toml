@@ -12,3 +12,4 @@ description = "Synthetic Shopify order fixtures contain credential-shaped IDs, n
 paths = [
   '''^src/lib/mocks/shopify/orders\.json$''',
 ]
+

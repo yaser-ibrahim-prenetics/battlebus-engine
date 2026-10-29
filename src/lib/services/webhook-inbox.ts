@@ -57,6 +57,21 @@ export type WebhookInboxDeliveryFailure = {
   terminal: boolean;
 };
 
+export const WEBHOOK_INBOX_COMPATIBILITY_MAX_ATTEMPTS = 2_000_000_000;
+
+export type WebhookInboxDeliveryPolicy = {
+  maxAttempts: number;
+  retryDelaySeconds: number;
+  terminal: boolean;
+};
+
+export function webhookInboxDeliveryMaxAttempts(
+  durableDeliveryEnabled: boolean,
+  configuredMaxAttempts: number
+): number {
+  return durableDeliveryEnabled ? configuredMaxAttempts : WEBHOOK_INBOX_COMPATIBILITY_MAX_ATTEMPTS;
+}
+
 const EVENT_NAME_PATTERN = /^[a-z][a-z0-9_-]*\/[a-zA-Z0-9_.-]+$/;
 
 const tableName = process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox";
@@ -131,6 +146,31 @@ export function webhookInboxRetryDelaySeconds(
   const maximum = Math.max(base, maxSeconds);
   const exponent = Math.min(30, Math.max(0, attempt - 1));
   return Math.min(maximum, base * 2 ** exponent);
+}
+
+/** Keep rollout-mode attempt, delay, and terminal-failure behavior in one policy. */
+export function webhookInboxDeliveryPolicy(params: {
+  durableDeliveryEnabled: boolean;
+  configuredMaxAttempts: number;
+  attempt: number;
+  retryBaseSeconds: number;
+  retryMaxSeconds: number;
+  terminalFailure: boolean;
+}): WebhookInboxDeliveryPolicy {
+  return {
+    maxAttempts: webhookInboxDeliveryMaxAttempts(
+      params.durableDeliveryEnabled,
+      params.configuredMaxAttempts
+    ),
+    retryDelaySeconds: params.durableDeliveryEnabled
+      ? webhookInboxRetryDelaySeconds(
+          params.attempt,
+          params.retryBaseSeconds,
+          params.retryMaxSeconds
+        )
+      : 1,
+    terminal: params.durableDeliveryEnabled && params.terminalFailure,
+  };
 }
 
 /** Keep persisted/logged delivery failures free of credentials and payloads. */

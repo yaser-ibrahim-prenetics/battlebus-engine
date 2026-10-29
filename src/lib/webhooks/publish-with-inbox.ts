@@ -27,7 +27,8 @@ import {
   markInboxPublished,
   markInboxFailed,
   validateWebhookInboxEvents,
-  webhookInboxRetryDelaySeconds,
+  webhookInboxDeliveryMaxAttempts,
+  webhookInboxDeliveryPolicy,
   type WebhookInboxEvent,
 } from "@/lib/services/webhook-inbox";
 
@@ -40,11 +41,6 @@ const PERSISTED_HEADER_NAMES = new Set([
   "x-shopify-shop-domain",
   "x-timestamp",
 ]);
-
-// Compatibility mode retains old immediate-retry behavior while still using
-// exact leases. The very high limit prevents the new dead-letter policy from
-// activating until the rollout flag is enabled.
-const COMPATIBILITY_MAX_ATTEMPTS = 2_000_000_000;
 
 /**
  * Build an allowlisted, bounded metadata map for the inbox `headers` column.
@@ -106,9 +102,10 @@ export async function publishWebhookEvents(
 
   const eventValidationError = validateWebhookInboxEvents(events);
 
-  const maxAttempts = config.webhookInbox.durableDeliveryEnabled
-    ? config.webhookInbox.maxAttempts
-    : COMPATIBILITY_MAX_ATTEMPTS;
+  const maxAttempts = webhookInboxDeliveryMaxAttempts(
+    config.webhookInbox.durableDeliveryEnabled,
+    config.webhookInbox.maxAttempts
+  );
   const claimed = inboxId
     ? await claimWebhookInboxEntry(inboxId, {
         leaseSeconds: config.webhookInbox.leaseSeconds,
@@ -151,19 +148,19 @@ export async function publishWebhookEvents(
     );
 
     if (claimed) {
+      const policy = webhookInboxDeliveryPolicy({
+        durableDeliveryEnabled: config.webhookInbox.durableDeliveryEnabled,
+        configuredMaxAttempts: config.webhookInbox.maxAttempts,
+        attempt: claimed.attempts,
+        retryBaseSeconds: config.webhookInbox.retryBaseSeconds,
+        retryMaxSeconds: config.webhookInbox.retryMaxSeconds,
+        terminalFailure: failure.terminal,
+      });
       // Awaited: the caller needs the failure safely recorded before
       // deciding what status code to return.
       await markInboxFailed(claimed, {
         errorCode: failure.errorCode,
-        maxAttempts,
-        retryDelaySeconds: config.webhookInbox.durableDeliveryEnabled
-          ? webhookInboxRetryDelaySeconds(
-              claimed.attempts,
-              config.webhookInbox.retryBaseSeconds,
-              config.webhookInbox.retryMaxSeconds
-            )
-          : 1,
-        terminal: config.webhookInbox.durableDeliveryEnabled && failure.terminal,
+        ...policy,
       });
     }
 

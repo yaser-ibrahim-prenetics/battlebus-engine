@@ -10,7 +10,8 @@ import {
   markInboxFailed,
   markInboxPublished,
   validateWebhookInboxEvents,
-  webhookInboxRetryDelaySeconds,
+  webhookInboxDeliveryMaxAttempts,
+  webhookInboxDeliveryPolicy,
 } from "@/lib/services/webhook-inbox";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
@@ -29,8 +30,6 @@ type WebhookInboxDrainEvent = {
   name: string;
   data?: { inboxId?: string };
 };
-const COMPATIBILITY_MAX_ATTEMPTS = 2_000_000_000;
-
 export const drainWebhookInbox = inngest.createFunction(
   {
     id: "drain-webhook-inbox",
@@ -61,73 +60,15 @@ export const drainWebhookInbox = inngest.createFunction(
       payload: { requestedInboxId },
     });
 
-    if (!config.webhookInbox.durableDeliveryEnabled) {
-      const compatibleEntries = await step.run("claim-compatible-receipts", () =>
-        claimWebhookInboxEntries(requestedInboxId ? 1 : config.webhookInbox.claimBatchSize, {
-          inboxId: requestedInboxId,
-          leaseSeconds: config.webhookInbox.leaseSeconds,
-          maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
-        })
-      );
-      let published = 0;
-      let failed = 0;
-      for (const entry of compatibleEntries) {
-        const outcome = await step.run(
-          `publish-compatible-${entry.id}-attempt-${entry.attempts}`,
-          async () => {
-            const validationError = validateWebhookInboxEvents(entry.events);
-            if (validationError) {
-              await markInboxFailed(entry, {
-                errorCode: validationError,
-                maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
-                retryDelaySeconds: 1,
-                terminal: true,
-              });
-              return "failed" as const;
-            }
-            try {
-              const sent = await inngest.send(entry.events as Parameters<typeof inngest.send>[0]);
-              return (await markInboxPublished(entry, sent?.ids ?? []))
-                ? ("published" as const)
-                : ("failed" as const);
-            } catch (error) {
-              const failure = classifyWebhookInboxDeliveryFailure(error);
-              await markInboxFailed(entry, {
-                errorCode: failure.errorCode,
-                maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
-                retryDelaySeconds: 1,
-                terminal: false,
-              });
-              return "failed" as const;
-            }
-          }
-        );
-        if (outcome === "published") published++;
-        else failed++;
-      }
-      const compatibleResult = {
-        status: compatibleEntries.length === 0 ? "idle" : "compatible_drain",
-        count: compatibleEntries.length,
-        published,
-        failed,
-        durableDeliveryEnabled: false,
-      };
-      logFlowEvent({
-        flow: "webhook_inbox_drain",
-        step: "done",
-        status: "completed",
-        runId,
-        durationMs: Date.now() - flowStart,
-        payload: compatibleResult,
-      });
-      return compatibleResult;
-    }
-
+    const maxAttempts = webhookInboxDeliveryMaxAttempts(
+      config.webhookInbox.durableDeliveryEnabled,
+      config.webhookInbox.maxAttempts
+    );
     const entries = await step.run("claim-ready-receipts", () =>
       claimWebhookInboxEntries(requestedInboxId ? 1 : config.webhookInbox.claimBatchSize, {
         inboxId: requestedInboxId,
         leaseSeconds: config.webhookInbox.leaseSeconds,
-        maxAttempts: config.webhookInbox.maxAttempts,
+        maxAttempts,
       })
     );
 
@@ -140,7 +81,7 @@ export const drainWebhookInbox = inngest.createFunction(
           if (validationError) {
             return markInboxFailed(entry, {
               errorCode: validationError,
-              maxAttempts: config.webhookInbox.maxAttempts,
+              maxAttempts,
               retryDelaySeconds: 1,
               terminal: true,
             });
@@ -151,15 +92,17 @@ export const drainWebhookInbox = inngest.createFunction(
             return (await markInboxPublished(entry, sent?.ids ?? [])) ? "published" : "stale";
           } catch (error) {
             const failure = classifyWebhookInboxDeliveryFailure(error);
+            const policy = webhookInboxDeliveryPolicy({
+              durableDeliveryEnabled: config.webhookInbox.durableDeliveryEnabled,
+              configuredMaxAttempts: config.webhookInbox.maxAttempts,
+              attempt: entry.attempts,
+              retryBaseSeconds: config.webhookInbox.retryBaseSeconds,
+              retryMaxSeconds: config.webhookInbox.retryMaxSeconds,
+              terminalFailure: failure.terminal,
+            });
             return markInboxFailed(entry, {
               errorCode: failure.errorCode,
-              maxAttempts: config.webhookInbox.maxAttempts,
-              retryDelaySeconds: webhookInboxRetryDelaySeconds(
-                entry.attempts,
-                config.webhookInbox.retryBaseSeconds,
-                config.webhookInbox.retryMaxSeconds
-              ),
-              terminal: failure.terminal,
+              ...policy,
             });
           }
         }
@@ -167,14 +110,20 @@ export const drainWebhookInbox = inngest.createFunction(
       outcomes.push(outcome);
     }
 
-    const retainedDeleted = await step.run("delete-expired-published-receipts", () =>
-      deleteRetainedPublishedInboxEntries(
-        config.webhookInbox.publishedRetentionDays,
-        config.webhookInbox.retentionBatchSize
-      )
-    );
+    const retainedDeleted = config.webhookInbox.durableDeliveryEnabled
+      ? await step.run("delete-expired-published-receipts", () =>
+          deleteRetainedPublishedInboxEntries(
+            config.webhookInbox.publishedRetentionDays,
+            config.webhookInbox.retentionBatchSize
+          )
+        )
+      : 0;
 
-    if (!requestedInboxId && entries.length === config.webhookInbox.claimBatchSize) {
+    if (
+      config.webhookInbox.durableDeliveryEnabled &&
+      !requestedInboxId &&
+      entries.length === config.webhookInbox.claimBatchSize
+    ) {
       const lastEntry = entries.at(-1);
       await step.sendEvent("continue-webhook-inbox-drain", {
         id: `webhook-inbox-drain-${runId}-${lastEntry?.id ?? "batch"}`,
@@ -190,6 +139,7 @@ export const drainWebhookInbox = inngest.createFunction(
       deadLettered: outcomes.filter((outcome) => outcome === "dead_letter").length,
       stale: outcomes.filter((outcome) => outcome === "stale").length,
       retainedDeleted,
+      durableDeliveryEnabled: config.webhookInbox.durableDeliveryEnabled,
     };
 
     logFlowEvent({

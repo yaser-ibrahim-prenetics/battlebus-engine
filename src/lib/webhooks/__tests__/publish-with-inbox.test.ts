@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   failed: vi.fn(),
   validate: vi.fn(),
   classify: vi.fn(),
-  delay: vi.fn(),
+  maxAttempts: vi.fn(),
+  policy: vi.fn(),
   webhookConfig: {
     durableDeliveryEnabled: true,
     leaseSeconds: 120,
@@ -27,11 +28,12 @@ vi.mock("@/lib/db/database", () => ({ isDatabaseConfigured: mocks.configured }))
 vi.mock("@/lib/services/webhook-inbox", () => ({
   claimWebhookInboxEntry: mocks.claim,
   classifyWebhookInboxDeliveryFailure: mocks.classify,
+  webhookInboxDeliveryMaxAttempts: mocks.maxAttempts,
+  webhookInboxDeliveryPolicy: mocks.policy,
   recordInboxEntry: mocks.record,
   markInboxPublished: mocks.published,
   markInboxFailed: mocks.failed,
   validateWebhookInboxEvents: mocks.validate,
-  webhookInboxRetryDelaySeconds: mocks.delay,
 }));
 
 import { publishWebhookEvents, redactWebhookHeaders } from "../publish-with-inbox";
@@ -64,7 +66,16 @@ describe("publishWebhookEvents", () => {
     mocks.published.mockResolvedValue(true);
     mocks.failed.mockResolvedValue("retryable");
     mocks.classify.mockReturnValue({ errorCode: "DeliveryError:http_503", terminal: false });
-    mocks.delay.mockReturnValue(60);
+    mocks.maxAttempts.mockImplementation((enabled: boolean, configured: number) =>
+      enabled ? configured : 2_000_000_000
+    );
+    mocks.policy.mockImplementation(
+      (params: { durableDeliveryEnabled: boolean; configuredMaxAttempts: number }) => ({
+        maxAttempts: params.durableDeliveryEnabled ? params.configuredMaxAttempts : 2_000_000_000,
+        retryDelaySeconds: params.durableDeliveryEnabled ? 60 : 1,
+        terminal: false,
+      })
+    );
   });
 
   async function publish() {
