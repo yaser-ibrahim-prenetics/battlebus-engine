@@ -100,6 +100,7 @@ export const processInventoryMesh = inngest.createFunction(
     const _flowStart = Date.now();
     const _runId = (event as any).id;
     const { source, destination, payload } = event.data;
+    const inventory = payload as InventorySyncPayload;
 
     logFlowEvent({
       flow: "inventory_mesh",
@@ -110,6 +111,36 @@ export const processInventoryMesh = inngest.createFunction(
       shopifyOrderName: event.data?.shopifyOrderName,
       payload: { source, destination, sku: (payload as InventorySyncPayload)?.sku },
     });
+
+    const inventoryProvider =
+      source === "dynamics" ? "d365" : source === "gps" || source === "warehouse" ? "gps" : null;
+    const observedQuantity = inventory.available ?? inventory.quantity;
+    const recoveryWarehouse =
+      inventoryProvider === "d365"
+        ? inventory.dataAreaId
+        : (inventory.warehouseName ?? inventory.warehouseId);
+    if (
+      config.oosRecovery.enabled &&
+      inventoryProvider &&
+      inventory.sku &&
+      recoveryWarehouse &&
+      Number.isSafeInteger(observedQuantity) &&
+      Number(observedQuantity) > 0
+    ) {
+      await step.run("queue-targeted-oos-drain", () =>
+        submitOosDrainRequest({
+          mode: "inventory_event",
+          dryRun: false,
+          provider: inventoryProvider,
+          warehouse: String(recoveryWarehouse),
+          sku: inventory.sku,
+          observedQuantity: Number(observedQuantity),
+          observedAt: inventory.timestamp ?? new Date().toISOString(),
+          sourceEventId: String(event.id),
+          batchLimit: config.oosRecovery.claimBatchSize,
+        })
+      );
+    }
 
     if (!config.features.enableInventorySync) {
       console.log(
@@ -132,8 +163,6 @@ export const processInventoryMesh = inngest.createFunction(
         destination,
       };
     }
-    const inventory = payload as InventorySyncPayload;
-
     console.log(`[InventoryMesh] ========================================`);
     console.log(`[InventoryMesh] Syncing inventory: ${source} → ${destination}`);
     console.log(`[InventoryMesh] SKU: ${inventory.sku || "N/A"}`);
@@ -222,37 +251,6 @@ export const processInventoryMesh = inngest.createFunction(
           result.success ? undefined : result.message
         );
       });
-    }
-
-    const inventoryProvider =
-      source === "dynamics" ? "d365" : source === "gps" || source === "warehouse" ? "gps" : null;
-    const observedQuantity = inventory.available ?? inventory.quantity;
-    const recoveryWarehouse =
-      inventoryProvider === "d365"
-        ? inventory.dataAreaId
-        : inventory.warehouseName ?? inventory.warehouseId;
-    if (
-      config.oosRecovery.enabled &&
-      result.success &&
-      inventoryProvider &&
-      inventory.sku &&
-      recoveryWarehouse &&
-      Number.isSafeInteger(observedQuantity) &&
-      Number(observedQuantity) > 0
-    ) {
-      await step.run("queue-targeted-oos-drain", () =>
-        submitOosDrainRequest({
-          mode: "inventory_event",
-          dryRun: false,
-          provider: inventoryProvider,
-          warehouse: String(recoveryWarehouse),
-          sku: inventory.sku,
-          observedQuantity: Number(observedQuantity),
-          observedAt: inventory.timestamp ?? new Date().toISOString(),
-          sourceEventId: String(event.id),
-          batchLimit: config.oosRecovery.claimBatchSize,
-        })
-      );
     }
 
     logFlowEvent({
