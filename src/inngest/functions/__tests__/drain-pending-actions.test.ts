@@ -62,7 +62,7 @@ describe("runDrainPendingActions", () => {
     vi.clearAllMocks();
     mutableConfig.features.dryRunMode = false;
     mutableConfig.pendingActions.durableQueueEnabled = true;
-    importLegacy.mockResolvedValue({ imported: 0, sourceOrders: 0 });
+    importLegacy.mockResolvedValue({ imported: 0, sourceOrders: 0, poisonOrders: 0 });
     claim.mockResolvedValue([]);
     complete.mockResolvedValue(undefined);
     retry.mockResolvedValue(undefined);
@@ -100,7 +100,7 @@ describe("runDrainPendingActions", () => {
   });
 
   it("imports legacy rows before claiming normalized actions", async () => {
-    importLegacy.mockResolvedValue({ imported: 2, sourceOrders: 1 });
+    importLegacy.mockResolvedValue({ imported: 2, sourceOrders: 1, poisonOrders: 0 });
     const step = immediateStep();
 
     await expect(
@@ -110,6 +110,22 @@ describe("runDrainPendingActions", () => {
       "import-legacy-actions",
       "claim-and-publish",
     ]);
+  });
+
+  it("surfaces quarantined legacy rows without blocking normalized claims", async () => {
+    importLegacy.mockResolvedValue({ imported: 0, sourceOrders: 0, poisonOrders: 1 });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const step = immediateStep();
+
+    await expect(
+      runDrainPendingActions({ step, event: { id: "poison", data: {} } })
+    ).resolves.toMatchObject({
+      status: "idle",
+      legacyPoisonOrders: 1,
+    });
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("poisonOrders=1"));
+    errorLog.mockRestore();
   });
 
   it("publishes with the stable action ID and acknowledges the exact lease", async () => {

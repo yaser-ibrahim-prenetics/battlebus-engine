@@ -152,8 +152,14 @@ describe("durable pending actions", () => {
   });
 
   it("imports valid legacy arrays without removing rollback projections", async () => {
-    query.mockResolvedValueOnce({ rows: [{ imported: "3", source_orders: "2" }] });
-    await expect(importLegacyPendingActions()).resolves.toEqual({ imported: 3, sourceOrders: 2 });
+    query.mockResolvedValueOnce({
+      rows: [{ imported: "3", source_orders: "2", poison_orders: "1" }],
+    });
+    await expect(importLegacyPendingActions()).resolves.toEqual({
+      imported: 3,
+      sourceOrders: 2,
+      poisonOrders: 1,
+    });
     expect(query).toHaveBeenCalledTimes(1);
   });
 });

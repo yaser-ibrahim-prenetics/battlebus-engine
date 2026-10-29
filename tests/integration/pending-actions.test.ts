@@ -186,12 +186,18 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
 
   it("copies valid legacy actions without clearing them or letting poison rows block", async () => {
     const poisonId = `${orderPrefix}poison`;
+    const oversizedId = `${orderPrefix}oversized`;
     const validId = `${orderPrefix}legacy`;
+    const existingActionId = await insertAction({
+      orderId: `${orderPrefix}existing-normalized`,
+      actionType: "refund",
+    });
     await pool.query(
       `INSERT INTO public.orders (id, order_number, title, pending_actions)
        VALUES
          ($1, $1, $1, '[{"eventName":"test/refund","eventData":{}}]'::jsonb),
-         ($2, $2, $2, $3::jsonb)`,
+         ($2, $2, $2, $3::jsonb),
+         ($4, $4, $4, $5::jsonb)`,
       [
         poisonId,
         validId,
@@ -209,14 +215,28 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
             sourceEventId: "legacy-fulfill-1",
           },
         ]),
+        oversizedId,
+        JSON.stringify([
+          {
+            action: "refund",
+            eventName: "test/refund",
+            eventData: { payload: "x".repeat(524_289) },
+            sourceEventId: "legacy-oversized-1",
+          },
+        ]),
       ]
     );
 
-    const imported = await pool.query<{ imported: string; source_orders: string }>(
-      importLegacyPendingActionsSQL,
-      [10]
-    );
-    expect(imported.rows[0]).toEqual({ imported: "2", source_orders: "1" });
+    const imported = await pool.query<{
+      imported: string;
+      source_orders: string;
+      poison_orders: string;
+    }>(importLegacyPendingActionsSQL, [10]);
+    expect(imported.rows[0]).toEqual({
+      imported: "2",
+      source_orders: "1",
+      poison_orders: "2",
+    });
 
     const legacy = await pool.query<{ pending_count: number }>(
       "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
@@ -234,6 +254,7 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       (row) => row.order_id === validId && row.action_type === "refund"
     );
     expect(validClaim).toBeDefined();
+    expect(claimed.rows.map((row) => row.action_id)).toContain(existingActionId);
     await pool.query(completePendingActionSQL, [validClaim!.action_id, validClaim!.lease_token]);
 
     const completedProjection = await pool.query<{

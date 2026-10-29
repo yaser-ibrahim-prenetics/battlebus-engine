@@ -125,6 +125,12 @@ export async function runDrainPendingActions({ step, event }: DrainContext) {
     ReturnType<typeof claimAndPublish>
   >;
 
+  if (legacy.poisonOrders > 0) {
+    console.error(
+      `[PendingActions] Legacy import quarantined poisonOrders=${legacy.poisonOrders}; operator review required`
+    );
+  }
+
   const status = result.claimed === 0 ? "idle" : "drained";
   logFlowEvent({
     flow: "pending_actions_drain",
@@ -138,6 +144,7 @@ export async function runDrainPendingActions({ step, event }: DrainContext) {
       status,
       legacyImported: legacy.imported,
       legacySourceOrders: legacy.sourceOrders,
+      legacyPoisonOrders: legacy.poisonOrders,
       ...result,
     },
   });
@@ -149,6 +156,7 @@ export async function runDrainPendingActions({ step, event }: DrainContext) {
     failed: result.failed,
     acknowledgementFailed: result.acknowledgementFailed,
     legacyImported: legacy.imported,
+    legacyPoisonOrders: legacy.poisonOrders,
   };
 }
 

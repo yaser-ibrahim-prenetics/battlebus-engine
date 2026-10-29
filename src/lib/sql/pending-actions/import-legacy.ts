@@ -2,7 +2,23 @@
 // Rows already represented in the normalized queue are skipped, so a retained
 // projection cannot starve newer legacy writes from the bounded import window.
 export const importLegacyPendingActionsSQL = `
-WITH legacy_orders AS MATERIALIZED (
+WITH poison_orders AS MATERIALIZED (
+  SELECT orders.id
+  FROM public.orders
+  WHERE jsonb_typeof(orders.pending_actions) = 'array'
+    AND jsonb_array_length(orders.pending_actions) > 0
+    AND EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(orders.pending_actions) AS item(action)
+      WHERE COALESCE(item.action->>'action', '') NOT IN ('cancel', 'refund', 'fulfill')
+        OR length(btrim(COALESCE(item.action->>'eventName', ''))) NOT BETWEEN 1 AND 255
+        OR jsonb_typeof(item.action->'eventData') IS DISTINCT FROM 'object'
+        OR octet_length((item.action->'eventData')::text) > 524288
+        OR length(btrim(COALESCE(item.action->>'sourceEventId', ''))) > 1024
+    )
+  ORDER BY orders.updated_at, orders.id
+  LIMIT $1
+), legacy_orders AS MATERIALIZED (
   SELECT
     orders.id,
     COALESCE(
@@ -20,6 +36,7 @@ WITH legacy_orders AS MATERIALIZED (
       WHERE COALESCE(item.action->>'action', '') NOT IN ('cancel', 'refund', 'fulfill')
         OR length(btrim(COALESCE(item.action->>'eventName', ''))) NOT BETWEEN 1 AND 255
         OR jsonb_typeof(item.action->'eventData') IS DISTINCT FROM 'object'
+        OR octet_length((item.action->'eventData')::text) > 524288
         OR length(btrim(COALESCE(item.action->>'sourceEventId', ''))) > 1024
     )
     AND EXISTS (
@@ -72,4 +89,5 @@ WITH legacy_orders AS MATERIALIZED (
 )
 SELECT
   (SELECT count(*) FROM inserted) AS imported,
-  (SELECT count(*) FROM legacy_orders) AS source_orders`;
+  (SELECT count(*) FROM legacy_orders) AS source_orders,
+  (SELECT count(*) FROM poison_orders) AS poison_orders`;
