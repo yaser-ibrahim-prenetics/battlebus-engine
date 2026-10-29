@@ -114,6 +114,30 @@ It preserves the stable `action_id` and source identity, so replay does not crea
 a new downstream identity. Never update queue state directly or delete queue or
 audit rows to bypass an unresolved failure.
 
+## Rollback to a legacy drain
+
+Do not send traffic to a rollback revision while a normalized action is
+`publishing`: publication may already have succeeded even though its exact
+acknowledgement is still uncertain.
+
+1. Deploy the current revision with
+   `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`. New producers then write only
+   the legacy projection and no new normalized leases are claimed.
+2. Wait longer than `PENDING_ACTIONS_LEASE_SECONDS` plus the maximum in-flight
+   request time, then verify that no normalized rows remain `publishing`.
+3. If any publishing row remains, do not roll back. Re-enable the current
+   revision, let its stable-ID recovery settle the lease, disable it again, and
+   repeat the wait and check.
+4. Verify that each retained legacy entry represents an unresolved normalized
+   row (`queued`, `publishing`, or `dead_letter`) and that published or
+   superseded rows have no matching projection.
+5. Only after those checks pass may the legacy revision receive traffic and its
+   drain be resumed.
+
+This quiescing check is mandatory because the legacy drain does not emit the
+normalized stable action ID. Skipping it can replay an event whose Inngest send
+succeeded just before an acknowledgement failure.
+
 ## Files
 
 | File                                                   | Responsibility                                      |
