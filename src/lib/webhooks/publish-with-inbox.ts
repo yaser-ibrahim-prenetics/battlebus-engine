@@ -18,10 +18,16 @@
 //      safety net for events that still never make it through.
 
 import { inngest } from "@/inngest/client";
+import { config } from "@/lib/config";
+import { isDatabaseConfigured } from "@/lib/db/database";
 import {
+  claimWebhookInboxEntry,
+  classifyWebhookInboxDeliveryFailure,
   recordInboxEntry,
   markInboxPublished,
   markInboxFailed,
+  validateWebhookInboxEvents,
+  webhookInboxRetryDelaySeconds,
   type WebhookInboxEvent,
 } from "@/lib/services/webhook-inbox";
 
@@ -81,43 +87,74 @@ export async function publishWebhookEvents(
 ): Promise<PublishWebhookEventsResult> {
   const { source, topic, payload, headers, events } = params;
 
+  const eventValidationError = events.length > 0 ? validateWebhookInboxEvents(events) : null;
+  if (eventValidationError) {
+    return { published: false, inboxId: null, error: eventValidationError };
+  }
+
   // 1. Durability guarantee: persist before we ever attempt to send.
+  const databaseConfigured = isDatabaseConfigured();
   const inboxId = await recordInboxEntry({
     source,
     topic: topic ?? null,
     payload,
-    headers: redactWebhookHeaders(headers) as Record<string, string>,
+    headers: redactWebhookHeaders(headers),
     events,
   });
 
+  if (databaseConfigured && !inboxId) {
+    return { published: false, inboxId: null, error: "durable_receipt_unavailable" };
+  }
+
   // Nothing to send (e.g. filtered/skipped topic) — trivially "published".
   if (events.length === 0) {
-    if (inboxId) {
-      void markInboxPublished(inboxId, []);
-    }
     return { published: true, eventIds: [], inboxId };
+  }
+
+  const claimed = inboxId
+    ? await claimWebhookInboxEntry(inboxId, {
+        leaseSeconds: config.webhookInbox.leaseSeconds,
+        maxAttempts: config.webhookInbox.maxAttempts,
+      })
+    : null;
+
+  if (inboxId && !claimed) {
+    return { published: false, inboxId, error: "durable_receipt_claim_unavailable" };
   }
 
   try {
     const sendResult = await inngest.send(events as Parameters<typeof inngest.send>[0]);
     const eventIds = sendResult?.ids ?? [];
 
-    if (inboxId) {
-      // Fire-and-forget: the send already succeeded, this is just bookkeeping.
-      void markInboxPublished(inboxId, eventIds);
+    if (claimed) {
+      const acknowledged = await markInboxPublished(claimed, eventIds);
+      if (!acknowledged) {
+        return { published: false, inboxId, error: "publication_acknowledgement_failed" };
+      }
     }
 
     return { published: true, eventIds, inboxId };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[WebhookInbox] Failed to publish ${source} event(s) to Inngest:`, error);
+    const failure = classifyWebhookInboxDeliveryFailure(error);
+    console.error(
+      `[WebhookInbox] Failed to publish source=${source} category=${failure.errorCode}`
+    );
 
-    if (inboxId) {
+    if (claimed) {
       // Awaited: the caller needs the failure safely recorded before
       // deciding what status code to return.
-      await markInboxFailed(inboxId, message);
+      await markInboxFailed(claimed, {
+        errorCode: failure.errorCode,
+        maxAttempts: config.webhookInbox.maxAttempts,
+        retryDelaySeconds: webhookInboxRetryDelaySeconds(
+          claimed.attempts,
+          config.webhookInbox.retryBaseSeconds,
+          config.webhookInbox.retryMaxSeconds
+        ),
+        terminal: failure.terminal,
+      });
     }
 
-    return { published: false, inboxId, error: message };
+    return { published: false, inboxId, error: failure.errorCode };
   }
 }

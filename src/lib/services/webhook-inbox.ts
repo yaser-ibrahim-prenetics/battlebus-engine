@@ -1,78 +1,186 @@
 /**
- * PostgreSQL Webhook Inbox — durability layer for inbound webhooks.
+ * PostgreSQL webhook inbox.
  *
- * Every webhook route (Shopify, GPS, GPS individual, STORD, Loop, Dynamics
- * fulfilment) records the raw payload + intended Inngest event(s) here
- * immediately after signature verification, before attempting
- * `inngest.send()`. If the send fails (or the process crashes before it
- * runs), the row stays `received`/`failed` and is retried by the
- * `drain-webhook-inbox` cron (see src/inngest/functions/drain-webhook-inbox.ts).
- *
- * Mirrors the defensive style of flow-logs.ts: every call is
- * wrapped in try/catch and never throws to the caller. When PostgreSQL is
- * unconfigured, reads return empty results and writes are silently skipped
- * (logged via console.warn) — the webhook route still gets to decide
- * whether to fail the request based on the Inngest publish result itself.
- *
- * Environment variables:
- *   WEBHOOK_INBOX_TABLE       – table name (default: "webhook_inbox")
+ * A verified webhook is persisted before publication. Every publisher must
+ * claim an exact, expiring lease before sending the recorded events and must
+ * acknowledge that exact lease afterwards. Failed attempts use bounded
+ * exponential backoff; exhausted rows become operator-visible dead letters.
  */
+import { isDatabaseConfigured, queryDatabase, quoteIdentifier } from "@/lib/db/database";
+import { createClaimWebhookInboxEntriesSQL } from "@/lib/sql/webhook-inbox/claim";
 import {
-  isDatabaseConfigured,
-  queryDatabase,
-  quoteIdentifier,
-} from "@/lib/db/database";
+  createFailWebhookInboxEntrySQL,
+  createPublishWebhookInboxEntrySQL,
+  createRequeueWebhookInboxDeadLetterSQL,
+} from "@/lib/sql/webhook-inbox/finish";
+import { createDeleteRetainedWebhookInboxEntriesSQL } from "@/lib/sql/webhook-inbox/retention";
 
 export type WebhookInboxStatus = "received" | "published" | "failed";
 
 export type WebhookInboxEvent = {
   name: string;
   data: Record<string, unknown>;
-  id?: string;
+  id: string;
 };
 
 export type RecordInboxEntryParams = {
   source: string;
   topic?: string | null;
   payload: unknown;
-  headers: Record<string, string>;
+  headers: Record<string, string | boolean>;
   events: WebhookInboxEvent[];
 };
 
-export type UnpublishedInboxEntry = {
+export type ClaimedWebhookInboxEntry = {
   id: string;
   source: string;
   topic: string | null;
   events: WebhookInboxEvent[];
   attempts: number;
+  replayCount: number;
+  leaseToken: string;
+  leaseExpiresAt: string;
 };
 
-const TABLE = quoteIdentifier(process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox");
+export type ClaimWebhookInboxOptions = {
+  leaseSeconds: number;
+  maxAttempts: number;
+  inboxId?: string;
+};
 
-let _warnedMissingConfig = false;
+export type WebhookInboxFailureState = "retryable" | "dead_letter" | "stale";
+
+export type WebhookInboxDeliveryFailure = {
+  errorCode: string;
+  terminal: boolean;
+};
+
+const EVENT_NAME_PATTERN = /^[a-z][a-z0-9_-]*\/[a-zA-Z0-9_.-]+$/;
+
+const tableName = process.env.WEBHOOK_INBOX_TABLE || "webhook_inbox";
+const TABLE = quoteIdentifier(tableName);
+const claimEntriesSQL = createClaimWebhookInboxEntriesSQL(tableName);
+const publishEntrySQL = createPublishWebhookInboxEntrySQL(tableName);
+const failEntrySQL = createFailWebhookInboxEntrySQL(tableName);
+const requeueDeadLetterSQL = createRequeueWebhookInboxDeadLetterSQL(tableName);
+const deleteRetainedEntriesSQL = createDeleteRetainedWebhookInboxEntriesSQL(tableName);
+
+let warnedMissingConfig = false;
 
 function databaseAvailable(): boolean {
   const available = isDatabaseConfigured();
-  if (!available && !_warnedMissingConfig) {
-    _warnedMissingConfig = true;
+  if (!available && !warnedMissingConfig) {
+    warnedMissingConfig = true;
     console.warn("[WebhookInbox] PostgreSQL is not configured - webhook inbox disabled");
   }
   return available;
 }
 
+function errorCategory(error: unknown): string {
+  if (error instanceof Error && error.name) return error.name;
+  return "unknown_error";
+}
+
+/** Validate persisted events before any publication or replay side effect. */
+export function validateWebhookInboxEvents(events: WebhookInboxEvent[]): string | null {
+  if (!Array.isArray(events) || events.length === 0 || events.length > 100) {
+    return "invalid_event_batch";
+  }
+  for (const event of events) {
+    if (
+      !event ||
+      typeof event.id !== "string" ||
+      !event.id.trim() ||
+      event.id.length > 512 ||
+      typeof event.name !== "string" ||
+      !EVENT_NAME_PATTERN.test(event.name) ||
+      !event.data ||
+      typeof event.data !== "object" ||
+      Array.isArray(event.data)
+    ) {
+      return "invalid_stable_event_identity";
+    }
+  }
+  return null;
+}
+
+/** Bounded exponential retry delay: base, 2×base, 4×base, ... */
+export function webhookInboxRetryDelaySeconds(
+  attempt: number,
+  baseSeconds: number,
+  maxSeconds: number
+): number {
+  const base = Math.max(1, baseSeconds);
+  const maximum = Math.max(base, maxSeconds);
+  const exponent = Math.min(30, Math.max(0, attempt - 1));
+  return Math.min(maximum, base * 2 ** exponent);
+}
+
+/** Keep persisted/logged delivery failures free of credentials and payloads. */
+export function classifyWebhookInboxDeliveryFailure(error: unknown): WebhookInboxDeliveryFailure {
+  const candidate = error as {
+    name?: unknown;
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown };
+  };
+  const statusValue = candidate?.status ?? candidate?.statusCode ?? candidate?.response?.status;
+  const status = Number.isInteger(Number(statusValue)) ? Number(statusValue) : undefined;
+  const name =
+    typeof candidate?.name === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(candidate.name)
+      ? candidate.name
+      : "delivery_error";
+  const code =
+    typeof candidate?.code === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(candidate.code)
+      ? candidate.code
+      : undefined;
+  const errorCode = [name, code, status ? `http_${status}` : undefined].filter(Boolean).join(":");
+  const terminal =
+    status !== undefined && status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status);
+  return { errorCode, terminal };
+}
+
+function mapClaimedRow(row: {
+  id: string;
+  source: string;
+  topic: string | null;
+  events: WebhookInboxEvent[];
+  attempts: number;
+  replay_count: number;
+  lease_token: string;
+  lease_expires_at: Date | string;
+}): ClaimedWebhookInboxEntry {
+  return {
+    id: row.id,
+    source: row.source,
+    topic: row.topic ?? null,
+    events: row.events ?? [],
+    attempts: Number(row.attempts),
+    replayCount: Number(row.replay_count),
+    leaseToken: row.lease_token,
+    leaseExpiresAt:
+      row.lease_expires_at instanceof Date
+        ? row.lease_expires_at.toISOString()
+        : String(row.lease_expires_at),
+  };
+}
+
 /**
- * Insert a `received` row for an inbound webhook. Must be awaited BEFORE
- * attempting to publish to Inngest — this is the durability guarantee.
- *
- * Returns the new row's id, or `null` if PostgreSQL is unconfigured or the
- * insert failed (never throws).
+ * Insert a receipt before publication. Empty event lists are terminal at
+ * insertion because there is deliberately nothing to publish.
  */
 export async function recordInboxEntry(params: RecordInboxEntryParams): Promise<string | null> {
   try {
     if (!databaseAvailable()) return null;
+    const published = params.events.length === 0;
     const result = await queryDatabase<{ id: string }>(
-      `INSERT INTO ${TABLE} (source, topic, payload, headers, events, status)
-       VALUES ($1, $2, $3, $4, $5, 'received')
+      `INSERT INTO ${TABLE} (
+         source, topic, payload, headers, events, status, published_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6,
+         CASE WHEN $6 = 'published' THEN now() ELSE NULL END
+       )
        RETURNING id`,
       [
         params.source,
@@ -80,55 +188,23 @@ export async function recordInboxEntry(params: RecordInboxEntryParams): Promise<
         params.payload ?? {},
         params.headers ?? {},
         params.events ?? [],
+        published ? "published" : "received",
       ]
     );
     return result.rows[0]?.id ?? null;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected insert error for source=${params.source}: ${msg}`);
+  } catch (error) {
+    console.warn(
+      `[WebhookInbox] Receipt insert failed for source=${params.source}: ${errorCategory(error)}`
+    );
     return null;
   }
 }
 
-/** Mark a row as successfully published to Inngest. Never throws. */
-export async function markInboxPublished(id: string, eventIds: string[]): Promise<void> {
-  if (!id) return;
-  try {
-    if (!databaseAvailable()) return;
-    await queryDatabase(
-      `UPDATE ${TABLE}
-       SET status = 'published', published_at = now(), event_ids = $2
-       WHERE id = $1`,
-      [id, eventIds]
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected markInboxPublished(${id}) error: ${msg}`);
-  }
-}
-
-/** Mark a row as failed to publish (increments attempts). Never throws. */
-export async function markInboxFailed(id: string, error: string): Promise<void> {
-  if (!id) return;
-  try {
-    if (!databaseAvailable()) return;
-    await queryDatabase(
-      `UPDATE ${TABLE}
-       SET status = 'failed', attempts = attempts + 1, last_error = $2
-       WHERE id = $1`,
-      [id, error]
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected markInboxFailed(${id}) error: ${msg}`);
-  }
-}
-
-/**
- * Fetch inbox rows not yet published, oldest first, for the drain cron to
- * re-attempt. Returns `[]` on any error or when PostgreSQL is unconfigured.
- */
-export async function getUnpublishedInboxEntries(limit: number): Promise<UnpublishedInboxEntry[]> {
+/** Claim ready rows atomically. Concurrent workers receive disjoint rows. */
+export async function claimWebhookInboxEntries(
+  limit: number,
+  options: ClaimWebhookInboxOptions
+): Promise<ClaimedWebhookInboxEntry[]> {
   try {
     if (!databaseAvailable()) return [];
     const result = await queryDatabase<{
@@ -137,24 +213,109 @@ export async function getUnpublishedInboxEntries(limit: number): Promise<Unpubli
       topic: string | null;
       events: WebhookInboxEvent[];
       attempts: number;
-    }>(
-      `SELECT id, source, topic, events, attempts
-       FROM ${TABLE}
-       WHERE status <> 'published'
-       ORDER BY received_at ASC
-       LIMIT $1`,
-      [Math.max(1, limit)]
-    );
-    return result.rows.map((row) => ({
-      id: row.id as string,
-      source: row.source as string,
-      topic: (row.topic as string | null) ?? null,
-      events: (row.events as WebhookInboxEvent[]) || [],
-      attempts: row.attempts ?? 0,
-    }));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[WebhookInbox] Unexpected getUnpublishedInboxEntries error: ${msg}`);
+      replay_count: number;
+      lease_token: string;
+      lease_expires_at: Date | string;
+    }>(claimEntriesSQL, [
+      Math.max(1, limit),
+      Math.max(30, options.leaseSeconds),
+      Math.max(1, options.maxAttempts),
+      options.inboxId ?? null,
+    ]);
+    return result.rows.map(mapClaimedRow);
+  } catch (error) {
+    console.warn(`[WebhookInbox] Claim failed: ${errorCategory(error)}`);
     return [];
+  }
+}
+
+/** Claim one newly inserted or operator-requeued receipt by id. */
+export async function claimWebhookInboxEntry(
+  inboxId: string,
+  options: Omit<ClaimWebhookInboxOptions, "inboxId">
+): Promise<ClaimedWebhookInboxEntry | null> {
+  const claimed = await claimWebhookInboxEntries(1, { ...options, inboxId });
+  return claimed[0] ?? null;
+}
+
+/** Acknowledge only the exact active lease. */
+export async function markInboxPublished(
+  entry: Pick<ClaimedWebhookInboxEntry, "id" | "leaseToken">,
+  eventIds: string[]
+): Promise<boolean> {
+  try {
+    if (!databaseAvailable()) return false;
+    const result = await queryDatabase(publishEntrySQL, [entry.id, entry.leaseToken, eventIds]);
+    return result.rowCount === 1;
+  } catch (error) {
+    console.warn(
+      `[WebhookInbox] Publication acknowledgement failed for ${entry.id}: ${errorCategory(error)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Fail only the exact active lease. The caller supplies the already bounded
+ * retry delay. The database converts the attempt to a dead letter once the
+ * attempt limit is reached or the failure is known to be terminal.
+ */
+export async function markInboxFailed(
+  entry: Pick<ClaimedWebhookInboxEntry, "id" | "leaseToken">,
+  failure: {
+    errorCode: string;
+    maxAttempts: number;
+    retryDelaySeconds: number;
+    terminal?: boolean;
+  }
+): Promise<WebhookInboxFailureState> {
+  try {
+    if (!databaseAvailable()) return "stale";
+    const result = await queryDatabase<{ dead_lettered_at: Date | null }>(failEntrySQL, [
+      entry.id,
+      entry.leaseToken,
+      failure.errorCode,
+      Math.max(1, failure.maxAttempts),
+      Math.max(1, failure.retryDelaySeconds),
+      failure.terminal === true,
+    ]);
+    const row = result.rows[0];
+    if (!row) return "stale";
+    return row.dead_lettered_at ? "dead_letter" : "retryable";
+  } catch (error) {
+    console.warn(
+      `[WebhookInbox] Failure acknowledgement failed for ${entry.id}: ${errorCategory(error)}`
+    );
+    return "stale";
+  }
+}
+
+/** Requeue one terminal dead letter. The recovery command is the audit trail. */
+export async function requeueWebhookInboxDeadLetter(inboxId: string): Promise<boolean> {
+  try {
+    if (!databaseAvailable()) return false;
+    const result = await queryDatabase(requeueDeadLetterSQL, [inboxId]);
+    return result.rowCount === 1;
+  } catch (error) {
+    console.warn(`[WebhookInbox] Dead-letter replay failed: ${errorCategory(error)}`);
+    return false;
+  }
+}
+
+/** Delete only old published receipts, in a bounded batch. */
+export async function deleteRetainedPublishedInboxEntries(
+  retentionDays: number,
+  limit: number
+): Promise<number> {
+  try {
+    if (!databaseAvailable()) return 0;
+    const result = await queryDatabase(deleteRetainedEntriesSQL, [
+      Math.max(1, retentionDays),
+      Math.max(1, limit),
+    ]);
+    return result.rowCount ?? 0;
+  } catch (error) {
+    console.warn(`[WebhookInbox] Retention cleanup failed: ${errorCategory(error)}`);
+    return 0;
   }
 }
