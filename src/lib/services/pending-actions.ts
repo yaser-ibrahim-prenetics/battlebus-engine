@@ -17,6 +17,8 @@ import { importLegacyPendingActionsSQL } from "@/lib/sql/pending-actions/import-
 
 export type PendingActionType = "fulfill" | "cancel" | "refund";
 
+const MAX_PENDING_ACTION_EVENT_BYTES = 512 * 1024;
+
 export interface PendingAction {
   action: PendingActionType;
   eventName: string;
@@ -74,6 +76,11 @@ export async function storePendingAction(
     throw new Error("Invalid pending action type");
   }
 
+  const serializedEventData = JSON.stringify(action.eventData);
+  if (Buffer.byteLength(serializedEventData, "utf8") > MAX_PENDING_ACTION_EVENT_BYTES) {
+    throw new Error("Pending action event data exceeds 512 KiB");
+  }
+
   const legacyPayload = JSON.stringify({
     action: action.action,
     eventName,
@@ -88,7 +95,7 @@ export async function storePendingAction(
       action.action,
       sourceEventId,
       eventName,
-      JSON.stringify(action.eventData),
+      serializedEventData,
       legacyPayload,
     ]);
     if (legacyResult.rowCount !== 1) {
@@ -105,7 +112,7 @@ export async function storePendingAction(
       action.action,
       sourceEventId,
       eventName,
-      JSON.stringify(action.eventData),
+      serializedEventData,
       legacyPayload,
       config.pendingActions.legacyProjectionEnabled,
     ]

@@ -38,6 +38,7 @@ import {
   retryWithBackoff,
 } from "@/lib/utils/constants";
 import { storePendingAction } from "@/lib/services/pending-actions";
+import { fulfillmentPendingActionData } from "@/lib/services/pending-action-payloads";
 import { resolveD365OrderHeaderForLifecycle } from "@/lib/services/d365-order-header-resolution";
 import { fetchD365InventoryLotsByShopifyOrder } from "@/lib/services/order-lookup";
 import {
@@ -328,7 +329,7 @@ export const processShopifyFulfillment = inngest.createFunction(
         await storePendingAction(shopifyOrderId, {
           action: "fulfill",
           eventName: "shopify/order.fulfilled",
-          eventData: event.data,
+          eventData: fulfillmentPendingActionData(event.data),
           sourceEventId: event.id,
         });
       });

@@ -14,6 +14,7 @@ import {
 import { ShopifyOrderPayload } from "../events";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { storePendingAction } from "@/lib/services/pending-actions";
+import { cancellationPendingActionData } from "@/lib/services/pending-action-payloads";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 
 export const processOrderCancellation = inngest.createFunction(
@@ -248,7 +249,7 @@ export const processOrderCancellation = inngest.createFunction(
         await storePendingAction(shopifyOrderId, {
           action: "cancel",
           eventName: "shopify/order.cancelled",
-          eventData: event.data,
+          eventData: cancellationPendingActionData(event.data),
           sourceEventId: event.id,
         });
       });
