@@ -292,9 +292,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           fallbackDataArea: segmented.plan.segments[0].dataAreaId,
           shortAddress,
           ensureEligible,
-          withExternalMutation: async (execute) => {
+          withExternalMutation: async (operationKey, execute) => {
             await ensureLease();
-            return runWithOosMutationLease(execute);
+            return runWithOosMutationLease(operationKey, execute);
           },
           shouldReportFailure: (error) => !isRejectedOosRecoveryAttempt(error),
         });
@@ -611,7 +611,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             };
           }
           for (const [lineIndex, line] of blockedLines.entries()) {
-            await runWithOosMutationLease(() =>
+            await runWithOosMutationLease(
+              `d365:line:${d365NumManual}:${line.sourceLineId}:${line.itemNumber}:${lineIndex}`,
+              () =>
               executeFulfillmentAction(
                 {
                   provider: "dynamics",
@@ -625,7 +627,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               )
             );
           }
-          await runWithOosMutationLease(() =>
+          await runWithOosMutationLease(`d365:confirm:${d365NumManual}`, () =>
             executeFulfillmentAction(
               {
                 provider: "dynamics",
@@ -638,7 +640,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               () => dynamics.confirmSalesOrder(d365NumManual, d365Company)
             )
           );
-          await runWithOosMutationLease(() =>
+          await runWithOosMutationLease(`d365:prepayment:${d365NumManual}`, () =>
             executeFulfillmentAction(
               {
                 provider: "dynamics",
@@ -733,13 +735,13 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        const result = await runWithOosMutationLease(() =>
+        const result = await runWithOosMutationLease(`targeted:gps:outbound:${warehouse}`, () =>
           gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
         );
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await runWithOosMutationLease(() =>
+          await runWithOosMutationLease(`targeted:shopify:gps-metafield:${warehouse}`, () =>
             setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,
@@ -1053,14 +1055,14 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        const result = await runWithOosMutationLease(() =>
+        const result = await runWithOosMutationLease(`scheduled:gps:outbound:${warehouse}`, () =>
           gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
         );
 
         // Store GPS metafield on success
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await runWithOosMutationLease(() =>
+          await runWithOosMutationLease(`scheduled:shopify:gps-metafield:${warehouse}`, () =>
             setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,

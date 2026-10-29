@@ -791,7 +791,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               // Create D365 packing slip (retry only transient API failures, not inventory/OData business errors)
               const fulfilmentPost = await retryWithBackoff(
                 () =>
-                  runWithOosMutationLease(() =>
+                  runWithOosMutationLease(`d365:fulfillment:${fulfillment.id}`, () =>
                     dynamics.createFulfilment({
                       fulfillmentId: `shopify:${fulfillment.id}`,
                       dataAreaId,
@@ -817,7 +817,9 @@ export const processShopifyFulfillment = inngest.createFunction(
                 processingStatus: depositPrecheck.processingStatus,
               });
               const depositShipInvoiceCheck = isDepositOrder
-                ? await runWithOosMutationLease(() =>
+                ? await runWithOosMutationLease(
+                    `d365:deposit-invoice:${fulfillment.id}`,
+                    () =>
                     dynamics.assertDepositShipmentInvoicingComplete(
                       d365Order.SalesOrderNumber!,
                       dataAreaId,
@@ -1251,8 +1253,13 @@ export const processShopifyFulfillment = inngest.createFunction(
               }
             }
 
-            const response = await runWithOosMutationLease(() =>
-              paypal.syncTrackingBatch(trackers)
+            const trackingOperation = trackers
+              .map((tracker) => `${tracker.transactionId}:${tracker.trackingNumber}`)
+              .sort()
+              .join(",");
+            const response = await runWithOosMutationLease(
+              `paypal:tracking:${trackingOperation}`,
+              () => paypal.syncTrackingBatch(trackers)
             );
 
             return {

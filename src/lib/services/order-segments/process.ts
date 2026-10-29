@@ -36,7 +36,7 @@ type ProcessSegmentsInput = {
   fallbackDataArea: string;
   shortAddress?: string;
   ensureEligible?: () => Promise<unknown>;
-  withExternalMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
+  withExternalMutation?: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
   shouldReportFailure?: (error: unknown) => boolean;
 };
 
@@ -60,8 +60,8 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync || input.testMode)
     return null;
   const { order, step, accounting } = input;
-  const withExternalMutation = <T>(execute: () => Promise<T>) =>
-    input.withExternalMutation ? input.withExternalMutation(execute) : execute();
+  const withExternalMutation = <T>(operationKey: string, execute: () => Promise<T>) =>
+    input.withExternalMutation ? input.withExternalMutation(operationKey, execute) : execute();
   if (!accounting) throw new Error("Payment accounting is required before splitting orders");
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await step.run("plan-order-segments", async () => {
@@ -114,7 +114,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (!stored) return null;
   const { plan } = stored;
   const bindings = await step.run("bind-shopify-segments", async () => {
-    return withExternalMutation(() => bindShopifySegments(shop, plan));
+    return withExternalMutation("shopify-segments:bind", () => bindShopifySegments(shop, plan));
   });
   const outcomes = await Promise.allSettled(
     plan.segments.map(async (segment): Promise<SegmentProgress> => {
@@ -122,7 +122,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       const prefix = `segment-${segment.index}`;
       const projected = segmentOrder(order, plan, segment.index);
       const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
-        withExternalMutation(() =>
+        withExternalMutation(`${prefix}:${phase}`, () =>
           executeFulfillmentAction(
             {
               provider: "dynamics",
@@ -233,7 +233,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         if (!payload.productList.length) return undefined;
         let result: Awaited<ReturnType<typeof gps.createOutboundOrder>>;
         try {
-          result = await withExternalMutation(() =>
+          result = await withExternalMutation(`${prefix}:gps`, () =>
             gps.createOutboundOrder(
               payload,
               segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"

@@ -32,10 +32,13 @@ leases are transaction-local during reservation; an interrupted transaction roll
 `parked`. Expired drain-request leases are requeued with a fresh durable dispatch identity, while
 expired dependencies move to `manual_review` and are never silently deleted.
 
-An exact replay attempt also takes a short-lived PostgreSQL provider-mutation lease around every
-external write. Expiry, manual rearm, provider rollover and outcome transitions use the same
-order-scoped lock and cannot invalidate an attempt while one of its provider calls is in flight.
-Multiple line writes for the same attempt may hold concurrent leases; a different attempt cannot.
+An exact replay attempt also records a stable operation key and takes a renewable PostgreSQL
+provider-mutation lease around every external write. Expiry, manual rearm, provider rollover and
+outcome transitions use the same order-scoped lock and cannot invalidate an attempt while one of
+its provider calls is in flight. Accepted and uncertain operations remain recorded, while a
+provider-confirmed inventory rejection may be tried by a later replay token. An expired pending
+operation is promoted to uncertain instead of being executed again. Independent line writes for
+the same attempt may hold concurrent leases; the same operation or a different attempt cannot.
 
 ## Drain entry points
 

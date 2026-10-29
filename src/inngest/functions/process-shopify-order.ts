@@ -1211,7 +1211,10 @@ export const processShopifyOrder = inngest.createFunction(
             d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
           } else {
             d365Header = await retryWithBackoff(
-              () => runWithOosMutationLease(() => dynamics.createSalesOrderHeaderV3(headerRequest)),
+              () =>
+                runWithOosMutationLease(`d365:header:${dataAreaId}`, () =>
+                  dynamics.createSalesOrderHeaderV3(headerRequest)
+                ),
               { label: `D365 header ${shopifyOrderName}` }
             );
           }
@@ -1280,12 +1283,14 @@ export const processShopifyOrder = inngest.createFunction(
           }
 
           const settledLineResults = await Promise.allSettled(
-            lineItems.map((line) =>
+            lineItems.map((line, lineIndex) =>
               (async () => {
                 try {
                   const created = await retryWithBackoff(
                     () =>
-                      runWithOosMutationLease(() =>
+                      runWithOosMutationLease(
+                        `d365:line:${salesOrderNo}:${line.itemNumber}:${lineIndex}`,
+                        () =>
                         dynamics.createSalesOrderLine({
                           ...line,
                           salesOrderNumber: salesOrderNo,
@@ -1496,7 +1501,7 @@ export const processShopifyOrder = inngest.createFunction(
 
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
-                await runWithOosMutationLease(() =>
+                await runWithOosMutationLease(`d365:confirm:${salesOrderNo}`, () =>
                   dynamics.confirmSalesOrder(salesOrderNo, dataAreaId)
                 );
                 if (attempt > 1) {
@@ -1556,7 +1561,7 @@ export const processShopifyOrder = inngest.createFunction(
             const depositCheck = await step.run("d365-create-prepayment", async () => {
               await retryWithBackoff(
                 () =>
-                  runWithOosMutationLease(() =>
+                  runWithOosMutationLease(`d365:prepayment:${salesOrderNo}`, () =>
                     dynamics.createPrepayment(salesOrderNo, dataAreaId)
                   ),
                 {
@@ -1661,7 +1666,9 @@ export const processShopifyOrder = inngest.createFunction(
           });
           gpsResult = await step.run("gps-dispatch", async () => {
             try {
-              const result = await runWithOosMutationLease(() =>
+              const result = await runWithOosMutationLease(
+                `gps:outbound:${warehouseName}:${salesOrderNo}`,
+                () =>
                 gps.createOutboundOrder(
                   payloadForStep,
                   warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -1670,7 +1677,9 @@ export const processShopifyOrder = inngest.createFunction(
 
               const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
               if (gpsOrderNo) {
-                await runWithOosMutationLease(() =>
+                await runWithOosMutationLease(
+                  `shopify:gps-metafield:${warehouseName}:${salesOrderNo}`,
+                  () =>
                   setGpsOrderMetafield(shopifyOrderId, {
                     gpsOrderId: gpsOrderNo,
                     warehouse: warehouseName,
@@ -1792,7 +1801,7 @@ export const processShopifyOrder = inngest.createFunction(
           try {
             await retryWithBackoff(
               () =>
-                runWithOosMutationLease(() =>
+                runWithOosMutationLease(`d365:prepayment:${reusedSalesOrderNumber}`, () =>
                   dynamics.createPrepayment(reusedSalesOrderNumber, dataAreaId)
                 ),
               {
@@ -1865,7 +1874,9 @@ export const processShopifyOrder = inngest.createFunction(
               warehouseName,
               saudiShortAddress
             );
-            const result = await runWithOosMutationLease(() =>
+            const result = await runWithOosMutationLease(
+              `gps:outbound:${warehouseName}:${reusedSalesOrderNumber}`,
+              () =>
               gps.createOutboundOrder(
                 gpsOrderPayload,
                 warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -1874,7 +1885,9 @@ export const processShopifyOrder = inngest.createFunction(
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
 
             if (gpsOrderNo) {
-              await runWithOosMutationLease(() =>
+              await runWithOosMutationLease(
+                `shopify:gps-metafield:${warehouseName}:${reusedSalesOrderNumber}`,
+                () =>
                 setGpsOrderMetafield(shopifyOrderId, {
                   gpsOrderId: gpsOrderNo,
                   warehouse: warehouseName,

@@ -1,9 +1,11 @@
 import { NonRetriableError } from "inngest";
 import type { OosRecoveryReplayMarker } from "./events";
+import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
 import {
   claimOosRecoveryMutation,
   isCurrentOosRecoveryAttempt,
   releaseOosRecoveryMutation,
+  renewOosRecoveryMutation,
   type OosRecoveryAttemptScope,
   type OosRetryContext,
 } from "@/lib/services/oos-recovery/outcomes";
@@ -73,13 +75,17 @@ export function createOosRecoveryAttemptGuard(params: {
     }
     return context;
   };
-  const runWithMutationLease = async <T>(execute: () => Promise<T>): Promise<T> => {
+  const runWithMutationLease = async <T>(
+    operationKey: string,
+    execute: () => Promise<T>
+  ): Promise<T> => {
     if (!params.active) return execute();
     const lease = await claimOosRecoveryMutation({
       shopifyStore: params.shopifyStore,
       orderId: params.orderId,
       attemptToken: requireAttemptToken(),
       expectedContext: requireContext(),
+      operationKey,
       leaseOwner: params.leaseOwner,
       leaseSeconds: params.leaseSeconds,
     });
@@ -88,19 +94,70 @@ export function createOosRecoveryAttemptGuard(params: {
         "Targeted OOS replay could not claim the current provider mutation"
       );
     }
+    const heartbeatIntervalMs = Math.max(1_000, Math.floor((params.leaseSeconds * 1_000) / 3));
+    const heartbeatRetryMs = Math.max(250, Math.min(1_000, heartbeatIntervalMs));
+    let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+    let heartbeatInFlight: Promise<void> | null = null;
+    let heartbeatStopped = false;
+    let leaseLost = false;
+    const scheduleHeartbeat = (delayMs: number): void => {
+      heartbeatTimer = setTimeout(() => {
+        let retryDelay = heartbeatIntervalMs;
+        heartbeatInFlight = renewOosRecoveryMutation(lease, params.leaseSeconds)
+          .then((renewed) => {
+            if (!renewed) leaseLost = true;
+          })
+          .catch(() => {
+            retryDelay = heartbeatRetryMs;
+          })
+          .finally(() => {
+            heartbeatInFlight = null;
+            if (!heartbeatStopped && !leaseLost) scheduleHeartbeat(retryDelay);
+          });
+      }, delayMs);
+      if (typeof heartbeatTimer === "object") heartbeatTimer.unref();
+    };
+    scheduleHeartbeat(heartbeatIntervalMs);
     let result: T | undefined;
     let executionError: unknown;
     try {
       result = await execute();
     } catch (error) {
       executionError = error;
+    } finally {
+      heartbeatStopped = true;
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      if (heartbeatInFlight) await heartbeatInFlight;
     }
-    if (!(await releaseOosRecoveryMutation(lease))) {
+    let released = false;
+    try {
+      released = await releaseOosRecoveryMutation(
+        lease,
+        executionError
+          ? isInventoryUnavailableError(executionError)
+            ? "rejected"
+            : "uncertain"
+          : "accepted"
+      );
+    } catch {
+      // An uncertain release must not allow the workflow to repeat a provider mutation.
+    }
+    if (leaseLost || !released) {
       throw new RejectedOosRecoveryAttemptError(
         "Targeted OOS replay lost its provider mutation lease"
       );
     }
-    if (executionError) throw executionError;
+    if (executionError) {
+      if (
+        executionError instanceof RejectedOosRecoveryAttemptError ||
+        isInventoryUnavailableError(executionError)
+      ) {
+        throw executionError;
+      }
+      throw new RejectedOosRecoveryAttemptError(
+        "Targeted OOS replay has an uncertain provider mutation outcome"
+      );
+    }
     return result as T;
   };
   return { requireAttemptToken, requireContext, runWithMutationLease };

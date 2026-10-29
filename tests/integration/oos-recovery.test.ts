@@ -21,6 +21,7 @@ import {
   rearmManualReviewOosDependencies,
   reparkOosDependencies,
   releaseOosRecoveryMutation,
+  renewOosRecoveryMutation,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
@@ -941,6 +942,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
+      operationKey: "d365:test-primary",
       leaseOwner: "integration-test",
       leaseSeconds: 300,
     });
@@ -950,10 +952,73 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
+      operationKey: "d365:test-concurrent",
       leaseOwner: "integration-test-concurrent",
       leaseSeconds: 300,
     });
     if (!concurrentLease) throw new Error("expected a concurrent same-attempt lease");
+    await expect(
+      claimOosRecoveryMutation({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        operationKey: "d365:test-primary",
+        leaseOwner: "integration-test-retry",
+        leaseSeconds: 300,
+      })
+    ).resolves.toBeNull();
+    const rejectedLease = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      operationKey: "d365:test-rejected",
+      leaseOwner: "integration-test-rejected",
+      leaseSeconds: 300,
+    });
+    if (!rejectedLease) throw new Error("expected an inventory-rejected provider mutation lease");
+    await expect(releaseOosRecoveryMutation(rejectedLease, "rejected")).resolves.toBe(true);
+    await pool.query(
+      `UPDATE public.oos_recovery_mutation_leases
+       SET lease_until = now() + interval '1 second' WHERE id = $1::uuid`,
+      [lease.leaseToken]
+    );
+    await expect(renewOosRecoveryMutation(lease, 300)).resolves.toBe(true);
+    const renewed = await pool.query<{ renewed: boolean }>(
+      `SELECT lease_until > now() + interval '4 minutes' AS renewed
+       FROM public.oos_recovery_mutation_leases WHERE id = $1::uuid`,
+      [lease.leaseToken]
+    );
+    expect(renewed.rows).toEqual([{ renewed: true }]);
+    const uncertainLease = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      operationKey: "d365:test-uncertain",
+      leaseOwner: "integration-test-uncertain",
+      leaseSeconds: 300,
+    });
+    if (!uncertainLease) throw new Error("expected an uncertain provider mutation lease");
+    await pool.query(
+      `UPDATE public.oos_recovery_mutation_leases
+       SET created_at = now() - interval '10 minutes', lease_until = now() - interval '1 second'
+       WHERE id = $1::uuid`,
+      [uncertainLease.leaseToken]
+    );
+    await expect(releaseOosRecoveryMutation(uncertainLease)).resolves.toBe(false);
+    await expect(
+      claimOosRecoveryMutation({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        operationKey: "d365:test-uncertain",
+        leaseOwner: "integration-test-uncertain-retry",
+        leaseSeconds: 300,
+      })
+    ).resolves.toBeNull();
 
     await expect(
       rearmManualReviewOosDependencies({
@@ -1002,6 +1067,17 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     });
     await expect(releaseOosRecoveryMutation(lease)).resolves.toBe(true);
     await expect(
+      claimOosRecoveryMutation({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        operationKey: "d365:test-primary",
+        leaseOwner: "integration-test-completed-retry",
+        leaseSeconds: 300,
+      })
+    ).resolves.toBeNull();
+    await expect(
       resolveOosDependencies({
         shopifyStore: "im8health.myshopify.com",
         orderId,
@@ -1020,6 +1096,41 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         includeManualReview: true,
       })
     ).resolves.toEqual({ dependencies: 1, manualReview: false });
+
+    await park([dependency(orderId)], new Date("2026-10-29T00:01:00Z"));
+    const nextAttemptToken = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!nextAttemptToken) throw new Error("expected a later replay attempt token");
+    const nextExpectedContext = await retryContext(orderId);
+    for (const operationKey of ["d365:test-primary", "d365:test-uncertain"]) {
+      await expect(
+        claimOosRecoveryMutation({
+          shopifyStore: "im8health.myshopify.com",
+          orderId,
+          attemptToken: nextAttemptToken,
+          expectedContext: nextExpectedContext,
+          operationKey,
+          leaseOwner: `integration-test-later-${operationKey}`,
+          leaseSeconds: 300,
+        })
+      ).resolves.toBeNull();
+    }
+    const retryAfterInventoryRejection = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken: nextAttemptToken,
+      expectedContext: nextExpectedContext,
+      operationKey: "d365:test-rejected",
+      leaseOwner: "integration-test-rejected-later",
+      leaseSeconds: 300,
+    });
+    if (!retryAfterInventoryRejection) {
+      throw new Error("expected an inventory-rejected operation to be retryable later");
+    }
+    await expect(releaseOosRecoveryMutation(retryAfterInventoryRejection)).resolves.toBe(true);
   });
 
   it("preserves the attempt ceiling across repeated same-provider failures", async () => {
