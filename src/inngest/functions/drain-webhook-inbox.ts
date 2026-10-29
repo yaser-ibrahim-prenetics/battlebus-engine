@@ -1,89 +1,140 @@
 // ============================================================================
-// DRAIN WEBHOOK INBOX — CRON SAFETY NET
+// DRAIN WEBHOOK INBOX — LEASED, BACKED-OFF PUBLICATION
 // ============================================================================
-// Periodic sweep that re-attempts publishing any `webhook_inbox` row not yet
-// marked `published`. This is the safety net for the case where a webhook
-// route's inngest.send() failed (and the route already returned a 5xx so the
-// sender — e.g. Shopify — will retry within its own window) or the process
-// crashed between recording the inbox row and sending the event. Even if
-// neither of those retries land, this cron eventually republishes the event.
 
 import { inngest } from "../client";
 import {
-  getUnpublishedInboxEntries,
-  markInboxPublished,
+  claimWebhookInboxEntries,
+  classifyWebhookInboxDeliveryFailure,
+  deleteRetainedPublishedInboxEntries,
   markInboxFailed,
+  markInboxPublished,
+  validateWebhookInboxEvents,
+  webhookInboxRetryDelaySeconds,
 } from "@/lib/services/webhook-inbox";
 import { config } from "@/lib/config";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+
+type DrainOutcome = "published" | "retryable" | "dead_letter" | "stale";
+type WebhookInboxDrainStep = {
+  run<T>(id: string, handler: () => Promise<T>): Promise<T>;
+  sendEvent(
+    id: string,
+    event: { id: string; name: "webhook/inbox.drain"; data: Record<string, never> }
+  ): Promise<unknown>;
+};
+type WebhookInboxDrainEvent = {
+  id: string;
+  name: string;
+  data?: { inboxId?: string };
+};
 
 export const drainWebhookInbox = inngest.createFunction(
   {
     id: "drain-webhook-inbox",
     name: "Drain Webhook Inbox",
     retries: RETRY_CONFIGS.LOW_PRIORITY,
-    // Only one sweep at a time — prevents overlapping cron runs from
-    // double-publishing the same inbox row.
+    // The database lease protects cross-process claims. The function-level
+    // limit additionally prevents cron, successor and manual drain runs from
+    // competing for provider publication capacity.
     concurrency: { limit: 1 },
-    triggers: [{ cron: `*/${config.webhookInbox.drainIntervalMinutes} * * * *` }],
+    triggers: [
+      { cron: `*/${config.webhookInbox.drainIntervalMinutes} * * * *` },
+      { event: "webhook/inbox.drain" },
+    ],
   },
-  async ({ step, event }: { step: any; event: any }) => {
-    const _flowStart = Date.now();
-    const _runId = (event as any).id;
+  async ({ step, event }: { step: WebhookInboxDrainStep; event: WebhookInboxDrainEvent }) => {
+    const flowStart = Date.now();
+    const runId = event.id;
+    const requestedInboxId =
+      event.name === "webhook/inbox.drain" && typeof event.data?.inboxId === "string"
+        ? event.data.inboxId
+        : undefined;
 
     logFlowEvent({
       flow: "webhook_inbox_drain",
       step: "start",
       status: "started",
-      runId: _runId,
-      payload: { intervalMinutes: config.webhookInbox.drainIntervalMinutes },
+      runId,
+      payload: { requestedInboxId },
     });
 
-    const drainResult = await step.run("drain", async () => {
-      const entries = await getUnpublishedInboxEntries(50);
+    const entries = await step.run("claim-ready-receipts", () =>
+      claimWebhookInboxEntries(requestedInboxId ? 1 : config.webhookInbox.claimBatchSize, {
+        inboxId: requestedInboxId,
+        leaseSeconds: config.webhookInbox.leaseSeconds,
+        maxAttempts: config.webhookInbox.maxAttempts,
+      })
+    );
 
-      if (entries.length === 0) {
-        return { count: 0, published: 0, failed: 0 };
-      }
+    const outcomes: DrainOutcome[] = [];
+    for (const entry of entries) {
+      const outcome = await step.run(
+        `publish-${entry.id}-attempt-${entry.attempts}-replay-${entry.replayCount}`,
+        async (): Promise<DrainOutcome> => {
+          const validationError = validateWebhookInboxEvents(entry.events);
+          if (validationError) {
+            return markInboxFailed(entry, {
+              errorCode: validationError,
+              maxAttempts: config.webhookInbox.maxAttempts,
+              retryDelaySeconds: 1,
+              terminal: true,
+            });
+          }
 
-      console.log(`[WebhookInboxDrain] ${entries.length} unpublished inbox row(s) to retry`);
-
-      let published = 0;
-      let failed = 0;
-
-      for (const entry of entries) {
-        if (!entry.events || entry.events.length === 0) {
-          // Nothing to send — treat as trivially published.
-          await markInboxPublished(entry.id, []);
-          published++;
-          continue;
+          try {
+            const sent = await inngest.send(entry.events as Parameters<typeof inngest.send>[0]);
+            return (await markInboxPublished(entry, sent?.ids ?? [])) ? "published" : "stale";
+          } catch (error) {
+            const failure = classifyWebhookInboxDeliveryFailure(error);
+            return markInboxFailed(entry, {
+              errorCode: failure.errorCode,
+              maxAttempts: config.webhookInbox.maxAttempts,
+              retryDelaySeconds: webhookInboxRetryDelaySeconds(
+                entry.attempts,
+                config.webhookInbox.retryBaseSeconds,
+                config.webhookInbox.retryMaxSeconds
+              ),
+              terminal: failure.terminal,
+            });
+          }
         }
+      );
+      outcomes.push(outcome);
+    }
 
-        try {
-          const sendResult = await inngest.send(entry.events as any);
-          await markInboxPublished(entry.id, sendResult?.ids ?? []);
-          published++;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(
-            `[WebhookInboxDrain] Retry publish failed for inbox row ${entry.id} (source=${entry.source}):`,
-            error
-          );
-          await markInboxFailed(entry.id, message);
-          failed++;
-        }
-      }
+    const retainedDeleted = await step.run("delete-expired-published-receipts", () =>
+      deleteRetainedPublishedInboxEntries(
+        config.webhookInbox.publishedRetentionDays,
+        config.webhookInbox.retentionBatchSize
+      )
+    );
 
-      return { count: entries.length, published, failed };
-    });
+    if (!requestedInboxId && entries.length === config.webhookInbox.claimBatchSize) {
+      const lastEntry = entries.at(-1);
+      await step.sendEvent("continue-webhook-inbox-drain", {
+        id: `webhook-inbox-drain-${runId}-${lastEntry?.id ?? "batch"}`,
+        name: "webhook/inbox.drain" as const,
+        data: {},
+      });
+    }
+
+    const drainResult = {
+      count: entries.length,
+      published: outcomes.filter((outcome) => outcome === "published").length,
+      retried: outcomes.filter((outcome) => outcome === "retryable").length,
+      deadLettered: outcomes.filter((outcome) => outcome === "dead_letter").length,
+      stale: outcomes.filter((outcome) => outcome === "stale").length,
+      retainedDeleted,
+    };
 
     logFlowEvent({
       flow: "webhook_inbox_drain",
       step: "done",
       status: "completed",
-      runId: _runId,
-      durationMs: Date.now() - _flowStart,
+      runId,
+      durationMs: Date.now() - flowStart,
       payload: drainResult,
     });
 

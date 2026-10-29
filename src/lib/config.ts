@@ -322,6 +322,29 @@ export const config = {
       1,
       59
     ),
+    claimBatchSize: clampInt(safeParseInt(process.env.WEBHOOK_INBOX_CLAIM_BATCH_SIZE, 50), 1, 500),
+    leaseSeconds: clampInt(safeParseInt(process.env.WEBHOOK_INBOX_LEASE_SECONDS, 120), 30, 900),
+    maxAttempts: clampInt(safeParseInt(process.env.WEBHOOK_INBOX_MAX_ATTEMPTS, 10), 1, 100),
+    retryBaseSeconds: clampInt(
+      safeParseInt(process.env.WEBHOOK_INBOX_RETRY_BASE_SECONDS, 60),
+      1,
+      3600
+    ),
+    retryMaxSeconds: clampInt(
+      safeParseInt(process.env.WEBHOOK_INBOX_RETRY_MAX_SECONDS, 21600),
+      60,
+      86400
+    ),
+    publishedRetentionDays: clampInt(
+      safeParseInt(process.env.WEBHOOK_INBOX_PUBLISHED_RETENTION_DAYS, 30),
+      1,
+      365
+    ),
+    retentionBatchSize: clampInt(
+      safeParseInt(process.env.WEBHOOK_INBOX_RETENTION_BATCH_SIZE, 100),
+      1,
+      1000
+    ),
   },
 
   // Order validation
