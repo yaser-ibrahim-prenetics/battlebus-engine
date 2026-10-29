@@ -255,7 +255,7 @@ export async function POST(request: NextRequest) {
           // If we still don't have line items or transactions, try the calculate endpoint as last resort
           if (!refund.refund_line_items && !refund.transactions) {
             console.log("[Actions] No refund data built, trying calculate endpoint...");
-            const calcResponse = await fetch(
+            const calcResponse = await shopify.shopifyProviderFetch(
               `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds/calculate.json`,
               {
                 method: "POST",
@@ -304,7 +304,7 @@ export async function POST(request: NextRequest) {
         JSON.stringify(refund, null, 2)
       );
 
-      const response = await fetch(
+      const response = await shopify.shopifyProviderFetch(
         `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/refunds.json`,
         {
           method: "POST",

@@ -33,17 +33,17 @@ limits to webhook ingestion. Any future outbound client must use its reserved na
 
 ## Configuration
 
-| Variable                                  | Default | Range  |
-| ----------------------------------------- | ------: | ------ |
-| `PROVIDER_CAPACITY_ENABLED`               | `false` | bool   |
-| `PROVIDER_CAPACITY_D365_LIMIT`            |     `4` | 1–100  |
-| `PROVIDER_CAPACITY_GPS_LIMIT`             |     `4` | 1–100  |
-| `PROVIDER_CAPACITY_SHOPIFY_LIMIT`         |     `8` | 1–100  |
-| `PROVIDER_CAPACITY_STORD_LIMIT`           |     `4` | 1–100  |
-| `PROVIDER_CAPACITY_LOOP_LIMIT`            |     `4` | 1–100  |
-| `PROVIDER_CAPACITY_LEASE_SECONDS`         |   `120` | 30–600 |
-| `PROVIDER_CAPACITY_ACQUIRE_TIMEOUT_MS`    | `30000` | 1–60 s |
-| `PROVIDER_CAPACITY_ACQUIRE_POLL_INTERVAL` |   `250` | 25–2 s |
+| Variable                                  | Default | Range   |
+| ----------------------------------------- | ------: | ------- |
+| `PROVIDER_CAPACITY_ENABLED`               | `false` | bool    |
+| `PROVIDER_CAPACITY_D365_LIMIT`            |     `4` | 1–100   |
+| `PROVIDER_CAPACITY_GPS_LIMIT`             |     `4` | 1–100   |
+| `PROVIDER_CAPACITY_SHOPIFY_LIMIT`         |     `8` | 1–100   |
+| `PROVIDER_CAPACITY_STORD_LIMIT`           |     `4` | 1–100   |
+| `PROVIDER_CAPACITY_LOOP_LIMIT`            |     `4` | 1–100   |
+| `PROVIDER_CAPACITY_LEASE_SECONDS`         |   `120` | 120–600 |
+| `PROVIDER_CAPACITY_ACQUIRE_TIMEOUT_MS`    | `30000` | 1–60 s  |
+| `PROVIDER_CAPACITY_ACQUIRE_POLL_INTERVAL` |   `250` | 25–2 s  |
 
 ## Acceptance criteria
 
@@ -51,5 +51,6 @@ limits to webhook ingestion. Any future outbound client must use its reserved na
 - Different providers do not block one another.
 - Expired claims are recoverable after a worker crash.
 - Exact-token renewal and release cannot modify a newer lease.
+- Every covered provider fetch has a 60-second upper bound, below the minimum 120-second lease.
 - Disabled mode performs no database access.
 - Operations health reports active and expired slots per provider without exposing operation data.

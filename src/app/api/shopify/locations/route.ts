@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
+import { shopifyProviderFetch } from "@/lib/clients/shopify";
 
 interface ShopifyLocation {
   id: number;
@@ -53,13 +54,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all locations from Shopify
-    const response = await fetch(`https://${shopDomain}/admin/api/${apiVersion}/locations.json`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-    });
+    const response = await shopifyProviderFetch(
+      `https://${shopDomain}/admin/api/${apiVersion}/locations.json`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+      }
+    );
 
     if (!response.ok) {
       const error = await response.text();

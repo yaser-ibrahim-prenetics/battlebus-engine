@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     // Helper to actually call Shopify cancel for a numeric order ID
     const cancelByNumericId = async (numericOrderId: number): Promise<Response> => {
-      return fetch(
+      return shopify.shopifyProviderFetch(
         `https://${shopDomain}/admin/api/${apiVersion}/orders/${numericOrderId}/cancel.json`,
         {
           method: "POST",

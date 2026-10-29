@@ -29,7 +29,7 @@ function buildUrl(endpoint: string): string {
   return `https://${config.shopify.im8.shopDomain}/admin/api/${SHOPIFY_API_VERSION}${endpoint}`;
 }
 
-async function shopifyProviderFetch(
+export async function shopifyProviderFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): Promise<Response> {
@@ -40,7 +40,11 @@ async function shopifyProviderFetch(
   } catch {
     // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
   }
-  return withProviderCapacity("shopify", `${method}:${capacityPath}`, () => fetch(input, init));
+  const timeout = AbortSignal.timeout(60_000);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+  return withProviderCapacity("shopify", `${method}:${capacityPath}`, () =>
+    fetch(input, { ...init, signal })
+  );
 }
 
 /**

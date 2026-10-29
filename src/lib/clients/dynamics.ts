@@ -236,8 +236,10 @@ async function pacedFetch(
   const requestBodyForLog = normalizeBodyForLog(init?.body);
 
   try {
+    const timeout = AbortSignal.timeout(60_000);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     const response = await withProviderCapacity("d365", `${method}:${capacityPath}`, () =>
-      fetch(input, init)
+      fetch(input, { ...init, signal })
     );
     const durationMs = Date.now() - startedAt;
     const responseBodyForLog = await readResponseBodyForLog(response);

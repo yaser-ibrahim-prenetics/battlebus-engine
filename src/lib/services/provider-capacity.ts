@@ -113,7 +113,7 @@ export async function acquireProviderCapacity(
   const limit = clamp(overrides.limit ?? providerLimit(provider), 1, 100);
   const leaseSeconds = clamp(
     overrides.leaseSeconds ?? config.providerCapacity?.leaseSeconds ?? 120,
-    30,
+    120,
     600
   );
   const acquireTimeoutMs = clamp(
@@ -157,7 +157,7 @@ export async function renewProviderCapacity(
      SET lease_until = clock_timestamp() + make_interval(secs => $5)
      WHERE provider = $1 AND slot = $2 AND lease_token = $3::uuid AND lease_owner = $4::uuid
        AND lease_until > clock_timestamp()`,
-    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner, clamp(leaseSeconds, 30, 600)]
+    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner, clamp(leaseSeconds, 120, 600)]
   );
   return result.rowCount === 1;
 }
@@ -191,7 +191,7 @@ export async function withProviderCapacity<T>(
     throw new Error("Shared provider capacity requires the configured PostgreSQL database");
   const leaseSeconds = clamp(
     overrides.leaseSeconds ?? config.providerCapacity?.leaseSeconds ?? 120,
-    30,
+    120,
     600
   );
   const lease = await acquireProviderCapacity(provider, operation, { ...overrides, pool });

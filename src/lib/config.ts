@@ -303,7 +303,11 @@ export const config = {
       stord: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_STORD_LIMIT, 4), 1, 100),
       loop: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_LOOP_LIMIT, 4), 1, 100),
     },
-    leaseSeconds: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_LEASE_SECONDS, 120), 30, 600),
+    leaseSeconds: clampInt(
+      safeParseInt(process.env.PROVIDER_CAPACITY_LEASE_SECONDS, 120),
+      120,
+      600
+    ),
     acquireTimeoutMs: clampInt(
       safeParseInt(process.env.PROVIDER_CAPACITY_ACQUIRE_TIMEOUT_MS, 30_000),
       1,
