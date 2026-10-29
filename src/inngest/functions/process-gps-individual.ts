@@ -12,7 +12,6 @@ import { filterDummySkus } from "@/lib/utils/validation";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
-  RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
 } from "@/lib/utils/constants";
@@ -44,10 +43,6 @@ const processGpsIndividualConfig = Object.freeze({
     key: "event.data.warehouse",
   },
   concurrency: CONCURRENCY_CONFIGS.FULFILLMENT,
-  rateLimit: {
-    ...RATE_LIMIT_CONFIGS.FULFILLMENT,
-    key: "event.data.outboundOrderNo",
-  },
 });
 
 export const processGpsIndividual = inngest.createFunction(
@@ -252,8 +247,7 @@ export const processGpsIndividual = inngest.createFunction(
             shippingWarehouseId:
               d365Dims?.shippingWarehouseId || fulfilmentConfig.shippingWarehouseId,
             shippingWarehouseLocationId:
-              d365Dims?.shippingWarehouseLocationId ||
-              fulfilmentConfig.shippingWarehouseLocationId,
+              d365Dims?.shippingWarehouseLocationId || fulfilmentConfig.shippingWarehouseLocationId,
             lotId: lotIdMap[skuKey] || "",
           };
         });
@@ -325,7 +319,11 @@ export const processGpsIndividual = inngest.createFunction(
         `\nTracking: ${fulfilmentData.trackingNumber} \nShopify: ${shopifyStatus} \nD365: ${d365Status}`;
 
       console.log(message);
-      await slack.sendInfoMessage(SlackChannelEnum.GPS, message, slack.slackNotificationId(event.id, "gps-individual-completed"));
+      await slack.sendInfoMessage(
+        SlackChannelEnum.GPS,
+        message,
+        slack.slackNotificationId(event.id, "gps-individual-completed")
+      );
     });
 
     // Step 7: Notify Hub of fulfillment with GPS source

@@ -77,25 +77,6 @@ export const CONCURRENCY_CONFIGS = {
 };
 
 // ============================================================================
-// RATE LIMIT CONFIGURATIONS
-// ============================================================================
-
-export const RATE_LIMIT_CONFIGS = {
-  FULFILLMENT: {
-    limit: envInt("RATE_LIMIT_FULFILLMENT", 5),
-    period: (process.env.RATE_LIMIT_FULFILLMENT_PERIOD || "24h") as "24h",
-  },
-  REFUND: {
-    limit: envInt("RATE_LIMIT_REFUND", 3),
-    period: (process.env.RATE_LIMIT_REFUND_PERIOD || "24h") as "24h",
-  },
-  CANCELLATION: {
-    limit: envInt("RATE_LIMIT_CANCELLATION", 1),
-    period: (process.env.RATE_LIMIT_CANCELLATION_PERIOD || "1h") as "1h",
-  },
-};
-
-// ============================================================================
 // RETRY CONFIGURATIONS
 // ============================================================================
 // Inngest accepts retries as 0-20 (literal union). Clamp env values and cast.
