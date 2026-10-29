@@ -6,9 +6,14 @@ region="${GCP_REGION:-asia-east1}"
 service="${CLOUD_RUN_SERVICE:-battle-bus}"
 runtime_service_account="${RUNTIME_SERVICE_ACCOUNT:-battle-bus-runtime@${project_id}.iam.gserviceaccount.com}"
 secret_env_file="${SECRET_ENV_FILE:-config/gcp-secret-env-names.txt}"
+secret_bindings_file="${SECRET_BINDINGS_FILE:-config/gcp-secret-bindings.txt}"
 
 if [[ ! -f "${secret_env_file}" ]]; then
   printf 'Secret inventory file not found: %s\n' "${secret_env_file}" >&2
+  exit 1
+fi
+if [[ ! -f "${secret_bindings_file}" ]]; then
+  printf 'Secret bindings file not found: %s\n' "${secret_bindings_file}" >&2
   exit 1
 fi
 
@@ -42,6 +47,7 @@ bindings=()
 migrated_names=()
 already_managed_names=()
 missing_names=()
+configured_names=()
 
 while IFS= read -r env_name; do
   [[ -z "${env_name}" || "${env_name}" == \#* ]] && continue
@@ -59,8 +65,31 @@ while IFS= read -r env_name; do
       end
   ' "${service_json}")"
 
+  explicit_binding="$(awk -F= -v name="${env_name}" '$1 == name { print $2 }' "${secret_bindings_file}")"
+  if [[ -n "${explicit_binding}" && ! "${explicit_binding}" =~ ^[a-z0-9-]+:[1-9][0-9]*$ ]]; then
+    printf 'Invalid pinned secret binding for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
+    exit 1
+  fi
+
   case "${entry_kind}" in
     missing)
+      if [[ -n "${explicit_binding}" ]]; then
+        secret_id="${explicit_binding%:*}"
+        secret_version="${explicit_binding##*:}"
+        secret_state="$(gcloud secrets versions describe "${secret_version}" \
+          --secret="${secret_id}" --project="${project_id}" --format='value(state)')"
+        if [[ "${secret_state}" != "ENABLED" ]]; then
+          printf 'Pinned secret version is not enabled for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
+          exit 1
+        fi
+        gcloud secrets add-iam-policy-binding "${secret_id}" \
+          --member="serviceAccount:${runtime_service_account}" \
+          --role=roles/secretmanager.secretAccessor \
+          --project="${project_id}" --quiet >/dev/null
+        bindings+=("${env_name}=${explicit_binding}")
+        configured_names+=("${env_name}")
+        continue
+      fi
       missing_names+=("${env_name}")
       continue
       ;;
@@ -69,6 +98,10 @@ while IFS= read -r env_name; do
       continue
       ;;
     plaintext)
+      if [[ -n "${explicit_binding}" ]]; then
+        printf 'Refusing to replace plaintext %s with a pinned secret without an explicit rotation.\n' "${env_name}" >&2
+        exit 1
+      fi
       ;;
     *)
       printf 'Unsupported Cloud Run environment entry for %s.\n' "${env_name}" >&2
@@ -117,6 +150,7 @@ done <"${secret_env_file}"
 if (( ${#bindings[@]} == 0 )); then
   printf 'No plaintext secret environment variables require migration.\n'
   printf 'Already Secret Manager-backed: %s\n' "${#already_managed_names[@]}"
+  printf 'Configured from pinned bindings: %s\n' "${#configured_names[@]}"
   printf 'Not configured on this service: %s\n' "${#missing_names[@]}"
   exit 0
 fi

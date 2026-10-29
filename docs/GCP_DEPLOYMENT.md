@@ -65,6 +65,10 @@ The canonical credential inventory is
 workstation to convert existing plaintext Cloud Run credentials into Secret
 Manager references through a verified no-traffic revision. See
 `docs/SECRET_MANAGEMENT.md` for rotation and history-remediation guidance.
+Secret names that cannot be safely derived, including the dedicated operations
+credential, are pinned to reviewed numeric versions in
+`config/gcp-secret-bindings.txt`; both the migration script and deployment
+workflow consume that same mapping.
 
 Store server credentials in Secret Manager and grant the runtime service
 account access to only the secrets it needs. Do not move `VERCEL_*` variables,
