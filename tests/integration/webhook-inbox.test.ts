@@ -188,6 +188,19 @@ describe.skipIf(!connectionString)("webhook inbox PostgreSQL contract", () => {
     expect(exhausted.rows[0].lease_token).toBeNull();
   });
 
+  it("dead-letters due compatibility attempts when the enabled limit becomes lower", async () => {
+    const id = await insertReceipt({ attempts: 10, status: "failed" });
+
+    expect((await claim(10, 120, 10, id)).rows).toHaveLength(0);
+    const state = await pool.query<{
+      dead_lettered_at: Date | null;
+      last_error: string | null;
+    }>("SELECT dead_lettered_at,last_error FROM public.webhook_inbox WHERE id=$1", [id]);
+
+    expect(state.rows[0].dead_lettered_at).toBeInstanceOf(Date);
+    expect(state.rows[0].last_error).toBe("delivery_attempt_limit_reached_after_rollout");
+  });
+
   it("deletes only bounded, expired published receipts", async () => {
     const publishedIds = await Promise.all(
       Array.from({ length: 3 }, () =>

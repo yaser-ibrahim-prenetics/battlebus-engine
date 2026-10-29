@@ -3,19 +3,34 @@ import { quoteIdentifier } from "@/lib/db/database";
 export function createClaimWebhookInboxEntriesSQL(tableName: string): string {
   const table = quoteIdentifier(tableName);
 
-  return `WITH exhausted AS (
-      UPDATE ${table}
+  return `WITH exhausted_candidates AS (
+      SELECT receipt.id
+      FROM ${table} AS receipt
+      WHERE receipt.status IN ('received', 'failed')
+        AND receipt.dead_lettered_at IS NULL
+        AND receipt.attempts >= $3
+        AND (
+          (receipt.lease_token IS NULL AND receipt.next_attempt_at <= now())
+          OR
+          (receipt.lease_token IS NOT NULL AND receipt.lease_expires_at <= now())
+        )
+      ORDER BY receipt.next_attempt_at, receipt.received_at, receipt.id
+      FOR UPDATE SKIP LOCKED
+      LIMIT $1
+    ), exhausted AS (
+      UPDATE ${table} AS receipt
       SET status = 'failed',
           dead_lettered_at = COALESCE(dead_lettered_at, now()),
           lease_token = NULL,
           lease_expires_at = NULL,
-          last_error = 'delivery_lease_expired_at_attempt_limit'
-      WHERE status IN ('received', 'failed')
-        AND dead_lettered_at IS NULL
-        AND lease_token IS NOT NULL
-        AND lease_expires_at <= now()
-        AND attempts >= $3
-      RETURNING id
+          last_error = CASE
+            WHEN receipt.lease_token IS NULL
+              THEN 'delivery_attempt_limit_reached_after_rollout'
+            ELSE 'delivery_lease_expired_at_attempt_limit'
+          END
+      FROM exhausted_candidates
+      WHERE receipt.id = exhausted_candidates.id
+      RETURNING receipt.id
     ), candidates AS (
       SELECT receipt.id
       FROM ${table} AS receipt
