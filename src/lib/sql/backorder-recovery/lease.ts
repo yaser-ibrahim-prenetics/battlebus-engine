@@ -57,10 +57,17 @@ export const releaseBackorderRecoveryLeaseSQL = `
   UPDATE public.backorder_recovery_leases
   SET lease_token = NULL,
       lease_expires_at = NULL,
-      released_at = now(),
-      updated_at = now()
+      released_at = COALESCE(released_at, now()),
+      updated_at = CASE WHEN lease_token = $3 THEN now() ELSE updated_at END
   WHERE shopify_store = $1
     AND order_id = $2
-    AND lease_token = $3
+    AND (
+      lease_token = $3
+      OR (
+        lease_token IS NULL
+        AND last_operation_key = $4
+        AND last_lease_owner = $5
+      )
+    )
   RETURNING shopify_store, order_id
 `;
