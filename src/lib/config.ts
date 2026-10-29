@@ -293,6 +293,11 @@ export const config = {
 
   // Pending lifecycle action drain sweep
   pendingActions: {
+    // Expand/deploy gate. Enable only after migrations are applied and no old
+    // drain revision receives traffic. Legacy projection remains on by default
+    // throughout the rollback window.
+    durableQueueEnabled: process.env.PENDING_ACTIONS_DURABLE_QUEUE_ENABLED === "true",
+    legacyProjectionEnabled: process.env.PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED !== "false",
     // 1-59 minutes (default 10). This powers the cron schedule for drain-pending-actions.
     drainIntervalMinutes: clampInt(
       safeParseInt(process.env.PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES, 10),
