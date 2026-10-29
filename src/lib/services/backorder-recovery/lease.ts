@@ -141,6 +141,8 @@ export async function releaseBackorderRecoveryLease(lease: BackorderRecoveryLeas
     lease.shopifyStore,
     lease.orderId,
     lease.token,
+    lease.operationKey,
+    lease.owner,
   ]);
   if (result.rowCount !== 1) {
     throw new Error(

@@ -59,6 +59,8 @@ describe.skipIf(!connectionString)("backorder recovery PostgreSQL lease", () => 
       "lease-test.myshopify.com",
       orderId,
       randomUUID(),
+      "retry:wrong-release",
+      "worker:retry:wrong-release",
     ]);
     expect(wrongRelease.rowCount).toBe(0);
 
@@ -66,8 +68,37 @@ describe.skipIf(!connectionString)("backorder recovery PostgreSQL lease", () => 
       "lease-test.myshopify.com",
       orderId,
       token,
+      "retry:release",
+      "worker:retry:release",
     ]);
     expect(release.rowCount).toBe(1);
+
+    const replayedRelease = await pool.query(releaseBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+      "retry:release",
+      "worker:retry:release",
+    ]);
+    expect(replayedRelease.rowCount).toBe(1);
+
+    const newerToken = randomUUID();
+    expect((await acquire(orderId, newerToken, "retry:new-owner")).rowCount).toBe(1);
+    const staleRelease = await pool.query(releaseBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+      "retry:release",
+      "worker:retry:release",
+    ]);
+    expect(staleRelease.rowCount).toBe(0);
+    const active = await pool.query<{ lease_token: string }>(
+      `SELECT lease_token
+       FROM public.backorder_recovery_leases
+       WHERE shopify_store = $1 AND order_id = $2`,
+      ["lease-test.myshopify.com", orderId]
+    );
+    expect(active.rows[0].lease_token).toBe(newerToken);
   });
 
   it("renews or reacquires only the replay-stable lease owner", async () => {
@@ -103,6 +134,8 @@ describe.skipIf(!connectionString)("backorder recovery PostgreSQL lease", () => 
           "lease-test.myshopify.com",
           orderId,
           token,
+          operationKey,
+          owner,
         ])
       ).rowCount
     ).toBe(1);
