@@ -83,6 +83,14 @@ function requireCanonicalShopifyStore(value: unknown): string {
   return resolved;
 }
 
+function backorderGpsOperationKey(
+  operation: "outbound" | "shopify-metafield",
+  orderId: string | number,
+  warehouse: string
+): string {
+  return `gps:${operation}:${String(orderId)}:${warehouse.trim().toUpperCase()}`;
+}
+
 async function buildBackorderGpsPayload(params: {
   order: ShopifyOrderPayload;
   shopifyOrderId: string;
@@ -735,14 +743,20 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        const result = await runWithOosMutationLease(`targeted:gps:outbound:${warehouse}`, () =>
-          gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
+        const result = await runWithOosMutationLease(
+          backorderGpsOperationKey("outbound", shopifyOrderId, warehouse),
+          () =>
+            gps.createOutboundOrder(
+              gpsPayload,
+              warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+            )
         );
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await runWithOosMutationLease(`targeted:shopify:gps-metafield:${warehouse}`, () =>
-            setGpsOrderMetafield(shopifyOrderId, {
+          await runWithOosMutationLease(
+            backorderGpsOperationKey("shopify-metafield", shopifyOrderId, warehouse),
+            () => setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,
               d365OrderNumber,
@@ -1055,15 +1069,21 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        const result = await runWithOosMutationLease(`scheduled:gps:outbound:${warehouse}`, () =>
-          gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
+        const result = await runWithOosMutationLease(
+          backorderGpsOperationKey("outbound", shopifyOrderId, warehouse),
+          () =>
+            gps.createOutboundOrder(
+              gpsPayload,
+              warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+            )
         );
 
         // Store GPS metafield on success
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await runWithOosMutationLease(`scheduled:shopify:gps-metafield:${warehouse}`, () =>
-            setGpsOrderMetafield(shopifyOrderId, {
+          await runWithOosMutationLease(
+            backorderGpsOperationKey("shopify-metafield", shopifyOrderId, warehouse),
+            () => setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,
               d365OrderNumber,

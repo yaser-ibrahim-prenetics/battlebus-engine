@@ -35,8 +35,9 @@ expired dependencies move to `manual_review` and are never silently deleted.
 An exact replay attempt also records a stable operation key and takes a renewable PostgreSQL
 provider-mutation lease around every external write. Expiry, manual rearm, provider rollover and
 outcome transitions use the same order-scoped lock and cannot invalidate an attempt while one of
-its provider calls is in flight. Accepted and uncertain operations remain recorded, while a
-provider-confirmed inventory rejection may be tried by a later replay token. An expired pending
+its provider calls is in flight. Accepted results and provider-confirmed inventory rejections are
+replayed from durable evidence without calling the provider again; a rejected operation may be
+tried by a later replay token. Uncertain operations remain hard-blocked, and an expired pending
 operation is promoted to uncertain instead of being executed again. Independent line writes for
 the same attempt may hold concurrent leases; the same operation or a different attempt cannot.
 

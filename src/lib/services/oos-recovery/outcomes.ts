@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
 import { lockOosRecoveryOrder } from "./locking";
+import type {
+  InventoryFailureCategory,
+  InventoryProvider,
+  ProviderBlockedItem,
+} from "./inventory-failure";
 
 export type OosRecoveryOutcome = {
   dependencies: number;
@@ -29,6 +34,26 @@ export type OosRecoveryMutationLease = {
   operationKey: string;
   leaseToken: string;
 };
+
+export type OosRecoveryMutationFailure = {
+  provider: InventoryProvider;
+  category: InventoryFailureCategory;
+  message: string;
+  blockedItems: ProviderBlockedItem[];
+  providerOrderNumber?: string;
+  providerWarehouse?: string;
+};
+
+export type OosRecoveryMutationClaim =
+  | { status: "claimed"; lease: OosRecoveryMutationLease }
+  | { status: "accepted"; result: { hasValue: boolean; value?: unknown } }
+  | { status: "rejected"; failure: OosRecoveryMutationFailure }
+  | { status: "blocked" };
+
+export type OosRecoveryMutationCompletion =
+  | { state: "accepted"; result: { hasValue: boolean; value?: unknown } }
+  | { state: "rejected"; failure: OosRecoveryMutationFailure }
+  | { state: "uncertain" };
 
 type LockedOosDependency = {
   id: string;
@@ -150,7 +175,7 @@ export async function claimOosRecoveryMutation(params: {
   operationKey: string;
   leaseOwner: string;
   leaseSeconds: number;
-}): Promise<OosRecoveryMutationLease | null> {
+}): Promise<OosRecoveryMutationClaim> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS recovery mutation requires the configured PostgreSQL database");
   const client = await pool.connect();
@@ -163,7 +188,7 @@ export async function claimOosRecoveryMutation(params: {
     });
     if (!ids) {
       await client.query("COMMIT");
-      return null;
+      return { status: "blocked" };
     }
     await client.query(
       `WITH obsolete AS (
@@ -187,8 +212,10 @@ export async function claimOosRecoveryMutation(params: {
       replay_token: string;
       state: "pending" | "accepted" | "rejected" | "uncertain";
       lease_until: Date | null;
+      result_payload: { hasValue: boolean; value?: unknown } | null;
+      failure_payload: OosRecoveryMutationFailure | null;
     }>(
-      `SELECT id, replay_token, state, lease_until
+      `SELECT id, replay_token, state, lease_until, result_payload, failure_payload
        FROM public.oos_recovery_mutation_leases
        WHERE lower(shopify_store) = lower($1) AND order_id = $2
          AND operation_key = $3
@@ -211,13 +238,23 @@ export async function claimOosRecoveryMutation(params: {
         [expiredPendingIds]
       );
     }
+    const accepted = existingOperation.rows.find((row) => row.state === "accepted");
+    if (accepted?.result_payload) {
+      await client.query("COMMIT");
+      return { status: "accepted", result: accepted.result_payload };
+    }
     if (
-      existingOperation.rows.some(
-        (row) => row.state !== "rejected" || row.replay_token === params.attemptToken
-      )
+      existingOperation.rows.some((row) => row.state === "pending" || row.state === "uncertain")
     ) {
       await client.query("COMMIT");
-      return null;
+      return { status: "blocked" };
+    }
+    const rejected = existingOperation.rows.find(
+      (row) => row.state === "rejected" && row.replay_token === params.attemptToken
+    );
+    if (rejected?.failure_payload) {
+      await client.query("COMMIT");
+      return { status: "rejected", failure: rejected.failure_payload };
     }
     const leaseToken = randomUUID();
     await client.query(
@@ -236,12 +273,15 @@ export async function claimOosRecoveryMutation(params: {
     );
     await client.query("COMMIT");
     return {
-      shopifyStore: params.shopifyStore,
-      orderId: params.orderId,
-      attemptToken: params.attemptToken,
-      expectedContext: params.expectedContext,
-      operationKey: params.operationKey,
-      leaseToken,
+      status: "claimed",
+      lease: {
+        shopifyStore: params.shopifyStore,
+        orderId: params.orderId,
+        attemptToken: params.attemptToken,
+        expectedContext: params.expectedContext,
+        operationKey: params.operationKey,
+        leaseToken,
+      },
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -297,7 +337,10 @@ export async function renewOosRecoveryMutation(
 
 export async function releaseOosRecoveryMutation(
   lease: OosRecoveryMutationLease,
-  outcome: "accepted" | "rejected" | "uncertain" = "accepted"
+  completion: OosRecoveryMutationCompletion = {
+    state: "accepted",
+    result: { hasValue: false },
+  }
 ): Promise<boolean> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS recovery mutation requires the configured PostgreSQL database");
@@ -318,7 +361,8 @@ export async function releaseOosRecoveryMutation(
     }
     const result = await client.query(
       `UPDATE public.oos_recovery_mutation_leases
-       SET state = $6, lease_until = NULL, finished_at = now()
+       SET state = $6, lease_until = NULL, finished_at = now(),
+         result_payload = $7::jsonb, failure_payload = $8::jsonb
        WHERE id = $1::uuid AND lower(shopify_store) = lower($2) AND order_id = $3
          AND replay_token = $4::uuid AND operation_key = $5
          AND state = 'pending' AND lease_until > now()`,
@@ -328,7 +372,9 @@ export async function releaseOosRecoveryMutation(
         lease.orderId,
         lease.attemptToken,
         lease.operationKey,
-        outcome,
+        completion.state,
+        completion.state === "accepted" ? JSON.stringify(completion.result) : null,
+        completion.state === "rejected" ? JSON.stringify(completion.failure) : null,
       ]
     );
     await client.query("COMMIT");

@@ -1,4 +1,5 @@
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
+import { createHash } from "node:crypto";
 // ============================================================================
 // SHOPIFY FULFILLMENT → D365 SYNC
 // ============================================================================
@@ -1253,10 +1254,19 @@ export const processShopifyFulfillment = inngest.createFunction(
               }
             }
 
-            const trackingOperation = trackers
-              .map((tracker) => `${tracker.transactionId}:${tracker.trackingNumber}`)
-              .sort()
-              .join(",");
+            const trackingOperation = createHash("sha256")
+              .update(
+                JSON.stringify(
+                  trackers
+                    .map((tracker) => [tracker.transactionId, tracker.trackingNumber])
+                    .sort(([leftTransaction, leftTracking], [rightTransaction, rightTracking]) =>
+                      `${leftTransaction}:${leftTracking}`.localeCompare(
+                        `${rightTransaction}:${rightTracking}`
+                      )
+                    )
+                )
+              )
+              .digest("hex");
             const response = await runWithOosMutationLease(
               `paypal:tracking:${trackingOperation}`,
               () => paypal.syncTrackingBatch(trackers)

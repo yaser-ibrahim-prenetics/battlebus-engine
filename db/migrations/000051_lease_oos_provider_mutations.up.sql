@@ -10,15 +10,25 @@ CREATE TABLE public.oos_recovery_mutation_leases (
   state text NOT NULL DEFAULT 'pending',
   lease_until timestamptz,
   finished_at timestamptz,
+  result_payload jsonb,
+  failure_payload jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT oos_mutation_operation_key_nonempty CHECK (length(trim(operation_key)) > 0),
+  CONSTRAINT oos_mutation_operation_key_shape CHECK (
+    length(trim(operation_key)) BETWEEN 1 AND 200
+  ),
   CONSTRAINT oos_mutation_lease_owner_nonempty CHECK (length(trim(lease_owner)) > 0),
   CONSTRAINT oos_mutation_state_valid CHECK (
     state IN ('pending', 'accepted', 'rejected', 'uncertain')
   ),
   CONSTRAINT oos_mutation_state_shape CHECK (
-    (state = 'pending' AND lease_until > created_at AND finished_at IS NULL)
-    OR (state <> 'pending' AND lease_until IS NULL AND finished_at IS NOT NULL)
+    (state = 'pending' AND lease_until > created_at AND finished_at IS NULL
+      AND result_payload IS NULL AND failure_payload IS NULL)
+    OR (state = 'accepted' AND lease_until IS NULL AND finished_at IS NOT NULL
+      AND result_payload IS NOT NULL AND failure_payload IS NULL)
+    OR (state = 'rejected' AND lease_until IS NULL AND finished_at IS NOT NULL
+      AND result_payload IS NULL AND failure_payload IS NOT NULL)
+    OR (state = 'uncertain' AND lease_until IS NULL AND finished_at IS NOT NULL
+      AND result_payload IS NULL AND failure_payload IS NULL)
   )
 );
 
@@ -28,6 +38,8 @@ CREATE UNIQUE INDEX idx_oos_recovery_mutation_operation
   );
 CREATE INDEX idx_oos_recovery_mutation_order
   ON public.oos_recovery_mutation_leases (lower(shopify_store), order_id, lease_until);
+CREATE INDEX idx_oos_recovery_mutation_cleanup
+  ON public.oos_recovery_mutation_leases (created_at, id);
 
 ALTER TABLE public.oos_recovery_mutation_leases ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.oos_recovery_mutation_leases FROM PUBLIC, anon, authenticated;
