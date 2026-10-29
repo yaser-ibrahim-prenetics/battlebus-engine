@@ -368,12 +368,15 @@ jobs:
           gcloud run services describe "${CLOUD_RUN_SERVICE}" \
             --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" \
             --format=json > "$RUNNER_TEMP/bus-current.json"
-          current_inbox_flag="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); env=d.get("spec",{}).get("template",{}).get("spec",{}).get("containers",[{}])[0].get("env",[]); print(next((str(v.get("value", "")).lower() for v in env if v.get("name")=="WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED"), "missing"))' "$RUNNER_TEMP/bus-current.json")"
-          if [ "${WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED}" = "true" ] && [ "${current_inbox_flag}" = "missing" ]; then
-            echo "Refusing first-release activation. Deploy and promote once with WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED=false, then enable it in a later deployment after the compatible revision and Inngest registration are active." >&2
-            exit 1
-          fi
           previous_traffic="$(node scripts/deploy/traffic-allocation.mjs "$RUNNER_TEMP/bus-current.json")"
+          if [ "${WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED}" = "true" ]; then
+            serving_revision="$(node scripts/deploy/webhook-inbox-activation.mjs serving "$RUNNER_TEMP/bus-current.json")"
+            gcloud run revisions describe "${serving_revision}" \
+              --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" \
+              --format=json > "$RUNNER_TEMP/bus-serving-revision.json"
+            node scripts/deploy/webhook-inbox-activation.mjs verify \
+              "$RUNNER_TEMP/bus-current.json" "$RUNNER_TEMP/bus-serving-revision.json"
+          fi
           echo "PREVIOUS_TRAFFIC=${previous_traffic}" >> "${GITHUB_ENV}"
           echo "CANDIDATE_TAG=${candidate_tag}" >> "${GITHUB_ENV}"
           echo "CANDIDATE_REVISION=${CLOUD_RUN_SERVICE}-${revision_suffix}" >> "${GITHUB_ENV}"
