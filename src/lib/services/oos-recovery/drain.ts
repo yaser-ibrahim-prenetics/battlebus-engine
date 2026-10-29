@@ -187,6 +187,51 @@ async function loadCandidates(
   return result.rows.map(mapDependencyRow);
 }
 
+async function lockInventoryScopes(
+  client: PoolClient,
+  dependencies: OosDependencyRow[]
+): Promise<Set<string>> {
+  const keys = [...new Set(dependencies.map(oosInventoryKey))].sort();
+  for (const key of keys) {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `oos-inventory:${key}`,
+    ]);
+  }
+  return new Set(keys);
+}
+
+async function subtractOutstandingReservations(
+  client: PoolClient,
+  availability: Map<string, number>,
+  dependencies: OosDependencyRow[]
+): Promise<Map<string, number>> {
+  const keys = [...new Set(dependencies.map(oosInventoryKey))];
+  if (keys.length === 0) return new Map(availability);
+  const reservations = await client.query<{
+    provider: InventoryProvider;
+    warehouse: string;
+    sku: string;
+    quantity: string;
+  }>(
+    `SELECT provider, warehouse, sku, sum(quantity_needed)::text AS quantity
+     FROM public.oos_recovery_dependencies
+     WHERE status = 'retrying'
+       AND (provider || ':' || upper(warehouse) || ':' || upper(sku)) = ANY($1::text[])
+     GROUP BY provider, warehouse, sku`,
+    [keys]
+  );
+  const remaining = new Map(availability);
+  for (const reservation of reservations.rows) {
+    const key = oosInventoryKey({
+      provider: reservation.provider,
+      warehouse: reservation.warehouse,
+      sku: reservation.sku,
+    } as OosDependencyRow);
+    remaining.set(key, Math.max(0, (remaining.get(key) ?? 0) - Number(reservation.quantity)));
+  }
+  return remaining;
+}
+
 export async function readCurrentOosInventory(
   dependencies: OosDependencyRow[]
 ): Promise<Map<string, number>> {
@@ -241,6 +286,11 @@ function buildRetryEvent(rows: OosDependencyRow[]) {
       backorderQueue: first.backorderQueue,
       targetedRecovery: true,
       blockedLineIds: [...new Set(rows.map((row) => row.orderLineId))].sort(),
+      blockedItems: rows
+        .map((row) => ({ orderLineId: row.orderLineId, providerSku: row.sku }))
+        .sort((a, b) =>
+          `${a.orderLineId}:${a.providerSku}`.localeCompare(`${b.orderLineId}:${b.providerSku}`)
+        ),
     },
   };
 }
@@ -264,7 +314,10 @@ async function queueSelectedOrders(
       `SELECT ${DEPENDENCY_COLUMNS}
        FROM public.oos_recovery_dependencies d
        WHERE d.shopify_store = $1 AND d.order_id = $2
-         AND d.status IN ('parked', 'leased', 'retrying')
+         AND d.status = 'parked'
+         AND d.next_attempt_at <= now()
+         AND (d.cooldown_until IS NULL OR d.cooldown_until <= now())
+         AND d.expires_at > now()
        ORDER BY d.first_parked_at, d.id
        FOR UPDATE`,
       [first.shopifyStore, first.orderId]
@@ -273,7 +326,12 @@ async function queueSelectedOrders(
     if (
       rows.length === 0 ||
       rows.length !== decision.dependencies.length ||
-      rows.some((row) => !decision.dependencies.some((candidate) => candidate.id === row.id))
+      rows.some(
+        (row) =>
+          !decision.dependencies.some(
+            (candidate) => candidate.id === row.id && candidate.version === row.version
+          )
+      )
     ) {
       continue;
     }
@@ -365,21 +423,10 @@ export async function executeOosDrain(
   const client = await pool.connect();
   try {
     const manualReviewExpired = await expireDependencies(client, request.dryRun);
-    if (request.mode === "sweep" && !request.provider && !request.orderId) {
-      const queuedKeys = await queueSweepKeys(client, request);
-      return {
-        examinedOrders: 0,
-        selectedOrders: 0,
-        selectedDependencies: 0,
-        manualReviewExpired,
-        queuedKeys,
-        decisions: [],
-      };
-    }
-    const candidates = await loadCandidates(client, request);
-    const availability = await inventoryReader(candidates);
-    const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
     if (request.dryRun) {
+      const candidates = await loadCandidates(client, request);
+      const availability = await inventoryReader(candidates);
+      const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
       return {
         examinedOrders: decisions.length,
         selectedOrders: decisions.filter((item) => item.selected).length,
@@ -391,7 +438,31 @@ export async function executeOosDrain(
         decisions,
       };
     }
+    if (request.mode === "sweep" && !request.provider && !request.orderId) {
+      const queuedKeys = await queueSweepKeys(client, request);
+      return {
+        examinedOrders: 0,
+        selectedOrders: 0,
+        selectedDependencies: 0,
+        manualReviewExpired,
+        queuedKeys,
+        decisions: [],
+      };
+    }
     await client.query("BEGIN");
+    const preliminary = await loadCandidates(client, request);
+    const lockedKeys = await lockInventoryScopes(client, preliminary);
+    const candidates = await loadCandidates(client, request);
+    if (candidates.some((row) => !lockedKeys.has(oosInventoryKey(row)))) {
+      throw new Error("OOS candidate inventory scopes changed while acquiring allocation locks");
+    }
+    const providerAvailability = await inventoryReader(candidates);
+    const availability = await subtractOutstandingReservations(
+      client,
+      providerAvailability,
+      candidates
+    );
+    const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
     const selected = await queueSelectedOrders(client, request, decisions, availability);
     await client.query("COMMIT");
     return {
