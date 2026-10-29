@@ -150,31 +150,13 @@ export const config = {
 
   // Slack Notification Channels
   slack: {
-    applicationName: "store",
     appEnv: process.env.APP_ENV || "local",
     integration: "real",
-    // "webhook" posts directly to the channel webhooks below (default). "kafka" publishes to
-    // slack-notification-service, which posts each notification id to Slack at most once.
-    transport: (process.env.SLACK_TRANSPORT || "webhook") as "webhook" | "kafka" | "pubsub",
+    // Delivery, formatting and webhook credentials belong to slack-notification-service.
+    transport: (process.env.SLACK_TRANSPORT || "pubsub") as "kafka" | "pubsub",
     publishEnabled: process.env.SLACK_PUBLISH_ENABLED !== "false",
     pubsubTopic: process.env.SLACK_PUBSUB_TOPIC || "",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
-    channel: {
-      order: process.env.SLACK_ORDER_CHANNEL,
-      general: process.env.SLACK_GENERAL_CHANNEL,
-      europa: process.env.SLACK_EUROPA_CHANNEL,
-      system: process.env.SLACK_SYSTEM_CHANNEL,
-      shopify: process.env.SLACK_SHOPIFY_CHANNEL,
-      shopifylow: process.env.SLACK_SHOPIFY_FLOW_CHANNEL,
-      prive: process.env.SLACK_PRIVE_CHANNEL,
-      loop: process.env.SLACK_LOOP_CHANNEL,
-      dynamics: process.env.SLACK_DYNAMICS_CHANNEL,
-      circledna: process.env.SLACK_CIRCLEDNA_CHANNEL,
-      circlednaorder: process.env.SLACK_CIRCLE_DNA_ORDER_CHANNEL,
-      gps: process.env.SLACK_GPS_CHANNEL,
-      gpslow: process.env.SLACK_GPS_LOW_CHANNEL,
-      stord: process.env.SLACK_STORD_CHANNEL,
-    },
   },
 
   // Kafka (used when SLACK_TRANSPORT=kafka)
@@ -431,8 +413,8 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     }
   }
 
-  if (!["webhook", "kafka", "pubsub"].includes(config.slack.transport))
-    errors.push("SLACK_TRANSPORT must be webhook, kafka, or pubsub");
+  if (!["kafka", "pubsub"].includes(config.slack.transport))
+    errors.push("SLACK_TRANSPORT must be kafka or pubsub");
   if (
     config.slack.transport === "pubsub" &&
     !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(

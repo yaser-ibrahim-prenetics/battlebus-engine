@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { config } from "@/lib/config";
 import { publishMessages } from "@/lib/clients/kafka";
-import type { ISlackAttachment } from "../types/slack";
+import type { SlackChannel } from "../types/slack";
 import {
   enqueueSlackNotification,
   drainSlackNotifications,
 } from "@/lib/services/slack-notifications/outbox";
 import { publishSlackToPubSub } from "./slack-pubsub";
-
-// Type for Slack channel keys
-type SlackChannel = keyof typeof config.slack.channel;
 
 export type SlackSeverity = "info" | "success" | "warning" | "error" | "critical";
 
@@ -64,58 +61,6 @@ export function slackNotificationId(
 // TRANSPORTS
 // ============================================================================
 
-const slackSender = async (channel: SlackChannel, attachments: ISlackAttachment[]) => {
-  const webhookUrl = config.slack.channel[channel];
-  if (!webhookUrl) {
-    return;
-  }
-
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ attachments }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Slack API error: ${response.status} - ${errorText}`);
-  }
-
-  return response;
-};
-
-// Legacy webhook format, kept unchanged while SLACK_TRANSPORT=webhook.
-const WEBHOOK_STYLE: Record<SlackSeverity, { color: string; emoji: string; label: string }> = {
-  info: { color: "#36a64f", emoji: ":white_check_mark:", label: "info" },
-  success: { color: "#36a64f", emoji: ":white_check_mark:", label: "info" },
-  warning: { color: "#ffcc00", emoji: ":warning:", label: "warning" },
-  error: { color: "danger", emoji: ":no_entry_sign:", label: "error" },
-  critical: { color: "danger", emoji: ":no_entry_sign:", label: "error" },
-};
-
-async function postToWebhook(notification: SlackNotification): Promise<void> {
-  const style = WEBHOOK_STYLE[notification.severity];
-  const msg = notification.summary ?? notification.title;
-  const title =
-    notification.title === ORDER_TITLE
-      ? `:white_check_mark: Order Placement`
-      : `${style.emoji} [${config.slack.appEnv.toLocaleUpperCase()}] ${config.slack.applicationName} ${style.label}`;
-
-  await slackSender(notification.channel, [
-    {
-      fallback: msg,
-      color: style.color,
-      title,
-      text: msg,
-      footer: config.slack.applicationName,
-      footer_icon: undefined,
-      ts: Math.floor(Date.now() / 1000),
-    },
-  ]);
-}
-
 async function publishToKafka(notification: SlackNotification): Promise<void> {
   const prepared: SlackNotification = {
     ...notification,
@@ -131,11 +76,7 @@ async function publishToKafka(notification: SlackNotification): Promise<void> {
 }
 
 export async function drainSlackOutbox() {
-  if (
-    config.slack.transport === "webhook" ||
-    config.slack.integration !== "real" ||
-    !config.slack.publishEnabled
-  ) {
+  if (config.slack.integration !== "real" || !config.slack.publishEnabled) {
     return { claimed: 0, published: 0, failed: 0 };
   }
   return drainSlackNotifications(publishQueuedNotification);
@@ -165,7 +106,9 @@ export async function sendSlackNotification(notification: SlackNotification): Pr
       if (config.slack.publishEnabled)
         await drainSlackNotifications(publishQueuedNotification, notification.id);
     } else {
-      await postToWebhook(notification);
+      throw new Error(
+        "SLACK_TRANSPORT must be kafka or pubsub; direct webhooks are no longer supported"
+      );
     }
   } catch (e) {
     console.error(

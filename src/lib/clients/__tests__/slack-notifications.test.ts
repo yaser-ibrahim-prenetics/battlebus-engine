@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const publishMessages = vi.fn();
 const enqueue = vi.fn();
+const publishPubSub = vi.fn();
+vi.mock("../slack-pubsub", () => ({ publishSlackToPubSub: publishPubSub }));
 vi.mock("@/lib/services/slack-notifications/outbox", () => ({
   enqueueSlackNotification: enqueue,
   drainSlackNotifications: async (publish: (value: unknown) => Promise<void>) => {
@@ -16,6 +18,7 @@ describe("Slack notifications", () => {
     process.env = { ...previous };
     publishMessages.mockReset();
     enqueue.mockReset();
+    publishPubSub.mockReset();
     vi.unstubAllGlobals();
     vi.resetModules();
   });
@@ -80,25 +83,6 @@ describe("Slack notifications", () => {
     expect(event.summary).toHaveLength(9000);
   });
 
-  it("preserves long reconciliation summaries in webhook notifications", async () => {
-    const slack = await load({
-      SLACK_TRANSPORT: "webhook",
-      SLACK_GPS_CHANNEL: "https://hooks.slack.test/gps",
-    });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
-    vi.stubGlobal("fetch", fetchSpy);
-    const summary = "Unsynced orders:\n" + "#123456789\n".repeat(1000) + "#LAST-ORDER";
-
-    await slack.sendErrorMessage("gps", summary, "evt-5:reconciliation-result");
-
-    expect(publishMessages).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const calls = fetchSpy.mock.calls as unknown as Array<[string, RequestInit]>;
-    const attachment = JSON.parse(String(calls[0][1].body)).attachments[0];
-    expect(attachment.text).toBe(summary);
-    expect(attachment.fallback).toBe(summary);
-  });
-
   it("never throws when publishing fails", async () => {
     const slack = await load({
       SLACK_TRANSPORT: "kafka",
@@ -112,30 +96,28 @@ describe("Slack notifications", () => {
     errorLog.mockRestore();
   });
 
-  it("keeps posting the legacy webhook format by default", async () => {
+  it("defaults to the service and ignores legacy webhook credentials", async () => {
+    delete process.env.SLACK_TRANSPORT;
     const slack = await load({ SLACK_GPS_CHANNEL: "https://hooks.slack.test/gps" });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
-
     await slack.sendWarningMessage("gps", "Inventory low", "evt-4:x");
-    await slack.sendOrderMessage("gps", "Order placed", "evt-4:y");
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(publishPubSub).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-4:x", channel: "gps" })
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 
-    expect(publishMessages).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const calls = fetchSpy.mock.calls as unknown as Array<[string, RequestInit]>;
-    expect(calls[0][0]).toBe("https://hooks.slack.test/gps");
-    const warning = JSON.parse(String(calls[0][1].body)).attachments[0];
-    expect(warning).toMatchObject({
-      color: "#ffcc00",
-      title: ":warning: [LOCAL] store warning",
-      text: "Inventory low",
-    });
-    const order = JSON.parse(String(calls[1][1].body)).attachments[0];
-    expect(order).toMatchObject({
-      color: "#36a64f",
-      title: ":white_check_mark: Order Placement",
-      text: "Order placed",
-    });
+  it("rejects legacy webhook configuration without sending", async () => {
+    const slack = await load({ SLACK_TRANSPORT: "webhook" });
+    const { validateConfig } = await import("@/lib/config");
+    expect(validateConfig().errors).toContain("SLACK_TRANSPORT must be kafka or pubsub");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    await slack.sendErrorMessage("system", "test", "legacy:1");
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(publishPubSub).not.toHaveBeenCalled();
+    errorLog.mockRestore();
   });
 
   it("requires Kafka brokers when SLACK_TRANSPORT=kafka", async () => {
