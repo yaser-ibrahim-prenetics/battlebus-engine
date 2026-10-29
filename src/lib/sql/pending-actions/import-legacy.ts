@@ -1,6 +1,9 @@
 // Expand-phase copy: legacy data remains intact for rollback-capable revisions.
 // Rows already represented in the normalized queue are skipped, so a retained
 // projection cannot starve newer legacy writes from the bounded import window.
+// The snapshot deliberately does not lock orders: queue operations use a
+// queue-before-order lock order, and a concurrent legacy append is copied by a
+// later sweep.
 export const importLegacyPendingActionsSQL = `
 WITH poison_orders AS MATERIALIZED (
   SELECT orders.id
@@ -59,7 +62,6 @@ WITH poison_orders AS MATERIALIZED (
     )
   ORDER BY orders.updated_at, orders.id
   LIMIT $1
-  FOR UPDATE SKIP LOCKED
 ), legacy_actions AS (
   SELECT legacy_orders.id AS order_row_id,
          legacy_orders.order_id,
