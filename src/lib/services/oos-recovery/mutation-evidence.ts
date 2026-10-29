@@ -34,6 +34,22 @@ export const gpsOutboundOrderEvidenceCodec: OosMutationEvidenceCodec<GpsOutbound
 
 type D365FulfillmentResult = Awaited<ReturnType<typeof dynamics.createFulfilment>>;
 
+export function d365DepositInvoiceReplayRequest(params: {
+  salesOrderNumber: string;
+  dataAreaId: string;
+  response: D365FulfillmentResult["response"];
+}) {
+  return {
+    salesOrderNumber: params.salesOrderNumber,
+    dataAreaId: params.dataAreaId,
+    fulfillmentSignals: {
+      status: params.response.status,
+      dimensionWarning: isThkWarehouseOrSiteDimensionWarning(params.response.Message),
+      invoiceVoucherPosted: hasThkInvoiceVoucherPosted(params.response.Message),
+    },
+  };
+}
+
 function normalizedD365ReplayMessage(message: string): string {
   const signals: string[] = [];
   if (isThkWarehouseOrSiteDimensionWarning(message)) {
