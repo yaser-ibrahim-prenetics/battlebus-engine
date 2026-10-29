@@ -47,11 +47,11 @@ An already active, unexpired fulfillment lease is not stolen. This keeps lease o
 
 `orders.pending_actions` remains populated with outstanding work during the expand and rollback phases so older Battle Bus revisions can safely resume. Before activation, producers write only this legacy projection. After activation, producers atomically write the normalized row and a deduplicated legacy projection. Before each claim, the drain:
 
-1. locks a bounded set of order rows with non-empty, fully valid JSON action arrays;
+1. snapshots a bounded set of order rows with non-empty, fully valid JSON action arrays;
 2. inserts actions that are not already represented in the normalized queue with a deterministic source ID; and
 3. leaves outstanding legacy entries intact for rollback-capable revisions.
 
-A concurrent legacy append waits for the row lock and is copied on a later sweep. Malformed or oversized arrays are quarantined without blocking normalized claims, and each drain exposes a bounded `legacyPoisonOrders` count for operator investigation without logging payloads. Exact normalized acknowledgement or supersession atomically removes only the matching legacy entry, so rollback sees outstanding work but cannot replay terminal work. Remove the projection mechanism and column only after all writers and rollback-capable revisions use the normalized table and the contract evidence window is complete.
+A concurrent legacy append does not block the snapshot and is copied on a later sweep. Malformed or oversized arrays are quarantined without blocking normalized claims, and each drain exposes a bounded `legacyPoisonOrders` count for operator investigation without logging payloads. Exact normalized acknowledgement or supersession atomically removes only the matching legacy entry, so rollback sees outstanding work but cannot replay terminal work. Remove the projection mechanism and column only after all writers and rollback-capable revisions use the normalized table and the contract evidence window is complete.
 
 ## Activation sequence
 

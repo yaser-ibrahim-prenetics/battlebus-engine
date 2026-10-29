@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import { Pool, type QueryResult } from "pg";
 
 import { claimPendingActionsSQL } from "@/lib/sql/pending-actions/claim";
 import { enqueuePendingActionSQL } from "@/lib/sql/pending-actions/enqueue";
@@ -273,6 +273,125 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       pending_count: 1,
       remaining_action: "fulfill",
     });
+  });
+
+  it("does not hold an order lock while legacy import waits on a queue row", async () => {
+    const orderId = `${orderPrefix}import-lock-order`;
+    const blockedActionId = await insertAction({ orderId, actionType: "refund" });
+    const completionLease = randomUUID();
+    const completionActionId = await insertAction({
+      orderId,
+      actionType: "cancel",
+      status: "publishing",
+      attempts: 1,
+      leaseToken: completionLease,
+      leaseExpiresAt: new Date(Date.now() + 120_000),
+    });
+    const sources = await pool.query<{
+      action_id: string;
+      action_type: string;
+      source_event_id: string;
+    }>(
+      `SELECT action_id, action_type, source_event_id
+       FROM public.pending_lifecycle_actions
+       WHERE action_id IN ($1, $2)`,
+      [blockedActionId, completionActionId]
+    );
+    const sourceByAction = new Map(
+      sources.rows.map((row) => [row.action_type, row.source_event_id] as const)
+    );
+    await pool.query(
+      `INSERT INTO public.orders (id, order_number, title, pending_actions)
+       VALUES ($1, $1, $1, $2::jsonb)`,
+      [
+        orderId,
+        JSON.stringify([
+          {
+            action: "refund",
+            eventName: "test/refund",
+            eventData: { orderId },
+            sourceEventId: sourceByAction.get("refund"),
+          },
+          {
+            action: "fulfill",
+            eventName: "test/fulfill",
+            eventData: { orderId },
+            sourceEventId: "import-lock-missing-action",
+          },
+          {
+            action: "cancel",
+            eventName: "test/cancel",
+            eventData: { orderId },
+            sourceEventId: sourceByAction.get("cancel"),
+          },
+        ]),
+      ]
+    );
+
+    const blockerClient = await pool.connect();
+    const importClient = await pool.connect();
+    const completionClient = await pool.connect();
+    let importPromise:
+      | Promise<QueryResult<{ imported: string; source_orders: string; poison_orders: string }>>
+      | undefined;
+    let completionPromise: Promise<QueryResult<{ action_id: string }>> | undefined;
+    try {
+      await blockerClient.query("BEGIN");
+      await blockerClient.query(
+        `INSERT INTO public.pending_lifecycle_actions (
+           order_id, action_type, source_event_id, event_name, event_data
+         ) VALUES ($1, 'fulfill', 'import-lock-missing-action', 'test/fulfill', $2::jsonb)`,
+        [orderId, JSON.stringify({ orderId })]
+      );
+      await importClient.query("SET application_name = 'pending-action-import-lock-order'");
+      importPromise = importClient.query<{
+        imported: string;
+        source_orders: string;
+        poison_orders: string;
+      }>(importLegacyPendingActionsSQL, [10]);
+
+      let importWaitsOnQueue = false;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const activity = await pool.query<{ waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_stat_activity
+             WHERE application_name = 'pending-action-import-lock-order'
+               AND wait_event_type = 'Lock'
+           ) AS waiting`
+        );
+        if (activity.rows[0].waiting) {
+          importWaitsOnQueue = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      completionPromise = completionClient.query<{ action_id: string }>(completePendingActionSQL, [
+        completionActionId,
+        completionLease,
+      ]);
+      const completionFinishedBeforeQueueRelease = await Promise.race([
+        completionPromise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+
+      await blockerClient.query("COMMIT");
+      const [imported, completed] = await Promise.all([importPromise, completionPromise]);
+      expect(importWaitsOnQueue).toBe(true);
+      expect(completionFinishedBeforeQueueRelease).toBe(true);
+      expect(completed.rows).toHaveLength(1);
+      expect(imported.rows[0]).toEqual({
+        imported: "0",
+        source_orders: "1",
+        poison_orders: "0",
+      });
+    } finally {
+      await blockerClient.query("ROLLBACK").catch(() => undefined);
+      await Promise.allSettled([importPromise, completionPromise].filter(Boolean));
+      blockerClient.release();
+      importClient.release();
+      completionClient.release();
+    }
   });
 
   it("does not recreate a legacy projection when a terminal action is retried", async () => {
