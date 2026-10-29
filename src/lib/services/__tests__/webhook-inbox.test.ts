@@ -4,6 +4,7 @@ import {
   classifyWebhookInboxDeliveryFailure,
   fingerprintWebhookPayload,
   validateWebhookInboxEvents,
+  webhookInboxDeliveryPolicy,
   webhookInboxRetryDelaySeconds,
 } from "../webhook-inbox";
 
@@ -44,6 +45,33 @@ describe("webhook inbox delivery policy", () => {
     expect(webhookInboxRetryDelaySeconds(1, 60, 3600)).toBe(60);
     expect(webhookInboxRetryDelaySeconds(2, 60, 3600)).toBe(120);
     expect(webhookInboxRetryDelaySeconds(8, 60, 3600)).toBe(3600);
+  });
+
+  it("centralizes enabled and compatibility delivery policy", () => {
+    expect(
+      webhookInboxDeliveryPolicy({
+        durableDeliveryEnabled: true,
+        configuredMaxAttempts: 10,
+        attempt: 2,
+        retryBaseSeconds: 60,
+        retryMaxSeconds: 3600,
+        terminalFailure: true,
+      })
+    ).toEqual({ maxAttempts: 10, retryDelaySeconds: 120, terminal: true });
+    expect(
+      webhookInboxDeliveryPolicy({
+        durableDeliveryEnabled: false,
+        configuredMaxAttempts: 10,
+        attempt: 2,
+        retryBaseSeconds: 60,
+        retryMaxSeconds: 3600,
+        terminalFailure: true,
+      })
+    ).toEqual({
+      maxAttempts: 2_000_000_000,
+      retryDelaySeconds: 1,
+      terminal: false,
+    });
   });
 
   it("classifies permanent HTTP failures without persisting raw messages", () => {

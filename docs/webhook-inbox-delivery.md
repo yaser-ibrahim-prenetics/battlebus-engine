@@ -43,8 +43,10 @@ newer work or create an unbounded retry loop.
 
 The rollout flag is disabled by default. Both modes use exact database leases so a disabled
 revision and an enabled revision cannot claim the same receipt. While disabled, failures remain
-immediately retryable and do not enter the bounded dead-letter policy. Enabling the flag activates
-bounded backoff, attempt limits, dead letters and published-row retention.
+immediately retryable and do not enter the bounded delivery-failure dead-letter policy. Malformed
+persisted event batches are always dead-lettered because retrying invalid data cannot succeed.
+Enabling the flag activates bounded backoff, attempt limits, provider-failure dead letters and
+published-row retention.
 
 ## Dead-letter recovery
 
