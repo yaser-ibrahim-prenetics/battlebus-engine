@@ -19,9 +19,9 @@
 
 import { inngest } from "../client";
 import {
-  requireAppliedOosRecoveryOutcome,
-  requireCurrentOosRecoveryAttempt,
+  createOosRecoveryAttemptGuard,
   isRejectedOosRecoveryAttempt,
+  requireAppliedOosRecoveryOutcome,
 } from "../oos-replay";
 import { readPlan } from "@/lib/services/order-segments/store";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
@@ -172,27 +172,19 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
       ? storedOosContext !== null
       : event.data.targetedRecovery === true;
   let oosRecoveryAttemptToken = suppliedOosRecoveryAttemptToken;
-  const requireOosRecoveryAttemptToken = (): string => {
-    if (!oosRecoveryAttemptToken) {
-      throw new NonRetriableError("Targeted OOS recovery is missing its replay attempt token");
-    }
-    return oosRecoveryAttemptToken;
-  };
-  const requireOosRecoveryContext = () => {
-    if (!storedOosContext) {
-      throw new NonRetriableError("Targeted OOS recovery is missing its dependency context");
-    }
-    return storedOosContext;
-  };
-  const assertTargetedRecoveryCurrent = async () => {
-    if (!isTargetedRecovery) return;
-    await requireCurrentOosRecoveryAttempt({
-      shopifyStore: shop,
-      orderId: String(shopifyOrderId),
-      attemptToken: requireOosRecoveryAttemptToken(),
-      expectedContext: requireOosRecoveryContext(),
-    });
-  };
+  const {
+    requireAttemptToken: requireOosRecoveryAttemptToken,
+    requireContext: requireOosRecoveryContext,
+    runWithMutationLease: runWithOosMutationLease,
+  } = createOosRecoveryAttemptGuard({
+    active: isTargetedRecovery,
+    shopifyStore: shop,
+    orderId: String(shopifyOrderId),
+    leaseOwner: `backorder:${event.id}`,
+    leaseSeconds: config.oosRecovery.leaseSeconds,
+    getAttemptToken: () => oosRecoveryAttemptToken,
+    getContext: () => storedOosContext,
+  });
   const beginManualOosRecoveryAttempt = async (stepId: string) => {
     const token = await step.run(stepId, () =>
       rearmManualReviewOosDependencies({
@@ -300,10 +292,11 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           fallbackDataArea: segmented.plan.segments[0].dataAreaId,
           shortAddress,
           ensureEligible,
-          beforeExternalMutation: async () => {
+          withExternalMutation: async (execute) => {
             await ensureLease();
-            await assertTargetedRecoveryCurrent();
+            return runWithOosMutationLease(execute);
           },
+          shouldReportFailure: (error) => !isRejectedOosRecoveryAttempt(error),
         });
         if (isTargetedRecovery) {
           const outcome = await step.run("resolve-segment-targeted-oos-dependencies", () =>
@@ -618,48 +611,45 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             };
           }
           for (const [lineIndex, line] of blockedLines.entries()) {
-            await executeFulfillmentAction(
+            await runWithOosMutationLease(() =>
+              executeFulfillmentAction(
+                {
+                  provider: "dynamics",
+                  scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
+                  sourceOrderId: String(shopifyOrderId),
+                  sourceLineIds: [`${line.sourceLineId}:${line.itemNumber}:${lineIndex}`],
+                  action: `oos-recovery-line:${d365NumManual}`,
+                },
+                line,
+                () => dynamics.createSalesOrderLine(line)
+              )
+            );
+          }
+          await runWithOosMutationLease(() =>
+            executeFulfillmentAction(
               {
                 provider: "dynamics",
                 scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
                 sourceOrderId: String(shopifyOrderId),
-                sourceLineIds: [`${line.sourceLineId}:${line.itemNumber}:${lineIndex}`],
-                action: `oos-recovery-line:${d365NumManual}`,
+                sourceLineIds: [`order:${d365NumManual}`],
+                action: "oos-recovery-confirm",
               },
-              line,
-              async () => {
-                await assertTargetedRecoveryCurrent();
-                return dynamics.createSalesOrderLine(line);
-              }
-            );
-          }
-          await executeFulfillmentAction(
-            {
-              provider: "dynamics",
-              scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
-              sourceOrderId: String(shopifyOrderId),
-              sourceLineIds: [`order:${d365NumManual}`],
-              action: "oos-recovery-confirm",
-            },
-            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
-            async () => {
-              await assertTargetedRecoveryCurrent();
-              return dynamics.confirmSalesOrder(d365NumManual, d365Company);
-            }
+              { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+              () => dynamics.confirmSalesOrder(d365NumManual, d365Company)
+            )
           );
-          await executeFulfillmentAction(
-            {
-              provider: "dynamics",
-              scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
-              sourceOrderId: String(shopifyOrderId),
-              sourceLineIds: [`order:${d365NumManual}`],
-              action: "oos-recovery-prepayment",
-            },
-            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
-            async () => {
-              await assertTargetedRecoveryCurrent();
-              return dynamics.createPrepayment(d365NumManual, d365Company);
-            }
+          await runWithOosMutationLease(() =>
+            executeFulfillmentAction(
+              {
+                provider: "dynamics",
+                scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
+                sourceOrderId: String(shopifyOrderId),
+                sourceLineIds: [`order:${d365NumManual}`],
+                action: "oos-recovery-prepayment",
+              },
+              { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+              () => dynamics.createPrepayment(d365NumManual, d365Company)
+            )
           );
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid-after-d365`,
@@ -743,21 +733,20 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        await assertTargetedRecoveryCurrent();
-        const result = await gps.createOutboundOrder(
-          gpsPayload,
-          warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+        const result = await runWithOosMutationLease(() =>
+          gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
         );
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await assertTargetedRecoveryCurrent();
-          await setGpsOrderMetafield(shopifyOrderId, {
-            gpsOrderId: gpsOrderNo,
-            warehouse,
-            d365OrderNumber,
-            createdAt: new Date().toISOString(),
-          });
+          await runWithOosMutationLease(() =>
+            setGpsOrderMetafield(shopifyOrderId, {
+              gpsOrderId: gpsOrderNo,
+              warehouse,
+              d365OrderNumber,
+              createdAt: new Date().toISOString(),
+            })
+          );
         }
 
         return { success: true, gpsOrderNo };
@@ -1064,22 +1053,21 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
-        await assertTargetedRecoveryCurrent();
-        const result = await gps.createOutboundOrder(
-          gpsPayload,
-          warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+        const result = await runWithOosMutationLease(() =>
+          gps.createOutboundOrder(gpsPayload, warehouse as "GPS Warehouse" | "GPS UK Warehouse")
         );
 
         // Store GPS metafield on success
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
-          await assertTargetedRecoveryCurrent();
-          await setGpsOrderMetafield(shopifyOrderId, {
-            gpsOrderId: gpsOrderNo,
-            warehouse,
-            d365OrderNumber,
-            createdAt: new Date().toISOString(),
-          });
+          await runWithOosMutationLease(() =>
+            setGpsOrderMetafield(shopifyOrderId, {
+              gpsOrderId: gpsOrderNo,
+              warehouse,
+              d365OrderNumber,
+              createdAt: new Date().toISOString(),
+            })
+          );
         }
 
         return {

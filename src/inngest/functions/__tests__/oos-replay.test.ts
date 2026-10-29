@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isRejectedOosRecoveryAttempt,
   requireAppliedOosRecoveryOutcome,
   validateOosRecoveryReplayAttempt,
 } from "../../oos-replay";
@@ -39,5 +40,16 @@ describe("targeted OOS replay correlation", () => {
       "stale attempt token"
     );
     expect(() => requireAppliedOosRecoveryOutcome({ dependencies: 1 })).not.toThrow();
+  });
+
+  it("classifies rejected attempts by their stable error type", () => {
+    let rejection: unknown;
+    try {
+      requireAppliedOosRecoveryOutcome({ dependencies: 0 });
+    } catch (error) {
+      rejection = error;
+    }
+    expect(isRejectedOosRecoveryAttempt(rejection)).toBe(true);
+    expect(isRejectedOosRecoveryAttempt(new Error("Targeted OOS replay wording only"))).toBe(false);
   });
 });
