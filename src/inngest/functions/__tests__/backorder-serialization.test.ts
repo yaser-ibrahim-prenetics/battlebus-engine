@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
   })),
   setGpsOrderMetafield: vi.fn(async () => undefined),
   sendOrderUpdate: vi.fn(async () => undefined),
+  advanceRunSequence: vi.fn(async () => ({
+    dispatched: { stage: "order_creation" },
+    snapshot: [],
+  })),
   readPlan: vi.fn(async (): Promise<unknown> => null),
   processOrderSegments: vi.fn(async (input: unknown): Promise<unknown> => {
     void input;
@@ -101,7 +105,9 @@ vi.mock("@/lib/utils/constants", () => ({
   BACKORDER_CONFIGS: mocks.backorderConfig,
 }));
 vi.mock("@/lib/services/flow-logs", () => ({ logFlowEvent: vi.fn() }));
-vi.mock("@/lib/services/run-sequence", () => ({ advanceRunSequence: vi.fn() }));
+vi.mock("@/lib/services/run-sequence", () => ({
+  advanceRunSequence: mocks.advanceRunSequence,
+}));
 vi.mock("@/lib/services/backorder-recovery/lease", () => ({
   acquireBackorderRecoveryLease: mocks.acquireLease,
   isBackorderRecoveryBusyError: (error: unknown) =>
@@ -322,6 +328,40 @@ describe("backorder recovery serialization", () => {
 
     expect(mocks.acquireLease).toHaveBeenCalledTimes(1);
     expect(mocks.renewLease).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a requested run sequence before resuming a stored segment plan", async () => {
+    mocks.readPlan.mockResolvedValue({
+      plan: {
+        inputHash: "segment-plan-hash",
+        segments: [{ dataAreaId: "im8" }],
+      },
+    });
+    const sequenced = {
+      ...event("backorder/retry"),
+      data: {
+        ...event("backorder/retry").data,
+        runSequence: [
+          {
+            id: "order-creation",
+            stage: "order_creation" as const,
+            eventName: "shopify/order.paid" as const,
+            status: "pending" as const,
+          },
+        ],
+      },
+    };
+
+    const result = await manualHandler({
+      event: sequenced,
+      step: step(),
+      runId: "sequenced-segment-run",
+    });
+
+    expect(result).toMatchObject({ status: "sequenced_dispatched", firstStage: "order_creation" });
+    expect(mocks.advanceRunSequence).toHaveBeenCalledTimes(1);
+    expect(mocks.processOrderSegments).not.toHaveBeenCalled();
     expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
   });
 });

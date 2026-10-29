@@ -175,9 +175,9 @@ async function loadCandidates(
          AND (cooldown_until IS NULL OR cooldown_until <= now())
          AND expires_at > now()
        )
-       AND bool_or($1::text IS NULL OR provider = $1)
-       AND bool_or($2::text IS NULL OR warehouse = $2)
-       AND bool_or($3::text IS NULL OR sku = $3)
+       AND bool_or(
+         $1::text IS NULL OR (provider = $1 AND warehouse = $2 AND sku = $3)
+       )
        AND bool_or($4::text IS NULL OR order_id = $4)
        AND bool_or($5::text IS NULL OR shopify_store = $5)
        AND bool_or($6::timestamptz IS NULL OR first_parked_at >= $6)
@@ -277,7 +277,7 @@ export async function readCurrentOosInventory(
   return availability;
 }
 
-function buildRetryEvent(rows: OosDependencyRow[]) {
+function buildRetryEvent(rows: OosDependencyRow[], attemptToken: string) {
   const first = rows[0];
   const identity = rows
     .map((row) => [row.id, row.version])
@@ -302,6 +302,7 @@ function buildRetryEvent(rows: OosDependencyRow[]) {
       retryMode: first.retryMode,
       backorderQueue: first.backorderQueue,
       targetedRecovery: true,
+      oosRecoveryAttemptToken: attemptToken,
       blockedLineIds: [...new Set(rows.map((row) => row.orderLineId))].sort(),
       blockedItems: rows
         .map((row) => ({ orderLineId: row.orderLineId, providerSku: row.sku }))
@@ -360,6 +361,7 @@ async function queueSelectedOrders(
       required.set(key, (required.get(key) ?? 0) + row.quantityNeeded);
     }
     const leaseToken = randomUUID();
+    const attemptToken = randomUUID();
     const ids = rows.map((row) => row.id);
     const leased = await client.query(
       `UPDATE public.oos_recovery_dependencies
@@ -371,7 +373,7 @@ async function queueSelectedOrders(
       [ids, `oos-drain:${request.id}`, leaseToken, 300]
     );
     if (leased.rowCount !== rows.length) continue;
-    const event = buildRetryEvent(rows);
+    const event = buildRetryEvent(rows, attemptToken);
     await client.query(
       `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
        VALUES ($1, $2, $3::jsonb)
@@ -381,8 +383,9 @@ async function queueSelectedOrders(
     await client.query(
       `UPDATE public.oos_recovery_dependencies
        SET status = 'retrying', lease_owner = NULL, lease_token = NULL, lease_until = NULL
+         , replay_token = $3::uuid
        WHERE id = ANY($1::uuid[]) AND status = 'leased' AND lease_token = $2`,
-      [ids, leaseToken]
+      [ids, leaseToken, attemptToken]
     );
     await client.query(
       `UPDATE public.orders

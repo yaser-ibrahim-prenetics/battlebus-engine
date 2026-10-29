@@ -17,10 +17,12 @@ import {
   loadOosRetryContext,
   moveOosDependenciesToManualReview,
   rearmManualReviewOosDependencies,
+  reparkOosDependencies,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
 import { queueHealthSQL } from "@/lib/sql/operations/health";
+import { claimOosOutboxEntries } from "@/lib/services/oos-recovery/outbox";
 
 const connectionString = process.env.OOS_RECOVERY_TEST_DATABASE_URL;
 
@@ -132,6 +134,37 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         { orderLineId: "duplicate-b", providerSku: `${prefix}same`.toUpperCase() },
       ],
       manualReview: false,
+      attemptToken: null,
+    });
+  });
+
+  it("exhausts an expired outbox lease at the configured attempt ceiling", async () => {
+    const orderId = `${prefix}outbox-expired-lease`;
+    const parked = await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    await pool.query(
+      `UPDATE public.oos_recovery_outbox
+       SET status = 'leased', attempt_count = 3, lease_token = gen_random_uuid(),
+         lease_until = now() - interval '1 minute'
+       WHERE id = $1`,
+      [parked.outboxId]
+    );
+
+    await expect(claimOosOutboxEntries(10, 30, 3)).resolves.toEqual([]);
+    const state = await pool.query<{
+      status: string;
+      lease_token: string | null;
+      next_attempt_at: string;
+      last_error_code: string;
+    }>(
+      `SELECT status, lease_token, next_attempt_at::text, last_error_code
+       FROM public.oos_recovery_outbox WHERE id = $1`,
+      [parked.outboxId]
+    );
+    expect(state.rows[0]).toEqual({
+      status: "failed",
+      lease_token: null,
+      next_attempt_at: "infinity",
+      last_error_code: "lease_attempts_exhausted",
     });
   });
 
@@ -253,6 +286,41 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       request,
       async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 100]))
     );
+    expect(result.selectedOrders).toBe(0);
+  });
+
+  it("matches provider, warehouse, and SKU on the same dependency row", async () => {
+    const orderId = `${prefix}tuple-target`;
+    await park(
+      [
+        dependency(orderId, {
+          provider: "gps",
+          warehouse: `${prefix}warehouse-a`,
+          sku: `${prefix}sku-a`,
+          orderLineId: "tuple-a",
+        }),
+        dependency(orderId, {
+          provider: "d365",
+          warehouse: `${prefix}warehouse-b`,
+          sku: `${prefix}sku-b`,
+          orderLineId: "tuple-b",
+        }),
+      ],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    const request = createOosDrainPreviewRequest({
+      mode: "manual",
+      dryRun: true,
+      provider: "gps",
+      warehouse: `${prefix}warehouse-b`,
+      sku: `${prefix}sku-b`,
+      batchLimit: 10,
+    });
+    const result = await executeOosDrain(
+      request,
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 100]))
+    );
+
     expect(result.selectedOrders).toBe(0);
   });
 
@@ -599,9 +667,16 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
   it("lets an explicit Hub retry rearm a manual-review dependency", async () => {
     const orderId = `${prefix}manual-rearm`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    const firstAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!firstAttempt) throw new Error("expected the first replay attempt token");
     await moveOosDependenciesToManualReview({
       shopifyStore: "im8health.myshopify.com",
       orderId,
+      attemptToken: firstAttempt,
       errorCode: "provider_rejected",
     });
 
@@ -614,35 +689,138 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       includeManualReview: true,
     });
     expect(context?.manualReview).toBe(true);
-    await expect(
-      rearmManualReviewOosDependencies({
-        shopifyStore: "im8health.myshopify.com",
-        orderId,
-        retentionDays: 30,
-      })
-    ).resolves.toBe(1);
-    const dependencyState = await pool.query<{ status: string; manual_review_at: Date | null }>(
-      `SELECT status, manual_review_at FROM public.oos_recovery_dependencies WHERE order_id = $1`,
+    const secondAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    expect(secondAttempt).toMatch(/^[0-9a-f-]{36}$/);
+    expect(secondAttempt).not.toBe(firstAttempt);
+    const dependencyState = await pool.query<{
+      status: string;
+      manual_review_at: Date | null;
+      replay_token: string;
+    }>(
+      `SELECT status, manual_review_at, replay_token
+       FROM public.oos_recovery_dependencies WHERE order_id = $1`,
       [orderId]
     );
-    expect(dependencyState.rows[0]).toEqual({ status: "retrying", manual_review_at: null });
+    expect(dependencyState.rows[0]).toEqual({
+      status: "retrying",
+      manual_review_at: null,
+      replay_token: secondAttempt,
+    });
   });
 
   it("lets the same correlated replay resolve a prior manual-review outcome", async () => {
     const orderId = `${prefix}manual-resolve`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    const attemptToken = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!attemptToken) throw new Error("expected a replay attempt token");
     await moveOosDependenciesToManualReview({
       shopifyStore: "im8health.myshopify.com",
       orderId,
+      attemptToken,
       errorCode: "transient_downstream_failure",
     });
     await expect(
       resolveOosDependencies({
         shopifyStore: "im8health.myshopify.com",
         orderId,
+        attemptToken,
         includeManualReview: true,
       })
     ).resolves.toEqual({ dependencies: 1, manualReview: false });
+  });
+
+  it("does not let an older replay resolve a newer recovery attempt", async () => {
+    const orderId = `${prefix}stale-replay`;
+    await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    const olderAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!olderAttempt) throw new Error("expected an older replay attempt token");
+    await moveOosDependenciesToManualReview({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken: olderAttempt,
+      errorCode: "older_attempt_failed",
+    });
+    const newerAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!newerAttempt) throw new Error("expected a newer replay attempt token");
+
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken: olderAttempt,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 0, manualReview: false });
+    const state = await pool.query<{ status: string; replay_token: string }>(
+      `SELECT status, replay_token
+       FROM public.oos_recovery_dependencies WHERE order_id = $1`,
+      [orderId]
+    );
+    expect(state.rows[0]).toEqual({ status: "retrying", replay_token: newerAttempt });
+  });
+
+  it("preserves the attempt ceiling across repeated same-provider failures", async () => {
+    const orderId = `${prefix}same-provider-ceiling`;
+    await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    const firstAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!firstAttempt) throw new Error("expected a first replay attempt token");
+    await reparkOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken: firstAttempt,
+      cooldownSeconds: 1,
+      maxAttempts: 2,
+      errorCode: "inventory_insufficient",
+    });
+    const secondAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!secondAttempt) throw new Error("expected a second replay attempt token");
+    await reparkOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken: secondAttempt,
+      cooldownSeconds: 1,
+      maxAttempts: 2,
+      errorCode: "inventory_insufficient",
+    });
+
+    const state = await pool.query<{
+      status: string;
+      attempt_count: number;
+      replay_token: string;
+    }>(
+      `SELECT status, attempt_count, replay_token
+       FROM public.oos_recovery_dependencies WHERE order_id = $1`,
+      [orderId]
+    );
+    expect(state.rows[0]).toEqual({
+      status: "manual_review",
+      attempt_count: 2,
+      replay_token: secondAttempt,
+    });
   });
 
   it("atomically resolves the recovered provider before parking a downstream failure", async () => {
@@ -651,9 +829,19 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       [dependency(orderId, { provider: "d365", warehouse: "U001", sku: "D365-SKU" })],
       new Date("2026-10-29T00:00:00Z")
     );
+    const attemptToken = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!attemptToken) throw new Error("expected a replay attempt token");
     await parkOosOrder({
       dependencies: [dependency(orderId, { provider: "gps", sku: "GPS-SKU" })],
-      context: { maxRetries: 10, resolvedProviderBeforeParking: "d365" },
+      context: {
+        maxRetries: 10,
+        resolvedProviderBeforeParking: "d365",
+        resolvedReplayToken: attemptToken,
+      },
       retentionDays: 30,
       now: new Date("2026-10-29T00:01:00Z"),
     });

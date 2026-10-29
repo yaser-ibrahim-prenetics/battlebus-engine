@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
 
@@ -11,6 +12,7 @@ export type OosRetryContext = {
   warehouse: string;
   blockedItems: Array<{ orderLineId: string; providerSku: string }>;
   manualReview: boolean;
+  attemptToken: string | null;
 };
 
 export async function loadOosRetryContext(params: {
@@ -26,8 +28,9 @@ export async function loadOosRetryContext(params: {
     order_line_id: string;
     sku: string;
     status: string;
+    replay_token: string | null;
   }>(
-    `SELECT provider, warehouse, order_line_id, sku, status
+    `SELECT provider, warehouse, order_line_id, sku, status, replay_token
      FROM public.oos_recovery_dependencies
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
        AND (status IN ('parked', 'leased', 'retrying') OR ($3 AND status = 'manual_review'))
@@ -40,6 +43,10 @@ export async function loadOosRetryContext(params: {
   if (result.rows.some((row) => row.provider !== provider || row.warehouse !== warehouse)) {
     throw new Error("OOS retry context spans more than one provider inventory scope");
   }
+  const attemptToken = result.rows[0].replay_token;
+  if (result.rows.some((row) => row.replay_token !== attemptToken)) {
+    throw new Error("OOS retry context spans more than one recovery attempt");
+  }
   return {
     provider,
     warehouse,
@@ -49,6 +56,7 @@ export async function loadOosRetryContext(params: {
         `${a.orderLineId}:${a.providerSku}`.localeCompare(`${b.orderLineId}:${b.providerSku}`)
       ),
     manualReview: result.rows.some((row) => row.status === "manual_review"),
+    attemptToken,
   };
 }
 
@@ -56,24 +64,34 @@ export async function rearmManualReviewOosDependencies(params: {
   shopifyStore: string;
   orderId: string;
   retentionDays: number;
-}): Promise<number> {
+}): Promise<string | null> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS manual recovery requires the configured PostgreSQL database");
-  const result = await pool.query(
+  const attemptToken = randomUUID();
+  const result = await pool.query<{ replay_token: string }>(
     `UPDATE public.oos_recovery_dependencies
      SET status = 'retrying', manual_review_at = NULL, resolved_at = NULL,
-       attempt_count = attempt_count + 1, last_attempt_at = now(), cooldown_until = NULL,
+       attempt_count = CASE
+         WHEN status IN ('parked', 'manual_review') THEN attempt_count + 1
+         ELSE attempt_count
+       END,
+       last_attempt_at = now(), cooldown_until = NULL,
        next_attempt_at = now(), expires_at = GREATEST(
          expires_at,
          now() + make_interval(days => $3)
        ),
        lease_owner = NULL, lease_token = NULL, lease_until = NULL,
+       replay_token = $4::uuid,
        last_error_code = 'manual_rearmed', version = version + 1
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND status = 'manual_review'`,
-    [params.shopifyStore, params.orderId, Math.max(1, params.retentionDays)]
+       AND (
+         status IN ('parked', 'manual_review')
+         OR (status = 'retrying' AND replay_token IS NULL)
+       )
+     RETURNING replay_token`,
+    [params.shopifyStore, params.orderId, Math.max(1, params.retentionDays), attemptToken]
   );
-  return result.rowCount ?? 0;
+  return result.rowCount ? attemptToken : null;
 }
 
 async function updateOrderState(
@@ -108,6 +126,7 @@ async function updateOrderState(
 export async function resolveOosDependencies(params: {
   shopifyStore: string;
   orderId: string;
+  attemptToken: string;
   /** A correlated replay may close rows moved to review by an earlier failed attempt. */
   includeManualReview?: boolean;
 }): Promise<OosRecoveryOutcome> {
@@ -122,16 +141,24 @@ export async function resolveOosDependencies(params: {
        next_attempt_at = now(), lease_owner = NULL, lease_token = NULL, lease_until = NULL,
        manual_review_at = NULL, last_error_code = NULL, version = version + 1
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND (status IN ('parked', 'leased', 'retrying') OR ($3 AND status = 'manual_review'))`,
-      [params.shopifyStore, params.orderId, params.includeManualReview ?? false]
+       AND replay_token = $4::uuid
+       AND (status = 'retrying' OR ($3 AND status = 'manual_review'))`,
+      [
+        params.shopifyStore,
+        params.orderId,
+        params.includeManualReview ?? false,
+        params.attemptToken,
+      ]
     );
-    await updateOrderState(client, {
-      orderId: params.orderId,
-      status: "processing",
-      processingStatus: "processing",
-      clearError: true,
-      state: { oosRecovery: false, oosRecoveryOutcome: "resolved" },
-    });
+    if (result.rowCount) {
+      await updateOrderState(client, {
+        orderId: params.orderId,
+        status: "processing",
+        processingStatus: "processing",
+        clearError: true,
+        state: { oosRecovery: false, oosRecoveryOutcome: "resolved" },
+      });
+    }
     await client.query("COMMIT");
     return { dependencies: result.rowCount ?? 0, manualReview: false };
   } catch (error) {
@@ -145,6 +172,7 @@ export async function resolveOosDependencies(params: {
 export async function reparkOosDependencies(params: {
   shopifyStore: string;
   orderId: string;
+  attemptToken: string;
   cooldownSeconds: number;
   maxAttempts: number;
   errorCode: string;
@@ -173,9 +201,13 @@ export async function reparkOosDependencies(params: {
          ELSE NULL
        END,
        lease_owner = NULL, lease_token = NULL, lease_until = NULL,
+       replay_token = CASE
+         WHEN attempt_count >= $3 OR expires_at <= now() THEN replay_token
+         ELSE NULL
+       END,
        last_error_code = $5, version = version + 1
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND status IN ('leased', 'retrying')
+       AND status = 'retrying' AND replay_token = $6::uuid
      RETURNING status`,
       [
         params.shopifyStore,
@@ -183,18 +215,21 @@ export async function reparkOosDependencies(params: {
         Math.max(1, params.maxAttempts),
         Math.max(1, params.cooldownSeconds),
         params.errorCode,
+        params.attemptToken,
       ]
     );
     const manualReview = result.rows.some((row) => row.status === "manual_review");
-    await updateOrderState(client, {
-      orderId: params.orderId,
-      status: "failed",
-      processingStatus: "backorder",
-      state: {
-        oosRecovery: true,
-        oosRecoveryOutcome: manualReview ? "manual_review" : "parked",
-      },
-    });
+    if (result.rowCount) {
+      await updateOrderState(client, {
+        orderId: params.orderId,
+        status: "failed",
+        processingStatus: "backorder",
+        state: {
+          oosRecovery: true,
+          oosRecoveryOutcome: manualReview ? "manual_review" : "parked",
+        },
+      });
+    }
     await client.query("COMMIT");
     return { dependencies: result.rowCount ?? 0, manualReview };
   } catch (error) {
@@ -208,6 +243,7 @@ export async function reparkOosDependencies(params: {
 export async function moveOosDependenciesToManualReview(params: {
   shopifyStore: string;
   orderId: string;
+  attemptToken: string;
   errorCode: string;
 }): Promise<OosRecoveryOutcome> {
   const pool = await getDatabasePool();
@@ -221,15 +257,17 @@ export async function moveOosDependenciesToManualReview(params: {
        lease_owner = NULL, lease_token = NULL, lease_until = NULL,
        last_error_code = $3, version = version + 1
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND status IN ('parked', 'leased', 'retrying')`,
-      [params.shopifyStore, params.orderId, params.errorCode]
+       AND status IN ('retrying', 'manual_review') AND replay_token = $4::uuid`,
+      [params.shopifyStore, params.orderId, params.errorCode, params.attemptToken]
     );
-    await updateOrderState(client, {
-      orderId: params.orderId,
-      status: "failed",
-      processingStatus: "backorder",
-      state: { oosRecovery: true, oosRecoveryOutcome: "manual_review" },
-    });
+    if (result.rowCount) {
+      await updateOrderState(client, {
+        orderId: params.orderId,
+        status: "failed",
+        processingStatus: "backorder",
+        state: { oosRecovery: true, oosRecoveryOutcome: "manual_review" },
+      });
+    }
     await client.query("COMMIT");
     return { dependencies: result.rowCount ?? 0, manualReview: true };
   } catch (error) {

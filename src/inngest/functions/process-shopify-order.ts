@@ -86,7 +86,9 @@ import {
 } from "@/lib/services/oos-recovery/inventory-failure";
 import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
 import {
+  loadOosRetryContext,
   moveOosDependenciesToManualReview,
+  reparkOosDependencies,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 
@@ -271,12 +273,41 @@ export const processShopifyOrder = inngest.createFunction(
       event.data.originalShopifyOrderId || String(rawShopifyOrderId || "").split("-rerun-")[0]
     );
     const isOosRecoveryReplay = config.oosRecovery.enabled && event.data.oosRecoveryReplay === true;
+    const oosReplayContext = isOosRecoveryReplay
+      ? await step.run("load-paid-order-oos-replay-context", () =>
+          loadOosRetryContext({
+            shopifyStore: canonicalShopifyStore,
+            orderId: shopifyOrderId,
+            includeManualReview: true,
+          })
+        )
+      : null;
+    const oosRecoveryAttemptToken =
+      (typeof event.data.oosRecoveryAttemptToken === "string" &&
+        event.data.oosRecoveryAttemptToken.trim()) ||
+      oosReplayContext?.attemptToken ||
+      null;
+    if (
+      isOosRecoveryReplay &&
+      (!oosReplayContext ||
+        !oosRecoveryAttemptToken ||
+        oosReplayContext.attemptToken !== oosRecoveryAttemptToken)
+    ) {
+      throw new NonRetriableError("Targeted OOS replay is stale or missing its attempt token");
+    }
+    const requireOosRecoveryAttemptToken = (): string => {
+      if (!oosRecoveryAttemptToken) {
+        throw new NonRetriableError("Targeted OOS replay is missing its attempt token");
+      }
+      return oosRecoveryAttemptToken;
+    };
     const moveReplayToManualReview = async (errorCode: string) => {
       if (!isOosRecoveryReplay) return;
       await step.run(`manual-review-oos-replay-${errorCode}`, () =>
         moveOosDependenciesToManualReview({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
+          attemptToken: requireOosRecoveryAttemptToken(),
           errorCode,
         })
       );
@@ -288,6 +319,7 @@ export const processShopifyOrder = inngest.createFunction(
         resolveOosDependencies({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
+          attemptToken: requireOosRecoveryAttemptToken(),
           includeManualReview: true,
         })
       );
@@ -442,6 +474,7 @@ export const processShopifyOrder = inngest.createFunction(
           inngestRunId,
           inngestIdempotencyKey,
           oosRecoveryReplay: isOosRecoveryReplay,
+          oosRecoveryAttemptToken: oosRecoveryAttemptToken ?? undefined,
         });
         logFlowEvent({
           flow: "order_paid",
@@ -1021,26 +1054,45 @@ export const processShopifyOrder = inngest.createFunction(
       });
     } catch (error) {
       if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
-        await step.run("park-segmented-inventory-dependencies", () =>
-          parkOosOrder({
-            dependencies: toInventoryDependencies({
-              error,
-              order,
+        if (isOosRecoveryReplay && oosReplayContext?.provider === error.provider) {
+          await step.run("repark-segmented-inventory-dependencies", () =>
+            reparkOosDependencies({
               shopifyStore: canonicalShopifyStore,
-              warehouse: error.blockedItems[0]?.warehouse ?? error.providerWarehouse ?? dataAreaId,
-            }),
-            context: {
-              d365OrderNumber: error.providerOrderNumber ?? "",
-              sourceEventName: "shopify/order.paid",
-              failureStage: "order_creation",
-              retryMode: "gps_outbound",
-              backorderQueue: "sync",
-              resolvedProviderBeforeParking: isOosRecoveryReplay ? error.provider : undefined,
-              maxRetries: config.oosRecovery.maxAttempts,
-            },
-            retentionDays: config.oosRecovery.retentionDays,
-          })
-        );
+              orderId: shopifyOrderId,
+              attemptToken: requireOosRecoveryAttemptToken(),
+              cooldownSeconds: config.oosRecovery.cooldownSeconds,
+              maxAttempts: config.oosRecovery.maxAttempts,
+              errorCode: error.category,
+            })
+          );
+        } else {
+          await step.run("park-segmented-inventory-dependencies", () =>
+            parkOosOrder({
+              dependencies: toInventoryDependencies({
+                error,
+                order,
+                shopifyStore: canonicalShopifyStore,
+                warehouse:
+                  error.blockedItems[0]?.warehouse ?? error.providerWarehouse ?? dataAreaId,
+              }),
+              context: {
+                d365OrderNumber: error.providerOrderNumber ?? "",
+                sourceEventName: "shopify/order.paid",
+                failureStage: "order_creation",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+                resolvedProviderBeforeParking: isOosRecoveryReplay
+                  ? oosReplayContext?.provider
+                  : undefined,
+                resolvedReplayToken: isOosRecoveryReplay
+                  ? requireOosRecoveryAttemptToken()
+                  : undefined,
+                maxRetries: config.oosRecovery.maxAttempts,
+              },
+              retentionDays: config.oosRecovery.retentionDays,
+            })
+          );
+        }
         return {
           status: "parked_targeted_recovery",
           shopifyOrderId,
@@ -1847,6 +1899,17 @@ export const processShopifyOrder = inngest.createFunction(
 
           await step.run("emit-backorder-event-existing-d365-oos", async () => {
             if (config.oosRecovery.enabled) {
+              if (isOosRecoveryReplay && oosReplayContext?.provider === "gps") {
+                await reparkOosDependencies({
+                  shopifyStore: canonicalShopifyStore,
+                  orderId: shopifyOrderId,
+                  attemptToken: requireOosRecoveryAttemptToken(),
+                  cooldownSeconds: config.oosRecovery.cooldownSeconds,
+                  maxAttempts: config.oosRecovery.maxAttempts,
+                  errorCode: classifyGpsError(oosError),
+                });
+                return;
+              }
               await parkOosOrder({
                 dependencies: toInventoryDependencies({
                   error: gpsInventoryFailure(oosError),
@@ -1861,7 +1924,12 @@ export const processShopifyOrder = inngest.createFunction(
                   retryMode: "gps_outbound",
                   backorderQueue: "sync",
                   maxRetries: config.oosRecovery.maxAttempts,
-                  resolvedProviderBeforeParking: isOosRecoveryReplay ? "d365" : undefined,
+                  resolvedProviderBeforeParking: isOosRecoveryReplay
+                    ? oosReplayContext?.provider
+                    : undefined,
+                  resolvedReplayToken: isOosRecoveryReplay
+                    ? requireOosRecoveryAttemptToken()
+                    : undefined,
                 },
                 retentionDays: config.oosRecovery.retentionDays,
               });
@@ -1950,12 +2018,37 @@ export const processShopifyOrder = inngest.createFunction(
               ? "skipped"
               : "failed";
 
+        if (isOosRecoveryReplay && gpsRetryResult.type === "failed") {
+          await moveReplayToManualReview("downstream_replay_failure");
+          await publishResult("failed", {
+            error: gpsRetryResult.error,
+            d365OrderNumber: reusedSalesOrderNumber,
+            warehouse: warehouseName,
+          });
+          await step.run("notify-hub-oos-replay-gps-failed", () =>
+            csPlatform.sendOrderUpdate(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: reusedSalesOrderNumber,
+                warehouse: warehouseName,
+                status: "backorder",
+                processingStatus: "backorder",
+                gpsSyncStatus: "failed",
+                error: gpsRetryResult.error,
+                lastError: gpsRetryResult.error,
+                errorType: "gps_error",
+                lastErrorType: "gps_error",
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            )
+          );
+          throw new NonRetriableError(`[BACKORDER_TERMINAL] ${shopifyOrderName} GPS replay failed`);
+        }
         if (isOosRecoveryReplay) {
-          if (gpsRetryResult.type === "failed") {
-            await moveReplayToManualReview("downstream_replay_failure");
-          } else {
-            await resolveReplay();
-          }
+          await resolveReplay();
         }
 
         await publishResult("success", {
@@ -2069,6 +2162,35 @@ export const processShopifyOrder = inngest.createFunction(
           );
         }
       } else if (gpsResult.type === "failed" && !isGpsInventoryError(gpsResult.error)) {
+        if (isOosRecoveryReplay) {
+          await moveReplayToManualReview("downstream_replay_failure");
+          await publishResult("failed", {
+            error: gpsResult.error,
+            d365OrderNumber: salesOrderNo,
+            warehouse: warehouseName,
+          });
+          await step.run("notify-hub-new-order-oos-replay-gps-failed", () =>
+            csPlatform.sendOrderUpdate(
+              {
+                id: shopifyOrderId,
+                name: shopifyOrderName,
+                shopifyOrderId,
+                shopifyOrderName,
+                d365OrderNumber: salesOrderNo,
+                warehouse: warehouseName,
+                status: "backorder",
+                processingStatus: "backorder",
+                gpsSyncStatus: "failed",
+                error: gpsResult.error,
+                lastError: gpsResult.error,
+                errorType: "gps_error",
+                lastErrorType: "gps_error",
+              },
+              { inngestIdempotencyKey, inngestRunId }
+            )
+          );
+          throw new NonRetriableError(`[BACKORDER_TERMINAL] ${shopifyOrderName} GPS replay failed`);
+        }
         console.log(`[GPS] Order processing will continue despite GPS failure`);
       } else if (gpsResult.type === "skipped") {
         await publishStatus("gps.send-order", "skipped", "GPS sync not required for this order");
@@ -2105,6 +2227,17 @@ export const processShopifyOrder = inngest.createFunction(
 
         await step.run("emit-backorder-event", async () => {
           if (config.oosRecovery.enabled) {
+            if (isOosRecoveryReplay && oosReplayContext?.provider === "gps") {
+              await reparkOosDependencies({
+                shopifyStore: canonicalShopifyStore,
+                orderId: shopifyOrderId,
+                attemptToken: requireOosRecoveryAttemptToken(),
+                cooldownSeconds: config.oosRecovery.cooldownSeconds,
+                maxAttempts: config.oosRecovery.maxAttempts,
+                errorCode: classifyGpsError(oosError),
+              });
+              return;
+            }
             await parkOosOrder({
               dependencies: toInventoryDependencies({
                 error: gpsInventoryFailure(oosError),
@@ -2119,7 +2252,12 @@ export const processShopifyOrder = inngest.createFunction(
                 retryMode: "gps_outbound",
                 backorderQueue: "sync",
                 maxRetries: config.oosRecovery.maxAttempts,
-                resolvedProviderBeforeParking: isOosRecoveryReplay ? "d365" : undefined,
+                resolvedProviderBeforeParking: isOosRecoveryReplay
+                  ? oosReplayContext?.provider
+                  : undefined,
+                resolvedReplayToken: isOosRecoveryReplay
+                  ? requireOosRecoveryAttemptToken()
+                  : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
             });
@@ -2384,6 +2522,17 @@ export const processShopifyOrder = inngest.createFunction(
               ? "d365"
               : "gps";
           if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
+            if (isOosRecoveryReplay && oosReplayContext?.provider === error.provider) {
+              await reparkOosDependencies({
+                shopifyStore: canonicalShopifyStore,
+                orderId: shopifyOrderId,
+                attemptToken: requireOosRecoveryAttemptToken(),
+                cooldownSeconds: config.oosRecovery.cooldownSeconds,
+                maxAttempts: config.oosRecovery.maxAttempts,
+                errorCode: error.category,
+              });
+              return;
+            }
             await parkOosOrder({
               dependencies: toInventoryDependencies({
                 error,
@@ -2398,7 +2547,12 @@ export const processShopifyOrder = inngest.createFunction(
                 retryMode: "gps_outbound",
                 backorderQueue: "sync",
                 maxRetries: config.oosRecovery.maxAttempts,
-                resolvedProviderBeforeParking: isOosRecoveryReplay ? error.provider : undefined,
+                resolvedProviderBeforeParking: isOosRecoveryReplay
+                  ? oosReplayContext?.provider
+                  : undefined,
+                resolvedReplayToken: isOosRecoveryReplay
+                  ? requireOosRecoveryAttemptToken()
+                  : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
             });

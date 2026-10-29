@@ -61,6 +61,8 @@ export type ShopifyOrderPaidEvent = {
     fromSequencedRetry?: boolean;
     /** Paid-order replay dispatched after targeted D365 inventory recovery. */
     oosRecoveryReplay?: boolean;
+    /** Correlates this run with the exact targeted OOS recovery attempt. */
+    oosRecoveryAttemptToken?: string;
   };
 };
 
@@ -94,6 +96,8 @@ export type ShopifyOrderFulfilledEvent = {
     fromBackorderRetry?: boolean;
     /** Resolve targeted OOS dependencies only after this fulfillment reaches a terminal outcome. */
     oosRecoveryReplay?: boolean;
+    /** Correlates this run with the exact targeted OOS recovery attempt. */
+    oosRecoveryAttemptToken?: string;
     /** Hub / tooling hint (e.g. battle-hub-reconciliation). */
     source?: string;
     /** Battle Hub user who triggered a replay or manual fulfillment pipeline. */
@@ -330,6 +334,8 @@ export type BackorderRetryEvent = {
     blockedItems?: Array<{ orderLineId: string; providerSku: string }>;
     /** Downstream paid-order replay must report its terminal OOS outcome. */
     oosRecoveryReplay?: boolean;
+    /** Correlates downstream outcomes with this exact targeted OOS recovery attempt. */
+    oosRecoveryAttemptToken?: string;
     /**
      * Optional ordered list of pipeline stages to run when an order needs
      * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).
