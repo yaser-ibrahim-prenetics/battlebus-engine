@@ -90,6 +90,10 @@ export async function deepReadiness() {
       !queues.inbox_expired_lease_count &&
       queues.uncertain_age_seconds < 300 &&
       !queues.stale_reconciliation_count &&
+      (!config.oosRecovery.enabled ||
+        (queues.oos_due_age_seconds < 3600 &&
+          !queues.oos_expired_lease_count &&
+          !queues.oos_outbox_exhausted_count)) &&
       !workflows.length &&
       !truncated,
     dependencies,
@@ -97,6 +101,11 @@ export async function deepReadiness() {
     workflows,
     truncated,
     dryRun: config.features.dryRunMode,
-    thresholds: { inboxAgeSeconds: 300, uncertainActionAgeSeconds: 300, workflowIdleSeconds: 1800 },
+    thresholds: {
+      inboxAgeSeconds: 300,
+      uncertainActionAgeSeconds: 300,
+      workflowIdleSeconds: 1800,
+      oosDueAgeSeconds: 3600,
+    },
   };
 }

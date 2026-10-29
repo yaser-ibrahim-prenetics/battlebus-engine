@@ -145,6 +145,13 @@ read `battle_hub_pending_lifecycle_actions`, and verify the owner-only
 both runtime roles. Then set it to `true` and redeploy. Keep
 `PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED=true` through the rollback window.
 
+Keep `OOS_TARGETED_DRAIN_ENABLED=false` for the first deployment containing
+migration `000049`. Verify `battle_hub_oos_recovery` is readable by the Hub role,
+run an authenticated dry drain for representative GPS and D365 keys, and confirm
+the OOS queue metrics remain healthy. Enable the repository variable only after
+the candidate revision and migration job have passed those checks. Disabling the
+flag returns new orders to the legacy backorder path without removing parked data.
+
 The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
 Cloud Run service account. `DATABASE_URL` remains reserved for local tooling
 and the isolated migration job.
