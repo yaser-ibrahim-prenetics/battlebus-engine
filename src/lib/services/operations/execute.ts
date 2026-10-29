@@ -2,8 +2,9 @@ import { cancelStuckWorkflow, closeStaleReconciliation } from "./stalled";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { queryDatabase } from "@/lib/db/database";
-import { replayInboxSQL, markReplayedInboxSQL } from "@/lib/sql/operations/commands";
+import { replayInboxSQL } from "@/lib/sql/operations/commands";
 import { reconcileFulfillmentAttempt } from "../fulfillment-actions/recovery";
+import { requeueWebhookInboxDeadLetter } from "../webhook-inbox";
 import type { RecoveryCommand } from "./commands";
 
 export async function executeRecoveryCommand(command: RecoveryCommand) {
@@ -18,21 +19,21 @@ export async function executeRecoveryCommand(command: RecoveryCommand) {
       await queryDatabase<{
         id: string;
         status: string;
-        events: { id?: string; name: string; data: Record<string, unknown> }[];
+        dead_lettered_at: Date | null;
       }>(replayInboxSQL, [operation.inboxId])
     ).rows[0];
     if (!row) throw new Error("Inbox entry missing");
     if (row.status === "published") return { alreadyPublished: true };
-    if (
-      !row.events.length ||
-      row.events.length > 100 ||
-      row.events.some((event) => !event.id?.trim() || !event.name || !event.data)
-    )
-      throw new Error("Inbox replay requires original stable event identities");
-    const sent = await inngest.send(row.events);
-    const saved = await queryDatabase(markReplayedInboxSQL, [row.id, sent.ids]);
-    if (saved.rowCount !== 1) throw new Error("Inbox acknowledgement could not be saved");
-    return { eventIds: sent.ids };
+    if (row.status !== "failed" || !row.dead_lettered_at)
+      throw new Error("Inbox replay is restricted to terminal dead letters");
+    const requeued = await requeueWebhookInboxDeadLetter(row.id);
+    if (!requeued) throw new Error("Inbox dead letter is no longer replayable");
+    const sent = await inngest.send({
+      id: `replay-inbox:${command.id}`,
+      name: "webhook/inbox.drain",
+      data: { inboxId: row.id },
+    });
+    return { eventIds: sent.ids, requeued: true };
   }
   if (operation.operation === "resume_order") {
     // Uses the existing fresh-Shopify validation and durable segment/action guards.
