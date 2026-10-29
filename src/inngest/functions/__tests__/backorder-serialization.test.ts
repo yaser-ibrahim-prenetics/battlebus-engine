@@ -127,6 +127,15 @@ function step() {
   };
 }
 
+type BackorderHandler = (args: {
+  event: ReturnType<typeof event>;
+  step: ReturnType<typeof step>;
+  runId: string;
+}) => Promise<Record<string, unknown>>;
+
+const automaticHandler = processBackorder as unknown as BackorderHandler;
+const manualHandler = processBackorderRetry as unknown as BackorderHandler;
+
 describe("backorder recovery serialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -153,7 +162,7 @@ describe("backorder recovery serialization", () => {
 
   it("turns one manual retry event into exactly one leased recovery attempt", async () => {
     const manualStep = step();
-    const result = await (processBackorderRetry as unknown as (args: any) => Promise<any>)({
+    const result = await manualHandler({
       event: event("backorder/retry"),
       step: manualStep,
       runId: "manual-run-1",
@@ -172,7 +181,7 @@ describe("backorder recovery serialization", () => {
 
   it("keeps automatic retries on durable sleeps without consuming manual events", async () => {
     const automaticStep = step();
-    const result = await (processBackorder as unknown as (args: any) => Promise<any>)({
+    const result = await automaticHandler({
       event: event("backorder/created"),
       step: automaticStep,
       runId: "automatic-run-1",
@@ -192,7 +201,7 @@ describe("backorder recovery serialization", () => {
     });
     const manualStep = step();
 
-    const result = await (processBackorderRetry as unknown as (args: any) => Promise<any>)({
+    const result = await manualHandler({
       event: event("backorder/retry"),
       step: manualStep,
       runId: "manual-run-2",
@@ -212,12 +221,12 @@ describe("backorder recovery serialization", () => {
     mocks.backorderConfig.enabled = false;
 
     const [automatic, manual] = await Promise.all([
-      (processBackorder as unknown as (args: any) => Promise<any>)({
+      automaticHandler({
         event: event("backorder/created"),
         step: step(),
         runId: "disabled-auto",
       }),
-      (processBackorderRetry as unknown as (args: any) => Promise<any>)({
+      manualHandler({
         event: event("backorder/retry"),
         step: step(),
         runId: "disabled-manual",
