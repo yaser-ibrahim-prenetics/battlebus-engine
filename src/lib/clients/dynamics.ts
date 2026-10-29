@@ -28,6 +28,7 @@ import {
   classifyD365InventoryFailure,
   InventoryUnavailableError,
 } from "../services/oos-recovery/inventory-failure";
+import { withProviderCapacity } from "../services/provider-capacity";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -214,6 +215,12 @@ async function pacedFetch(
   const startedAt = Date.now();
   const url = String(input);
   const method = String(init?.method || "GET").toUpperCase();
+  let capacityPath = "request";
+  try {
+    capacityPath = new URL(url, "https://d365.invalid").pathname;
+  } catch {
+    // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
+  }
   // Circuit breaker gate — throws CircuitOpenError if circuit is open
   const isProbe = circuitPreFlight();
 
@@ -229,7 +236,9 @@ async function pacedFetch(
   const requestBodyForLog = normalizeBodyForLog(init?.body);
 
   try {
-    const response = await fetch(input, init);
+    const response = await withProviderCapacity("d365", `${method}:${capacityPath}`, () =>
+      fetch(input, init)
+    );
     const durationMs = Date.now() - startedAt;
     const responseBodyForLog = await readResponseBodyForLog(response);
 

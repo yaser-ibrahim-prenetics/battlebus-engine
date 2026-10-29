@@ -15,6 +15,7 @@ import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
 import { logFlowEvent } from "../services/flow-logs";
 import { InventoryUnavailableError } from "../services/oos-recovery/inventory-failure";
+import { withProviderCapacity } from "../services/provider-capacity";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
 const OMS_MIN_INTERVAL_MS = Math.max(
@@ -352,14 +353,16 @@ async function postOms<TResponse>(
 
     try {
       const response = await withOmsPacing(queueKey, () =>
-        fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(60_000),
-        })
+        withProviderCapacity("gps", `POST:${endpointPath}:${warehouseName}`, () =>
+          fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(60_000),
+          })
+        )
       );
 
       if (!response.ok) {
