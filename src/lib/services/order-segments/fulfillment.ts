@@ -86,6 +86,7 @@ export async function fulfillOrderSegments(input: {
             if (line.isService ? !allocation.include_services : !shipped) return [];
             return [
               {
+                sourceLineId: line.sourceLineId,
                 itemNumber: line.itemNumber,
                 lotId: line.lotId,
                 quantity: line.isService

@@ -137,6 +137,8 @@ export interface D365ReturnSalesOrderLineRequest {
 // ============================================================================
 
 export interface D365FulfilmentLine {
+  /** Stable Shopify/source order line identity; never sent to D365. */
+  sourceLineId?: string;
   itemNumber: string;
   quantity: number;
   shippingSiteId: string;

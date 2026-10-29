@@ -93,7 +93,7 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
             provider: "d365" as const,
             warehouse,
             sku: line.itemNumber.trim().toUpperCase(),
-            orderLineId: line.lotId!,
+            orderLineId: line.sourceLineId?.trim() || line.lotId!,
             quantityNeeded: Math.max(1, Math.ceil(Math.abs(line.quantity))),
           })),
           req.salesOrderNumber,
