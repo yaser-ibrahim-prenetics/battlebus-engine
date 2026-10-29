@@ -157,18 +157,20 @@
 ### 1A. `drain-pending-actions`
 
 **Function ID**: `drain-pending-actions`  
-**Trigger Event**: `order/lifecycle.ready`
+**Trigger**: Configurable cron (`PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES`)
 
 **Purpose**: Reconcile out-of-order Shopify lifecycle events (fulfill/cancel/refund) that arrived before D365/GPS order creation completed.
 
 **Workflow**:
 
 ```
-1. Read pending actions
-   └─ Fetch `orders.pending_actions` from Hub API
+1. Import legacy actions
+   └─ Atomically move valid `orders.pending_actions` arrays into the normalized queue
 
-2. Prioritize cancellation
-   └─ If cancel exists, skip conflicting fulfill actions
+2. Claim a bounded batch
+   ├─ PostgreSQL `FOR UPDATE SKIP LOCKED`
+   ├─ Expiring lease token per action
+   └─ Cancellation supersedes queued fulfillment
 
 3. Re-emit canonical lifecycle events
    ├─ shopify/order.fulfilled
@@ -176,23 +178,23 @@
    └─ shopify/refund.created
    (all with fromDrain=true)
 
-4. Clear queue
-   └─ Remove processed pending_actions from order row
+4. Acknowledge exact claims
+   └─ Update only matching action ID + lease token; retry uncertain publication with backoff
 ```
 
 **Technical Details**:
 
-- **Idempotency**: `event.data.shopifyOrderId`
+- **Idempotency**: stable `pending-action-<action_id>` event ID
 - **Retries**: Low-priority retry policy
-- **Concurrency**: 1 per Shopify order
-- **Data Source**: Hub endpoint `/api/orders/pending-actions`
+- **Concurrency**: two overlapping sweeps; database row locks isolate claims
+- **Data Source**: Cloud SQL `pending_lifecycle_actions`
 
 **Key Features**:
 
-- ✅ Durable storage of deferred actions in Supabase JSONB
+- ✅ Normalized durable storage with claim/ack state
 - ✅ No silent lifecycle-event loss
-- ✅ Safe replay with idempotent canonical events
-- ✅ Backorder resolution compatible (`process-backorder` also emits `order/lifecycle.ready`)
+- ✅ Stable event identities across uncertain publication and lease recovery
+- ✅ Rolling-deployment bridge for legacy JSON writers
 
 ---
 

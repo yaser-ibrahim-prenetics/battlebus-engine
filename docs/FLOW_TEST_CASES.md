@@ -468,37 +468,38 @@ Verify that fulfillments from all sources (Stord webhook, GPS cron sync, Hub man
 
 ### Goal
 
-Verify that the cron-based drain sweep correctly replays all deferred lifecycle actions (cancel, refund, fulfill) in batch and clears them after processing.
+Verify that the cron-based drain sweep claims and replays deferred lifecycle actions without duplicate claims or whole-order clears.
 
 ### Preconditions
 
-- Orders with pending actions in `orders.pending_actions` JSONB column
+- Actions in `pending_lifecycle_actions`; legacy `orders.pending_actions` may be used to verify the rollout bridge
 - `drain-pending-actions` cron running or manually triggered
 - Downstream systems (D365/GPS) now ready
 
 ### Constraints
 
 - Cron interval is configurable (`PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES`).
-- Concurrency limited to 1 (no overlapping sweeps).
+- Overlapping sweeps are isolated by `FOR UPDATE SKIP LOCKED` and expiring leases.
+- Every emitted event uses the stable `pending-action-<action_id>` ID.
 - Actions replayed with `fromDrain: true` flag to prevent infinite deferral loops.
 
 ### Test cases
 
 #### TC-PA-001: Drain replays deferred cancel
 
-| Field           | Value                                                                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Cancel was deferred because GPS order didn't exist yet; now it does                                                                         |
-| **Steps**       | 1. Verify pending cancel action exists. 2. Trigger or wait for drain. 3. Verify cancel event re-emitted. 4. Verify pending actions cleared. |
-| **Expected**    | `shopify/order.cancelled` re-emitted with `fromDrain: true`. Cancel processes successfully. `pending_actions` array emptied.                |
+| Field           | Value                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Cancel was deferred because GPS order didn't exist yet; now it does                                                                          |
+| **Steps**       | 1. Verify a queued cancel row exists. 2. Trigger or wait for drain. 3. Verify the event ID and replay flags. 4. Verify the row is published. |
+| **Expected**    | `shopify/order.cancelled` is emitted with `fromDrain: true` and `pendingActionId`; only the claimed action and lease are acknowledged.       |
 
 #### TC-PA-002: Drain replays multiple actions for different orders
 
 | Field           | Value                                                                                                            |
 | --------------- | ---------------------------------------------------------------------------------------------------------------- |
 | **Description** | Multiple orders have pending actions                                                                             |
-| **Steps**       | 1. Create 3+ orders with pending actions. 2. Trigger drain. 3. Verify batch emission.                            |
-| **Expected**    | All events emitted in single `inngest.send` batch. All orders' pending actions cleared in single batch API call. |
+| **Steps**       | 1. Create 3+ queued actions. 2. Run two drains concurrently. 3. Verify claims, event IDs, and terminal states.   |
+| **Expected**    | Each row is claimed by at most one worker; events are batch-sent with stable IDs and acknowledged independently. |
 
 #### TC-PA-003: Drain when downstream still not ready
 
@@ -508,6 +509,22 @@ Verify that the cron-based drain sweep correctly replays all deferred lifecycle 
 | **Steps**       | 1. Trigger drain for order where D365 is still missing.                                                                   |
 | **Expected**    | Replayed function detects `fromDrain: true` and returns `status: "failed"` instead of deferring again (no infinite loop). |
 
+#### TC-PA-004: Publication succeeds but acknowledgement fails
+
+| Field           | Value                                                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Inngest accepts the event but the database acknowledgement is unavailable                                                    |
+| **Steps**       | 1. Claim an action. 2. Accept publication. 3. Fail acknowledgement. 4. Wait for lease expiry and run another drain.          |
+| **Expected**    | The action is reclaimed and republished with the same event ID; downstream idempotency prevents a second business operation. |
+
+#### TC-PA-005: Cancellation supersedes fulfillment
+
+| Field           | Value                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| **Description** | The same order has queued cancellation and fulfillment actions                              |
+| **Steps**       | 1. Enqueue both actions. 2. Trigger drain. 3. Inspect emitted events and row states.        |
+| **Expected**    | Cancellation is emitted first; the queued fulfillment is `superseded` and is never claimed. |
+
 ### Results
 
 | Case      | Actual result | Status | Evidence | Tester | Date | Notes |
@@ -515,6 +532,8 @@ Verify that the cron-based drain sweep correctly replays all deferred lifecycle 
 | TC-PA-001 |               |        |          |        |      |       |
 | TC-PA-002 |               |        |          |        |      |       |
 | TC-PA-003 |               |        |          |        |      |       |
+| TC-PA-004 |               |        |          |        |      |       |
+| TC-PA-005 |               |        |          |        |      |       |
 
 ---
 
