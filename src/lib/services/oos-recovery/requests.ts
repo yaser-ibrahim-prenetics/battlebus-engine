@@ -192,9 +192,10 @@ async function writeRequest(
 async function enqueueRequestEvent(client: PoolClient, request: OosDrainRequest): Promise<void> {
   await client.query(
     `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
-     VALUES ($1, 'oos/drain.requested', jsonb_build_object('requestId', $2::text))
+     VALUES ($1, 'oos/drain.requested',
+       jsonb_build_object('requestId', $2::text, 'laneKey', $3::text))
      ON CONFLICT (event_id) DO NOTHING`,
-    [`oos-drain-requested-${request.id}`, request.id]
+    [`oos-drain-requested-${request.id}`, request.id, request.laneKey]
   );
 }
 
@@ -233,7 +234,7 @@ export async function submitOosDrainRequest(
     const slot = active?.status === "leased" ? "successor" : "active";
     const replaceId = slot === "successor" ? queuedSuccessor?.id : active?.status === "queued" ? active.id : undefined;
     const request = await writeRequest(client, replaceId, slot, input, laneKey);
-    await enqueueRequestEvent(client, request);
+    if (request.slot === "active") await enqueueRequestEvent(client, request);
     await client.query("COMMIT");
     return { request, created: !replaceId };
   } catch (error) {
@@ -301,6 +302,16 @@ export async function finishOosDrainRequest(params: {
        RETURNING id`,
       [params.request.laneKey]
     );
+    if (successor.rows[0]?.id) {
+      await client.query(
+        `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
+         SELECT $1, 'oos/drain.requested',
+           jsonb_build_object('requestId', id::text, 'laneKey', lane_key)
+         FROM public.oos_drain_requests WHERE id = $2
+         ON CONFLICT (event_id) DO NOTHING`,
+        [`oos-drain-requested-${successor.rows[0].id}`, successor.rows[0].id]
+      );
+    }
     await client.query("COMMIT");
     return successor.rows[0]?.id ?? null;
   } catch (error) {
@@ -309,4 +320,20 @@ export async function finishOosDrainRequest(params: {
   } finally {
     client.release();
   }
+}
+
+export async function retryOosDrainRequest(
+  request: OosDrainRequest,
+  errorCode: string
+): Promise<boolean> {
+  const pool = await getDatabasePool();
+  if (!pool) return false;
+  const result = await pool.query(
+    `UPDATE public.oos_drain_requests
+     SET status = 'queued', lease_token = NULL, lease_until = NULL,
+       last_error_code = $3
+     WHERE id = $1 AND status = 'leased' AND lease_token = $2`,
+    [request.id, request.leaseToken, errorCode.slice(0, 160)]
+  );
+  return result.rowCount === 1;
 }
