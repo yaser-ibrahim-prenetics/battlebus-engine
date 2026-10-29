@@ -1,0 +1,79 @@
+# OOS parking and targeted drain
+
+This document defines PR 4 of the Spock Store replacement sequence. It replaces long-lived,
+per-order inventory polling with durable per-line dependencies and bounded targeted drains.
+
+## Delivery contract
+
+- GPS and D365 inventory failures are represented as typed dependencies. A dependency identifies
+  the provider, canonical warehouse, provider SKU, original Shopify order line, required quantity,
+  Shopify order and canonical store. Runtime code must not recover these identifiers by parsing an
+  error message.
+- Every original Shopify order line remains independently recoverable, including duplicate SKUs
+  and lines combined into one provider request.
+- Parking is one PostgreSQL transaction: dependency rows, the parked order state, safe failure
+  evidence and a durable outbox notification either all commit or all roll back.
+- Existing Battle Hub backorder events and manual retry controls remain supported. The targeted
+  drain emits the same canonical `backorder/retry` event only after it has reserved enough stock for
+  every unresolved dependency on the order.
+
+## Durable states
+
+Dependencies use these states:
+
+- `parked`: eligible after `next_attempt_at`
+- `leased`: temporarily owned by an exact drain lease
+- `retrying`: replay was durably published
+- `resolved`: the later order replay succeeded
+- `manual_review`: expired, non-inventory failure, or exhausted recovery
+
+Exact lease tokens prevent a stale worker from acknowledging another worker's claim. Expired leases
+return to `parked`; expired dependencies move to `manual_review` and are never silently deleted.
+
+## Drain entry points
+
+The same validated request model supports:
+
+- inventory observations keyed by provider, warehouse and SKU;
+- authenticated manual requests by key or order;
+- scheduled reconciliation sweeps;
+- date, order and SKU filters; and
+- evidence-only dry runs.
+
+Live and dry-run requests use separate lanes. For one lane and canonical inventory key, the database
+stores at most one active request and one coalesced successor. A newer observation refreshes the
+successor rather than creating unbounded runs.
+
+## FIFO and quantity allocation
+
+Live drains claim bounded candidate orders oldest first with `FOR UPDATE SKIP LOCKED`. Before an
+order is replayed, the worker reads current inventory for every unresolved dependency on that order.
+The transaction reserves required quantities from a drain-local availability budget, so two workers
+cannot allocate the same observation. An order with multiple blocked lines is replayed only when all
+of them can be satisfied.
+
+Dry runs execute the same selection algorithm but never mutate dependencies, requests, orders or
+outbox rows.
+
+## Rollout
+
+`OOS_TARGETED_DRAIN_ENABLED` defaults to `false`.
+
+1. Apply migration 49.
+2. Deploy with the flag disabled and verify migration assertions, queue health and Battle Hub access.
+3. Enable typed parking for a controlled store/provider cohort.
+4. Run dry-run drains and compare FIFO decisions with operator expectations.
+5. Enable live targeted drains, then retire redundant per-order polling only after the evidence
+   window is complete.
+
+## Acceptance criteria
+
+- Inventory for one warehouse/provider key never wakes work for another key.
+- Concurrent drainers claim disjoint rows and cannot allocate the same observed quantity.
+- An order with two blocked SKUs wakes only when both are satisfiable.
+- Available inventory is allocated oldest-first without overselling.
+- Repeated observations create at most one active drain and one successor per lane/key.
+- Dry-run returns evidence without database mutation.
+- A bounded batch can process a queue of at least 10,000 rows without loading the whole queue.
+- Continued inventory failures apply cooldown and increment attempts; non-inventory failures and
+  expired entries become visible manual-review work.
