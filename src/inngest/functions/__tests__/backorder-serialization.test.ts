@@ -23,7 +23,10 @@ const mocks = vi.hoisted(() => ({
   setGpsOrderMetafield: vi.fn(async () => undefined),
   sendOrderUpdate: vi.fn(async () => undefined),
   readPlan: vi.fn(async (): Promise<unknown> => null),
-  processOrderSegments: vi.fn(async (_input: unknown): Promise<unknown> => null),
+  processOrderSegments: vi.fn(async (input: unknown): Promise<unknown> => {
+    void input;
+    return null;
+  }),
   loadOrderAccounting: vi.fn(async (): Promise<unknown> => ({})),
   loadSaudiShortAddress: vi.fn(async () => ""),
   loadEligibleRecoveryOrder: vi.fn(async (): Promise<unknown> => ({})),
