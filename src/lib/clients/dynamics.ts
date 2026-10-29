@@ -28,7 +28,8 @@ import {
   classifyD365InventoryFailure,
   InventoryUnavailableError,
 } from "../services/oos-recovery/inventory-failure";
-import { withProviderCapacity } from "../services/provider-capacity";
+import { ProviderCapacityTimeoutError, withProviderCapacity } from "../services/provider-capacity";
+import { boundedProviderRequestInit } from "./provider-request";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -208,7 +209,7 @@ const D365_MIN_INTERVAL_MS = Math.max(
 );
 let d365LastRequestAt = 0;
 
-async function pacedFetch(
+export async function pacedFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): Promise<Response> {
@@ -236,16 +237,8 @@ async function pacedFetch(
   const requestBodyForLog = normalizeBodyForLog(init?.body);
 
   try {
-    const boundedInit = config.providerCapacity?.enabled
-      ? {
-          ...init,
-          signal: init?.signal
-            ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
-            : AbortSignal.timeout(60_000),
-        }
-      : init;
     const response = await withProviderCapacity("d365", `${method}:${capacityPath}`, () =>
-      fetch(input, boundedInit)
+      fetch(input, boundedProviderRequestInit(init))
     );
     const durationMs = Date.now() - startedAt;
     const responseBodyForLog = await readResponseBodyForLog(response);
@@ -289,15 +282,18 @@ async function pacedFetch(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const capacityBackpressure = err instanceof ProviderCapacityTimeoutError;
 
-    logD365HttpTrace({
-      source: "d365_api",
-      method,
-      url,
-      durationMs,
-      requestBody: requestBodyForLog,
-      errorMessage,
-    });
+    if (!capacityBackpressure) {
+      logD365HttpTrace({
+        source: "d365_api",
+        method,
+        url,
+        durationMs,
+        requestBody: requestBodyForLog,
+        errorMessage,
+      });
+    }
 
     logFlowEvent({
       level: "error",
@@ -306,7 +302,7 @@ async function pacedFetch(
       client: "d365",
       status: "failed",
       durationMs,
-      errorType: "network_or_runtime_error",
+      errorType: capacityBackpressure ? "capacity_exhausted" : "network_or_runtime_error",
       errorMessage,
       payload: {
         method,
@@ -315,7 +311,7 @@ async function pacedFetch(
         requestBody: requestBodyForLog,
       },
     });
-    circuitRecordFailure();
+    if (!capacityBackpressure) circuitRecordFailure();
     throw err;
   }
 }

@@ -254,7 +254,7 @@ export async function queryD365Inventory(
     return new Map();
   }
 
-  const response = await fetch(url, {
+  const response = await dynamics.pacedFetch(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token.access_token}`,

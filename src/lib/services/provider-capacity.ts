@@ -198,11 +198,15 @@ export async function withProviderCapacity<T>(
   let renewal = Promise.resolve();
   const timer = setInterval(
     () => {
-      renewal = renewal.then(async () => {
-        if (!(await renewProviderCapacity(lease, leaseSeconds, pool))) {
+      renewal = renewal
+        .then(async () => {
+          if (!(await renewProviderCapacity(lease, leaseSeconds, pool))) {
+            console.error(`[ProviderCapacity] Lost ${provider} capacity lease ${lease.slot}`);
+          }
+        })
+        .catch(() => {
           console.error(`[ProviderCapacity] Lost ${provider} capacity lease ${lease.slot}`);
-        }
-      });
+        });
     },
     Math.max(10_000, Math.floor((leaseSeconds * 1000) / 3))
   );
@@ -214,12 +218,15 @@ export async function withProviderCapacity<T>(
     clearInterval(timer);
     try {
       await renewal;
-      await releaseProviderCapacity(lease, pool);
-    } catch {
-      // Never turn a confirmed provider response into a retryable failure. The bounded lease expires.
-      console.error(
-        `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot}`
-      );
+    } finally {
+      try {
+        await releaseProviderCapacity(lease, pool);
+      } catch {
+        // Never turn a confirmed provider response into a retryable failure. The bounded lease expires.
+        console.error(
+          `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot}`
+        );
+      }
     }
   }
 }

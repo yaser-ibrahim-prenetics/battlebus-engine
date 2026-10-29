@@ -9,6 +9,7 @@ import { config } from "../config";
 import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
 import { logFlowEvent } from "../services/flow-logs";
 import { withProviderCapacity } from "../services/provider-capacity";
+import { boundedProviderRequestInit } from "./provider-request";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 
@@ -40,16 +41,8 @@ export async function shopifyProviderFetch(
   } catch {
     // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
   }
-  const boundedInit = config.providerCapacity?.enabled
-    ? {
-        ...init,
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
-          : AbortSignal.timeout(60_000),
-      }
-    : init;
   return withProviderCapacity("shopify", `${method}:${capacityPath}`, () =>
-    fetch(input, boundedInit)
+    fetch(input, boundedProviderRequestInit(init))
   );
 }
 

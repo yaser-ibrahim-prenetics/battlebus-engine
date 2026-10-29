@@ -15,6 +15,7 @@ import crypto from "crypto";
 import { config } from "../config";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { withProviderCapacity } from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "./provider-request";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
@@ -46,18 +47,10 @@ async function pacedFetch(
   } catch {
     // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
   }
-  const boundedInit = config.providerCapacity?.enabled
-    ? {
-        ...init,
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
-          : AbortSignal.timeout(60_000),
-      }
-    : init;
   return withProviderCapacity(
     "gps",
     `${String(init?.method || "GET").toUpperCase()}:${capacityPath}`,
-    () => fetch(input, boundedInit)
+    () => fetch(input, boundedProviderRequestInit(init))
   );
 }
 
