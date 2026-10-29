@@ -339,6 +339,89 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
     expect(projection.rows[0].pending_count).toBe(0);
   });
 
+  it("serializes a duplicate enqueue with concurrent terminal completion", async () => {
+    const orderId = `${orderPrefix}terminal-race`;
+    const sourceEventId = "terminal-race-source";
+    const eventData = { shopifyOrderId: orderId };
+    const parameters = [
+      orderId,
+      "refund",
+      sourceEventId,
+      "test/refund",
+      JSON.stringify(eventData),
+      JSON.stringify({
+        action: "refund",
+        eventName: "test/refund",
+        eventData,
+        sourceEventId,
+      }),
+      true,
+    ];
+    await pool.query(
+      `INSERT INTO public.orders (
+         id, order_number, title, shopify_order_id, pending_actions
+       ) VALUES ($1, $1, $1, $1, '[]'::jsonb)`,
+      [orderId]
+    );
+    const first = await pool.query<{ action_id: string }>(enqueuePendingActionSQL, parameters);
+    const claimed = await pool.query<{ action_id: string; lease_token: string }>(
+      claimPendingActionsSQL,
+      [10, 120, 10]
+    );
+    const action = claimed.rows.find((row) => row.action_id === first.rows[0].action_id);
+    expect(action).toBeDefined();
+
+    const completionClient = await pool.connect();
+    const enqueueClient = await pool.connect();
+    try {
+      await completionClient.query("BEGIN");
+      await completionClient.query(completePendingActionSQL, [
+        action!.action_id,
+        action!.lease_token,
+      ]);
+      await enqueueClient.query("SET application_name = 'pending-action-terminal-race'");
+      const retryPromise = enqueueClient.query<{
+        action_id: string;
+        legacy_projected: boolean;
+      }>(enqueuePendingActionSQL, parameters);
+
+      let observedLockWait = false;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const activity = await pool.query<{ waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_stat_activity
+             WHERE application_name = 'pending-action-terminal-race'
+               AND wait_event_type = 'Lock'
+           ) AS waiting`
+        );
+        if (activity.rows[0].waiting) {
+          observedLockWait = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      await completionClient.query("COMMIT");
+      const retry = await retryPromise;
+      expect(observedLockWait).toBe(true);
+      expect(retry.rows[0]).toEqual({
+        action_id: first.rows[0].action_id,
+        legacy_projected: false,
+      });
+    } finally {
+      await completionClient.query("ROLLBACK").catch(() => undefined);
+      completionClient.release();
+      enqueueClient.release();
+    }
+
+    const projection = await pool.query<{ pending_count: number }>(
+      `SELECT jsonb_array_length(pending_actions) AS pending_count
+       FROM public.orders WHERE id = $1`,
+      [orderId]
+    );
+    expect(projection.rows[0].pending_count).toBe(0);
+  });
+
   it("blocks legacy rollback until an audited dead-letter replay settles", async () => {
     const actionId = await insertAction({
       orderId: `${orderPrefix}rollback-gate`,

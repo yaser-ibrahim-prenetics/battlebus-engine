@@ -39,6 +39,7 @@ WITH existing AS MATERIALIZED (
     AND action_type = $2
     AND source_event_id = $3
   LIMIT 1
+  FOR UPDATE
 ), target_order AS MATERIALIZED (${targetOrderSQL}
 ), legacy_projection AS (${legacyProjectionSQL(
   "$7::boolean",
