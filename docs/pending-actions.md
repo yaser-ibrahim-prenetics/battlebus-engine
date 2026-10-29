@@ -124,14 +124,21 @@ acknowledgement is still uncertain.
    `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`. New producers then write only
    the legacy projection and no new normalized leases are claimed.
 2. Wait longer than `PENDING_ACTIONS_LEASE_SECONDS` plus the maximum in-flight
-   request time, then verify that no normalized rows remain `publishing`.
-3. If any publishing row remains, do not roll back. Re-enable the current
-   revision, let its stable-ID recovery settle the lease, disable it again, and
-   repeat the wait and check.
-4. Verify that each retained legacy entry represents an unresolved normalized
-   row (`queued`, `publishing`, or `dead_letter`) and that published or
-   superseded rows have no matching projection.
-5. Only after those checks pass may the legacy revision receive traffic and its
+   request time, then run this from the trusted owner session:
+
+   ```sql
+   SELECT * FROM public.pending_lifecycle_action_rollback_status();
+   ```
+
+3. Require `safe_to_resume_legacy=true`. Publishing, dead-letter, previously
+   attempted queued, and audited-but-unsettled replay rows all block rollback.
+4. If blocked, do not roll back. Re-enable the current revision, investigate
+   dead letters, use the audited replay procedure where required, and let the
+   normalized stable-ID path publish and acknowledge every uncertain action.
+   Disable it again, repeat the wait, and rerun the gate.
+5. Verify that every retained legacy entry is a fresh, never-attempted queued
+   action and that published or superseded rows have no matching projection.
+6. Only after those checks pass may the legacy revision receive traffic and its
    drain be resumed.
 
 This quiescing check is mandatory because the legacy drain does not emit the
