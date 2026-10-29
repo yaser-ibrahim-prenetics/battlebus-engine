@@ -21,6 +21,11 @@ Migration `000046` enforces queue transitions at the database boundary, caps
 replay payload size, adds an audited owner-only discard path, and makes legacy
 rollback fail closed when normalized and legacy projections disagree.
 
+Migration `000048` adds exact webhook-inbox leases, bounded retry scheduling,
+dead-letter evidence, replay counters, and indexes for ready work and published
+receipt retention. See [webhook inbox delivery reliability](../docs/webhook-inbox-delivery.md)
+for rollout and rollback gates.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If
