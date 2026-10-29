@@ -6,6 +6,7 @@
 import type { D365SalesOrderHeadersV3Address } from "../types/dynamics";
 import type { ShopifyAddress } from "../../inngest/events";
 import { getCountryISO3 } from "../helpers/country";
+import { toSaudiGpsAddressLines } from "./saudi-gps-address";
 
 // ============================================================================
 // GPS Address Type
@@ -94,17 +95,19 @@ export function toGpsOrderAddress(
 
   const trimGpsAddressLine = (line: string | null | undefined): string =>
     (line ?? "").replace(/^[\s,]+|[\s,]+$/g, "").trim();
-  const normalizedShortAddress = shortAddress?.trim().toUpperCase() ?? "";
-  const saShortAddress =
-    address.country_code === "SA" && normalizedShortAddress ? normalizedShortAddress : undefined;
-  const streetLine = trimGpsAddressLine(address.address1);
+  const { addressOne, addressTwo } =
+    address.country_code === "SA"
+      ? toSaudiGpsAddressLines(
+          trimGpsAddressLine(address.address1),
+          trimGpsAddressLine(address.address2),
+          shortAddress
+        )
+      : { addressOne: address.address1, addressTwo: trimGpsAddressLine(address.address2) };
 
   return {
     receiver: `${address.first_name} ${address.last_name}`.trim(),
-    addressOne: saShortAddress
-      ? `${saShortAddress}${streetLine ? ` ${streetLine}` : ""}`
-      : address.address1,
-    addressTwo: trimGpsAddressLine(address.address2),
+    addressOne,
+    addressTwo,
     cityName: address.city,
     countryRegionCode: address.country_code,
     provinceName: address.province ?? "",
