@@ -21,6 +21,7 @@ import * as gps from "@/lib/clients/gps";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { sendHubWebhook } from "@/lib/clients/hub-transport";
+import { submitOosDrainRequest } from "@/lib/services/oos-recovery/requests";
 
 type Platform = "shopify" | "dynamics" | "gps" | "warehouse" | "stord";
 
@@ -221,6 +222,37 @@ export const processInventoryMesh = inngest.createFunction(
           result.success ? undefined : result.message
         );
       });
+    }
+
+    const inventoryProvider =
+      source === "dynamics" ? "d365" : source === "gps" || source === "warehouse" ? "gps" : null;
+    const observedQuantity = inventory.available ?? inventory.quantity;
+    const recoveryWarehouse =
+      inventoryProvider === "d365"
+        ? inventory.dataAreaId
+        : inventory.warehouseName ?? inventory.warehouseId;
+    if (
+      config.oosRecovery.enabled &&
+      result.success &&
+      inventoryProvider &&
+      inventory.sku &&
+      recoveryWarehouse &&
+      Number.isSafeInteger(observedQuantity) &&
+      Number(observedQuantity) > 0
+    ) {
+      await step.run("queue-targeted-oos-drain", () =>
+        submitOosDrainRequest({
+          mode: "inventory_event",
+          dryRun: false,
+          provider: inventoryProvider,
+          warehouse: String(recoveryWarehouse),
+          sku: inventory.sku,
+          observedQuantity: Number(observedQuantity),
+          observedAt: inventory.timestamp ?? new Date().toISOString(),
+          sourceEventId: String(event.id),
+          batchLimit: config.oosRecovery.claimBatchSize,
+        })
+      );
     }
 
     logFlowEvent({
