@@ -25,6 +25,7 @@ const claim: ClaimedPendingAction = {
   action: "cancel",
   eventName: "shopify/order.cancelled",
   eventData: { shopifyOrderId: "1001" },
+  sourceEventId: "shopify-order-cancelled-1001",
   leaseToken: "22222222-2222-4222-8222-222222222222",
   attempts: 1,
 };
@@ -109,6 +110,7 @@ describe("durable pending actions", () => {
           action_type: claim.action,
           event_name: claim.eventName,
           event_data: claim.eventData,
+          source_event_id: claim.sourceEventId,
           lease_token: claim.leaseToken,
           attempts: claim.attempts,
         },
@@ -139,7 +141,7 @@ describe("durable pending actions", () => {
     expect(JSON.stringify(query.mock.calls)).not.toContain("provider");
   });
 
-  it("imports and clears valid legacy arrays in one database operation", async () => {
+  it("imports valid legacy arrays without removing rollback projections", async () => {
     query.mockResolvedValueOnce({ rows: [{ imported: "3", source_orders: "2" }] });
     await expect(importLegacyPendingActions()).resolves.toEqual({ imported: 3, sourceOrders: 2 });
     expect(query).toHaveBeenCalledTimes(1);

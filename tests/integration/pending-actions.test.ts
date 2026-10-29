@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 
 import { claimPendingActionsSQL } from "@/lib/sql/pending-actions/claim";
+import { completePendingActionSQL } from "@/lib/sql/pending-actions/finish";
 import { importLegacyPendingActionsSQL } from "@/lib/sql/pending-actions/import-legacy";
 
 const connectionString = process.env.PENDING_ACTIONS_TEST_DATABASE_URL;
@@ -120,6 +121,25 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
     const orderId = `${orderPrefix}cancelled`;
     await insertAction({ orderId, actionType: "cancel", status: "dead_letter", attempts: 10 });
     const fulfillmentId = await insertAction({ orderId, actionType: "fulfill" });
+    const fulfillment = await pool.query<{ source_event_id: string }>(
+      "SELECT source_event_id FROM public.pending_lifecycle_actions WHERE action_id = $1",
+      [fulfillmentId]
+    );
+    await pool.query(
+      `INSERT INTO public.orders (id, order_number, title, shopify_order_id, pending_actions)
+       VALUES ($1, $1, $1, $1, $2::jsonb)`,
+      [
+        orderId,
+        JSON.stringify([
+          {
+            action: "fulfill",
+            eventName: "test/fulfill",
+            eventData: { orderId },
+            sourceEventId: fulfillment.rows[0].source_event_id,
+          },
+        ]),
+      ]
+    );
 
     const result = await pool.query<{ action_id: string }>(claimPendingActionsSQL, [10, 120, 10]);
     expect(result.rows).toHaveLength(0);
@@ -128,6 +148,11 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       [fulfillmentId]
     );
     expect(state.rows[0]).toEqual({ status: "superseded", event_data: {} });
+    const projection = await pool.query<{ pending_count: number }>(
+      "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
+      [orderId]
+    );
+    expect(projection.rows[0].pending_count).toBe(0);
   });
 
   it("copies valid legacy actions without clearing them or letting poison rows block", async () => {
@@ -164,7 +189,19 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
     );
     expect(legacy.rows[0].pending_count).toBe(1);
 
-    const claimed = await pool.query<{ order_id: string }>(claimPendingActionsSQL, [10, 120, 10]);
-    expect(claimed.rows.map((row) => row.order_id)).toContain(validId);
+    const claimed = await pool.query<{
+      action_id: string;
+      order_id: string;
+      lease_token: string;
+    }>(claimPendingActionsSQL, [10, 120, 10]);
+    const validClaim = claimed.rows.find((row) => row.order_id === validId);
+    expect(validClaim).toBeDefined();
+    await pool.query(completePendingActionSQL, [validClaim!.action_id, validClaim!.lease_token]);
+
+    const completedProjection = await pool.query<{ pending_count: number }>(
+      "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
+      [validId]
+    );
+    expect(completedProjection.rows[0].pending_count).toBe(0);
   });
 });

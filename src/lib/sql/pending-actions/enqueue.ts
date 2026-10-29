@@ -1,8 +1,4 @@
-// During the expand/rollback window, every normalized write is also projected
-// into orders.pending_actions. The projection is intentionally retained until
-// a later contract migration proves that no rollback-capable revision uses it.
-export const enqueuePendingActionSQL = `
-WITH target_order AS MATERIALIZED (
+const targetOrderSQL = `
   SELECT orders.id
   FROM public.orders
   WHERE orders.shopify_order_id = $1 OR orders.platform_order_id = $1
@@ -10,8 +6,10 @@ WITH target_order AS MATERIALIZED (
     CASE WHEN orders.shopify_order_id = $1 THEN 0 ELSE 1 END,
     orders.updated_at DESC,
     orders.id
-  LIMIT 1
-), legacy_projection AS (
+  LIMIT 1`;
+
+function legacyProjectionSQL(enabledExpression: string): string {
+  return `
   UPDATE public.orders AS orders
   SET pending_actions = CASE
         WHEN EXISTS (
@@ -24,9 +22,17 @@ WITH target_order AS MATERIALIZED (
       END,
       updated_at = now()
   FROM target_order
-  WHERE $7::boolean
+  WHERE ${enabledExpression}
     AND orders.id = target_order.id
-  RETURNING orders.id
+  RETURNING orders.id`;
+}
+
+// During the expand/rollback window, every outstanding normalized write is
+// projected into orders.pending_actions. Exact completion/supersession removes
+// its projection so a rollback cannot replay already-terminal work.
+export const enqueuePendingActionSQL = `
+WITH target_order AS MATERIALIZED (${targetOrderSQL}
+), legacy_projection AS (${legacyProjectionSQL("$7::boolean")}
 ), queued AS (
   INSERT INTO public.pending_lifecycle_actions (
     order_id,
@@ -47,27 +53,7 @@ SELECT
 FROM queued`;
 
 export const enqueueLegacyPendingActionSQL = `
-WITH target_order AS MATERIALIZED (
-  SELECT orders.id
-  FROM public.orders
-  WHERE orders.shopify_order_id = $1 OR orders.platform_order_id = $1
-  ORDER BY
-    CASE WHEN orders.shopify_order_id = $1 THEN 0 ELSE 1 END,
-    orders.updated_at DESC,
-    orders.id
-  LIMIT 1
+WITH target_order AS MATERIALIZED (${targetOrderSQL}
+), legacy_projection AS (${legacyProjectionSQL("true")}
 )
-UPDATE public.orders AS orders
-SET pending_actions = CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(orders.pending_actions) AS item(action)
-        WHERE item.action->>'sourceEventId' = $2
-          AND item.action->>'action' = $3
-      ) THEN orders.pending_actions
-      ELSE orders.pending_actions || jsonb_build_array($4::jsonb)
-    END,
-    updated_at = now()
-FROM target_order
-WHERE orders.id = target_order.id
-RETURNING orders.id`;
+SELECT id FROM legacy_projection`;
