@@ -10,7 +10,15 @@ export const queueHealthSQL = `SELECT
   (SELECT COALESCE(sum(GREATEST(attempts-1,0)),0)::bigint FROM public.webhook_inbox) AS inbox_retry_attempt_count,
   (SELECT count(DISTINCT attempt_id)::int FROM public.fulfillment_actions WHERE status IN ('pending','uncertain')) AS uncertain_count,
   (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::float8 FROM public.fulfillment_actions WHERE status IN ('pending','uncertain')) AS uncertain_age_seconds,
-  (SELECT count(*)::int FROM public.reconciliation_attempts WHERE status='running' AND started_at<now()-interval '30 minutes') AS stale_reconciliation_count`;
+  (SELECT count(*)::int FROM public.reconciliation_attempts WHERE status='running' AND started_at<now()-interval '30 minutes') AS stale_reconciliation_count,
+  (SELECT count(*)::int FROM public.oos_recovery_dependencies WHERE status='parked') AS oos_parked_count,
+  (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(first_parked_at)),0)::float8 FROM public.oos_recovery_dependencies WHERE status='parked' AND next_attempt_at<=now() AND (cooldown_until IS NULL OR cooldown_until<=now())) AS oos_due_age_seconds,
+  (SELECT count(*)::int FROM public.oos_recovery_dependencies WHERE status='retrying') AS oos_retrying_count,
+  (SELECT count(*)::int FROM public.oos_recovery_dependencies WHERE status='manual_review') AS oos_manual_review_count,
+  (SELECT count(*)::int FROM public.oos_recovery_dependencies WHERE status='leased' AND lease_until<=now()) AS oos_expired_lease_count,
+  (SELECT count(*)::int FROM public.oos_drain_requests WHERE status IN ('queued','leased')) AS oos_open_drain_count,
+  (SELECT count(*)::int FROM public.oos_recovery_outbox WHERE status IN ('queued','failed') AND next_attempt_at<=now()) AS oos_outbox_due_count,
+  (SELECT count(*)::int FROM public.oos_recovery_outbox WHERE status='failed' AND next_attempt_at='infinity'::timestamptz) AS oos_outbox_exhausted_count`;
 export const inboxSummariesSQL = `SELECT id,source,topic,
   CASE
     WHEN dead_lettered_at IS NOT NULL THEN 'dead_letter'

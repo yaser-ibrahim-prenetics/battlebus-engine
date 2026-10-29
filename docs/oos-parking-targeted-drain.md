@@ -59,12 +59,29 @@ outbox rows.
 
 `OOS_TARGETED_DRAIN_ENABLED` defaults to `false`.
 
+| Variable                            | Default | Purpose                                      |
+| ----------------------------------- | ------- | -------------------------------------------- |
+| `OOS_TARGETED_DRAIN_ENABLED`        | `false` | Activate typed parking and targeted drains   |
+| `OOS_DRAIN_CLAIM_BATCH_SIZE`        | `100`   | Maximum orders examined by one bounded drain |
+| `OOS_DRAIN_LEASE_SECONDS`           | `300`   | Exact request/outbox lease duration          |
+| `OOS_DEPENDENCY_RETENTION_DAYS`     | `30`    | Time before unresolved work needs review     |
+| `OOS_DEPENDENCY_MAX_ATTEMPTS`       | `10`    | Recovery attempts before manual review       |
+| `OOS_DEPENDENCY_COOLDOWN_SECONDS`   | `3600`  | Delay after another inventory rejection      |
+| `OOS_DRAIN_SWEEP_INTERVAL_MINUTES`  | `30`    | Reconciliation sweep cadence                 |
+| `OOS_OUTBOX_DRAIN_INTERVAL_MINUTES` | `5`     | Durable event publisher cadence              |
+
 1. Apply migration 49.
 2. Deploy with the flag disabled and verify migration assertions, queue health and Battle Hub access.
 3. Enable typed parking for a controlled store/provider cohort.
 4. Run dry-run drains and compare FIFO decisions with operator expectations.
 5. Enable live targeted drains, then retire redundant per-order polling only after the evidence
    window is complete.
+
+The authenticated `POST /api/operations/oos-drain` endpoint supports provider/warehouse/SKU,
+order/store and parked-date filters. Set `dryRun: true` for selection evidence without dependency,
+request, order or retry-outbox mutation. Queue depth, oldest due age, retries, manual-review work,
+expired leases and exhausted outbox entries are returned by the authenticated operations health
+view.
 
 ## Acceptance criteria
 
