@@ -34,5 +34,9 @@ BEGIN
   IF to_regprocedure('public.requeue_pending_lifecycle_action(uuid,text)') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left pending-action replay function behind';
   END IF;
+
+  IF to_regprocedure('public.pending_lifecycle_action_rollback_status()') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left pending-action rollback gate behind';
+  END IF;
 END
 $$;
