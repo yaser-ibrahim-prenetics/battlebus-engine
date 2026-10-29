@@ -29,6 +29,9 @@ recovery run, and it removes Inngest rate limits that could discard valid lifecy
 - `BACKORDER_RETRY_ENABLED=false` stops both automatic and manual mutation paths before credentials,
   database access or provider work. A manual resolution event also cancels a sleeping automatic
   recovery run for the same order and Shopify store.
+- Every `backorder/created`, `backorder/retry` and `backorder/resolved` event carries the canonical
+  Shopify `myshopify.com` domain. A source-level contract test prevents producers from omitting the
+  store or using an unresolved alias.
 
 The lease duration is configured with `BACKORDER_RECOVERY_LEASE_SECONDS`. The default is 600
 seconds and accepted values are clamped to 60–3,600 seconds. The default exceeds the Cloud Run
@@ -80,5 +83,7 @@ access to it.
 - A busy lease causes a durable wait and later acquisition, not a lost retry event.
 - One manual retry event produces one provider/replay attempt.
 - Automatic recovery does not consume `backorder/retry` events.
+- Automatic cancellation matches both the order ID and canonical store, including producer-shaped
+  events, without cancelling the same numeric order ID in a different store.
 - The global recovery kill switch prevents both automatic and manual provider work.
 - Lifecycle workflow tests confirm there are no `rateLimit` options.
