@@ -39,6 +39,7 @@ BEGIN
 
   IF to_regclass('public.pending_lifecycle_action_resolutions') IS NULL
     OR to_regprocedure('public.requeue_pending_lifecycle_action(uuid,text)') IS NULL
+    OR to_regprocedure('public.pending_lifecycle_action_rollback_status()') IS NULL
   THEN
     RAISE EXCEPTION 'Pending-action replay audit objects are missing';
   END IF;
@@ -50,6 +51,14 @@ BEGIN
   ) OR has_function_privilege(
     'battle_hub_runtime',
     'public.requeue_pending_lifecycle_action(uuid,text)',
+    'EXECUTE'
+  ) OR has_function_privilege(
+    'battle_bus_runtime',
+    'public.pending_lifecycle_action_rollback_status()',
+    'EXECUTE'
+  ) OR has_function_privilege(
+    'battle_hub_runtime',
+    'public.pending_lifecycle_action_rollback_status()',
     'EXECUTE'
   ) OR has_table_privilege(
     'battle_bus_runtime',
@@ -196,6 +205,7 @@ INSERT INTO public.pending_lifecycle_actions (
 DO $$
 DECLARE
   replay_action_id uuid;
+  rollback_safe boolean;
 BEGIN
   SELECT id
   INTO replay_action_id
@@ -206,6 +216,14 @@ BEGIN
 
   IF replay_action_id IS NULL THEN
     RAISE EXCEPTION 'Battle Hub dead-letter projection is incorrect';
+  END IF;
+
+  SELECT safe_to_resume_legacy
+  INTO rollback_safe
+  FROM public.pending_lifecycle_action_rollback_status();
+
+  IF rollback_safe THEN
+    RAISE EXCEPTION 'Dead-letter action did not block legacy rollback';
   END IF;
 
   PERFORM public.requeue_pending_lifecycle_action(
@@ -231,6 +249,27 @@ BEGIN
       AND performed_by = current_user
   ) THEN
     RAISE EXCEPTION 'Audited pending-action replay contract failed';
+  END IF;
+
+  SELECT safe_to_resume_legacy
+  INTO rollback_safe
+  FROM public.pending_lifecycle_action_rollback_status();
+
+  IF rollback_safe THEN
+    RAISE EXCEPTION 'Unsettled audited replay did not block legacy rollback';
+  END IF;
+
+  UPDATE public.pending_lifecycle_actions
+  SET status = 'published',
+      published_at = now()
+  WHERE action_id = replay_action_id;
+
+  SELECT safe_to_resume_legacy
+  INTO rollback_safe
+  FROM public.pending_lifecycle_action_rollback_status();
+
+  IF NOT rollback_safe THEN
+    RAISE EXCEPTION 'Settled replay still blocks legacy rollback';
   END IF;
 END $$;
 

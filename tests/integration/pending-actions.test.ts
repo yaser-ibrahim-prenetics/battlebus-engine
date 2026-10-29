@@ -17,6 +17,15 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
   });
 
   afterEach(async () => {
+    await pool.query(
+      `DELETE FROM public.pending_lifecycle_action_resolutions
+       WHERE action_id IN (
+         SELECT action_id
+         FROM public.pending_lifecycle_actions
+         WHERE order_id LIKE $1
+       )`,
+      [`${orderPrefix}%`]
+    );
     await pool.query("DELETE FROM public.pending_lifecycle_actions WHERE order_id LIKE $1", [
       `${orderPrefix}%`,
     ]);
@@ -242,5 +251,49 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       pending_count: 1,
       remaining_action: "fulfill",
     });
+  });
+
+  it("blocks legacy rollback until an audited dead-letter replay settles", async () => {
+    const actionId = await insertAction({
+      orderId: `${orderPrefix}rollback-gate`,
+      actionType: "refund",
+      status: "dead_letter",
+      attempts: 10,
+    });
+
+    const beforeReplay = await pool.query<{
+      dead_letter_actions: string;
+      safe_to_resume_legacy: boolean;
+    }>("SELECT * FROM public.pending_lifecycle_action_rollback_status()");
+    expect(beforeReplay.rows[0]).toMatchObject({
+      dead_letter_actions: "1",
+      safe_to_resume_legacy: false,
+    });
+
+    await pool.query("SELECT public.requeue_pending_lifecycle_action($1, $2)", [
+      actionId,
+      "INC-rollback: verified provider outcome",
+    ]);
+
+    const beforeSettlement = await pool.query<{
+      uncertain_queued_actions: string;
+      safe_to_resume_legacy: boolean;
+    }>("SELECT * FROM public.pending_lifecycle_action_rollback_status()");
+    expect(beforeSettlement.rows[0]).toMatchObject({
+      uncertain_queued_actions: "1",
+      safe_to_resume_legacy: false,
+    });
+
+    await pool.query(
+      `UPDATE public.pending_lifecycle_actions
+       SET status = 'published', published_at = now()
+       WHERE action_id = $1`,
+      [actionId]
+    );
+
+    const afterSettlement = await pool.query<{ safe_to_resume_legacy: boolean }>(
+      "SELECT * FROM public.pending_lifecycle_action_rollback_status()"
+    );
+    expect(afterSettlement.rows[0].safe_to_resume_legacy).toBe(true);
   });
 });

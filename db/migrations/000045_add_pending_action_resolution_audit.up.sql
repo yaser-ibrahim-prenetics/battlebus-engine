@@ -14,6 +14,46 @@ ALTER TABLE public.pending_lifecycle_action_resolutions ENABLE ROW LEVEL SECURIT
 REVOKE ALL ON public.pending_lifecycle_action_resolutions
   FROM PUBLIC, anon, authenticated, battle_bus_runtime, battle_hub_runtime;
 
+CREATE FUNCTION public.pending_lifecycle_action_rollback_status()
+RETURNS TABLE (
+  publishing_actions bigint,
+  uncertain_queued_actions bigint,
+  dead_letter_actions bigint,
+  safe_to_resume_legacy boolean
+)
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, public
+AS $$
+  WITH blocker_counts AS (
+    SELECT
+      count(*) FILTER (WHERE queue.status = 'publishing') AS publishing_actions,
+      count(*) FILTER (
+        WHERE queue.status = 'queued'
+          AND (
+            queue.attempts > 0
+            OR EXISTS (
+              SELECT 1
+              FROM public.pending_lifecycle_action_resolutions AS resolution
+              WHERE resolution.action_id = queue.action_id
+            )
+          )
+      ) AS uncertain_queued_actions,
+      count(*) FILTER (WHERE queue.status = 'dead_letter') AS dead_letter_actions
+    FROM public.pending_lifecycle_actions AS queue
+  )
+  SELECT
+    blocker_counts.publishing_actions,
+    blocker_counts.uncertain_queued_actions,
+    blocker_counts.dead_letter_actions,
+    blocker_counts.publishing_actions = 0
+      AND blocker_counts.uncertain_queued_actions = 0
+      AND blocker_counts.dead_letter_actions = 0
+  FROM blocker_counts
+$$;
+
+REVOKE ALL ON FUNCTION public.pending_lifecycle_action_rollback_status() FROM PUBLIC;
+
 CREATE FUNCTION public.requeue_pending_lifecycle_action(
   requested_action_id uuid,
   resolution_reason text
@@ -82,5 +122,7 @@ REVOKE ALL ON FUNCTION public.requeue_pending_lifecycle_action(uuid, text) FROM 
 
 COMMENT ON TABLE public.pending_lifecycle_action_resolutions IS
   'Append-only owner audit of reviewed dead-letter lifecycle action replays.';
+COMMENT ON FUNCTION public.pending_lifecycle_action_rollback_status() IS
+  'Owner-only gate that blocks legacy drain rollback while normalized publication outcomes remain uncertain.';
 COMMENT ON FUNCTION public.requeue_pending_lifecycle_action(uuid, text) IS
   'Owner-only reviewed replay that preserves action identity and records the database actor and reason.';
