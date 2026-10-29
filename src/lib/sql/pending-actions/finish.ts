@@ -1,3 +1,5 @@
+import { legacyOrderIdentitySQL, legacyProjectionIdentitySQL } from "./legacy-projection";
+
 export const completePendingActionSQL = `
 WITH completed AS (
   UPDATE public.pending_lifecycle_actions
@@ -20,21 +22,15 @@ WITH completed AS (
         )
         FROM jsonb_array_elements(orders.pending_actions)
           WITH ORDINALITY AS item(action, ordinality)
-        WHERE (
-          item.action->>'action' = completed.action_type
-          AND (
-            item.action->>'sourceEventId' = completed.source_event_id
-            OR (
-              NULLIF(btrim(item.action->>'sourceEventId'), '') IS NULL
-              AND 'legacy:' || md5(item.action::text) = completed.source_event_id
-            )
-          )
-        ) IS NOT TRUE
+        WHERE ${legacyProjectionIdentitySQL(
+          "item.action",
+          "completed.action_type",
+          "completed.source_event_id"
+        )} IS NOT TRUE
       ),
       updated_at = now()
   FROM completed
-  WHERE orders.shopify_order_id = completed.order_id
-     OR orders.platform_order_id = completed.order_id
+  WHERE ${legacyOrderIdentitySQL("orders", "completed.order_id")}
   RETURNING orders.id
 )
 SELECT

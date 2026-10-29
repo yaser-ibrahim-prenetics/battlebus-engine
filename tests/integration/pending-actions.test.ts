@@ -119,23 +119,39 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
 
   it("keeps dead-lettered cancellation ahead of fulfillment", async () => {
     const orderId = `${orderPrefix}cancelled`;
-    await insertAction({ orderId, actionType: "cancel", status: "dead_letter", attempts: 10 });
+    const cancellationId = await insertAction({
+      orderId,
+      actionType: "cancel",
+      status: "dead_letter",
+      attempts: 10,
+    });
     const fulfillmentId = await insertAction({ orderId, actionType: "fulfill" });
-    const fulfillment = await pool.query<{ source_event_id: string }>(
-      "SELECT source_event_id FROM public.pending_lifecycle_actions WHERE action_id = $1",
-      [fulfillmentId]
+    const sources = await pool.query<{ action_type: string; source_event_id: string }>(
+      `SELECT action_type, source_event_id
+       FROM public.pending_lifecycle_actions
+       WHERE action_id IN ($1, $2)`,
+      [cancellationId, fulfillmentId]
+    );
+    const sourceByAction = new Map(
+      sources.rows.map((row) => [row.action_type, row.source_event_id] as const)
     );
     await pool.query(
-      `INSERT INTO public.orders (id, order_number, title, shopify_order_id, pending_actions)
-       VALUES ($1, $1, $1, $1, $2::jsonb)`,
+      `INSERT INTO public.orders (id, order_number, title, pending_actions)
+       VALUES ($1, $1, $1, $2::jsonb)`,
       [
         orderId,
         JSON.stringify([
           {
+            action: "cancel",
+            eventName: "test/cancel",
+            eventData: { orderId },
+            sourceEventId: sourceByAction.get("cancel"),
+          },
+          {
             action: "fulfill",
             eventName: "test/fulfill",
             eventData: { orderId },
-            sourceEventId: fulfillment.rows[0].source_event_id,
+            sourceEventId: sourceByAction.get("fulfill"),
           },
         ]),
       ]
@@ -148,21 +164,25 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       [fulfillmentId]
     );
     expect(state.rows[0]).toEqual({ status: "superseded", event_data: {} });
-    const projection = await pool.query<{ pending_count: number }>(
-      "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
+    const projection = await pool.query<{ pending_count: number; remaining_action: string }>(
+      `SELECT
+         jsonb_array_length(pending_actions) AS pending_count,
+         pending_actions->0->>'action' AS remaining_action
+       FROM public.orders
+       WHERE id = $1`,
       [orderId]
     );
-    expect(projection.rows[0].pending_count).toBe(0);
+    expect(projection.rows[0]).toEqual({ pending_count: 1, remaining_action: "cancel" });
   });
 
   it("copies valid legacy actions without clearing them or letting poison rows block", async () => {
     const poisonId = `${orderPrefix}poison`;
     const validId = `${orderPrefix}legacy`;
     await pool.query(
-      `INSERT INTO public.orders (id, order_number, title, shopify_order_id, pending_actions)
+      `INSERT INTO public.orders (id, order_number, title, pending_actions)
        VALUES
-         ($1, $1, $1, $1, '[{"eventName":"test/refund","eventData":{}}]'::jsonb),
-         ($2, $2, $2, $2, $3::jsonb)`,
+         ($1, $1, $1, '[{"eventName":"test/refund","eventData":{}}]'::jsonb),
+         ($2, $2, $2, $3::jsonb)`,
       [
         poisonId,
         validId,
@@ -173,6 +193,12 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
             eventData: { orderId: validId },
             sourceEventId: "legacy-refund-1",
           },
+          {
+            action: "fulfill",
+            eventName: "test/fulfill",
+            eventData: { orderId: validId },
+            sourceEventId: "legacy-fulfill-1",
+          },
         ]),
       ]
     );
@@ -181,27 +207,40 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       importLegacyPendingActionsSQL,
       [10]
     );
-    expect(imported.rows[0]).toEqual({ imported: "1", source_orders: "1" });
+    expect(imported.rows[0]).toEqual({ imported: "2", source_orders: "1" });
 
     const legacy = await pool.query<{ pending_count: number }>(
       "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
       [validId]
     );
-    expect(legacy.rows[0].pending_count).toBe(1);
+    expect(legacy.rows[0].pending_count).toBe(2);
 
     const claimed = await pool.query<{
       action_id: string;
+      action_type: string;
       order_id: string;
       lease_token: string;
     }>(claimPendingActionsSQL, [10, 120, 10]);
-    const validClaim = claimed.rows.find((row) => row.order_id === validId);
+    const validClaim = claimed.rows.find(
+      (row) => row.order_id === validId && row.action_type === "refund"
+    );
     expect(validClaim).toBeDefined();
     await pool.query(completePendingActionSQL, [validClaim!.action_id, validClaim!.lease_token]);
 
-    const completedProjection = await pool.query<{ pending_count: number }>(
-      "SELECT jsonb_array_length(pending_actions) AS pending_count FROM public.orders WHERE id = $1",
+    const completedProjection = await pool.query<{
+      pending_count: number;
+      remaining_action: string;
+    }>(
+      `SELECT
+         jsonb_array_length(pending_actions) AS pending_count,
+         pending_actions->0->>'action' AS remaining_action
+       FROM public.orders
+       WHERE id = $1`,
       [validId]
     );
-    expect(completedProjection.rows[0].pending_count).toBe(0);
+    expect(completedProjection.rows[0]).toEqual({
+      pending_count: 1,
+      remaining_action: "fulfill",
+    });
   });
 });

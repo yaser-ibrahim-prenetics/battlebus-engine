@@ -25,7 +25,6 @@ const claim: ClaimedPendingAction = {
   action: "cancel",
   eventName: "shopify/order.cancelled",
   eventData: { shopifyOrderId: "1001" },
-  sourceEventId: "shopify-order-cancelled-1001",
   leaseToken: "22222222-2222-4222-8222-222222222222",
   attempts: 1,
 };
@@ -110,7 +109,6 @@ describe("durable pending actions", () => {
           action_type: claim.action,
           event_name: claim.eventName,
           event_data: claim.eventData,
-          source_event_id: claim.sourceEventId,
           lease_token: claim.leaseToken,
           attempts: claim.attempts,
         },
