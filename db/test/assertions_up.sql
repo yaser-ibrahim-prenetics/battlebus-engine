@@ -10,7 +10,7 @@ BEGIN
   INTO missing_tables
   FROM unnest(ARRAY[
     'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
-    'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
+    'mission_runs', 'oos_recovery_mutation_leases', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
     'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
@@ -24,7 +24,7 @@ BEGIN
 
   FOREACH table_name IN ARRAY ARRAY[
     'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
-    'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
+    'mission_runs', 'oos_recovery_mutation_leases', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
     'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',

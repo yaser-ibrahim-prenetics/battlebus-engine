@@ -22,11 +22,11 @@ export async function fulfillOrderSegments(input: {
   orderId: string;
   fulfillments: ShopifyFulfillment[];
   step: StepRunner;
-  withExternalMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
+  withExternalMutation?: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
 }) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
-  const withExternalMutation = <T>(execute: () => Promise<T>) =>
-    input.withExternalMutation ? input.withExternalMutation(execute) : execute();
+  const withExternalMutation = <T>(operationKey: string, execute: () => Promise<T>) =>
+    input.withExternalMutation ? input.withExternalMutation(operationKey, execute) : execute();
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await readPlan(shop, input.orderId);
   if (!stored) return null;
@@ -103,7 +103,9 @@ export async function fulfillOrderSegments(input: {
           });
           let result: Awaited<ReturnType<typeof dynamics.createFulfilment>>;
           try {
-            result = await withExternalMutation(() =>
+            result = await withExternalMutation(
+              `segment:${segment.index}:fulfillment:${allocation.fulfillment_id}`,
+              () =>
               dynamics.createFulfilment({
                 fulfillmentId: `shopify:${allocation.fulfillment_id}`,
                 dataAreaId: segment.dataAreaId,
@@ -151,7 +153,9 @@ export async function fulfillOrderSegments(input: {
               processingStatus: deposit.processingStatus,
             })
           ) {
-            await withExternalMutation(() =>
+            await withExternalMutation(
+              `segment:${segment.index}:deposit-invoice:${allocation.fulfillment_id}`,
+              () =>
               dynamics.assertDepositShipmentInvoicingComplete(
                 salesOrderNumber,
                 segment.dataAreaId,

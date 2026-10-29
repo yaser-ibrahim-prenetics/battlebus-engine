@@ -133,9 +133,12 @@ vi.mock("@/lib/services/oos-recovery/outcomes", () => ({
     shopifyStore: params.shopifyStore,
     orderId: params.orderId,
     attemptToken: params.attemptToken,
+    expectedContext: params.expectedContext,
+    operationKey: params.operationKey,
     leaseToken: "mutation-lease-token",
   })),
   releaseOosRecoveryMutation: vi.fn(async () => true),
+  renewOosRecoveryMutation: vi.fn(async () => true),
   isCurrentOosRecoveryAttempt: vi.fn(async () => true),
   loadOosRetryContext: mocks.loadOosRetryContext,
   moveOosDependenciesToManualReview: vi.fn(async () => ({
@@ -379,10 +382,10 @@ describe("backorder recovery serialization", () => {
     mocks.processOrderSegments.mockImplementation(async (rawInput: unknown) => {
       const input = rawInput as {
         step: ReturnType<typeof step>;
-        withExternalMutation: <T>(execute: () => Promise<T>) => Promise<T>;
+        withExternalMutation: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
       };
       return input.step.run("segment-provider-mutation", () =>
-        input.withExternalMutation(async () => ({ status: "segmented" }))
+        input.withExternalMutation("test:segmented", async () => ({ status: "segmented" }))
       );
     });
     const args = {
