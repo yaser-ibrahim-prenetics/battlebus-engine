@@ -26,6 +26,11 @@ dead-letter evidence, replay counters, and indexes for ready work and published
 receipt retention. See [webhook inbox delivery reliability](../docs/webhook-inbox-delivery.md)
 for rollout and rollback gates.
 
+Migration `000049` adds the per-line OOS recovery queue, coalesced targeted-drain
+requests, minimal event outbox, and the payload-free Battle Hub operational view.
+See [OOS parking and targeted drain](../docs/oos-parking-targeted-drain.md) for the
+disabled-by-default rollout sequence.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If
