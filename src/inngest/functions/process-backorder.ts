@@ -59,166 +59,200 @@ async function buildBackorderGpsPayload(params: {
   return toGpsOutboundOrder(params.order, params.d365OrderNumber, params.warehouse, shortAddress);
 }
 
-function createBackorderHandler() {
-  return async function handleBackorder({
-    event,
-    step,
-    runId,
-  }: {
-    event: any;
-    step: any;
-    runId?: string;
-  }) {
-    const {
-      shopifyOrderId,
-      shopifyOrderName,
-      d365OrderNumber,
-      warehouse,
-      errorMessage,
-      errorType,
-    } = event.data;
+async function handleBackorder({ event, step, runId }: { event: any; step: any; runId?: string }) {
+  const { shopifyOrderId, shopifyOrderName, d365OrderNumber, warehouse, errorMessage, errorType } =
+    event.data;
 
-    const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
+  const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
 
-    const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
-    // Respect explicit maxRetries=0 from producer (park only, no auto-retry).
-    const maxRetries =
-      event.data.maxRetries ??
-      (autoRetryEnabled ? BACKORDER_CONFIGS.autoRetryMaxAttempts : BACKORDER_CONFIGS.maxRetries);
-    const retryIntervalHours = autoRetryEnabled
-      ? BACKORDER_CONFIGS.autoRetryIntervalHours
-      : BACKORDER_CONFIGS.retryIntervalHours;
-    let retryCount = event.data.retryCount || 0;
-    const isManualRetryRequest =
-      event.name === "backorder/retry" ||
-      event.data.triggeredBy === "manual" ||
-      event.data.triggeredBy === "manual_bulk";
-    const backorderQueueTag = event.data.backorderQueue;
-    const manualRetryOnly = !autoRetryEnabled;
-    const defaultFailureSystem: "d365" | "gps" | "validation" =
-      event.data.failureStage === "fulfillment" ||
-      event.data.sourceEventName === "shopify/order.fulfilled" ||
-      (typeof event.data.sourceEventName === "string" &&
-        event.data.sourceEventName.includes("fulfilled"))
-        ? "d365"
-        : "gps";
-    const explicitRetryMode = event.data.retryMode;
-    const derivedRetryMode: "gps_outbound" | "fulfillment_replay" =
-      event.data.failureStage === "fulfillment" ||
-      event.data.sourceEventName === "shopify/order.fulfilled"
-        ? "fulfillment_replay"
-        : "gps_outbound";
-    const effectiveRetryMode: "gps_outbound" | "fulfillment_replay" =
-      explicitRetryMode === "fulfillment_replay" || explicitRetryMode === "gps_outbound"
-        ? explicitRetryMode
-        : derivedRetryMode;
+  const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
+  // Respect explicit maxRetries=0 from producer (park only, no auto-retry).
+  const maxRetries =
+    event.data.maxRetries ??
+    (autoRetryEnabled ? BACKORDER_CONFIGS.autoRetryMaxAttempts : BACKORDER_CONFIGS.maxRetries);
+  const retryIntervalHours = autoRetryEnabled
+    ? BACKORDER_CONFIGS.autoRetryIntervalHours
+    : BACKORDER_CONFIGS.retryIntervalHours;
+  let retryCount = event.data.retryCount || 0;
+  const isManualRetryRequest =
+    event.name === "backorder/retry" ||
+    event.data.triggeredBy === "manual" ||
+    event.data.triggeredBy === "manual_bulk";
+  const backorderQueueTag = event.data.backorderQueue;
+  const manualRetryOnly = !autoRetryEnabled;
+  const defaultFailureSystem: "d365" | "gps" | "validation" =
+    event.data.failureStage === "fulfillment" ||
+    event.data.sourceEventName === "shopify/order.fulfilled" ||
+    (typeof event.data.sourceEventName === "string" &&
+      event.data.sourceEventName.includes("fulfilled"))
+      ? "d365"
+      : "gps";
+  const explicitRetryMode = event.data.retryMode;
+  const derivedRetryMode: "gps_outbound" | "fulfillment_replay" =
+    event.data.failureStage === "fulfillment" ||
+    event.data.sourceEventName === "shopify/order.fulfilled"
+      ? "fulfillment_replay"
+      : "gps_outbound";
+  const effectiveRetryMode: "gps_outbound" | "fulfillment_replay" =
+    explicitRetryMode === "fulfillment_replay" || explicitRetryMode === "gps_outbound"
+      ? explicitRetryMode
+      : derivedRetryMode;
 
-    const _flowStart = Date.now();
-    const _runId = String(runId ?? "");
-    const shop = resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain;
-    const leaseOwner = `${event.name}:${_runId || event.id}`;
-    const acquireLease = (operationSuffix: string) =>
-      acquireBackorderRecoveryLease({
-        shopifyStore: shop,
-        orderId: String(shopifyOrderId),
-        operationKey: `${event.id}:${operationSuffix}`,
-        owner: leaseOwner,
-        leaseSeconds: BACKORDER_CONFIGS.recoveryLeaseSeconds,
-      });
-    const releaseLease = (lease: BackorderRecoveryLease) => releaseBackorderRecoveryLease(lease);
+  const _flowStart = Date.now();
+  const _runId = String(runId ?? "");
+  const shop = resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain;
+  const leaseOwner = `${event.name}:${_runId || event.id}`;
+  const acquireLease = (operationSuffix: string) =>
+    acquireBackorderRecoveryLease({
+      shopifyStore: shop,
+      orderId: String(shopifyOrderId),
+      operationKey: `${event.id}:${operationSuffix}`,
+      owner: leaseOwner,
+      leaseSeconds: BACKORDER_CONFIGS.recoveryLeaseSeconds,
+    });
+  const releaseLease = (lease: BackorderRecoveryLease) => releaseBackorderRecoveryLease(lease);
 
-    if (effectiveRetryMode === "gps_outbound" && !config.features.dryRunMode) {
-      const segmented = await readPlan(shop, String(shopifyOrderId));
-      if (segmented && isManualRetryRequest) {
-        const lease = await acquireLease("segment-recovery");
-        const ensureEligible = () =>
-          loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
-        try {
-          const latest = await ensureEligible();
-          const accounting = await step.run("reload-segment-accounting", () =>
-            loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
-          );
-          const shortAddress = await loadSaudiShortAddress({
-            step,
-            order: latest as unknown as ShopifyOrderPayload,
-            shopifyOrderId: String(shopifyOrderId),
-            shopifyStore: shop,
-          });
-          return await processOrderSegments({
-            order: latest as unknown as ShopifyOrderPayload,
-            step,
-            accounting,
-            shopDomain: shop,
-            fallbackDataArea: segmented.plan.segments[0].dataAreaId,
-            shortAddress,
-            ensureEligible,
-          });
-        } finally {
-          await releaseLease(lease);
-        }
+  if (effectiveRetryMode === "gps_outbound" && !config.features.dryRunMode) {
+    const segmented = await readPlan(shop, String(shopifyOrderId));
+    if (segmented && isManualRetryRequest) {
+      const lease = await acquireLease("segment-recovery");
+      const ensureEligible = () =>
+        loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
+      try {
+        const latest = await ensureEligible();
+        const accounting = await step.run("reload-segment-accounting", () =>
+          loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
+        );
+        const shortAddress = await loadSaudiShortAddress({
+          step,
+          order: latest as unknown as ShopifyOrderPayload,
+          shopifyOrderId: String(shopifyOrderId),
+          shopifyStore: shop,
+        });
+        return await processOrderSegments({
+          order: latest as unknown as ShopifyOrderPayload,
+          step,
+          accounting,
+          shopDomain: shop,
+          fallbackDataArea: segmented.plan.segments[0].dataAreaId,
+          shortAddress,
+          ensureEligible,
+        });
+      } finally {
+        await releaseLease(lease);
       }
-      if (segmented)
-        return {
-          status: "segment_recovery_required",
-          reason:
-            "Replay the order or use manual backorder recovery to resume its durable segment plan",
-        };
     }
+    if (segmented)
+      return {
+        status: "segment_recovery_required",
+        reason:
+          "Replay the order or use manual backorder recovery to resume its durable segment plan",
+      };
+  }
+
+  logFlowEvent({
+    flow: "backorder",
+    step: "start",
+    status: "started",
+    runId: _runId || undefined,
+    shopifyOrderId: String(shopifyOrderId),
+    shopifyOrderName,
+    d365OrderNumber,
+    payload: { errorType, warehouse, retryCount },
+  });
+
+  console.log(`[Backorder] ========================================`);
+  console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
+  console.log(`[Backorder] Error: ${errorType} - ${errorMessage}`);
+  console.log(
+    `[Backorder] Failed SKUs: ${failedSkus.length > 0 ? failedSkus.join(", ") : "(all lines)"}`
+  );
+  console.log(`[Backorder] Retry ${retryCount}/${maxRetries}`);
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Sequenced rerun: if the manual retry came with a `runSequence`, dispatch
+  // the first stage's pipeline event and persist the timeline. Each upstream
+  // handler will hand off to the next stage on success via advanceRunSequence.
+  // ────────────────────────────────────────────────────────────────────────
+  const incomingSequence: RunSequenceStage[] = Array.isArray(event.data.runSequence)
+    ? (event.data.runSequence as RunSequenceStage[])
+    : [];
+  if (incomingSequence.length > 0 && event.name === "backorder/retry") {
+    const result = await step.run("dispatch-sequenced-rerun", async () => {
+      const lease = await acquireLease("sequenced-rerun");
+      try {
+        const { getOrder } = await import("@/lib/clients/shopify");
+        const freshOrder = (await getOrder(
+          shopifyOrderId,
+          event.data.shopifyStore
+        )) as unknown as ShopifyOrderPayload;
+        const fulfillments = Array.isArray((freshOrder as any)?.fulfillments)
+          ? ((freshOrder as any).fulfillments as any[])
+          : [];
+
+        return await advanceRunSequence({
+          shopifyOrderId,
+          shopifyOrderName,
+          remaining: incomingSequence,
+          orderJson: freshOrder,
+          fulfillments,
+          shopifyStore: event.data.shopifyStore,
+          inngestRunId: _runId || undefined,
+        });
+      } finally {
+        await releaseLease(lease);
+      }
+    });
+
+    await csPlatform.sendOrderUpdate(
+      {
+        id: shopifyOrderId,
+        name: shopifyOrderName,
+        shopifyOrderId,
+        shopifyOrderName,
+        d365OrderNumber,
+        warehouse,
+        status: "processing",
+        processingStatus: "processing",
+        retryAt: null,
+        ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
+          ? {
+              state: {
+                failureContext: { backorderQueue: backorderQueueTag },
+              },
+            }
+          : {}),
+      },
+      {}
+    );
 
     logFlowEvent({
       flow: "backorder",
-      step: "start",
-      status: "started",
+      step: "sequenced-rerun-dispatched",
+      status: "completed",
       runId: _runId || undefined,
       shopifyOrderId: String(shopifyOrderId),
       shopifyOrderName,
-      d365OrderNumber,
-      payload: { errorType, warehouse, retryCount },
+      durationMs: Date.now() - _flowStart,
+      payload: {
+        firstStage: result.dispatched?.stage,
+        totalStages: incomingSequence.length,
+      },
     });
 
-    console.log(`[Backorder] ========================================`);
-    console.log(`[Backorder] Processing backorder for ${shopifyOrderName}`);
-    console.log(`[Backorder] Error: ${errorType} - ${errorMessage}`);
-    console.log(
-      `[Backorder] Failed SKUs: ${failedSkus.length > 0 ? failedSkus.join(", ") : "(all lines)"}`
-    );
-    console.log(`[Backorder] Retry ${retryCount}/${maxRetries}`);
+    return {
+      status: "sequenced_dispatched",
+      shopifyOrderId,
+      shopifyOrderName,
+      firstStage: result.dispatched?.stage,
+      totalStages: incomingSequence.length,
+      processedAt: new Date().toISOString(),
+    };
+  }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Sequenced rerun: if the manual retry came with a `runSequence`, dispatch
-    // the first stage's pipeline event and persist the timeline. Each upstream
-    // handler will hand off to the next stage on success via advanceRunSequence.
-    // ────────────────────────────────────────────────────────────────────────
-    const incomingSequence: RunSequenceStage[] = Array.isArray(event.data.runSequence)
-      ? (event.data.runSequence as RunSequenceStage[])
-      : [];
-    if (incomingSequence.length > 0 && event.name === "backorder/retry") {
-      const result = await step.run("dispatch-sequenced-rerun", async () => {
-        const lease = await acquireLease("sequenced-rerun");
-        try {
-          const { getOrder } = await import("@/lib/clients/shopify");
-          const freshOrder = (await getOrder(
-            shopifyOrderId,
-            event.data.shopifyStore
-          )) as unknown as ShopifyOrderPayload;
-          const fulfillments = Array.isArray((freshOrder as any)?.fulfillments)
-            ? ((freshOrder as any).fulfillments as any[])
-            : [];
-
-          return await advanceRunSequence({
-            shopifyOrderId,
-            shopifyOrderName,
-            remaining: incomingSequence,
-            orderJson: freshOrder,
-            fulfillments,
-            shopifyStore: event.data.shopifyStore,
-            inngestRunId: _runId || undefined,
-          });
-        } finally {
-          await releaseLease(lease);
-        }
-      });
-
+  // Notify Battle Hub when first parked in backorder queue.
+  if (event.name === "backorder/created") {
+    await step.run("notify-hub-backorder-created", async () => {
       await csPlatform.sendOrderUpdate(
         {
           id: shopifyOrderId,
@@ -227,47 +261,207 @@ function createBackorderHandler() {
           shopifyOrderName,
           d365OrderNumber,
           warehouse,
-          status: "processing",
-          processingStatus: "processing",
-          retryAt: null,
-          ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
-            ? {
-                state: {
-                  failureContext: { backorderQueue: backorderQueueTag },
-                },
-              }
-            : {}),
+          status: "backorder",
+          error: errorMessage,
+          errorType,
+          state: {
+            failureContext: {
+              stage: event.data.failureStage || "order_creation",
+              system: event.data.failureSystem || defaultFailureSystem,
+              sourceEventName: event.data.sourceEventName || event.name,
+              retryMode: effectiveRetryMode,
+              ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
+                ? { backorderQueue: backorderQueueTag }
+                : {}),
+            },
+          },
         },
         {}
       );
+    });
+  }
 
-      logFlowEvent({
-        flow: "backorder",
-        step: "sequenced-rerun-dispatched",
-        status: "completed",
-        runId: _runId || undefined,
-        shopifyOrderId: String(shopifyOrderId),
-        shopifyOrderName,
-        durationMs: Date.now() - _flowStart,
-        payload: {
-          firstStage: result.dispatched?.stage,
-          totalStages: incomingSequence.length,
+  // Manual-only mode: orders stay parked until Hub explicitly requests retry.
+  if (manualRetryOnly && !isManualRetryRequest) {
+    await step.run("notify-backorder-parked-manual-only", async () => {
+      await slack.sendWarningMessage(
+        SlackChannelEnum.SHOPIFY,
+        `[Backorder parked - manual retry only] ${shopifyOrderName}\n` +
+          `Error: ${errorType} - ${errorMessage}\n` +
+          `Warehouse: ${warehouse}\n` +
+          `D365: ${d365OrderNumber}`,
+        slack.slackNotificationId(event.id, "backorder-parked-manual-only")
+      );
+    });
+
+    return {
+      status: "parked_manual_only",
+      shopifyOrderId,
+      shopifyOrderName,
+      errorType,
+      retryCount: 0,
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  // Manual retry request: perform exactly one retry attempt.
+  if (isManualRetryRequest) {
+    const manualAttempt = retryCount + 1;
+    const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
+      const lease = await acquireLease(`manual-retry:${manualAttempt}`);
+      try {
+        try {
+          const { getOrder } = await import("@/lib/clients/shopify");
+          const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
+          const order = freshOrder as unknown as ShopifyOrderPayload;
+
+          const d365NumManual = String(d365OrderNumber || "").trim();
+          if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
+            await inngest.send({
+              id: `backorder-retry:${event.id}:shopify-order-paid`,
+              name: "shopify/order.paid",
+              data: {
+                shopifyOrderId: String(shopifyOrderId),
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                receivedAt: new Date().toISOString(),
+              },
+            });
+            return { success: true, replayDispatched: true };
+          }
+
+          if (effectiveRetryMode === "fulfillment_replay") {
+            const fulfillments = Array.isArray((order as any)?.fulfillments)
+              ? ((order as any).fulfillments as any[])
+              : [];
+            if (fulfillments.length === 0) {
+              return {
+                success: false,
+                error: "No Shopify fulfillments found to replay",
+                isInventoryError: false,
+              };
+            }
+
+            await inngest.send({
+              id: `backorder-retry:${event.id}:shopify-order-fulfilled`,
+              name: "shopify/order.fulfilled",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                fulfillments,
+                receivedAt: new Date().toISOString(),
+                fromBackorderRetry: true,
+              },
+            });
+
+            return { success: true, replayDispatched: true };
+          }
+
+          const gpsPayload = await buildBackorderGpsPayload({
+            order,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyStore: event.data.shopifyStore,
+            d365OrderNumber,
+            warehouse,
+          });
+          const result = await gps.createOutboundOrder(
+            gpsPayload,
+            warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+          );
+
+          const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
+          if (gpsOrderNo) {
+            await setGpsOrderMetafield(shopifyOrderId, {
+              gpsOrderId: gpsOrderNo,
+              warehouse,
+              d365OrderNumber,
+              createdAt: new Date().toISOString(),
+            });
+          }
+
+          return { success: true, gpsOrderNo };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: msg,
+            isInventoryError:
+              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+          };
+        }
+      } finally {
+        await releaseLease(lease);
+      }
+    });
+
+    if (retryResult.success) {
+      await step.run("notify-backorder-resolved-manual", async () => {
+        const paidReplay =
+          effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
+        await slack.sendOrderMessage(
+          SlackChannelEnum.SHOPIFY,
+          effectiveRetryMode === "fulfillment_replay"
+            ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
+            : paidReplay
+              ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.paid`
+              : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`,
+          slack.slackNotificationId(event.id, "backorder-resolved-manual", manualAttempt)
+        );
+        const replayDispatchedManual =
+          effectiveRetryMode === "fulfillment_replay" ||
+          (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
+            shopifyOrderId,
+            shopifyOrderName,
+            d365OrderNumber,
+            warehouse,
+            gpsOrderId: retryResult.gpsOrderNo,
+            gpsSyncStatus: replayDispatchedManual ? undefined : "synced",
+            status: "processing",
+            processingStatus: "processing",
+            error: undefined,
+            lastError: undefined,
+            errorType: undefined,
+            lastErrorType: undefined,
+            retryAt: null,
+          },
+          {}
+        );
+      });
+
+      await inngest.send({
+        id: `backorder-retry:${event.id}:resolved`,
+        name: "backorder/resolved",
+        data: {
+          shopifyOrderId,
+          shopifyOrderName,
+          resolvedAt: new Date().toISOString(),
+          resolution: "manual",
         },
       });
 
+      // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
+
       return {
-        status: "sequenced_dispatched",
+        status: "resolved",
         shopifyOrderId,
         shopifyOrderName,
-        firstStage: result.dispatched?.stage,
-        totalStages: incomingSequence.length,
+        gpsOrderNo: retryResult.gpsOrderNo,
+        replayDispatched: !!(retryResult as any).replayDispatched,
+        retryCount: manualAttempt,
         processedAt: new Date().toISOString(),
       };
     }
 
-    // Notify Battle Hub when first parked in backorder queue.
-    if (event.name === "backorder/created") {
-      await step.run("notify-hub-backorder-created", async () => {
+    // Still inventory-related: keep parked in queue, no automatic requeue.
+    if (retryResult.isInventoryError) {
+      await step.run("notify-hub-manual-retry-still-backorder", async () => {
         await csPlatform.sendOrderUpdate(
           {
             id: shopifyOrderId,
@@ -277,242 +471,271 @@ function createBackorderHandler() {
             d365OrderNumber,
             warehouse,
             status: "backorder",
-            error: errorMessage,
+            processingStatus: "backorder",
+            error: retryResult.error,
             errorType,
-            state: {
-              failureContext: {
-                stage: event.data.failureStage || "order_creation",
-                system: event.data.failureSystem || defaultFailureSystem,
-                sourceEventName: event.data.sourceEventName || event.name,
-                retryMode: effectiveRetryMode,
-                ...(backorderQueueTag === "sync" || backorderQueueTag === "fulfilment"
-                  ? { backorderQueue: backorderQueueTag }
-                  : {}),
-              },
-            },
           },
           {}
         );
       });
-    }
-
-    // Manual-only mode: orders stay parked until Hub explicitly requests retry.
-    if (manualRetryOnly && !isManualRetryRequest) {
-      await step.run("notify-backorder-parked-manual-only", async () => {
-        await slack.sendWarningMessage(
-          SlackChannelEnum.SHOPIFY,
-          `[Backorder parked - manual retry only] ${shopifyOrderName}\n` +
-            `Error: ${errorType} - ${errorMessage}\n` +
-            `Warehouse: ${warehouse}\n` +
-            `D365: ${d365OrderNumber}`,
-          slack.slackNotificationId(event.id, "backorder-parked-manual-only")
-        );
-      });
 
       return {
-        status: "parked_manual_only",
+        status: "still_backorder",
         shopifyOrderId,
         shopifyOrderName,
-        errorType,
-        retryCount: 0,
+        error: retryResult.error,
+        retryCount: manualAttempt,
         processedAt: new Date().toISOString(),
       };
     }
 
-    // Manual retry request: perform exactly one retry attempt.
-    if (isManualRetryRequest) {
-      const manualAttempt = retryCount + 1;
-      const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
-        const lease = await acquireLease(`manual-retry:${manualAttempt}`);
+    await step.run("notify-manual-retry-non-inventory-error", async () => {
+      await slack.sendErrorMessage(
+        SlackChannelEnum.SHOPIFY,
+        `[Backorder] Non-inventory error on manual retry for ${shopifyOrderName}:\n${retryResult.error}`,
+        slack.slackNotificationId(
+          event.id,
+          "backorder-manual-retry-non-inventory-error",
+          manualAttempt
+        )
+      );
+    });
+
+    return {
+      status: "error",
+      shopifyOrderId,
+      shopifyOrderName,
+      error: retryResult.error,
+      retryCount: manualAttempt,
+      reason: "Non-inventory error — requires manual investigation",
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  // No auto-retry mode: keep order parked in backorder queue for manual action only.
+  if (maxRetries <= 0) {
+    await step.run("notify-backorder-parked-no-retry", async () => {
+      await slack.sendWarningMessage(
+        SlackChannelEnum.SHOPIFY,
+        `[Backorder parked - no auto-retry] ${shopifyOrderName}\n` +
+          `Error: ${errorType} - ${errorMessage}\n` +
+          `Warehouse: ${warehouse}\n` +
+          `D365: ${d365OrderNumber}`,
+        slack.slackNotificationId(event.id, "backorder-parked-no-retry")
+      );
+    });
+
+    return {
+      status: "parked_no_retry",
+      shopifyOrderId,
+      shopifyOrderName,
+      errorType,
+      retryCount: 0,
+      processedAt: new Date().toISOString(),
+    };
+  }
+
+  // Retry loop
+  while (retryCount < maxRetries) {
+    retryCount++;
+
+    console.log(
+      `[Backorder] Waiting ${retryIntervalHours}h before automatic attempt ${retryCount}/${maxRetries}`
+    );
+    await step.sleep(`wait-before-auto-retry-${retryCount}`, `${retryIntervalHours}h`);
+    const triggeredBy = "auto";
+
+    // Attempt GPS order creation
+    const retryResult = await step.run(`retry-gps-order-${retryCount}`, async () => {
+      const lease = await acquireLease(`auto-retry:${retryCount}`);
+      try {
         try {
-          try {
-            const { getOrder } = await import("@/lib/clients/shopify");
-            const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
-            const order = freshOrder as unknown as ShopifyOrderPayload;
+          // Refetch order from Shopify for latest data
+          const { getOrder } = await import("@/lib/clients/shopify");
+          const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
+          const order = freshOrder as unknown as ShopifyOrderPayload;
 
-            const d365NumManual = String(d365OrderNumber || "").trim();
-            if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
-              await inngest.send({
-                id: `backorder-retry:${event.id}:shopify-order-paid`,
-                name: "shopify/order.paid",
-                data: {
-                  shopifyOrderId: String(shopifyOrderId),
-                  shopifyOrderName,
-                  shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                  orderJson: order,
-                  receivedAt: new Date().toISOString(),
-                },
-              });
-              return { success: true, replayDispatched: true };
-            }
-
-            if (effectiveRetryMode === "fulfillment_replay") {
-              const fulfillments = Array.isArray((order as any)?.fulfillments)
-                ? ((order as any).fulfillments as any[])
-                : [];
-              if (fulfillments.length === 0) {
-                return {
-                  success: false,
-                  error: "No Shopify fulfillments found to replay",
-                  isInventoryError: false,
-                };
-              }
-
-              await inngest.send({
-                id: `backorder-retry:${event.id}:shopify-order-fulfilled`,
-                name: "shopify/order.fulfilled",
-                data: {
-                  shopifyOrderId,
-                  shopifyOrderName,
-                  shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                  orderJson: order,
-                  fulfillments,
-                  receivedAt: new Date().toISOString(),
-                  fromBackorderRetry: true,
-                },
-              });
-
-              return { success: true, replayDispatched: true };
-            }
-
-            const gpsPayload = await buildBackorderGpsPayload({
-              order,
-              shopifyOrderId: String(shopifyOrderId),
-              shopifyStore: event.data.shopifyStore,
-              d365OrderNumber,
-              warehouse,
+          const d365NumLoop = String(d365OrderNumber || "").trim();
+          if (effectiveRetryMode === "gps_outbound" && !d365NumLoop) {
+            await inngest.send({
+              id: `backorder-auto:${event.id}:${retryCount}:shopify-order-paid`,
+              name: "shopify/order.paid",
+              data: {
+                shopifyOrderId: String(shopifyOrderId),
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                receivedAt: new Date().toISOString(),
+              },
             });
-            const result = await gps.createOutboundOrder(
-              gpsPayload,
-              warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-            );
-
-            const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
-            if (gpsOrderNo) {
-              await setGpsOrderMetafield(shopifyOrderId, {
-                gpsOrderId: gpsOrderNo,
-                warehouse,
-                d365OrderNumber,
-                createdAt: new Date().toISOString(),
-              });
-            }
-
-            return { success: true, gpsOrderNo };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
             return {
-              success: false,
-              error: msg,
-              isInventoryError:
-                effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+              success: true,
+              retryCount,
+              triggeredBy,
+              replayDispatched: true,
             };
           }
-        } finally {
-          await releaseLease(lease);
-        }
-      });
 
-      if (retryResult.success) {
-        await step.run("notify-backorder-resolved-manual", async () => {
-          const paidReplay =
-            effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
-          await slack.sendOrderMessage(
-            SlackChannelEnum.SHOPIFY,
-            effectiveRetryMode === "fulfillment_replay"
-              ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.fulfilled`
-              : paidReplay
-                ? `Backorder replay dispatched (manual retry): ${shopifyOrderName} via shopify/order.paid`
-                : `Backorder resolved (manual retry): ${shopifyOrderName} (GPS: ${retryResult.gpsOrderNo})`,
-            slack.slackNotificationId(event.id, "backorder-resolved-manual", manualAttempt)
+          if (effectiveRetryMode === "fulfillment_replay") {
+            const fulfillments = Array.isArray((order as any)?.fulfillments)
+              ? ((order as any).fulfillments as any[])
+              : [];
+            if (fulfillments.length === 0) {
+              return {
+                success: false,
+                error: "No Shopify fulfillments found to replay",
+                isInventoryError: false,
+                retryCount,
+                triggeredBy,
+              };
+            }
+
+            await inngest.send({
+              id: `backorder-auto:${event.id}:${retryCount}:shopify-order-fulfilled`,
+              name: "shopify/order.fulfilled",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+                orderJson: order,
+                fulfillments,
+                receivedAt: new Date().toISOString(),
+                fromBackorderRetry: true,
+              },
+            });
+
+            return {
+              success: true,
+              retryCount,
+              triggeredBy,
+              replayDispatched: true,
+            };
+          }
+
+          // Rebuild GPS payload
+          const gpsPayload = await buildBackorderGpsPayload({
+            order,
+            shopifyOrderId: String(shopifyOrderId),
+            shopifyStore: event.data.shopifyStore,
+            d365OrderNumber,
+            warehouse,
+          });
+          const result = await gps.createOutboundOrder(
+            gpsPayload,
+            warehouse as "GPS Warehouse" | "GPS UK Warehouse"
           );
-          const replayDispatchedManual =
-            effectiveRetryMode === "fulfillment_replay" ||
-            (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
-          await csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber,
+
+          // Store GPS metafield on success
+          const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
+          if (gpsOrderNo) {
+            await setGpsOrderMetafield(shopifyOrderId, {
+              gpsOrderId: gpsOrderNo,
               warehouse,
-              gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: replayDispatchedManual ? undefined : "synced",
-              status: "processing",
-              processingStatus: "processing",
-              error: undefined,
-              lastError: undefined,
-              errorType: undefined,
-              lastErrorType: undefined,
-              retryAt: null,
-            },
-            {}
-          );
-        });
+              d365OrderNumber,
+              createdAt: new Date().toISOString(),
+            });
+          }
 
-        await inngest.send({
-          id: `backorder-retry:${event.id}:resolved`,
-          name: "backorder/resolved",
-          data: {
+          return {
+            success: true,
+            gpsOrderNo,
+            retryCount,
+            triggeredBy,
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.log(`[Backorder] Retry ${retryCount} failed: ${msg}`);
+
+          return {
+            success: false,
+            error: msg,
+            isInventoryError:
+              effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+            retryCount,
+            triggeredBy,
+          };
+        }
+      } finally {
+        await releaseLease(lease);
+      }
+    });
+
+    if (retryResult.success) {
+      // Resolved
+      console.log(`[Backorder] Order ${shopifyOrderName} resolved on retry ${retryCount}`);
+
+      await step.run("notify-backorder-resolved", async () => {
+        const paidReplayLoop =
+          effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
+        await slack.sendOrderMessage(
+          SlackChannelEnum.SHOPIFY,
+          effectiveRetryMode === "fulfillment_replay"
+            ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
+            : paidReplayLoop
+              ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.paid`
+              : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`,
+          slack.slackNotificationId(event.id, "backorder-resolved", retryCount)
+        );
+
+        const replayDispatchedAuto =
+          effectiveRetryMode === "fulfillment_replay" ||
+          (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
+        await csPlatform.sendOrderUpdate(
+          {
+            id: shopifyOrderId,
+            name: shopifyOrderName,
             shopifyOrderId,
             shopifyOrderName,
-            resolvedAt: new Date().toISOString(),
-            resolution: "manual",
+            d365OrderNumber,
+            warehouse,
+            gpsOrderId: retryResult.gpsOrderNo,
+            gpsSyncStatus: replayDispatchedAuto ? undefined : "synced",
+            status: "processing",
+            processingStatus: "processing",
+            error: undefined,
+            lastError: undefined,
+            errorType: undefined,
+            lastErrorType: undefined,
+            retryAt: null,
           },
-        });
+          {}
+        );
+      });
 
-        // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
-
-        return {
-          status: "resolved",
+      // Emit resolved event
+      await inngest.send({
+        id: `backorder-auto:${event.id}:${retryCount}:resolved`,
+        name: "backorder/resolved",
+        data: {
           shopifyOrderId,
           shopifyOrderName,
-          gpsOrderNo: retryResult.gpsOrderNo,
-          replayDispatched: !!(retryResult as any).replayDispatched,
-          retryCount: manualAttempt,
-          processedAt: new Date().toISOString(),
-        };
-      }
+          resolvedAt: new Date().toISOString(),
+          resolution: "fulfilled",
+        },
+      });
 
-      // Still inventory-related: keep parked in queue, no automatic requeue.
-      if (retryResult.isInventoryError) {
-        await step.run("notify-hub-manual-retry-still-backorder", async () => {
-          await csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber,
-              warehouse,
-              status: "backorder",
-              processingStatus: "backorder",
-              error: retryResult.error,
-              errorType,
-            },
-            {}
-          );
-        });
+      // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
 
-        return {
-          status: "still_backorder",
-          shopifyOrderId,
-          shopifyOrderName,
-          error: retryResult.error,
-          retryCount: manualAttempt,
-          processedAt: new Date().toISOString(),
-        };
-      }
+      return {
+        status: "resolved",
+        shopifyOrderId,
+        shopifyOrderName,
+        gpsOrderNo: retryResult.gpsOrderNo,
+        replayDispatched: !!(retryResult as any).replayDispatched,
+        retryCount,
+        processedAt: new Date().toISOString(),
+      };
+    }
 
-      await step.run("notify-manual-retry-non-inventory-error", async () => {
+    // If it's not an inventory error anymore, something else is wrong — escalate immediately
+    if (!retryResult.isInventoryError) {
+      console.log(`[Backorder] Non-inventory error on retry ${retryCount}, escalating`);
+
+      await step.run("notify-non-inventory-error", async () => {
         await slack.sendErrorMessage(
           SlackChannelEnum.SHOPIFY,
-          `[Backorder] Non-inventory error on manual retry for ${shopifyOrderName}:\n${retryResult.error}`,
-          slack.slackNotificationId(
-            event.id,
-            "backorder-manual-retry-non-inventory-error",
-            manualAttempt
-          )
+          `[Backorder] Non-inventory error for ${shopifyOrderName} on retry ${retryCount}/${maxRetries}:\n${retryResult.error}`,
+          slack.slackNotificationId(event.id, "backorder-non-inventory-error", retryCount)
         );
       });
 
@@ -521,290 +744,18 @@ function createBackorderHandler() {
         shopifyOrderId,
         shopifyOrderName,
         error: retryResult.error,
-        retryCount: manualAttempt,
+        retryCount,
         reason: "Non-inventory error — requires manual investigation",
         processedAt: new Date().toISOString(),
       };
     }
 
-    // No auto-retry mode: keep order parked in backorder queue for manual action only.
-    if (maxRetries <= 0) {
-      await step.run("notify-backorder-parked-no-retry", async () => {
-        await slack.sendWarningMessage(
-          SlackChannelEnum.SHOPIFY,
-          `[Backorder parked - no auto-retry] ${shopifyOrderName}\n` +
-            `Error: ${errorType} - ${errorMessage}\n` +
-            `Warehouse: ${warehouse}\n` +
-            `D365: ${d365OrderNumber}`,
-          slack.slackNotificationId(event.id, "backorder-parked-no-retry")
-        );
-      });
-
-      return {
-        status: "parked_no_retry",
-        shopifyOrderId,
-        shopifyOrderName,
-        errorType,
-        retryCount: 0,
-        processedAt: new Date().toISOString(),
-      };
-    }
-
-    // Retry loop
-    while (retryCount < maxRetries) {
-      retryCount++;
-
-      console.log(
-        `[Backorder] Waiting ${retryIntervalHours}h before automatic attempt ${retryCount}/${maxRetries}`
-      );
-      await step.sleep(`wait-before-auto-retry-${retryCount}`, `${retryIntervalHours}h`);
-      const triggeredBy = "auto";
-
-      // Attempt GPS order creation
-      const retryResult = await step.run(`retry-gps-order-${retryCount}`, async () => {
-        const lease = await acquireLease(`auto-retry:${retryCount}`);
-        try {
-          try {
-            // Refetch order from Shopify for latest data
-            const { getOrder } = await import("@/lib/clients/shopify");
-            const freshOrder = await getOrder(shopifyOrderId, event.data.shopifyStore);
-            const order = freshOrder as unknown as ShopifyOrderPayload;
-
-            const d365NumLoop = String(d365OrderNumber || "").trim();
-            if (effectiveRetryMode === "gps_outbound" && !d365NumLoop) {
-              await inngest.send({
-                id: `backorder-auto:${event.id}:${retryCount}:shopify-order-paid`,
-                name: "shopify/order.paid",
-                data: {
-                  shopifyOrderId: String(shopifyOrderId),
-                  shopifyOrderName,
-                  shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                  orderJson: order,
-                  receivedAt: new Date().toISOString(),
-                },
-              });
-              return {
-                success: true,
-                retryCount,
-                triggeredBy,
-                replayDispatched: true,
-              };
-            }
-
-            if (effectiveRetryMode === "fulfillment_replay") {
-              const fulfillments = Array.isArray((order as any)?.fulfillments)
-                ? ((order as any).fulfillments as any[])
-                : [];
-              if (fulfillments.length === 0) {
-                return {
-                  success: false,
-                  error: "No Shopify fulfillments found to replay",
-                  isInventoryError: false,
-                  retryCount,
-                  triggeredBy,
-                };
-              }
-
-              await inngest.send({
-                id: `backorder-auto:${event.id}:${retryCount}:shopify-order-fulfilled`,
-                name: "shopify/order.fulfilled",
-                data: {
-                  shopifyOrderId,
-                  shopifyOrderName,
-                  shopifyStore: event.data.shopifyStore || "im8-battle-bus",
-                  orderJson: order,
-                  fulfillments,
-                  receivedAt: new Date().toISOString(),
-                  fromBackorderRetry: true,
-                },
-              });
-
-              return {
-                success: true,
-                retryCount,
-                triggeredBy,
-                replayDispatched: true,
-              };
-            }
-
-            // Rebuild GPS payload
-            const gpsPayload = await buildBackorderGpsPayload({
-              order,
-              shopifyOrderId: String(shopifyOrderId),
-              shopifyStore: event.data.shopifyStore,
-              d365OrderNumber,
-              warehouse,
-            });
-            const result = await gps.createOutboundOrder(
-              gpsPayload,
-              warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-            );
-
-            // Store GPS metafield on success
-            const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
-            if (gpsOrderNo) {
-              await setGpsOrderMetafield(shopifyOrderId, {
-                gpsOrderId: gpsOrderNo,
-                warehouse,
-                d365OrderNumber,
-                createdAt: new Date().toISOString(),
-              });
-            }
-
-            return {
-              success: true,
-              gpsOrderNo,
-              retryCount,
-              triggeredBy,
-            };
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.log(`[Backorder] Retry ${retryCount} failed: ${msg}`);
-
-            return {
-              success: false,
-              error: msg,
-              isInventoryError:
-                effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
-              retryCount,
-              triggeredBy,
-            };
-          }
-        } finally {
-          await releaseLease(lease);
-        }
-      });
-
-      if (retryResult.success) {
-        // Resolved
-        console.log(`[Backorder] Order ${shopifyOrderName} resolved on retry ${retryCount}`);
-
-        await step.run("notify-backorder-resolved", async () => {
-          const paidReplayLoop =
-            effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
-          await slack.sendOrderMessage(
-            SlackChannelEnum.SHOPIFY,
-            effectiveRetryMode === "fulfillment_replay"
-              ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.fulfilled`
-              : paidReplayLoop
-                ? `Backorder replay dispatched: ${shopifyOrderName} after ${retryCount} retries via shopify/order.paid`
-                : `Backorder resolved: ${shopifyOrderName} after ${retryCount} retries (GPS: ${retryResult.gpsOrderNo})`,
-            slack.slackNotificationId(event.id, "backorder-resolved", retryCount)
-          );
-
-          const replayDispatchedAuto =
-            effectiveRetryMode === "fulfillment_replay" ||
-            (effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched);
-          await csPlatform.sendOrderUpdate(
-            {
-              id: shopifyOrderId,
-              name: shopifyOrderName,
-              shopifyOrderId,
-              shopifyOrderName,
-              d365OrderNumber,
-              warehouse,
-              gpsOrderId: retryResult.gpsOrderNo,
-              gpsSyncStatus: replayDispatchedAuto ? undefined : "synced",
-              status: "processing",
-              processingStatus: "processing",
-              error: undefined,
-              lastError: undefined,
-              errorType: undefined,
-              lastErrorType: undefined,
-              retryAt: null,
-            },
-            {}
-          );
-        });
-
-        // Emit resolved event
-        await inngest.send({
-          id: `backorder-auto:${event.id}:${retryCount}:resolved`,
-          name: "backorder/resolved",
-          data: {
-            shopifyOrderId,
-            shopifyOrderName,
-            resolvedAt: new Date().toISOString(),
-            resolution: "fulfilled",
-          },
-        });
-
-        // Pending lifecycle actions drained by the cron sweep — no explicit trigger needed.
-
-        return {
-          status: "resolved",
-          shopifyOrderId,
-          shopifyOrderName,
-          gpsOrderNo: retryResult.gpsOrderNo,
-          replayDispatched: !!(retryResult as any).replayDispatched,
-          retryCount,
-          processedAt: new Date().toISOString(),
-        };
-      }
-
-      // If it's not an inventory error anymore, something else is wrong — escalate immediately
-      if (!retryResult.isInventoryError) {
-        console.log(`[Backorder] Non-inventory error on retry ${retryCount}, escalating`);
-
-        await step.run("notify-non-inventory-error", async () => {
-          await slack.sendErrorMessage(
-            SlackChannelEnum.SHOPIFY,
-            `[Backorder] Non-inventory error for ${shopifyOrderName} on retry ${retryCount}/${maxRetries}:\n${retryResult.error}`,
-            slack.slackNotificationId(event.id, "backorder-non-inventory-error", retryCount)
-          );
-        });
-
-        return {
-          status: "error",
-          shopifyOrderId,
-          shopifyOrderName,
-          error: retryResult.error,
-          retryCount,
-          reason: "Non-inventory error — requires manual investigation",
-          processedAt: new Date().toISOString(),
-        };
-      }
-
-      // Update Battle Hub with retry status
-      await step.run(`notify-hub-retry-${retryCount}`, async () => {
-        const nextRetryAt =
-          retryCount < maxRetries
-            ? new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString()
-            : undefined;
-
-        await csPlatform.sendOrderUpdate(
-          {
-            id: shopifyOrderId,
-            name: shopifyOrderName,
-            shopifyOrderId,
-            shopifyOrderName,
-            d365OrderNumber,
-            warehouse,
-            status: "backorder",
-            error: retryResult.error,
-            errorType,
-            retryAt: nextRetryAt,
-          },
-          {}
-        );
-      });
-    }
-
-    // Max retries exhausted — escalate
-    console.log(`[Backorder] Max retries (${maxRetries}) exhausted for ${shopifyOrderName}`);
-
-    await step.run("notify-backorder-exhausted", async () => {
-      await slack.sendErrorMessage(
-        "gpslow",
-        `[Backorder EXHAUSTED] ${shopifyOrderName}\n` +
-          `Error: ${errorType} - ${errorMessage}\n` +
-          `SKUs: ${failedSkus.join(", ")}\n` +
-          `Warehouse: ${warehouse}\n` +
-          `D365: ${d365OrderNumber}\n` +
-          `Retried ${maxRetries} times over ${maxRetries * retryIntervalHours}h\n` +
-          `Action Required: Manual intervention needed`,
-        slack.slackNotificationId(event.id, "backorder-exhausted")
-      );
+    // Update Battle Hub with retry status
+    await step.run(`notify-hub-retry-${retryCount}`, async () => {
+      const nextRetryAt =
+        retryCount < maxRetries
+          ? new Date(Date.now() + retryIntervalHours * 60 * 60 * 1000).toISOString()
+          : undefined;
 
       await csPlatform.sendOrderUpdate(
         {
@@ -814,41 +765,72 @@ function createBackorderHandler() {
           shopifyOrderName,
           d365OrderNumber,
           warehouse,
-          status: "backorder_exhausted",
-          error: errorMessage,
+          status: "backorder",
+          error: retryResult.error,
           errorType,
+          retryAt: nextRetryAt,
         },
         {}
       );
     });
+  }
 
-    logFlowEvent({
-      flow: "backorder",
-      step: "done",
-      status: "failed",
-      level: "error",
-      runId: _runId || undefined,
-      shopifyOrderId: String(shopifyOrderId),
-      shopifyOrderName,
-      d365OrderNumber,
-      durationMs: Date.now() - _flowStart,
-      errorType,
-      errorMessage,
-      payload: { retryCount: maxRetries },
-    });
-    return {
-      status: "exhausted",
-      shopifyOrderId,
-      shopifyOrderName,
-      errorType,
-      errorMessage,
-      retryCount: maxRetries,
-      processedAt: new Date().toISOString(),
-    };
+  // Max retries exhausted — escalate
+  console.log(`[Backorder] Max retries (${maxRetries}) exhausted for ${shopifyOrderName}`);
+
+  await step.run("notify-backorder-exhausted", async () => {
+    await slack.sendErrorMessage(
+      "gpslow",
+      `[Backorder EXHAUSTED] ${shopifyOrderName}\n` +
+        `Error: ${errorType} - ${errorMessage}\n` +
+        `SKUs: ${failedSkus.join(", ")}\n` +
+        `Warehouse: ${warehouse}\n` +
+        `D365: ${d365OrderNumber}\n` +
+        `Retried ${maxRetries} times over ${maxRetries * retryIntervalHours}h\n` +
+        `Action Required: Manual intervention needed`,
+      slack.slackNotificationId(event.id, "backorder-exhausted")
+    );
+
+    await csPlatform.sendOrderUpdate(
+      {
+        id: shopifyOrderId,
+        name: shopifyOrderName,
+        shopifyOrderId,
+        shopifyOrderName,
+        d365OrderNumber,
+        warehouse,
+        status: "backorder_exhausted",
+        error: errorMessage,
+        errorType,
+      },
+      {}
+    );
+  });
+
+  logFlowEvent({
+    flow: "backorder",
+    step: "done",
+    status: "failed",
+    level: "error",
+    runId: _runId || undefined,
+    shopifyOrderId: String(shopifyOrderId),
+    shopifyOrderName,
+    d365OrderNumber,
+    durationMs: Date.now() - _flowStart,
+    errorType,
+    errorMessage,
+    payload: { retryCount: maxRetries },
+  });
+  return {
+    status: "exhausted",
+    shopifyOrderId,
+    shopifyOrderName,
+    errorType,
+    errorMessage,
+    retryCount: maxRetries,
+    processedAt: new Date().toISOString(),
   };
 }
-
-const handleBackorder = createBackorderHandler();
 
 const backorderConcurrency: [{ limit: number }, { limit: number; key: string }] = [
   { limit: 5 },
