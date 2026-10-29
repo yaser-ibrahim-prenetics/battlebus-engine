@@ -25,7 +25,7 @@ export { processInventoryMesh } from "./process-inventory-mesh";
 export { processInventoryFullSync } from "./process-inventory-full-sync";
 export { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
 export { processLocationSync } from "./process-location-sync";
-export { processBackorder } from "./process-backorder";
+export { processBackorder, processBackorderRetry } from "./process-backorder";
 export { drainPendingActions } from "./drain-pending-actions";
 export { drainWebhookInbox } from "./drain-webhook-inbox";
 export { processSubscriptionOrder } from "./process-subscription-order";
@@ -61,7 +61,7 @@ import { processInventoryMesh } from "./process-inventory-mesh";
 import { processInventoryFullSync } from "./process-inventory-full-sync";
 import { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
 import { processLocationSync } from "./process-location-sync";
-import { processBackorder } from "./process-backorder";
+import { processBackorder, processBackorderRetry } from "./process-backorder";
 import { drainPendingActions } from "./drain-pending-actions";
 import { drainWebhookInbox } from "./drain-webhook-inbox";
 import { processSubscriptionOrder } from "./process-subscription-order";
@@ -115,6 +115,7 @@ export const functions = [
   ...inventoryFunctions,
   // Backorder Retry Queue
   processBackorder,
+  processBackorderRetry,
   // Stacked lifecycle action drain
   drainPendingActions,
   // Webhook inbox drain (safety net for inngest.send() failures)

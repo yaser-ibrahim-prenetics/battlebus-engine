@@ -233,8 +233,6 @@ export const BACKORDER_CONFIGS = {
   retryIntervalHours: envInt("BACKORDER_RETRY_INTERVAL_HOURS", 24),
   // Max days before auto-cancel
   maxDaysBeforeCancel: envInt("BACKORDER_MAX_DAYS", 30),
-  // Timeout for step.waitForEvent (how long to wait for stock replenishment event)
-  waitForEventTimeoutHours: envInt("BACKORDER_WAIT_TIMEOUT_HOURS", 48),
   // Feature flag for backorder retry
   enabled: process.env.BACKORDER_RETRY_ENABLED !== "false",
   // Auto-retry: opt-in automatic retry (default: manual-only)
@@ -242,4 +240,10 @@ export const BACKORDER_CONFIGS = {
   autoRetryEnabled: process.env.BACKORDER_AUTO_RETRY_ENABLED === "true",
   autoRetryIntervalHours: envInt("BACKORDER_AUTO_RETRY_INTERVAL_HOURS", 12),
   autoRetryMaxAttempts: envInt("BACKORDER_AUTO_RETRY_MAX_ATTEMPTS", 3),
+  // Longer than the Cloud Run request timeout; bounds crash recovery without
+  // allowing an automatic and manual provider attempt to overlap.
+  recoveryLeaseSeconds: Math.max(
+    60,
+    Math.min(3600, envInt("BACKORDER_RECOVERY_LEASE_SECONDS", 600))
+  ),
 };
