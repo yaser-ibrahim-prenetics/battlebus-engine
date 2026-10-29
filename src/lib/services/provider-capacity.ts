@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Pool, QueryResult, QueryResultRow } from "pg";
+import type { Pool, QueryConfig, QueryResult, QueryResultRow } from "pg";
 import { config } from "@/lib/config";
 import { getDatabasePool } from "@/lib/db/database";
 
@@ -52,11 +52,14 @@ async function capacityQuery<Row extends QueryResultRow = QueryResultRow>(
   timeoutMs: number
 ): Promise<QueryResult<Row>> {
   const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
-  const query = pool.query<Row>({
+  // node-postgres supports per-query query_timeout at runtime, although its
+  // QueryConfig declaration currently exposes the field only on ClientConfig.
+  const queryConfig = {
     text,
     values: [...values],
     query_timeout: boundedTimeoutMs,
-  });
+  } as QueryConfig;
+  const query: Promise<QueryResult<Row>> = pool.query<Row>(queryConfig);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
