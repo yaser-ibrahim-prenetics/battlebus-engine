@@ -74,6 +74,15 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
   const { shopifyOrderId, shopifyOrderName, d365OrderNumber, warehouse, errorMessage, errorType } =
     event.data;
 
+  if (!BACKORDER_CONFIGS.enabled) {
+    return {
+      status: "disabled",
+      shopifyOrderId,
+      shopifyOrderName,
+      processedAt: new Date().toISOString(),
+    };
+  }
+
   const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
 
   const autoRetryEnabled = BACKORDER_CONFIGS.autoRetryEnabled;
