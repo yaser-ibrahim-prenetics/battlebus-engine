@@ -15,7 +15,9 @@ per-order inventory polling with durable per-line dependencies and bounded targe
   evidence and a durable outbox notification either all commit or all roll back.
 - Existing Battle Hub backorder events and manual retry controls remain supported. The targeted
   drain emits the same canonical `backorder/retry` event only after it has reserved enough stock for
-  every unresolved dependency on the order.
+  every unresolved dependency on the order. The durable event keeps only replay metadata; exact
+  blocked-line evidence is loaded from PostgreSQL by the consumer, so a valid 500-line order stays
+  inside the outbox payload limit without duplicating identifiers.
 
 ## Durable states
 
@@ -70,8 +72,9 @@ and outstanding `retrying` quantities are reserved before allocation. An order w
 lines is replayed only when all of them can be satisfied, including when independent drain lanes
 compete for the same provider quantity.
 
-Dry runs execute the same selection algorithm but never mutate dependencies, drain requests, orders
-or outbox rows. Only the restricted command-audit receipt and aggregate preview result are written.
+Dry runs execute the same selection algorithm and subtract quantities already reserved by active
+`retrying` dependencies, but never mutate dependencies, drain requests, orders or outbox rows. Only
+the restricted command-audit receipt and aggregate preview result are written.
 
 ## Rollout
 
