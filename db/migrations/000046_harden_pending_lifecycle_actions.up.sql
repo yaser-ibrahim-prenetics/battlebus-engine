@@ -108,14 +108,18 @@ BEGIN
       RAISE EXCEPTION 'Runtime role cannot rewrite pending lifecycle action attempts';
     END IF;
 
-    IF NEW.status = 'superseded' AND NOT EXISTS (
-      SELECT 1
-      FROM public.pending_lifecycle_actions AS cancellation
-      WHERE cancellation.order_id = OLD.order_id
-        AND cancellation.action_type = 'cancel'
-        AND cancellation.status IN ('queued', 'publishing', 'published', 'dead_letter')
+    IF NEW.status = 'superseded' AND (
+      OLD.action_type <> 'fulfill'
+      OR NOT EXISTS (
+        SELECT 1
+        FROM public.pending_lifecycle_actions AS cancellation
+        WHERE cancellation.action_id <> OLD.action_id
+          AND cancellation.order_id = OLD.order_id
+          AND cancellation.action_type = 'cancel'
+          AND cancellation.status IN ('queued', 'publishing', 'published', 'dead_letter')
+      )
     ) THEN
-      RAISE EXCEPTION 'Runtime role cannot supersede an action without a cancellation';
+      RAISE EXCEPTION 'Runtime role can supersede only fulfillment blocked by a distinct cancellation';
     END IF;
   END IF;
 
