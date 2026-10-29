@@ -130,6 +130,7 @@ jobs:
           FULFILLMENT_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
           PENDING_ACTIONS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
           BACKORDER_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
+          WEBHOOK_INBOX_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
         id: test
         continue-on-error: true
         run: npm test -- --reporter=dot
