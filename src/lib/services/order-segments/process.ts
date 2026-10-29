@@ -36,7 +36,8 @@ type ProcessSegmentsInput = {
   fallbackDataArea: string;
   shortAddress?: string;
   ensureEligible?: () => Promise<unknown>;
-  beforeExternalMutation?: () => Promise<unknown>;
+  withExternalMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
+  shouldReportFailure?: (error: unknown) => boolean;
 };
 
 export async function processOrderSegments(input: ProcessSegmentsInput) {
@@ -44,10 +45,12 @@ export async function processOrderSegments(input: ProcessSegmentsInput) {
     return await runOrderSegments(input);
   } catch (error) {
     const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
-    try {
-      await reportSegmentProgress(shop, input.order, error);
-    } catch {
-      console.error("[OrderSegments] Could not report recovery state");
+    if (input.shouldReportFailure?.(error) !== false) {
+      try {
+        await reportSegmentProgress(shop, input.order, error);
+      } catch {
+        console.error("[OrderSegments] Could not report recovery state");
+      }
     }
     throw error;
   }
@@ -57,6 +60,8 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync || input.testMode)
     return null;
   const { order, step, accounting } = input;
+  const withExternalMutation = <T>(execute: () => Promise<T>) =>
+    input.withExternalMutation ? input.withExternalMutation(execute) : execute();
   if (!accounting) throw new Error("Payment accounting is required before splitting orders");
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await step.run("plan-order-segments", async () => {
@@ -109,8 +114,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (!stored) return null;
   const { plan } = stored;
   const bindings = await step.run("bind-shopify-segments", async () => {
-    await input.beforeExternalMutation?.();
-    return bindShopifySegments(shop, plan);
+    return withExternalMutation(() => bindShopifySegments(shop, plan));
   });
   const outcomes = await Promise.allSettled(
     plan.segments.map(async (segment): Promise<SegmentProgress> => {
@@ -118,19 +122,18 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       const prefix = `segment-${segment.index}`;
       const projected = segmentOrder(order, plan, segment.index);
       const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
-        executeFulfillmentAction(
-          {
-            provider: "dynamics",
-            scope: `${config.dynamics.baseUrl}:${segment.dataAreaId}:${shop}`,
-            sourceOrderId: String(order.id),
-            sourceLineIds: [`segment:${segment.index}:${phase}`],
-            action: `${prefix}:${phase}`,
-          },
-          request,
-          async () => {
-            await input.beforeExternalMutation?.();
-            return execute();
-          }
+        withExternalMutation(() =>
+          executeFulfillmentAction(
+            {
+              provider: "dynamics",
+              scope: `${config.dynamics.baseUrl}:${segment.dataAreaId}:${shop}`,
+              sourceOrderId: String(order.id),
+              sourceLineIds: [`segment:${segment.index}:${phase}`],
+              action: `${prefix}:${phase}`,
+            },
+            request,
+            execute
+          )
         );
       const salesOrderNumber = await step.run(`${prefix}-header`, async () => {
         const header = toD365SalesOrderHeaderV3(
@@ -219,7 +222,6 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         await input.ensureEligible?.();
         if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
           return undefined;
-        await input.beforeExternalMutation?.();
         const payload = toGpsOutboundOrder(
           projected,
           salesOrderNumber,
@@ -231,9 +233,11 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         if (!payload.productList.length) return undefined;
         let result: Awaited<ReturnType<typeof gps.createOutboundOrder>>;
         try {
-          result = await gps.createOutboundOrder(
-            payload,
-            segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+          result = await withExternalMutation(() =>
+            gps.createOutboundOrder(
+              payload,
+              segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+            )
           );
         } catch (error) {
           if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {

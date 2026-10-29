@@ -134,30 +134,84 @@ async function expireDependencies(
   const boundedLimit = Math.max(1, Math.min(1000, limit));
   if (dryRun) {
     const result = await client.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM (
-         SELECT id FROM public.oos_recovery_dependencies
-         WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()
-         ORDER BY expires_at, id LIMIT $1
-       ) expired`,
+      `WITH expired_orders AS (
+         SELECT candidate.shopify_store, candidate.order_id,
+           min(candidate.expires_at) AS first_expiry
+         FROM public.oos_recovery_dependencies candidate
+         WHERE candidate.status IN ('parked', 'leased', 'retrying')
+         GROUP BY candidate.shopify_store, candidate.order_id
+         HAVING bool_or(candidate.expires_at <= now())
+           AND NOT EXISTS (
+             SELECT 1 FROM public.oos_recovery_mutation_leases mutation
+             WHERE lower(mutation.shopify_store) = lower(candidate.shopify_store)
+               AND mutation.order_id = candidate.order_id AND mutation.lease_until > now()
+           )
+         ORDER BY first_expiry, candidate.shopify_store, candidate.order_id
+         LIMIT $1
+       )
+       SELECT count(*)::text AS count
+       FROM public.oos_recovery_dependencies dependency
+       JOIN expired_orders USING (shopify_store, order_id)
+       WHERE dependency.status IN ('parked', 'leased', 'retrying')`,
       [boundedLimit]
     );
     return Number(result.rows[0]?.count ?? 0);
   }
-  const result = await client.query(
-    `WITH expired AS (
-       SELECT id FROM public.oos_recovery_dependencies
-       WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()
-       ORDER BY expires_at, id
-       FOR UPDATE SKIP LOCKED
-       LIMIT $1
-     )
-     UPDATE public.oos_recovery_dependencies AS dependency
-     SET status = 'manual_review', manual_review_at = now(), last_error_code = 'expired',
-       lease_owner = NULL, lease_token = NULL, lease_until = NULL
-     FROM expired WHERE dependency.id = expired.id`,
-    [boundedLimit]
-  );
-  return result.rowCount ?? 0;
+  await client.query("BEGIN");
+  try {
+    const candidates = await client.query<{ shopify_store: string; order_id: string }>(
+      `SELECT shopify_store, order_id
+       FROM public.oos_recovery_dependencies
+       WHERE status IN ('parked', 'leased', 'retrying')
+       GROUP BY shopify_store, order_id
+       HAVING bool_or(expires_at <= now())
+       ORDER BY min(expires_at), shopify_store, order_id
+       LIMIT $1`,
+      [boundedLimit]
+    );
+    let expired = 0;
+    for (const candidate of candidates.rows) {
+      if (!(await tryLockOosRecoveryOrder(client, candidate.shopify_store, candidate.order_id))) {
+        continue;
+      }
+      const dependencies = await client.query<{ id: string; expires_at: Date }>(
+        `SELECT id, expires_at
+         FROM public.oos_recovery_dependencies
+         WHERE shopify_store = $1 AND order_id = $2
+           AND status IN ('parked', 'leased', 'retrying')
+         ORDER BY id FOR UPDATE`,
+        [candidate.shopify_store, candidate.order_id]
+      );
+      const activeMutation = await client.query(
+        `SELECT 1 FROM public.oos_recovery_mutation_leases
+         WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+         LIMIT 1`,
+        [candidate.shopify_store, candidate.order_id]
+      );
+      if (
+        activeMutation.rowCount ||
+        !dependencies.rows.some((row) => new Date(row.expires_at).getTime() <= Date.now())
+      ) {
+        continue;
+      }
+      const result = await client.query(
+        `UPDATE public.oos_recovery_dependencies
+         SET status = 'manual_review', manual_review_at = now(), last_error_code = 'expired',
+           lease_owner = NULL, lease_token = NULL, lease_until = NULL
+         WHERE id = ANY($1::uuid[])`,
+        [dependencies.rows.map((row) => row.id)]
+      );
+      if (result.rowCount !== dependencies.rowCount) {
+        throw new Error("OOS expiry changed an incomplete order dependency set");
+      }
+      expired += result.rowCount ?? 0;
+    }
+    await client.query("COMMIT");
+    return expired;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 async function loadCandidates(

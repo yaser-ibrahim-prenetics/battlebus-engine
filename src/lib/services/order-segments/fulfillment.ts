@@ -22,9 +22,11 @@ export async function fulfillOrderSegments(input: {
   orderId: string;
   fulfillments: ShopifyFulfillment[];
   step: StepRunner;
-  beforeExternalMutation?: () => Promise<unknown>;
+  withExternalMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
 }) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
+  const withExternalMutation = <T>(execute: () => Promise<T>) =>
+    input.withExternalMutation ? input.withExternalMutation(execute) : execute();
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await readPlan(shop, input.orderId);
   if (!stored) return null;
@@ -81,6 +83,7 @@ export async function fulfillOrderSegments(input: {
           const progress = stored.progress[String(segment.index)];
           if (!progress?.salesOrderNumber || !progress.lines?.length)
             throw new Error("Segment provider order is not ready for fulfillment");
+          const salesOrderNumber = progress.salesOrderNumber;
           const dimensions = getFulfilmentConfig(segment.warehouse);
           const lines = progress.lines.flatMap((line) => {
             const shipped = allocation.quantities[line.sourceLineId] ?? 0;
@@ -100,15 +103,16 @@ export async function fulfillOrderSegments(input: {
           });
           let result: Awaited<ReturnType<typeof dynamics.createFulfilment>>;
           try {
-            await input.beforeExternalMutation?.();
-            result = await dynamics.createFulfilment({
-              fulfillmentId: `shopify:${allocation.fulfillment_id}`,
-              dataAreaId: segment.dataAreaId,
-              salesOrderNumber: progress.salesOrderNumber,
-              type: "shipment",
-              confirmedShippedDate: allocation.posting_date,
-              lines,
-            });
+            result = await withExternalMutation(() =>
+              dynamics.createFulfilment({
+                fulfillmentId: `shopify:${allocation.fulfillment_id}`,
+                dataAreaId: segment.dataAreaId,
+                salesOrderNumber,
+                type: "shipment",
+                confirmedShippedDate: allocation.posting_date,
+                lines,
+              })
+            );
           } catch (error) {
             if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {
               throw new InventoryUnavailableError(
@@ -131,14 +135,14 @@ export async function fulfillOrderSegments(input: {
                     },
                   ];
                 }),
-                error.providerOrderNumber ?? progress.salesOrderNumber,
+                error.providerOrderNumber ?? salesOrderNumber,
                 error.providerWarehouse ?? segment.dataAreaId.toUpperCase()
               );
             }
             throw error;
           }
           const deposit = await dynamics.verifyDepositFulfillmentApplied(
-            progress.salesOrderNumber,
+            salesOrderNumber,
             segment.dataAreaId
           );
           if (
@@ -147,12 +151,13 @@ export async function fulfillOrderSegments(input: {
               processingStatus: deposit.processingStatus,
             })
           ) {
-            await input.beforeExternalMutation?.();
-            await dynamics.assertDepositShipmentInvoicingComplete(
-              progress.salesOrderNumber,
-              segment.dataAreaId,
-              result.response,
-              { depositFulfillment: true }
+            await withExternalMutation(() =>
+              dynamics.assertDepositShipmentInvoicingComplete(
+                salesOrderNumber,
+                segment.dataAreaId,
+                result.response,
+                { depositFulfillment: true }
+              )
             );
           }
           await queryDatabase(completeAllocationSQL, [

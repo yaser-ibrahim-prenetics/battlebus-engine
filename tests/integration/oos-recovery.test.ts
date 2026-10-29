@@ -14,11 +14,13 @@ import {
   submitOosDrainRequest,
 } from "@/lib/services/oos-recovery/requests";
 import {
+  claimOosRecoveryMutation,
   isCurrentOosRecoveryAttempt,
   loadOosRetryContext,
   moveOosDependenciesToManualReview,
   rearmManualReviewOosDependencies,
   reparkOosDependencies,
+  releaseOosRecoveryMutation,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
@@ -39,6 +41,9 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
   });
 
   afterEach(async () => {
+    await pool.query("DELETE FROM public.oos_recovery_mutation_leases WHERE order_id LIKE $1", [
+      `${prefix}%`,
+    ]);
     await pool.query("DELETE FROM public.oos_recovery_outbox WHERE event_data::text ILIKE $1", [
       `%${prefix}%`,
     ]);
@@ -675,6 +680,44 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     ]);
   });
 
+  it("expires every dependency on an order when any one line expires", async () => {
+    const orderId = `${prefix}expired-complete-order`;
+    await park(
+      [
+        dependency(orderId, { orderLineId: "line-a", sku: "SKU-A" }),
+        dependency(orderId, { orderLineId: "line-b", sku: "SKU-B" }),
+      ],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET expires_at = CASE
+         WHEN order_line_id = 'line-a' THEN now() - interval '1 minute'
+         ELSE now() + interval '1 day'
+       END
+       WHERE order_id = $1`,
+      [orderId]
+    );
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const request = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!request) throw new Error("expected a drain request lease");
+    const result = await executeOosDrain(request, async () => new Map());
+
+    expect(result.manualReviewExpired).toBe(2);
+    const states = await pool.query<{ status: string; count: number }>(
+      `SELECT status, count(*)::int AS count
+       FROM public.oos_recovery_dependencies WHERE order_id = $1 GROUP BY status`,
+      [orderId]
+    );
+    expect(states.rows).toEqual([{ status: "manual_review", count: 2 }]);
+  });
+
   it("lets an explicit Hub retry rearm a manual-review dependency", async () => {
     const orderId = `${prefix}manual-rearm`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
@@ -722,6 +765,44 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       manual_review_at: null,
       replay_token: secondAttempt,
     });
+  });
+
+  it("rearms the complete order when review and retrying rows are mixed", async () => {
+    const orderId = `${prefix}mixed-rearm`;
+    await park(
+      [
+        dependency(orderId, { orderLineId: "line-a", sku: "SKU-A" }),
+        dependency(orderId, { orderLineId: "line-b", sku: "SKU-B" }),
+      ],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    const firstAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!firstAttempt) throw new Error("expected a replay attempt token");
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET status = 'manual_review', manual_review_at = now()
+       WHERE order_id = $1 AND order_line_id = 'line-a'`,
+      [orderId]
+    );
+
+    const secondAttempt = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    expect(secondAttempt).toMatch(/^[0-9a-f-]{36}$/);
+    expect(secondAttempt).not.toBe(firstAttempt);
+    const states = await pool.query<{ status: string; replay_token: string; count: number }>(
+      `SELECT status, replay_token, count(*)::int AS count
+       FROM public.oos_recovery_dependencies WHERE order_id = $1
+       GROUP BY status, replay_token`,
+      [orderId]
+    );
+    expect(states.rows).toEqual([{ status: "retrying", replay_token: secondAttempt, count: 2 }]);
   });
 
   it("lets the same correlated replay resolve a prior manual-review outcome", async () => {
@@ -845,6 +926,102 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     expect(order.rows[0]?.processing_status).toBe("backorder");
   });
 
+  it("blocks invalidation while an exact provider mutation lease is active", async () => {
+    const orderId = `${prefix}mutation-lease`;
+    await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    const attemptToken = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!attemptToken) throw new Error("expected a replay attempt token");
+    const expectedContext = await retryContext(orderId);
+    const lease = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      leaseOwner: "integration-test",
+      leaseSeconds: 300,
+    });
+    if (!lease) throw new Error("expected a provider mutation lease");
+    const concurrentLease = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      leaseOwner: "integration-test-concurrent",
+      leaseSeconds: 300,
+    });
+    if (!concurrentLease) throw new Error("expected a concurrent same-attempt lease");
+
+    await expect(
+      rearmManualReviewOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        retentionDays: 30,
+      })
+    ).resolves.toBeNull();
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 0, manualReview: false });
+    await expect(
+      parkOosOrder({
+        dependencies: [dependency(orderId, { provider: "d365", sku: "D365-SKU" })],
+        context: {
+          maxRetries: 10,
+          resolvedProviderBeforeParking: expectedContext.provider,
+          resolvedReplayToken: attemptToken,
+          resolvedAttemptContext: expectedContext,
+        },
+        retentionDays: 30,
+      })
+    ).rejects.toThrow("provider mutation lease is active");
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET expires_at = now() - interval '1 minute' WHERE order_id = $1`,
+      [orderId]
+    );
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const request = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!request) throw new Error("expected a drain request lease");
+    await expect(executeOosDrain(request, async () => new Map())).resolves.toMatchObject({
+      manualReviewExpired: 0,
+    });
+    await expect(releaseOosRecoveryMutation(lease)).resolves.toBe(true);
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 0, manualReview: false });
+    await expect(releaseOosRecoveryMutation(concurrentLease)).resolves.toBe(true);
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 1, manualReview: false });
+  });
+
   it("preserves the attempt ceiling across repeated same-provider failures", async () => {
     const orderId = `${prefix}same-provider-ceiling`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
@@ -907,12 +1084,14 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       retentionDays: 30,
     });
     if (!attemptToken) throw new Error("expected a replay attempt token");
+    const resolvedAttemptContext = await retryContext(orderId);
     await parkOosOrder({
       dependencies: [dependency(orderId, { provider: "gps", sku: "GPS-SKU" })],
       context: {
         maxRetries: 10,
         resolvedProviderBeforeParking: "d365",
         resolvedReplayToken: attemptToken,
+        resolvedAttemptContext,
       },
       retentionDays: 30,
       now: new Date("2026-10-29T00:01:00Z"),

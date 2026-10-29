@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
     retentionDays: 30,
     cooldownSeconds: 60,
     maxAttempts: 3,
+    leaseSeconds: 300,
   },
   loadOosRetryContext: vi.fn(async (): Promise<unknown> => null),
 }));
@@ -128,6 +129,14 @@ vi.mock("@/lib/services/backorder-recovery/lease", () => ({
   renewBackorderRecoveryLease: mocks.renewLease,
 }));
 vi.mock("@/lib/services/oos-recovery/outcomes", () => ({
+  claimOosRecoveryMutation: vi.fn(async (params: Record<string, unknown>) => ({
+    shopifyStore: params.shopifyStore,
+    orderId: params.orderId,
+    attemptToken: params.attemptToken,
+    leaseToken: "mutation-lease-token",
+  })),
+  releaseOosRecoveryMutation: vi.fn(async () => true),
+  isCurrentOosRecoveryAttempt: vi.fn(async () => true),
   loadOosRetryContext: mocks.loadOosRetryContext,
   moveOosDependenciesToManualReview: vi.fn(async () => ({
     dependencies: 1,
@@ -370,12 +379,11 @@ describe("backorder recovery serialization", () => {
     mocks.processOrderSegments.mockImplementation(async (rawInput: unknown) => {
       const input = rawInput as {
         step: ReturnType<typeof step>;
-        beforeExternalMutation: () => Promise<unknown>;
+        withExternalMutation: <T>(execute: () => Promise<T>) => Promise<T>;
       };
-      return input.step.run("segment-provider-mutation", async () => {
-        await input.beforeExternalMutation();
-        return { status: "segmented" };
-      });
+      return input.step.run("segment-provider-mutation", () =>
+        input.withExternalMutation(async () => ({ status: "segmented" }))
+      );
     });
     const args = {
       event: event("backorder/retry"),

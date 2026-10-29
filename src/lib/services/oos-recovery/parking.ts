@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
 import type { InventoryDependency, InventoryProvider } from "./inventory-failure";
 import { lockOosRecoveryOrder } from "./locking";
+import { lockMatchingOosRecoveryAttempt, type OosRecoveryAttemptScope } from "./outcomes";
 
 export type OosRecoveryContext = {
   d365OrderNumber?: string;
@@ -14,6 +15,8 @@ export type OosRecoveryContext = {
   resolvedProviderBeforeParking?: InventoryProvider;
   /** Correlates the recovered provider with the exact replay that is closing it. */
   resolvedReplayToken?: string;
+  /** Exact recovered dependency set that must be closed before downstream parking. */
+  resolvedAttemptContext?: OosRecoveryAttemptScope;
   maxRetries: number;
 };
 
@@ -107,32 +110,50 @@ export async function parkOosOrderWithClient(
   const event = buildOosParkedEvent({ ...params, now });
 
   await lockOosRecoveryOrder(client, first.shopifyStore, first.shopifyOrderId);
+  const activeMutation = await client.query(
+    `SELECT 1 FROM public.oos_recovery_mutation_leases
+     WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+     LIMIT 1`,
+    [first.shopifyStore, first.shopifyOrderId]
+  );
+  if (activeMutation.rowCount) {
+    throw new Error("OOS parking deferred while a provider mutation lease is active");
+  }
 
   if (
-    Boolean(params.context.resolvedProviderBeforeParking) !==
-    Boolean(params.context.resolvedReplayToken)
+    new Set([
+      Boolean(params.context.resolvedProviderBeforeParking),
+      Boolean(params.context.resolvedReplayToken),
+      Boolean(params.context.resolvedAttemptContext),
+    ]).size !== 1
   ) {
-    throw new Error("OOS downstream parking requires both a provider and replay token");
+    throw new Error(
+      "OOS downstream parking requires a provider, replay token and exact attempt context"
+    );
   }
 
   if (params.context.resolvedProviderBeforeParking) {
+    const ids = await lockMatchingOosRecoveryAttempt(client, {
+      shopifyStore: first.shopifyStore,
+      orderId: first.shopifyOrderId,
+      attemptToken: params.context.resolvedReplayToken!,
+      expectedContext: params.context.resolvedAttemptContext!,
+      allowedStatuses: ["retrying"],
+    });
+    if (!ids) {
+      throw new Error("OOS downstream parking rejected a stale or incomplete replay attempt");
+    }
     const resolved = await client.query(
       `UPDATE public.oos_recovery_dependencies
-       SET status = 'resolved', resolved_at = $4, cooldown_until = NULL,
+       SET status = 'resolved', resolved_at = $3, cooldown_until = NULL,
          lease_owner = NULL, lease_token = NULL, lease_until = NULL,
          replay_token = NULL, last_error_code = NULL, version = version + 1
-       WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND provider = $3
-         AND status = 'retrying' AND replay_token = $5::uuid`,
-      [
-        first.shopifyStore,
-        first.shopifyOrderId,
-        params.context.resolvedProviderBeforeParking,
-        now,
-        params.context.resolvedReplayToken,
-      ]
+       WHERE id = ANY($1::uuid[]) AND provider = $2
+         AND status = 'retrying' AND replay_token = $4::uuid`,
+      [ids, params.context.resolvedProviderBeforeParking, now, params.context.resolvedReplayToken]
     );
-    if (!resolved.rowCount) {
-      throw new Error("OOS downstream parking rejected a stale replay attempt");
+    if (resolved.rowCount !== ids.length) {
+      throw new Error("OOS downstream parking changed an incomplete replay attempt");
     }
   }
 

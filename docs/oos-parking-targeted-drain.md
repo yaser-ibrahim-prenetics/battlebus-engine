@@ -32,6 +32,11 @@ leases are transaction-local during reservation; an interrupted transaction roll
 `parked`. Expired drain-request leases are requeued with a fresh durable dispatch identity, while
 expired dependencies move to `manual_review` and are never silently deleted.
 
+An exact replay attempt also takes a short-lived PostgreSQL provider-mutation lease around every
+external write. Expiry, manual rearm, provider rollover and outcome transitions use the same
+order-scoped lock and cannot invalidate an attempt while one of its provider calls is in flight.
+Multiple line writes for the same attempt may hold concurrent leases; a different attempt cannot.
+
 ## Drain entry points
 
 The same validated request model supports:
@@ -75,7 +80,7 @@ or outbox rows. Only the restricted command-audit receipt and aggregate preview 
 | `OOS_DRAIN_SWEEP_INTERVAL_MINUTES`  | `30`    | Reconciliation sweep cadence                 |
 | `OOS_OUTBOX_DRAIN_INTERVAL_MINUTES` | `5`     | Durable event publisher cadence              |
 
-1. Apply migration 49.
+1. Apply migrations 49 through 51.
 2. Deploy with the flag disabled and verify migration assertions, queue health and Battle Hub access.
 3. Enable typed parking for a controlled store/provider cohort.
 4. Run dry-run drains and compare FIFO decisions with operator expectations.
