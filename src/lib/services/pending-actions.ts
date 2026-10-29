@@ -129,14 +129,17 @@ export async function storePendingAction(
 export async function importLegacyPendingActions(): Promise<{
   imported: number;
   sourceOrders: number;
+  poisonOrders: number;
 }> {
-  const { rows } = await queryDatabase<{ imported: string; source_orders: string }>(
-    importLegacyPendingActionsSQL,
-    [config.pendingActions.legacyImportOrderLimit]
-  );
+  const { rows } = await queryDatabase<{
+    imported: string;
+    source_orders: string;
+    poison_orders: string;
+  }>(importLegacyPendingActionsSQL, [config.pendingActions.legacyImportOrderLimit]);
   return {
     imported: Number(rows[0]?.imported || 0),
     sourceOrders: Number(rows[0]?.source_orders || 0),
+    poisonOrders: Number(rows[0]?.poison_orders || 0),
   };
 }
 
