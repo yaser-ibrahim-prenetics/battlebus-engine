@@ -5,6 +5,7 @@ import { closeDatabase } from "@/lib/db/database";
 import { executeOosDrain, oosInventoryKey } from "@/lib/services/oos-recovery/drain";
 import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
 import { claimOosDrainRequest, submitOosDrainRequest } from "@/lib/services/oos-recovery/requests";
+import { loadOosRetryContext } from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
 import { queueHealthSQL } from "@/lib/sql/operations/health";
 
@@ -101,6 +102,16 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     expect(rows.rows.map((row) => row.order_line_id)).toEqual(["duplicate-a", "duplicate-b"]);
     expect(outbox.rows[0]).toEqual({ event_id: result.eventId, targeted: true });
     expect(order.rows[0].processing_status).toBe("backorder");
+    await expect(
+      loadOosRetryContext({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+      })
+    ).resolves.toEqual({
+      provider: "gps",
+      warehouse: `${prefix}warehouse`.toUpperCase(),
+      blockedLineIds: ["duplicate-a", "duplicate-b"],
+    });
   });
 
   it("keeps one leased active request and one coalesced successor per key", async () => {

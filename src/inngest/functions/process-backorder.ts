@@ -46,6 +46,7 @@ import {
   type BackorderRecoveryLease,
 } from "@/lib/services/backorder-recovery/lease";
 import {
+  loadOosRetryContext,
   moveOosDependenciesToManualReview,
   reparkOosDependencies,
   resolveOosDependencies,
@@ -122,7 +123,16 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     event.name === "backorder/retry" ||
     event.data.triggeredBy === "manual" ||
     event.data.triggeredBy === "manual_bulk";
-  const isTargetedRecovery = event.data.targetedRecovery === true;
+  const storedOosContext =
+    config.oosRecovery?.enabled && event.name === "backorder/retry"
+      ? await step.run("load-targeted-oos-retry-context", () =>
+          loadOosRetryContext({
+            shopifyStore: shop,
+            orderId: String(shopifyOrderId),
+          })
+        )
+      : null;
+  const isTargetedRecovery = event.data.targetedRecovery === true || storedOosContext !== null;
   const backorderQueueTag = event.data.backorderQueue;
   const manualRetryOnly = !autoRetryEnabled;
   const defaultFailureSystem: "d365" | "gps" | "validation" =
@@ -393,7 +403,8 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         const order = freshOrder as unknown as ShopifyOrderPayload;
 
         const d365NumManual = String(d365OrderNumber || "").trim();
-        if (isTargetedRecovery && event.data.failureSystem === "d365") {
+        const targetedProvider = storedOosContext?.provider ?? event.data.failureSystem;
+        if (isTargetedRecovery && targetedProvider === "d365") {
           if (!d365NumManual) {
             return {
               success: false,
@@ -402,9 +413,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             };
           }
           const blockedLineIds = new Set(
-            Array.isArray(event.data.blockedLineIds)
-              ? event.data.blockedLineIds.map((id: unknown) => String(id))
-              : []
+            storedOosContext?.blockedLineIds ??
+              (Array.isArray(event.data.blockedLineIds)
+                ? event.data.blockedLineIds.map((id: unknown) => String(id))
+                : [])
           );
           if (blockedLineIds.size === 0) {
             return {
@@ -414,12 +426,13 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             };
           }
           const accounting = await loadOrderAccounting(order, shop);
+          const d365Company = storedOosContext?.warehouse ?? warehouse;
           const blockedLines = toD365SalesOrderLines(
             order,
             d365NumManual,
-            warehouse,
+            d365Company,
             false,
-            warehouse,
+            d365Company,
             accounting,
             false
           ).filter((line) => line.sourceLineId && blockedLineIds.has(line.sourceLineId));
@@ -433,8 +446,8 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           for (const line of blockedLines) {
             await dynamics.createSalesOrderLine(line);
           }
-          await dynamics.confirmSalesOrder(d365NumManual, warehouse);
-          await dynamics.createPrepayment(d365NumManual, warehouse);
+          await dynamics.confirmSalesOrder(d365NumManual, d365Company);
+          await dynamics.createPrepayment(d365NumManual, d365Company);
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid-after-d365`,
             name: "shopify/order.paid",
