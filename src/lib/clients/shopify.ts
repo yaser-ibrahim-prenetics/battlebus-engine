@@ -40,10 +40,16 @@ export async function shopifyProviderFetch(
   } catch {
     // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
   }
-  const timeout = AbortSignal.timeout(60_000);
-  const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+  const boundedInit = config.providerCapacity?.enabled
+    ? {
+        ...init,
+        signal: init?.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
+      }
+    : init;
   return withProviderCapacity("shopify", `${method}:${capacityPath}`, () =>
-    fetch(input, { ...init, signal })
+    fetch(input, boundedInit)
   );
 }
 

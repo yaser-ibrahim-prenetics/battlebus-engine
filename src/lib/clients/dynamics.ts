@@ -236,10 +236,16 @@ async function pacedFetch(
   const requestBodyForLog = normalizeBodyForLog(init?.body);
 
   try {
-    const timeout = AbortSignal.timeout(60_000);
-    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    const boundedInit = config.providerCapacity?.enabled
+      ? {
+          ...init,
+          signal: init?.signal
+            ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
+            : AbortSignal.timeout(60_000),
+        }
+      : init;
     const response = await withProviderCapacity("d365", `${method}:${capacityPath}`, () =>
-      fetch(input, { ...init, signal })
+      fetch(input, boundedInit)
     );
     const durationMs = Date.now() - startedAt;
     const responseBodyForLog = await readResponseBodyForLog(response);
