@@ -14,12 +14,7 @@ import {
   analyzeRefundAmount,
   resolveRefundPresentmentCurrency,
 } from "@/lib/utils/shopify-refund-amount";
-import {
-  THROTTLE_CONFIGS,
-  CONCURRENCY_CONFIGS,
-  RATE_LIMIT_CONFIGS,
-  RETRY_CONFIGS,
-} from "@/lib/utils/constants";
+import { THROTTLE_CONFIGS, CONCURRENCY_CONFIGS, RETRY_CONFIGS } from "@/lib/utils/constants";
 import { resolveD365OrderHeaderForRefundWithAudit } from "@/lib/services/d365-refund-order-resolution";
 import { logRefundTraceLifecycle } from "@/lib/utils/d365-odata-trace";
 import { hasCompletedRefundFlowLog, logFlowEvent } from "@/lib/services/flow-logs";
@@ -43,10 +38,6 @@ export const processRefund = inngest.createFunction(
         key: "event.data.shopifyOrderId",
       },
     ],
-    rateLimit: {
-      ...RATE_LIMIT_CONFIGS.REFUND,
-      key: "event.data.shopifyOrderId",
-    },
     triggers: [{ event: "shopify/refund.created" }],
   },
   async ({ event, step, runId }) => {

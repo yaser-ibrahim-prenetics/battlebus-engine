@@ -48,8 +48,6 @@ import { determineWarehouse } from "@/lib/helpers/warehouse";
 import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
-  CONCURRENCY_CONFIGS,
-  RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
   SUBSCRIPTION_TAG_WAIT_MINUTES,
@@ -195,10 +193,6 @@ export const processSubscriptionOrder = inngest.createFunction(
         key: "event.data.orderJson.shipping_address.country_code",
       },
     ],
-    rateLimit: {
-      ...RATE_LIMIT_CONFIGS.FULFILLMENT,
-      key: "event.data.shopifyOrderId",
-    },
     triggers: [{ event: "shopify/subscription.renewed" }],
   },
   async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {

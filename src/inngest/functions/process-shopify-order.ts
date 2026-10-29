@@ -64,7 +64,6 @@ import { getFulfillmentOrders } from "@/lib/clients/shopify";
 import {
   THROTTLE_CONFIGS,
   CONCURRENCY_CONFIGS,
-  RATE_LIMIT_CONFIGS,
   RETRY_CONFIGS,
   retryWithBackoff,
   TAG_WAIT_ENABLED,
@@ -214,10 +213,6 @@ export const processShopifyOrder = inngest.createFunction(
         key: "event.data.orderJson.shipping_address.country_code",
       },
     ],
-    rateLimit: {
-      ...RATE_LIMIT_CONFIGS.FULFILLMENT,
-      key: "event.data.shopifyOrderId",
-    },
     cancelOn: [{ event: "shopify/order.cancelled", match: "data.shopifyOrderId" }],
     priority: {
       run: "event.data.isSubscription ? 100 : 0",
