@@ -36,6 +36,7 @@ import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
 import type { RunSequenceStage, ShopifyOrderPayload } from "../events";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { advanceRunSequence } from "@/lib/services/run-sequence";
+import { NonRetriableError } from "inngest";
 import {
   acquireBackorderRecoveryLease,
   isBackorderRecoveryBusyError,
@@ -51,6 +52,20 @@ type LeaseAcquisitionResult =
 function secondsUntil(retryAt: string): number {
   const remaining = Math.ceil((Date.parse(retryAt) - Date.now()) / 1_000) + 1;
   return Number.isFinite(remaining) ? Math.max(1, Math.min(3_600, remaining)) : 1;
+}
+
+function requireCanonicalShopifyStore(value: unknown): string {
+  const supplied = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(supplied)) {
+    throw new NonRetriableError(
+      "Backorder recovery requires a canonical Shopify myshopify.com domain"
+    );
+  }
+  const resolved = resolveShopifyAdminCredentials(supplied).shopDomain.trim().toLowerCase();
+  if (resolved !== supplied) {
+    throw new NonRetriableError("Backorder recovery rejected an unknown Shopify store");
+  }
+  return resolved;
 }
 
 async function buildBackorderGpsPayload(params: {
@@ -82,6 +97,8 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
       processedAt: new Date().toISOString(),
     };
   }
+
+  const shop = requireCanonicalShopifyStore(event.data.shopifyStore);
 
   const failedSkus: string[] = Array.isArray(event.data.failedSkus) ? event.data.failedSkus : [];
 
@@ -120,7 +137,6 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
   const _flowStart = Date.now();
   const _runId = String(runId ?? "");
-  const shop = resolveShopifyAdminCredentials(event.data.shopifyStore).shopDomain;
   const leaseOwner = `${event.name}:${_runId || event.id}`;
   const acquireLease = async (operationSuffix: string): Promise<BackorderRecoveryLease> => {
     let waitAttempt = 0;
