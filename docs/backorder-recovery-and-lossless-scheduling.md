@@ -32,6 +32,10 @@ recovery run, and it removes Inngest rate limits that could discard valid lifecy
 - Every `backorder/created`, `backorder/retry` and `backorder/resolved` event carries the canonical
   Shopify `myshopify.com` domain. A source-level contract test prevents producers from omitting the
   store or using an unresolved alias.
+- Runtime validation also fails closed before lease, database or provider work when an external or
+  legacy event has a missing, malformed or unknown store. Reissue already-scheduled legacy events
+  through Battle Hub with the canonical domain; they are never allowed to fall back to the active
+  configured store.
 
 The lease duration is configured with `BACKORDER_RECOVERY_LEASE_SECONDS`. The default is 600
 seconds and accepted values are clamped to 60–3,600 seconds. The default exceeds the Cloud Run
@@ -63,7 +67,10 @@ rate limit from being reintroduced to these workflows.
    `false` for an immediate runtime kill switch.
 5. Verify manual retry, duplicate retry, busy-lease deferral and concurrent automatic/manual retry
    scenarios in the development environment before production activation.
-6. To roll back, restore the previous runtime first. Drop migration 47 only after no new runtime
+6. Inspect already-scheduled backorder events. Reissue any event that lacks the canonical store
+   through Battle Hub after deployment; the new runtime rejects it non-retriably and without side
+   effects.
+7. To roll back, restore the previous runtime first. Drop migration 47 only after no new runtime
    revision can acquire leases.
 
 The lease table contains operational identifiers only. It does not store order payloads, customer
