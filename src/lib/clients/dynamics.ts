@@ -28,7 +28,11 @@ import {
   classifyD365InventoryFailure,
   InventoryUnavailableError,
 } from "../services/oos-recovery/inventory-failure";
-import { ProviderCapacityTimeoutError, withProviderCapacity } from "../services/provider-capacity";
+import {
+  ProviderCapacityDatabaseTimeoutError,
+  ProviderCapacityTimeoutError,
+  withProviderCapacity,
+} from "../services/provider-capacity";
 import { boundedProviderRequestInit } from "./provider-request";
 import type {
   D365AuthToken,
@@ -280,7 +284,11 @@ export async function pacedFetch(
     const errorMessage = err instanceof Error ? err.message : String(err);
     const capacityBackpressure =
       err instanceof ProviderCapacityTimeoutError ||
-      (err instanceof Error && err.name === "ProviderCapacityTimeoutError");
+      err instanceof ProviderCapacityDatabaseTimeoutError ||
+      (err instanceof Error &&
+        ["ProviderCapacityTimeoutError", "ProviderCapacityDatabaseTimeoutError"].includes(
+          err.name
+        ));
 
     if (!capacityBackpressure) {
       logD365HttpTrace({

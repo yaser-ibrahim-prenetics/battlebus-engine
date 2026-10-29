@@ -11,7 +11,14 @@ const capacity = vi.hoisted(() => {
       this.name = "ProviderCapacityTimeoutError";
     }
   }
+  class ProviderCapacityDatabaseTimeoutError extends Error {
+    constructor() {
+      super("Shared provider capacity database query timed out");
+      this.name = "ProviderCapacityDatabaseTimeoutError";
+    }
+  }
   return {
+    ProviderCapacityDatabaseTimeoutError,
     ProviderCapacityTimeoutError,
     withProviderCapacity: vi.fn(),
   };
@@ -57,10 +64,10 @@ describe("D365 shared capacity backpressure", () => {
 
     now += 30_001;
     capacity.withProviderCapacity.mockRejectedValueOnce(
-      new capacity.ProviderCapacityTimeoutError()
+      new capacity.ProviderCapacityDatabaseTimeoutError()
     );
     await expect(pacedFetch("https://d365.example/data/probe")).rejects.toBeInstanceOf(
-      capacity.ProviderCapacityTimeoutError
+      capacity.ProviderCapacityDatabaseTimeoutError
     );
     expect(getCircuitState().state).toBe("OPEN");
 
