@@ -110,6 +110,10 @@ BEGIN
 
     IF NEW.status = 'superseded' AND (
       OLD.action_type <> 'fulfill'
+      OR (
+        OLD.status = 'publishing'
+        AND OLD.lease_expires_at > now()
+      )
       OR NOT EXISTS (
         SELECT 1
         FROM public.pending_lifecycle_actions AS cancellation
@@ -119,7 +123,7 @@ BEGIN
           AND cancellation.status IN ('queued', 'publishing', 'published', 'dead_letter')
       )
     ) THEN
-      RAISE EXCEPTION 'Runtime role can supersede only fulfillment blocked by a distinct cancellation';
+      RAISE EXCEPTION 'Runtime role can supersede only queued or expired fulfillment blocked by a distinct cancellation';
     END IF;
   END IF;
 

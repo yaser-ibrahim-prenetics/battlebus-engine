@@ -503,6 +503,49 @@ BEGIN
     WHEN raise_exception THEN
       NULL;
   END;
+
+  BEGIN
+    INSERT INTO public.pending_lifecycle_actions (
+      order_id,
+      action_type,
+      source_event_id,
+      event_name,
+      event_data
+    ) VALUES
+      (
+        '1006',
+        'cancel',
+        'shopify-order-cancelled-1006',
+        'shopify/order.cancelled',
+        '{"shopifyOrderId":"1006"}'::jsonb
+      ),
+      (
+        '1006',
+        'fulfill',
+        'shopify-order-fulfilled-1006',
+        'shopify/order.fulfilled',
+        '{"shopifyOrderId":"1006"}'::jsonb
+      );
+
+    UPDATE public.pending_lifecycle_actions
+    SET status = 'publishing',
+        attempts = attempts + 1,
+        lease_token = gen_random_uuid(),
+        lease_expires_at = now() + interval '2 minutes'
+    WHERE source_event_id = 'shopify-order-fulfilled-1006';
+
+    UPDATE public.pending_lifecycle_actions
+    SET status = 'superseded',
+        superseded_at = now(),
+        lease_token = NULL,
+        lease_expires_at = NULL,
+        last_error = 'forged active-lease supersession'
+    WHERE source_event_id = 'shopify-order-fulfilled-1006';
+    RAISE check_violation USING MESSAGE = 'Runtime role superseded an active fulfillment lease';
+  EXCEPTION
+    WHEN raise_exception THEN
+      NULL;
+  END;
 END $$;
 
 RESET ROLE;
