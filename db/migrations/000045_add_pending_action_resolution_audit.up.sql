@@ -19,6 +19,8 @@ RETURNS TABLE (
   publishing_actions bigint,
   uncertain_queued_actions bigint,
   dead_letter_actions bigint,
+  missing_queued_projections bigint,
+  stale_terminal_projections bigint,
   safe_to_resume_legacy boolean
 )
 LANGUAGE sql
@@ -41,15 +43,65 @@ AS $$
       ) AS uncertain_queued_actions,
       count(*) FILTER (WHERE queue.status = 'dead_letter') AS dead_letter_actions
     FROM public.pending_lifecycle_actions AS queue
+  ), projection_counts AS (
+    SELECT count(*) AS missing_queued_projections
+    FROM public.pending_lifecycle_actions AS queue
+    WHERE queue.status = 'queued'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.orders AS orders
+        CROSS JOIN LATERAL jsonb_array_elements(orders.pending_actions) AS item(action)
+        WHERE (
+            orders.shopify_order_id = queue.order_id
+            OR orders.platform_order_id = queue.order_id
+            OR orders.id::text = queue.order_id
+          )
+          AND item.action->>'action' = queue.action_type
+          AND (
+            item.action->>'sourceEventId' = queue.source_event_id
+            OR (
+              NULLIF(btrim(item.action->>'sourceEventId'), '') IS NULL
+              AND 'legacy:' || md5(item.action::text) = queue.source_event_id
+            )
+          )
+      )
+  ), terminal_projection_counts AS (
+    SELECT count(*) AS stale_terminal_projections
+    FROM public.orders AS orders
+    CROSS JOIN LATERAL jsonb_array_elements(orders.pending_actions) AS item(action)
+    WHERE EXISTS (
+      SELECT 1
+      FROM public.pending_lifecycle_actions AS queue
+      WHERE queue.status IN ('published', 'superseded')
+        AND (
+          orders.shopify_order_id = queue.order_id
+          OR orders.platform_order_id = queue.order_id
+          OR orders.id::text = queue.order_id
+        )
+        AND item.action->>'action' = queue.action_type
+        AND (
+          item.action->>'sourceEventId' = queue.source_event_id
+          OR (
+            NULLIF(btrim(item.action->>'sourceEventId'), '') IS NULL
+            AND 'legacy:' || md5(item.action::text) = queue.source_event_id
+          )
+        )
+    )
   )
   SELECT
     blocker_counts.publishing_actions,
     blocker_counts.uncertain_queued_actions,
     blocker_counts.dead_letter_actions,
+    projection_counts.missing_queued_projections,
+    terminal_projection_counts.stale_terminal_projections,
     blocker_counts.publishing_actions = 0
       AND blocker_counts.uncertain_queued_actions = 0
       AND blocker_counts.dead_letter_actions = 0
+      AND projection_counts.missing_queued_projections = 0
+      AND terminal_projection_counts.stale_terminal_projections = 0
   FROM blocker_counts
+  CROSS JOIN projection_counts
+  CROSS JOIN terminal_projection_counts
 $$;
 
 REVOKE ALL ON FUNCTION public.pending_lifecycle_action_rollback_status() FROM PUBLIC;
