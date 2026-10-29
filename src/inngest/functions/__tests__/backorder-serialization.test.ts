@@ -22,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   })),
   setGpsOrderMetafield: vi.fn(async () => undefined),
   sendOrderUpdate: vi.fn(async () => undefined),
+  readPlan: vi.fn(async (): Promise<unknown> => null),
+  processOrderSegments: vi.fn(async (_input: unknown): Promise<unknown> => null),
+  loadOrderAccounting: vi.fn(async (): Promise<unknown> => ({})),
+  loadSaudiShortAddress: vi.fn(async () => ""),
+  loadEligibleRecoveryOrder: vi.fn(async (): Promise<unknown> => ({})),
   backorderConfig: {
     enabled: true,
     autoRetryEnabled: true,
@@ -42,14 +47,18 @@ vi.mock("../../client", () => ({
     send: mocks.send,
   },
 }));
-vi.mock("@/lib/services/order-segments/store", () => ({ readPlan: vi.fn(async () => null) }));
+vi.mock("@/lib/services/order-segments/store", () => ({ readPlan: mocks.readPlan }));
 vi.mock("@/lib/services/order-segments/process", () => ({
-  processOrderSegments: vi.fn(),
+  processOrderSegments: mocks.processOrderSegments,
 }));
-vi.mock("@/lib/services/order-accounting/load", () => ({ loadOrderAccounting: vi.fn() }));
-vi.mock("@/lib/services/saudi-short-address", () => ({ loadSaudiShortAddress: vi.fn() }));
+vi.mock("@/lib/services/order-accounting/load", () => ({
+  loadOrderAccounting: mocks.loadOrderAccounting,
+}));
+vi.mock("@/lib/services/saudi-short-address", () => ({
+  loadSaudiShortAddress: mocks.loadSaudiShortAddress,
+}));
 vi.mock("@/lib/services/order-segments/recovery", () => ({
-  loadEligibleRecoveryOrder: vi.fn(),
+  loadEligibleRecoveryOrder: mocks.loadEligibleRecoveryOrder,
 }));
 vi.mock("@/lib/config", () => ({ config: { features: { dryRunMode: false } } }));
 vi.mock("@/lib/clients/gps", () => ({
@@ -127,6 +136,19 @@ function step() {
   };
 }
 
+function recordedStep(): ReturnType<typeof step> {
+  const results = new Map<string, unknown>();
+  return {
+    run: vi.fn(async (name: string, execute: () => Promise<unknown>) => {
+      if (results.has(name)) return results.get(name);
+      const result = await execute();
+      results.set(name, result);
+      return result;
+    }),
+    sleep: vi.fn(async () => undefined),
+  };
+}
+
 type BackorderHandler = (args: {
   event: ReturnType<typeof event>;
   step: ReturnType<typeof step>;
@@ -140,6 +162,11 @@ describe("backorder recovery serialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backorderConfig.enabled = true;
+    mocks.readPlan.mockResolvedValue(null);
+    mocks.processOrderSegments.mockResolvedValue(null);
+    mocks.loadOrderAccounting.mockResolvedValue({});
+    mocks.loadSaudiShortAddress.mockResolvedValue("");
+    mocks.loadEligibleRecoveryOrder.mockResolvedValue({});
   });
 
   it("registers created and manual retry events on separate workers", () => {
@@ -237,5 +264,38 @@ describe("backorder recovery serialization", () => {
     expect(manual).toMatchObject({ status: "disabled", shopifyOrderId: "1001" });
     expect(mocks.acquireLease).not.toHaveBeenCalled();
     expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not reacquire a segmented lease after its release step is replayed", async () => {
+    const replayStep = recordedStep();
+    mocks.readPlan.mockResolvedValue({
+      plan: {
+        inputHash: "segment-plan-hash",
+        segments: [{ dataAreaId: "im8" }],
+      },
+    });
+    mocks.loadEligibleRecoveryOrder.mockResolvedValue({ id: "1001", name: "#1001" });
+    mocks.processOrderSegments.mockImplementation(async (rawInput: unknown) => {
+      const input = rawInput as {
+        step: ReturnType<typeof step>;
+        beforeExternalMutation: () => Promise<unknown>;
+      };
+      return input.step.run("segment-provider-mutation", async () => {
+        await input.beforeExternalMutation();
+        return { status: "segmented" };
+      });
+    });
+    const args = {
+      event: event("backorder/retry"),
+      step: replayStep,
+      runId: "segment-replay-run",
+    };
+
+    await manualHandler(args);
+    await manualHandler(args);
+
+    expect(mocks.acquireLease).toHaveBeenCalledTimes(1);
+    expect(mocks.renewLease).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
   });
 });

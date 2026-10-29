@@ -163,7 +163,6 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
       const ensureLease = () => renewBackorderRecoveryLease(lease);
       const ensureEligible = () =>
         loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
-      await ensureLease();
       const latest = await ensureEligible();
       const accounting = await step.run("reload-segment-accounting", () =>
         loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
