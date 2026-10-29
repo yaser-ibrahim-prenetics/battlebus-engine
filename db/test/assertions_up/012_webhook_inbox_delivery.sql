@@ -4,7 +4,7 @@ DECLARE
 BEGIN
   FOREACH column_name IN ARRAY ARRAY[
     'next_attempt_at', 'lease_token', 'lease_expires_at',
-    'dead_lettered_at', 'replay_count', 'updated_at'
+    'dead_lettered_at', 'replay_count', 'last_replay_request_id', 'updated_at'
   ]
   LOOP
     IF NOT EXISTS (
