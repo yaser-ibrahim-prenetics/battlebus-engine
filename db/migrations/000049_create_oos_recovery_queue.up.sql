@@ -151,6 +151,32 @@ CREATE TRIGGER battle_platform_oos_drain_updated_at
   BEFORE UPDATE ON public.oos_drain_requests
   FOR EACH ROW EXECUTE FUNCTION public.battle_platform_set_updated_at();
 
+CREATE TABLE public.oos_drain_command_receipts (
+  request_id uuid PRIMARY KEY,
+  request_hash text NOT NULL,
+  drain_request_id uuid REFERENCES public.oos_drain_requests(id),
+  lane_key text NOT NULL,
+  dry_run boolean NOT NULL,
+  actor_hash text NOT NULL,
+  reason text NOT NULL,
+  status text NOT NULL DEFAULT 'accepted',
+  result_evidence jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  CONSTRAINT oos_command_hash_format CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT oos_command_actor_hash_format CHECK (actor_hash ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT oos_command_reason_length CHECK (length(reason) BETWEEN 10 AND 1000),
+  CONSTRAINT oos_command_status CHECK (status IN ('accepted', 'completed', 'failed')),
+  CONSTRAINT oos_command_result_consistent CHECK (
+    (status = 'accepted' AND completed_at IS NULL)
+    OR (status IN ('completed', 'failed') AND completed_at IS NOT NULL)
+  )
+);
+
+CREATE INDEX idx_oos_command_actor_rate_limit
+  ON public.oos_drain_command_receipts (actor_hash, created_at DESC)
+  WHERE dry_run AND status = 'accepted';
+
 CREATE TABLE public.oos_recovery_outbox (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id text NOT NULL UNIQUE,
@@ -195,18 +221,25 @@ CREATE TRIGGER battle_platform_oos_outbox_updated_at
 
 ALTER TABLE public.oos_recovery_dependencies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.oos_drain_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.oos_drain_command_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.oos_recovery_outbox ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON public.oos_recovery_dependencies FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.oos_drain_requests FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.oos_drain_command_receipts FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.oos_recovery_outbox FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.oos_recovery_dependencies TO battle_bus_runtime;
 GRANT SELECT, INSERT, UPDATE ON public.oos_drain_requests TO battle_bus_runtime;
+GRANT SELECT, INSERT ON public.oos_drain_command_receipts TO battle_bus_runtime;
+GRANT UPDATE (status, result_evidence, completed_at)
+  ON public.oos_drain_command_receipts TO battle_bus_runtime;
 GRANT SELECT, INSERT, UPDATE ON public.oos_recovery_outbox TO battle_bus_runtime;
 
 CREATE POLICY oos_dependencies_runtime ON public.oos_recovery_dependencies
   FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);
 CREATE POLICY oos_drain_requests_runtime ON public.oos_drain_requests
+  FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);
+CREATE POLICY oos_drain_commands_runtime ON public.oos_drain_command_receipts
   FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);
 CREATE POLICY oos_outbox_runtime ON public.oos_recovery_outbox
   FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);

@@ -125,19 +125,36 @@ const DEPENDENCY_COLUMNS = `d.id, d.order_id, d.order_name, d.order_line_id,
   d.failure_category, d.d365_order_number, d.source_event_name, d.failure_stage,
   d.retry_mode, d.backorder_queue, d.first_parked_at, d.version`;
 
-async function expireDependencies(client: PoolClient, dryRun: boolean): Promise<number> {
+async function expireDependencies(
+  client: PoolClient,
+  dryRun: boolean,
+  limit: number
+): Promise<number> {
+  const boundedLimit = Math.max(1, Math.min(1000, limit));
   if (dryRun) {
     const result = await client.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM public.oos_recovery_dependencies
-       WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()`
+      `SELECT count(*)::text AS count FROM (
+         SELECT id FROM public.oos_recovery_dependencies
+         WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()
+         ORDER BY expires_at, id LIMIT $1
+       ) expired`,
+      [boundedLimit]
     );
     return Number(result.rows[0]?.count ?? 0);
   }
   const result = await client.query(
-    `UPDATE public.oos_recovery_dependencies
+    `WITH expired AS (
+       SELECT id FROM public.oos_recovery_dependencies
+       WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()
+       ORDER BY expires_at, id
+       FOR UPDATE SKIP LOCKED
+       LIMIT $1
+     )
+     UPDATE public.oos_recovery_dependencies AS dependency
      SET status = 'manual_review', manual_review_at = now(), last_error_code = 'expired',
        lease_owner = NULL, lease_token = NULL, lease_until = NULL
-     WHERE status IN ('parked', 'leased', 'retrying') AND expires_at <= now()`
+     FROM expired WHERE dependency.id = expired.id`,
+    [boundedLimit]
   );
   return result.rowCount ?? 0;
 }
@@ -150,7 +167,7 @@ async function loadCandidates(
     `WITH candidate_orders AS (
        SELECT shopify_store, order_id, min(first_parked_at) AS parked_at
        FROM public.oos_recovery_dependencies
-       WHERE status IN ('parked', 'leased', 'retrying')
+       WHERE status IN ('parked', 'leased', 'retrying', 'manual_review')
        GROUP BY shopify_store, order_id
        HAVING bool_and(
          status = 'parked'
@@ -420,24 +437,32 @@ export async function executeOosDrain(
 ): Promise<OosDrainResult> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS drain requires the configured PostgreSQL database");
+  if (request.dryRun) {
+    const previewClient = await pool.connect();
+    let manualReviewExpired: number;
+    let candidates: OosDependencyRow[];
+    try {
+      manualReviewExpired = await expireDependencies(previewClient, true, request.batchLimit);
+      candidates = await loadCandidates(previewClient, request);
+    } finally {
+      previewClient.release();
+    }
+    const availability = await inventoryReader(candidates);
+    const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
+    return {
+      examinedOrders: decisions.length,
+      selectedOrders: decisions.filter((item) => item.selected).length,
+      selectedDependencies: decisions
+        .filter((item) => item.selected)
+        .reduce((sum, item) => sum + item.dependencies.length, 0),
+      manualReviewExpired,
+      queuedKeys: 0,
+      decisions,
+    };
+  }
   const client = await pool.connect();
   try {
-    const manualReviewExpired = await expireDependencies(client, request.dryRun);
-    if (request.dryRun) {
-      const candidates = await loadCandidates(client, request);
-      const availability = await inventoryReader(candidates);
-      const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
-      return {
-        examinedOrders: decisions.length,
-        selectedOrders: decisions.filter((item) => item.selected).length,
-        selectedDependencies: decisions
-          .filter((item) => item.selected)
-          .reduce((sum, item) => sum + item.dependencies.length, 0),
-        manualReviewExpired,
-        queuedKeys: 0,
-        decisions,
-      };
-    }
+    const manualReviewExpired = await expireDependencies(client, false, request.batchLimit);
     if (request.mode === "sweep" && !request.provider && !request.orderId) {
       const queuedKeys = await queueSweepKeys(client, request);
       return {

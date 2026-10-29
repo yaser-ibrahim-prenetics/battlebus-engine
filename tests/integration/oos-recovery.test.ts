@@ -7,7 +7,10 @@ import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
 import {
   claimOosDrainRequest,
   createOosDrainPreviewRequest,
+  OosDrainCommandConflictError,
   redispatchStalledOosDrainRequests,
+  reserveOosDrainPreviewCommand,
+  finishOosDrainPreviewCommand,
   submitOosDrainRequest,
 } from "@/lib/services/oos-recovery/requests";
 import {
@@ -35,6 +38,10 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     await pool.query("DELETE FROM public.oos_recovery_outbox WHERE event_data::text ILIKE $1", [
       `%${prefix}%`,
     ]);
+    await pool.query(
+      "DELETE FROM public.oos_drain_command_receipts WHERE lower(lane_key) LIKE $1",
+      [`%${prefix}%`]
+    );
     await pool.query("DELETE FROM public.oos_drain_requests WHERE lower(lane_key) LIKE $1", [
       `%${prefix}%`,
     ]);
@@ -215,6 +222,39 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     ).toEqual(["parked", "parked"]);
   });
 
+  it("does not replay an order while any unresolved line needs manual review", async () => {
+    const orderId = `${prefix}mixed-manual-review`;
+    await park(
+      [
+        dependency(orderId, { sku: `${prefix}ready`, orderLineId: "ready-line" }),
+        dependency(orderId, { sku: `${prefix}manual`, orderLineId: "manual-line" }),
+      ],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET status = 'manual_review', manual_review_at = now()
+       WHERE order_id = $1 AND order_line_id = 'manual-line'`,
+      [orderId]
+    );
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      provider: "gps",
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}ready`,
+      batchLimit: 1,
+    });
+    const request = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!request) throw new Error("expected a drain request lease");
+
+    const result = await executeOosDrain(
+      request,
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 100]))
+    );
+    expect(result.selectedOrders).toBe(0);
+  });
+
   it("runs dry selection without mutating dependencies or publishing retries", async () => {
     const orderId = `${prefix}dry`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
@@ -303,6 +343,12 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       sku: `${prefix}redispatch`,
       batchLimit: 1,
     });
+    await pool.query(
+      `UPDATE public.oos_recovery_outbox
+       SET status = 'published', published_at = now()
+       WHERE event_data->>'requestId' = $1`,
+      [submitted.request.id]
+    );
     expect(await claimOosDrainRequest(submitted.request.id, 30)).not.toBeNull();
     await pool.query(
       `UPDATE public.oos_drain_requests SET lease_until = now() - interval '1 second'
@@ -324,6 +370,134 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     expect(savedRequest.rows[0]).toEqual({ status: "queued", dispatch_count: 2 });
     expect(events.rows).toHaveLength(2);
     expect(new Set(events.rows.map((row) => row.event_id)).size).toBe(2);
+  });
+
+  it("does not duplicate an outstanding dispatch and fails visibly after outbox exhaustion", async () => {
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      provider: "gps",
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}outage`,
+      batchLimit: 1,
+    });
+    await pool.query(
+      "UPDATE public.oos_drain_requests SET last_error_code = 'lease_expired' WHERE id = $1",
+      [submitted.request.id]
+    );
+
+    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBe(0);
+    const beforeExhaustion = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM public.oos_recovery_outbox
+       WHERE event_data->>'requestId' = $1`,
+      [submitted.request.id]
+    );
+    expect(beforeExhaustion.rows[0].count).toBe("1");
+
+    await pool.query(
+      `UPDATE public.oos_recovery_outbox
+       SET status = 'failed', next_attempt_at = 'infinity'::timestamptz,
+         last_error_code = 'delivery_exhausted'
+       WHERE event_data->>'requestId' = $1`,
+      [submitted.request.id]
+    );
+    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBe(0);
+    const failed = await pool.query<{ status: string; last_error_code: string }>(
+      "SELECT status, last_error_code FROM public.oos_drain_requests WHERE id = $1",
+      [submitted.request.id]
+    );
+    expect(failed.rows[0]).toEqual({ status: "failed", last_error_code: "outbox_exhausted" });
+  });
+
+  it("preserves immutable command receipts across coalescing and rejects UUID reuse", async () => {
+    const input = {
+      mode: "manual" as const,
+      dryRun: false,
+      provider: "gps" as const,
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}command`,
+      batchLimit: 1,
+    };
+    const command = {
+      requestId: randomUUID(),
+      actor: "service:battle-bus-operations",
+      reason: "Operator verified restored inventory for this exact key",
+    };
+    const first = await submitOosDrainRequest(input, command);
+    const replay = await submitOosDrainRequest(input, command);
+    expect(replay.request.id).toBe(first.request.id);
+    await expect(
+      submitOosDrainRequest(input, { ...command, reason: "Conflicting request parameters" })
+    ).rejects.toBeInstanceOf(OosDrainCommandConflictError);
+    const receipts = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM public.oos_drain_command_receipts WHERE request_id = $1",
+      [command.requestId]
+    );
+    expect(receipts.rows[0].count).toBe("1");
+  });
+
+  it("returns the saved aggregate result for an idempotent preview command", async () => {
+    const input = {
+      mode: "manual" as const,
+      dryRun: true,
+      provider: "gps" as const,
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}preview-command`,
+      batchLimit: 1,
+    };
+    const command = {
+      requestId: randomUUID(),
+      actor: "service:battle-bus-operations",
+      reason: "Operator requested a bounded inventory recovery preview",
+    };
+    await expect(reserveOosDrainPreviewCommand(input, command)).resolves.toEqual({
+      status: "execute",
+    });
+    const evidence = {
+      examinedOrders: 3,
+      selectedOrders: 1,
+      selectedDependencies: 2,
+      manualReviewExpired: 0,
+      queuedKeys: 0,
+    };
+    await finishOosDrainPreviewCommand({ requestId: command.requestId, result: evidence });
+    await expect(reserveOosDrainPreviewCommand(input, command)).resolves.toEqual({
+      status: "completed",
+      result: evidence,
+    });
+  });
+
+  it("moves expired dependencies to review in bounded batches", async () => {
+    const orderIds = [0, 1, 2].map((index) => `${prefix}expired-${index}`);
+    for (const [index, orderId] of orderIds.entries()) {
+      await park([dependency(orderId)], new Date(`2026-10-29T00:0${index}:00Z`));
+    }
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET expires_at = now() - interval '1 minute'
+       WHERE order_id = ANY($1::text[])`,
+      [orderIds]
+    );
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId: orderIds[0],
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const request = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!request) throw new Error("expected a drain request lease");
+    await executeOosDrain(request, async () => new Map());
+
+    const states = await pool.query<{ status: string; count: number }>(
+      `SELECT status, count(*)::int AS count FROM public.oos_recovery_dependencies
+       WHERE order_id = ANY($1::text[]) GROUP BY status ORDER BY status`,
+      [orderIds]
+    );
+    expect(states.rows).toEqual([
+      { status: "manual_review", count: 1 },
+      { status: "parked", count: 2 },
+    ]);
   });
 
   it("lets an explicit Hub retry rearm a manual-review dependency", async () => {
