@@ -134,7 +134,8 @@ export const config = {
 
   // CS Platform (Battle Hub) Configuration
   csPlatform: {
-    baseUrl: process.env.CS_PLATFORM_URL || process.env.BATTLE_HUB_URL || process.env.BATTLE_CS_URL || "",
+    baseUrl:
+      process.env.CS_PLATFORM_URL || process.env.BATTLE_HUB_URL || process.env.BATTLE_CS_URL || "",
     webhookSecret: process.env.CS_PLATFORM_WEBHOOK_SECRET || "",
     enabled: process.env.CS_PLATFORM_ENABLED !== "false",
   },
@@ -154,10 +155,7 @@ export const config = {
     integration: "real",
     // "webhook" posts directly to the channel webhooks below (default). "kafka" publishes to
     // slack-notification-service, which posts each notification id to Slack at most once.
-    transport: (process.env.SLACK_TRANSPORT || "webhook") as
-      | "webhook"
-      | "kafka"
-      | "pubsub",
+    transport: (process.env.SLACK_TRANSPORT || "webhook") as "webhook" | "kafka" | "pubsub",
     publishEnabled: process.env.SLACK_PUBLISH_ENABLED !== "false",
     pubsubTopic: process.env.SLACK_PUBSUB_TOPIC || "",
     enabledRiskCheck: process.env.ENABLE_SLACK_RISK_CHECK === "true",
@@ -227,8 +225,7 @@ export const config = {
      * Controls the scheduled product inventory reconciliation cron only.
      * Manual inventory reconciliation endpoints/events remain available.
      */
-    enableProductInventorySyncCron:
-      process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
+    enableProductInventorySyncCron: process.env.ENABLE_PRODUCT_INVENTORY_SYNC_CRON === "true",
     enabledGpsOutboundMock: false,
     /**
      * Explicitly post a D365 return-order invoice (credit note) after the `type: "return"`
@@ -288,7 +285,11 @@ export const config = {
     maxRetries: safeParseInt(process.env.BACKORDER_MAX_RETRIES, 7),
     retryIntervalHours: safeParseInt(process.env.BACKORDER_RETRY_INTERVAL_HOURS, 24),
     maxDaysBeforeCancel: safeParseInt(process.env.BACKORDER_MAX_DAYS, 30),
-    waitForEventTimeoutHours: safeParseInt(process.env.BACKORDER_WAIT_TIMEOUT_HOURS, 48),
+    recoveryLeaseSeconds: clampInt(
+      safeParseInt(process.env.BACKORDER_RECOVERY_LEASE_SECONDS, 600),
+      60,
+      3600
+    ),
   },
 
   // Pending lifecycle action drain sweep
@@ -309,11 +310,7 @@ export const config = {
       1,
       500
     ),
-    leaseSeconds: clampInt(
-      safeParseInt(process.env.PENDING_ACTIONS_LEASE_SECONDS, 120),
-      30,
-      900
-    ),
+    leaseSeconds: clampInt(safeParseInt(process.env.PENDING_ACTIONS_LEASE_SECONDS, 120), 30, 900),
     maxAttempts: clampInt(safeParseInt(process.env.PENDING_ACTIONS_MAX_ATTEMPTS, 10), 1, 100),
     legacyImportOrderLimit: clampInt(
       safeParseInt(process.env.PENDING_ACTIONS_LEGACY_IMPORT_ORDER_LIMIT, 100),
@@ -401,9 +398,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
       errors.push("CS_PLATFORM_URL or BATTLE_CS_URL is required when CS Platform is enabled");
     }
     if (!config.csPlatform.webhookSecret) {
-      console.warn(
-        "CS_PLATFORM_WEBHOOK_SECRET is not set - Battle Hub callbacks will fail closed"
-      );
+      console.warn("CS_PLATFORM_WEBHOOK_SECRET is not set - Battle Hub callbacks will fail closed");
     }
   }
 
@@ -418,7 +413,12 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
 
   if (!["webhook", "kafka", "pubsub"].includes(config.slack.transport))
     errors.push("SLACK_TRANSPORT must be webhook, kafka, or pubsub");
-  if (config.slack.transport === "pubsub" && !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(config.slack.pubsubTopic))
+  if (
+    config.slack.transport === "pubsub" &&
+    !/^projects\/[a-z][a-z0-9-]+\/topics\/[a-zA-Z][a-zA-Z0-9._~+%-]+$/.test(
+      config.slack.pubsubTopic
+    )
+  )
     errors.push("SLACK_PUBSUB_TOPIC must be a full Pub/Sub topic resource");
   if (config.slack.transport === "kafka") {
     if (config.kafka.brokers.length === 0)
