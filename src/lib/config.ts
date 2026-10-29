@@ -269,6 +269,25 @@ export const config = {
     maxDaysBeforeCancel: safeParseInt(process.env.BACKORDER_MAX_DAYS, 30),
   },
 
+  oosRecovery: {
+    // Expand/deploy gate. Migration 49 and the disabled runtime must be deployed first.
+    enabled: process.env.OOS_TARGETED_DRAIN_ENABLED === "true",
+    claimBatchSize: clampInt(safeParseInt(process.env.OOS_DRAIN_CLAIM_BATCH_SIZE, 100), 1, 1000),
+    leaseSeconds: clampInt(safeParseInt(process.env.OOS_DRAIN_LEASE_SECONDS, 300), 30, 1800),
+    retentionDays: clampInt(safeParseInt(process.env.OOS_DEPENDENCY_RETENTION_DAYS, 30), 1, 365),
+    maxAttempts: clampInt(safeParseInt(process.env.OOS_DEPENDENCY_MAX_ATTEMPTS, 10), 1, 100),
+    cooldownSeconds: clampInt(
+      safeParseInt(process.env.OOS_DEPENDENCY_COOLDOWN_SECONDS, 3600),
+      60,
+      86400
+    ),
+    sweepIntervalMinutes: clampInt(
+      safeParseInt(process.env.OOS_DRAIN_SWEEP_INTERVAL_MINUTES, 30),
+      1,
+      59
+    ),
+  },
+
   // Pending lifecycle action drain sweep
   pendingActions: {
     // Expand/deploy gate. Enable only after migrations are applied and no old
