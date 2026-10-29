@@ -81,10 +81,10 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
         result?.Message || result?.Result || responseText || `HTTP ${response.status}`
       ).trim();
       const inventoryFailure = classifyD365InventoryFailure(providerDetail);
-      if (inventoryFailure) {
-        const warehouse =
-          lines.find((line) => line.shippingWarehouseId?.trim())?.shippingWarehouseId?.trim() ||
-          req.dataAreaId;
+      const isTrustedProviderRejection =
+        (response.ok && result?.status === 0) || [400, 409, 422].includes(response.status);
+      if (inventoryFailure && isTrustedProviderRejection) {
+        const warehouse = req.dataAreaId.trim().toUpperCase();
         throw new InventoryUnavailableError(
           "d365",
           inventoryFailure,
