@@ -382,6 +382,45 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     });
   });
 
+  it("subtracts active retry reservations from dry-run evidence", async () => {
+    const reservedOrderId = `${prefix}dry-reserved`;
+    const candidateOrderId = `${prefix}dry-candidate`;
+    await park([dependency(reservedOrderId)], new Date("2026-10-29T00:00:00Z"));
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId: reservedOrderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const liveRequest = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!liveRequest) throw new Error("expected a drain request lease");
+    await executeOosDrain(
+      liveRequest,
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 1]))
+    );
+    await park([dependency(candidateOrderId)], new Date("2026-10-29T00:01:00Z"));
+
+    const preview = createOosDrainPreviewRequest({
+      mode: "manual",
+      dryRun: true,
+      orderId: candidateOrderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const result = await executeOosDrain(
+      preview,
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 1]))
+    );
+
+    expect(result.selectedOrders).toBe(0);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0]).toMatchObject({
+      selected: false,
+      reason: "insufficient_inventory",
+    });
+  });
+
   it("serializes independent lanes that compete for the same provider inventory", async () => {
     const firstOrderId = `${prefix}concurrent-a`;
     const secondOrderId = `${prefix}concurrent-b`;
@@ -421,6 +460,52 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
 
     expect(results.reduce((sum, result) => sum + result.selectedOrders, 0)).toBe(1);
     expect(retrying.rowCount).toBe(1);
+  });
+
+  it("keeps a 500-line targeted retry inside the durable outbox payload limit", async () => {
+    const orderId = `${prefix}large-retry`;
+    const sku = `${prefix}large-retry-sku`;
+    const dependencies = Array.from({ length: 500 }, (_, index) =>
+      dependency(orderId, {
+        orderLineId: `gid://shopify/LineItem/${String(index).padStart(4, "0")}-${"L".repeat(180)}`,
+        sku,
+      })
+    );
+    await park(dependencies, new Date("2026-10-29T00:00:00Z"));
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const request = await claimOosDrainRequest(submitted.request.id, 300);
+    if (!request) throw new Error("expected a drain request lease");
+
+    const result = await executeOosDrain(
+      request,
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 500]))
+    );
+    const outbox = await pool.query<{
+      payload_bytes: number;
+      event_data: Record<string, unknown>;
+    }>(
+      `SELECT octet_length(event_data::text)::integer AS payload_bytes, event_data
+       FROM public.oos_recovery_outbox
+       WHERE event_name = 'backorder/retry' AND event_data->>'shopifyOrderId' = $1`,
+      [orderId]
+    );
+
+    expect(result.selectedDependencies).toBe(500);
+    expect(outbox.rows).toHaveLength(1);
+    expect(outbox.rows[0].payload_bytes).toBeLessThanOrEqual(32_768);
+    expect(outbox.rows[0].event_data).toMatchObject({
+      shopifyOrderId: orderId,
+      targetedRecovery: true,
+    });
+    expect(outbox.rows[0].event_data.oosRecoveryAttemptToken).toEqual(expect.any(String));
+    expect(outbox.rows[0].event_data).not.toHaveProperty("blockedLineIds");
+    expect(outbox.rows[0].event_data).not.toHaveProperty("blockedItems");
   });
 
   it("redispatches an expired request lease with a fresh durable event identity", async () => {

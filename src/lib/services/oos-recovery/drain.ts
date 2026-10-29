@@ -360,12 +360,6 @@ function buildRetryEvent(rows: OosDependencyRow[], attemptToken: string) {
       backorderQueue: first.backorderQueue,
       targetedRecovery: true,
       oosRecoveryAttemptToken: attemptToken,
-      blockedLineIds: [...new Set(rows.map((row) => row.orderLineId))].sort(),
-      blockedItems: rows
-        .map((row) => ({ orderLineId: row.orderLineId, providerSku: row.sku }))
-        .sort((a, b) =>
-          `${a.orderLineId}:${a.providerSku}`.localeCompare(`${b.orderLineId}:${b.providerSku}`)
-        ),
     },
   };
 }
@@ -496,15 +490,20 @@ export async function executeOosDrain(
   if (request.dryRun) {
     const previewClient = await pool.connect();
     let manualReviewExpired: number;
-    let candidates: OosDependencyRow[];
+    let decisions: OosDrainDecision[];
     try {
       manualReviewExpired = await expireDependencies(previewClient, true, request.batchLimit);
-      candidates = await loadCandidates(previewClient, request);
+      const candidates = await loadCandidates(previewClient, request);
+      const providerAvailability = await inventoryReader(candidates);
+      const availability = await subtractOutstandingReservations(
+        previewClient,
+        providerAvailability,
+        candidates
+      );
+      decisions = allocateOosOrders(candidates, availability, request.batchLimit);
     } finally {
       previewClient.release();
     }
-    const availability = await inventoryReader(candidates);
-    const decisions = allocateOosOrders(candidates, availability, request.batchLimit);
     return {
       examinedOrders: decisions.length,
       selectedOrders: decisions.filter((item) => item.selected).length,
