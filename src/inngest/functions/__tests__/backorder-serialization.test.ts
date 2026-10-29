@@ -275,6 +275,23 @@ describe("backorder recovery serialization", () => {
     expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
   });
 
+  it("fails closed for missing or unknown stores before lease and provider work", async () => {
+    const missingStore = event("backorder/retry");
+    const unknownStore = event("backorder/retry");
+    missingStore.data.shopifyStore = "";
+    unknownStore.data.shopifyStore = "unknown.myshopify.com";
+
+    await expect(
+      manualHandler({ event: missingStore, step: step(), runId: "missing-store" })
+    ).rejects.toThrow("canonical Shopify");
+    await expect(
+      manualHandler({ event: unknownStore, step: step(), runId: "unknown-store" })
+    ).rejects.toThrow("unknown Shopify store");
+
+    expect(mocks.acquireLease).not.toHaveBeenCalled();
+    expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
+  });
+
   it("does not reacquire a segmented lease after its release step is replayed", async () => {
     const replayStep = recordedStep();
     mocks.readPlan.mockResolvedValue({
