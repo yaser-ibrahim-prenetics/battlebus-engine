@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   setGpsOrderMetafield: vi.fn(async () => undefined),
   sendOrderUpdate: vi.fn(async () => undefined),
   backorderConfig: {
+    enabled: true,
     autoRetryEnabled: true,
     autoRetryMaxAttempts: 1,
     autoRetryIntervalHours: 1,
@@ -129,6 +130,7 @@ function step() {
 describe("backorder recovery serialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.backorderConfig.enabled = true;
   });
 
   it("registers created and manual retry events on separate workers", () => {
@@ -204,5 +206,27 @@ describe("backorder recovery serialization", () => {
     expect(mocks.acquireLease).toHaveBeenCalledTimes(2);
     expect(mocks.createOutboundOrder).toHaveBeenCalledTimes(1);
     expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors the global retry kill switch before credentials or provider work", async () => {
+    mocks.backorderConfig.enabled = false;
+
+    const [automatic, manual] = await Promise.all([
+      (processBackorder as unknown as (args: any) => Promise<any>)({
+        event: event("backorder/created"),
+        step: step(),
+        runId: "disabled-auto",
+      }),
+      (processBackorderRetry as unknown as (args: any) => Promise<any>)({
+        event: event("backorder/retry"),
+        step: step(),
+        runId: "disabled-manual",
+      }),
+    ]);
+
+    expect(automatic).toMatchObject({ status: "disabled", shopifyOrderId: "1001" });
+    expect(manual).toMatchObject({ status: "disabled", shopifyOrderId: "1001" });
+    expect(mocks.acquireLease).not.toHaveBeenCalled();
+    expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
   });
 });
