@@ -415,7 +415,10 @@ export async function submitOosDrainRequest(
 export async function reserveOosDrainPreviewCommand(
   rawInput: OosDrainRequestInput,
   rawCommand: OosDrainCommand
-): Promise<{ status: "execute" } | { status: "completed"; result: OosDrainPreviewEvidence }> {
+): Promise<
+  | { status: "execute"; executionToken: string }
+  | { status: "completed"; result: OosDrainPreviewEvidence }
+> {
   const input = normalizeOosDrainRequest(rawInput);
   if (!input.dryRun) throw new Error("OOS preview command requires dryRun=true");
   const command = validateCommand(rawCommand);
@@ -440,7 +443,7 @@ export async function reserveOosDrainPreviewCommand(
       stale: boolean;
     }>(
       `SELECT request_hash, status, result_evidence,
-         created_at <= now() - interval '5 minutes' AS stale
+         preview_started_at <= now() - interval '5 minutes' AS stale
        FROM public.oos_drain_command_receipts WHERE request_id = $1`,
       [command.requestId]
     );
@@ -457,17 +460,33 @@ export async function reserveOosDrainPreviewCommand(
       if (existing.rows[0].status === "accepted" && !existing.rows[0].stale) {
         throw new OosDrainCommandInProgressError("OOS preview command is already running");
       }
-      await client.query(
+      const otherActive = await client.query(
+        `SELECT 1 FROM public.oos_drain_command_receipts
+         WHERE actor_hash = $1 AND request_id <> $2 AND dry_run AND status = 'accepted'
+           AND preview_started_at > now() - interval '5 minutes'
+         LIMIT 1`,
+        [actorHash, command.requestId]
+      );
+      if (otherActive.rowCount) {
+        throw new OosDrainCommandInProgressError(
+          "An OOS preview is already running for this operations principal"
+        );
+      }
+      const reclaimed = await client.query<{ preview_token: string }>(
         `UPDATE public.oos_drain_command_receipts
-         SET status = 'accepted', result_evidence = NULL, completed_at = NULL
-         WHERE request_id = $1`,
+         SET status = 'accepted', result_evidence = NULL, completed_at = NULL,
+           preview_token = gen_random_uuid(), preview_started_at = now()
+         WHERE request_id = $1
+         RETURNING preview_token`,
         [command.requestId]
       );
+      await client.query("COMMIT");
+      return { status: "execute", executionToken: reclaimed.rows[0].preview_token };
     } else {
       const active = await client.query(
         `SELECT 1 FROM public.oos_drain_command_receipts
          WHERE actor_hash = $1 AND dry_run AND status = 'accepted'
-           AND created_at > now() - interval '5 minutes'
+           AND preview_started_at > now() - interval '5 minutes'
          LIMIT 1`,
         [actorHash]
       );
@@ -476,15 +495,17 @@ export async function reserveOosDrainPreviewCommand(
           "An OOS preview is already running for this operations principal"
         );
       }
-      await client.query(
+      const inserted = await client.query<{ preview_token: string }>(
         `INSERT INTO public.oos_drain_command_receipts (
-           request_id, request_hash, lane_key, dry_run, actor_hash, reason
-         ) VALUES ($1, $2, $3, true, $4, $5)`,
+           request_id, request_hash, lane_key, dry_run, actor_hash, reason,
+           preview_token, preview_started_at
+         ) VALUES ($1, $2, $3, true, $4, $5, gen_random_uuid(), now())
+         RETURNING preview_token`,
         [command.requestId, requestHash, laneKey, actorHash, command.reason]
       );
+      await client.query("COMMIT");
+      return { status: "execute", executionToken: inserted.rows[0].preview_token };
     }
-    await client.query("COMMIT");
-    return { status: "execute" };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -495,21 +516,24 @@ export async function reserveOosDrainPreviewCommand(
 
 export async function finishOosDrainPreviewCommand(params: {
   requestId: string;
+  executionToken: string;
   result?: OosDrainPreviewEvidence;
   errorCode?: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS drain previews require the configured PostgreSQL database");
-  await pool.query(
+  const result = await pool.query(
     `UPDATE public.oos_drain_command_receipts
      SET status = $2, result_evidence = $3::jsonb, completed_at = now()
-     WHERE request_id = $1 AND dry_run AND status = 'accepted'`,
+     WHERE request_id = $1 AND dry_run AND status = 'accepted' AND preview_token = $4`,
     [
       params.requestId,
       params.errorCode ? "failed" : "completed",
       JSON.stringify(params.result ?? { errorCode: params.errorCode ?? "preview_failed" }),
+      params.executionToken,
     ]
   );
+  return result.rowCount === 1;
 }
 
 export async function claimOosDrainRequest(
@@ -612,30 +636,60 @@ export async function retryOosDrainRequest(
   }
 }
 
-export async function redispatchStalledOosDrainRequests(limit: number): Promise<number> {
+export async function redispatchStalledOosDrainRequests(
+  limit: number,
+  maxAttempts: number
+): Promise<number> {
   const pool = await getDatabasePool();
   if (!pool) return 0;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const boundedLimit = Math.max(1, Math.min(500, limit));
+    const boundedMaxAttempts = Math.max(1, Math.min(100, maxAttempts));
     await client.query(
-      `UPDATE public.oos_drain_requests
+      `WITH expired AS (
+         SELECT id FROM public.oos_drain_requests
+         WHERE slot = 'active' AND status = 'leased' AND lease_until <= now()
+         ORDER BY lease_until, id
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1
+       )
+       UPDATE public.oos_drain_requests AS request
        SET status = 'queued', lease_token = NULL, lease_until = NULL,
          last_error_code = 'lease_expired'
-       WHERE slot = 'active' AND status = 'leased' AND lease_until <= now()`
+       FROM expired
+       WHERE request.id = expired.id`,
+      [boundedLimit]
     );
-    const stalled = await client.query<{ id: string; lane_key: string }>(
-      `SELECT id, lane_key
+    const stalled = await client.query<{ id: string; lane_key: string; attempt_count: number }>(
+      `SELECT id, lane_key, attempt_count
        FROM public.oos_drain_requests
        WHERE slot = 'active' AND status = 'queued'
          AND (last_error_code = 'lease_expired' OR updated_at <= now() - interval '5 minutes')
        ORDER BY updated_at, id
        FOR UPDATE SKIP LOCKED
        LIMIT $1`,
-      [Math.max(1, Math.min(500, limit))]
+      [boundedLimit]
     );
     let dispatched = 0;
     for (const request of stalled.rows) {
+      if (request.attempt_count >= boundedMaxAttempts) {
+        const successor = await failOosDrainRequestAndPromote(
+          client,
+          request.id,
+          request.lane_key,
+          "lease_attempts_exhausted"
+        );
+        if (successor) {
+          const promoted = await enqueueRequestEvent(client, {
+            id: successor,
+            laneKey: request.lane_key,
+          });
+          if (promoted === "dispatched") dispatched++;
+        }
+        continue;
+      }
       const outcome = await enqueueRequestEvent(client, {
         id: request.id,
         laneKey: request.lane_key,
@@ -645,26 +699,15 @@ export async function redispatchStalledOosDrainRequests(limit: number): Promise<
         continue;
       }
       if (outcome === "exhausted") {
-        await client.query(
-          `UPDATE public.oos_drain_requests
-           SET status = 'failed', completed_at = now(), last_error_code = 'outbox_exhausted'
-           WHERE id = $1 AND status = 'queued'`,
-          [request.id]
+        const successor = await failOosDrainRequestAndPromote(
+          client,
+          request.id,
+          request.lane_key,
+          "outbox_exhausted"
         );
-        const successor = await client.query<{ id: string }>(
-          `UPDATE public.oos_drain_requests
-           SET slot = 'active'
-           WHERE id = (
-             SELECT id FROM public.oos_drain_requests
-             WHERE lane_key = $1 AND slot = 'successor' AND status = 'queued'
-             ORDER BY created_at, id LIMIT 1 FOR UPDATE
-           )
-           RETURNING id`,
-          [request.lane_key]
-        );
-        if (successor.rows[0]?.id) {
+        if (successor) {
           const promoted = await enqueueRequestEvent(client, {
-            id: successor.rows[0].id,
+            id: successor,
             laneKey: request.lane_key,
           });
           if (promoted === "dispatched") dispatched++;
@@ -679,4 +722,31 @@ export async function redispatchStalledOosDrainRequests(limit: number): Promise<
   } finally {
     client.release();
   }
+}
+
+async function failOosDrainRequestAndPromote(
+  client: PoolClient,
+  requestId: string,
+  laneKey: string,
+  errorCode: string
+): Promise<string | null> {
+  const failed = await client.query(
+    `UPDATE public.oos_drain_requests
+     SET status = 'failed', completed_at = now(), last_error_code = $2
+     WHERE id = $1 AND status = 'queued'`,
+    [requestId, errorCode]
+  );
+  if (failed.rowCount !== 1) return null;
+  const successor = await client.query<{ id: string }>(
+    `UPDATE public.oos_drain_requests
+     SET slot = 'active'
+     WHERE id = (
+       SELECT id FROM public.oos_drain_requests
+       WHERE lane_key = $1 AND slot = 'successor' AND status = 'queued'
+       ORDER BY created_at, id LIMIT 1 FOR UPDATE
+     )
+     RETURNING id`,
+    [laneKey]
+  );
+  return successor.rows[0]?.id ?? null;
 }

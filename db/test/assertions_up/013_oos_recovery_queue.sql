@@ -9,6 +9,18 @@ BEGIN
     RAISE EXCEPTION 'OOS recovery schema is incomplete';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'oos_drain_command_receipts'
+      AND column_name = 'preview_token' AND data_type = 'uuid'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'oos_drain_command_receipts'
+      AND column_name = 'preview_started_at' AND data_type = 'timestamp with time zone'
+  ) THEN
+    RAISE EXCEPTION 'OOS preview execution lease columns are missing';
+  END IF;
+
   IF to_regclass('public.idx_oos_dependency_active_identity') IS NULL
     OR to_regclass('public.idx_oos_dependency_inventory_fifo') IS NULL
     OR to_regclass('public.idx_oos_dependency_ready') IS NULL
@@ -24,6 +36,8 @@ BEGIN
     OR NOT has_table_privilege('battle_bus_runtime', 'public.oos_drain_requests', 'SELECT,INSERT,UPDATE')
     OR has_table_privilege('battle_bus_runtime', 'public.oos_drain_requests', 'DELETE,TRUNCATE')
     OR NOT has_table_privilege('battle_bus_runtime', 'public.oos_drain_command_receipts', 'SELECT,INSERT')
+    OR NOT has_column_privilege('battle_bus_runtime', 'public.oos_drain_command_receipts', 'preview_token', 'UPDATE')
+    OR NOT has_column_privilege('battle_bus_runtime', 'public.oos_drain_command_receipts', 'preview_started_at', 'UPDATE')
     OR has_table_privilege('battle_bus_runtime', 'public.oos_drain_command_receipts', 'DELETE,TRUNCATE')
     OR NOT has_table_privilege('battle_bus_runtime', 'public.oos_recovery_outbox', 'SELECT,INSERT,UPDATE')
     OR has_table_privilege('battle_bus_runtime', 'public.oos_recovery_outbox', 'DELETE,TRUNCATE')

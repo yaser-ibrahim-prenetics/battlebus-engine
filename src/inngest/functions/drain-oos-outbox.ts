@@ -45,7 +45,10 @@ export const drainOosOutbox = inngest.createFunction(
       return { status: "disabled", published: 0, failed: 0 };
     }
     await step.run("redispatch-stalled-oos-drains", () =>
-      redispatchStalledOosDrainRequests(config.oosRecovery.claimBatchSize)
+      redispatchStalledOosDrainRequests(
+        config.oosRecovery.claimBatchSize,
+        config.oosRecovery.maxAttempts
+      )
     );
     const entries = await step.run("claim-oos-outbox", () =>
       claimOosOutboxEntries(config.oosRecovery.claimBatchSize, config.oosRecovery.leaseSeconds)

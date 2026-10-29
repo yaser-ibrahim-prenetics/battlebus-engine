@@ -79,8 +79,11 @@ beforeEach(() => {
     dryRun: true,
   };
   createOosDrainPreviewRequest.mockReturnValue(preview);
-  reserveOosDrainPreviewCommand.mockResolvedValue({ status: "execute" });
-  finishOosDrainPreviewCommand.mockResolvedValue(undefined);
+  reserveOosDrainPreviewCommand.mockResolvedValue({
+    status: "execute",
+    executionToken: "00000000-0000-4000-8000-000000000005",
+  });
+  finishOosDrainPreviewCommand.mockResolvedValue(true);
   executeOosDrain.mockResolvedValue({
     examinedOrders: 1,
     selectedOrders: 1,
@@ -126,6 +129,31 @@ describe("OOS drain operations route", () => {
       }
     );
     expect(executeOosDrain).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ requestId, drainRequestId: "drain-1" })
+    );
+  });
+
+  it("rejects incomplete, missing, and reversed targets as client errors", async () => {
+    const incomplete = await POST(request({ ...validBody, sku: undefined }));
+    const missing = await POST(
+      request({
+        requestId,
+        reason: validBody.reason,
+        mode: "manual",
+        dryRun: false,
+      })
+    );
+    const reversed = await POST(
+      request({
+        ...validBody,
+        parkedFrom: "2026-10-30T00:00:00.000Z",
+        parkedTo: "2026-10-29T00:00:00.000Z",
+      })
+    );
+
+    expect([incomplete.status, missing.status, reversed.status]).toEqual([400, 400, 400]);
+    expect(submitOosDrainRequest).not.toHaveBeenCalled();
   });
 
   it("executes dry runs through the non-persistent preview path", async () => {
@@ -136,6 +164,12 @@ describe("OOS drain operations route", () => {
     expect(createOosDrainPreviewRequest).toHaveBeenCalledOnce();
     expect(executeOosDrain).toHaveBeenCalledOnce();
     expect(finishOosDrainPreviewCommand).toHaveBeenCalledOnce();
+    expect(finishOosDrainPreviewCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId,
+        executionToken: "00000000-0000-4000-8000-000000000005",
+      })
+    );
     expect(submitOosDrainRequest).not.toHaveBeenCalled();
   });
 
