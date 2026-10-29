@@ -73,7 +73,10 @@ import {
   isInventoryUnavailableError,
   toInventoryDependencies,
 } from "@/lib/services/oos-recovery/inventory-failure";
-import { d365FulfillmentEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
+import {
+  d365FulfillmentEvidenceCodec,
+  depositInvoiceEvidenceCodec,
+} from "@/lib/services/oos-recovery/mutation-evidence";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -837,23 +840,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                       fulfilmentPost.response,
                       { depositFulfillment: true }
                     ),
-                    {
-                      encode: (value) => value,
-                      decode: (evidence) => {
-                        const value = evidence as {
-                          verified?: unknown;
-                          processingStatus?: unknown;
-                        };
-                        if (
-                          value?.verified !== true ||
-                          (value.processingStatus !== null &&
-                            typeof value.processingStatus !== "string")
-                        ) {
-                          throw new Error("Invalid deposit invoice evidence");
-                        }
-                        return value as { verified: boolean; processingStatus: string | null };
-                      },
-                    }
+                    depositInvoiceEvidenceCodec
                   )
                 : { verified: false, processingStatus: depositPrecheck.processingStatus };
 

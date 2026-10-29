@@ -16,6 +16,7 @@ import {
   isInventoryUnavailableError,
 } from "@/lib/services/oos-recovery/inventory-failure";
 import {
+  depositInvoiceEvidenceCodec,
   d365FulfillmentEvidenceCodec,
   type OosMutationEvidenceCodec,
 } from "@/lib/services/oos-recovery/mutation-evidence";
@@ -181,23 +182,7 @@ export async function fulfillOrderSegments(input: {
                 result.response,
                 { depositFulfillment: true }
               ),
-              {
-                encode: (value) => value,
-                decode: (evidence) => {
-                  const value = evidence as {
-                    verified?: unknown;
-                    processingStatus?: unknown;
-                  };
-                  if (
-                    value?.verified !== true ||
-                    (value.processingStatus !== null &&
-                      typeof value.processingStatus !== "string")
-                  ) {
-                    throw new Error("Invalid deposit invoice evidence");
-                  }
-                  return value as { verified: boolean; processingStatus: string | null };
-                },
-              }
+              depositInvoiceEvidenceCodec
             );
           }
           await queryDatabase(completeAllocationSQL, [
