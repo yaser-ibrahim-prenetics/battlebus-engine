@@ -7,7 +7,8 @@ BEGIN
   FROM unnest(ARRAY[
     'refund_hold_decisions', 'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
     'fulfillment_evidence_claims', 'mission_runs', 'order_lines', 'order_segment_refunds',
-    'orders', 'pending_lifecycle_actions', 'permissions', 'products', 'reconciliation_attempts', 'recovery_commands',
+    'orders', 'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions',
+    'permissions', 'products', 'reconciliation_attempts', 'recovery_commands',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks', 'user_permissions',
     'user_preferences', 'users', 'webhook_inbox', 'workflow_observations',
     'workspace_members', 'workspaces'
@@ -28,6 +29,10 @@ BEGIN
 
   IF to_regprocedure('public.battle_platform_scrub_pending_action_payload()') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left pending-action scrub function behind';
+  END IF;
+
+  IF to_regprocedure('public.requeue_pending_lifecycle_action(uuid,text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left pending-action replay function behind';
   END IF;
 END
 $$;

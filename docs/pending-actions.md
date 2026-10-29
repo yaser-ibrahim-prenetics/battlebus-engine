@@ -12,7 +12,7 @@ Shopify can send fulfillment or cancellation events before Battle Bus has create
 - a producer `source_event_id`, deduplicated with `order_id` and `action_type`;
 - the canonical event name and data;
 - a generated priority: cancel, refund, then fulfill;
-- queue status, attempt count, availability time, and version;
+- queue status, attempt count, and availability time;
 - a lease token and expiry while a worker owns the action; and
 - terminal publication, supersession, or dead-letter state.
 
@@ -45,17 +45,17 @@ An already active, unexpired fulfillment lease is not stolen. This keeps lease o
 
 ## Legacy rollout bridge
 
-`orders.pending_actions` remains populated during the expand and rollback phases so older Battle Bus revisions can safely resume. Before activation, producers write only this legacy projection. After activation, producers atomically write the normalized row and retain a deduplicated legacy projection. Before each claim, the drain:
+`orders.pending_actions` remains populated with outstanding work during the expand and rollback phases so older Battle Bus revisions can safely resume. Before activation, producers write only this legacy projection. After activation, producers atomically write the normalized row and a deduplicated legacy projection. Before each claim, the drain:
 
 1. locks a bounded set of order rows with non-empty, fully valid JSON action arrays;
 2. inserts actions that are not already represented in the normalized queue with a deterministic source ID; and
-3. leaves the legacy arrays intact for rollback-capable revisions.
+3. leaves outstanding legacy entries intact for rollback-capable revisions.
 
-A concurrent legacy append waits for the row lock and is copied on a later sweep. Malformed arrays are excluded without blocking normalized claims. Remove legacy projections only after all writers and rollback-capable revisions use the normalized table and the contract evidence window is complete.
+A concurrent legacy append waits for the row lock and is copied on a later sweep. Malformed arrays are excluded without blocking normalized claims. Exact normalized acknowledgement or supersession atomically removes only the matching legacy entry, so rollback sees outstanding work but cannot replay terminal work. Remove the projection mechanism and column only after all writers and rollback-capable revisions use the normalized table and the contract evidence window is complete.
 
 ## Activation sequence
 
-1. Apply migrations `000040` through `000044` while `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`.
+1. Apply migrations `000040` through `000045` while `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`.
 2. Run `scripts/bootstrap-hub-database.sh` before migration `000044` in Cloud SQL, then verify Battle Hub can read the safe active-action view.
 3. Deploy Battle Bus with the durable queue disabled and legacy projection enabled; confirm no old drain revision receives traffic.
 4. Set the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=true` and deploy again.
@@ -81,16 +81,44 @@ These are non-secret runtime settings. The defaults are appropriate for the curr
 - A successful enqueue returns an `action_id`; a repeated producer event returns the same ID.
 - `publishing` rows always have a lease token and expiry.
 - `published` rows have `published_at`; `superseded` rows have `superseded_at`.
-- `dead_letter` rows require operator investigation and replay tooling before cutover.
+- `dead_letter` rows are visible in Battle Hub without payloads and require operator investigation before replay.
 - An elevated count of expired publishing leases indicates publication or database acknowledgement failures.
 - Compare retained legacy arrays with normalized rows during the rollback window; an action missing from the normalized queue indicates malformed input or import lag.
-- Battle Hub reads only `battle_hub_pending_lifecycle_actions`; payloads and terminal rows are never exposed through that view.
+- Battle Hub reads only `battle_hub_pending_lifecycle_actions`; active and dead-letter states are visible, but payloads and completed rows are never exposed through that view.
+
+## Dead-letter resolution
+
+Dead-letter replay is an owner-only database operation and is always recorded in
+`pending_lifecycle_action_resolutions`. Battle Bus and Battle Hub runtime roles
+cannot execute it or read the audit table.
+
+1. Identify the action in Battle Hub and correlate `last_error` with Cloud Run,
+   Inngest, and downstream provider logs.
+2. Confirm the provider outcome and fix the underlying configuration or outage.
+   Do not replay an unresolved provider write with an unknown outcome.
+3. From a trusted Cloud SQL administrator session, execute:
+
+   ```sql
+   SELECT public.requeue_pending_lifecycle_action(
+     '<action-id>'::uuid,
+     'INC-1234: provider outcome verified; corrected configuration'
+   );
+   ```
+
+4. Verify that the action is `queued`, its attempt budget was reset, and an audit
+   row records the database identity, previous attempt count, reason, and time.
+5. Observe the next drain through publication and downstream idempotency checks.
+
+The procedure accepts only `dead_letter` rows and requires a meaningful reason.
+It preserves the stable `action_id` and source identity, so replay does not create
+a new downstream identity. Never update queue state directly or delete queue or
+audit rows to bypass an unresolved failure.
 
 ## Files
 
 | File                                                   | Responsibility                                      |
 | ------------------------------------------------------ | --------------------------------------------------- |
-| `db/migrations/000040_*` through `000044_*`            | Queue schema, indexes, runtime access, and rollback |
+| `db/migrations/000040_*` through `000045_*`            | Queue schema, indexes, runtime access, and rollback |
 | `src/lib/services/pending-actions.ts`                  | Validation, enqueue, claim, acknowledgement, retry  |
 | `src/lib/sql/pending-actions/`                         | Atomic PostgreSQL queue operations                  |
 | `src/inngest/functions/drain-pending-actions.ts`       | Scheduled import, batch publication, and metrics    |
