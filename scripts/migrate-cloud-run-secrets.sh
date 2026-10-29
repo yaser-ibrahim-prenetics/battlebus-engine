@@ -94,6 +94,27 @@ while IFS= read -r env_name; do
       continue
       ;;
     secret)
+      if [[ -n "${explicit_binding}" ]]; then
+        current_binding="$(jq -r --arg name "${env_name}" '
+          .spec.template.spec.containers[0].env[]
+          | select(.name == $name)
+          | .valueFrom.secretKeyRef
+          | (((.secret // .name // "") | split("/") | last) + ":" + (.version // .key // ""))
+        ' "${service_json}")"
+        if [[ "${current_binding}" != "${explicit_binding}" ]]; then
+          printf 'Existing Secret Manager binding for %s does not match pinned binding: %s != %s\n' \
+            "${env_name}" "${current_binding}" "${explicit_binding}" >&2
+          exit 1
+        fi
+        secret_id="${explicit_binding%:*}"
+        secret_version="${explicit_binding##*:}"
+        secret_state="$(gcloud secrets versions describe "${secret_version}" \
+          --secret="${secret_id}" --project="${project_id}" --format='value(state)')"
+        if [[ "${secret_state}" != "ENABLED" ]]; then
+          printf 'Pinned secret version is not enabled for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
+          exit 1
+        fi
+      fi
       already_managed_names+=("${env_name}")
       continue
       ;;
