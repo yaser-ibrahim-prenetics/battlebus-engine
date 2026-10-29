@@ -6,6 +6,8 @@
  * acknowledge that exact lease afterwards. Failed attempts use bounded
  * exponential backoff; exhausted rows become operator-visible dead letters.
  */
+import { createHash } from "node:crypto";
+
 import { isDatabaseConfigured, queryDatabase, quoteIdentifier } from "@/lib/db/database";
 import { createClaimWebhookInboxEntriesSQL } from "@/lib/sql/webhook-inbox/claim";
 import {
@@ -79,6 +81,21 @@ function databaseAvailable(): boolean {
 function errorCategory(error: unknown): string {
   if (error instanceof Error && error.name) return error.name;
   return "unknown_error";
+}
+
+export type WebhookPayloadFingerprint = {
+  sha256: string;
+  byteLength: number;
+};
+
+/** Persist only a content fingerprint; replay uses the separately minimized events. */
+export function fingerprintWebhookPayload(payload: unknown): WebhookPayloadFingerprint {
+  const serialized =
+    typeof payload === "string" ? payload : (JSON.stringify(payload ?? null) ?? "null");
+  return {
+    sha256: createHash("sha256").update(serialized).digest("hex"),
+    byteLength: Buffer.byteLength(serialized),
+  };
 }
 
 /** Validate persisted events before any publication or replay side effect. */
@@ -185,7 +202,7 @@ export async function recordInboxEntry(params: RecordInboxEntryParams): Promise<
       [
         params.source,
         params.topic ?? null,
-        params.payload ?? {},
+        fingerprintWebhookPayload(params.payload),
         params.headers ?? {},
         params.events ?? [],
         published ? "published" : "received",
@@ -290,11 +307,14 @@ export async function markInboxFailed(
   }
 }
 
-/** Requeue one terminal dead letter. The recovery command is the audit trail. */
-export async function requeueWebhookInboxDeadLetter(inboxId: string): Promise<boolean> {
+/** Requeue one terminal dead letter exactly once per audited recovery command. */
+export async function requeueWebhookInboxDeadLetter(
+  inboxId: string,
+  recoveryRequestId: string
+): Promise<boolean> {
   try {
     if (!databaseAvailable()) return false;
-    const result = await queryDatabase(requeueDeadLetterSQL, [inboxId]);
+    const result = await queryDatabase(requeueDeadLetterSQL, [inboxId, recoveryRequestId]);
     return result.rowCount === 1;
   } catch (error) {
     console.warn(`[WebhookInbox] Dead-letter replay failed: ${errorCategory(error)}`);

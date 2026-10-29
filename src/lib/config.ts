@@ -316,6 +316,8 @@ export const config = {
 
   // Webhook inbox drain sweep (safety net for inngest.send() failures)
   webhookInbox: {
+    // Disabled by default for expand/deploy activation and runtime-only rollback.
+    durableDeliveryEnabled: process.env.WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED === "true",
     // 1-59 minutes (default 5). This powers the cron schedule for drain-webhook-inbox.
     drainIntervalMinutes: clampInt(
       safeParseInt(process.env.WEBHOOK_INBOX_DRAIN_INTERVAL_MINUTES, 5),

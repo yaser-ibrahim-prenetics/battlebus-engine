@@ -82,6 +82,20 @@ describe.skipIf(!connectionString)("webhook inbox PostgreSQL contract", () => {
     expect(first.rows[0].lease_token).not.toBe(second.rows[0].lease_token);
   });
 
+  it("keeps compatibility and hardened rollout workers on disjoint receipts", async () => {
+    const firstId = await insertReceipt();
+    const secondId = await insertReceipt();
+
+    const [compatibility, hardened] = await Promise.all([
+      claim(1, 120, 2_000_000_000),
+      claim(1, 120, 3),
+    ]);
+    const ids = [...compatibility.rows, ...hardened.rows].map((row) => row.id);
+
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids)).toEqual(new Set([firstId, secondId]));
+  });
+
   it("acknowledges only the exact active lease token", async () => {
     const id = await insertReceipt();
     const entry = (await claim(1, 120, 3, id)).rows[0];
@@ -133,8 +147,14 @@ describe.skipIf(!connectionString)("webhook inbox PostgreSQL contract", () => {
     expect(terminal.rows[0].dead_lettered_at).toBeInstanceOf(Date);
     expect((await claim(1, 120, 2, id)).rows).toHaveLength(0);
 
-    const replayed = await pool.query<{ replay_count: number }>(requeueSQL, [id]);
+    const replayRequestId = randomUUID();
+    const replayed = await pool.query<{ replay_count: number }>(requeueSQL, [id, replayRequestId]);
     expect(replayed.rows[0].replay_count).toBe(1);
+    const idempotentReplay = await pool.query<{ replay_count: number }>(requeueSQL, [
+      id,
+      replayRequestId,
+    ]);
+    expect(idempotentReplay.rows[0].replay_count).toBe(1);
     const replayClaim = (await claim(1, 120, 2, id)).rows[0];
     expect(replayClaim.attempts).toBe(1);
   });

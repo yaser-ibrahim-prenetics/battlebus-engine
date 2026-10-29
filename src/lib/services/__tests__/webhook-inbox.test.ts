@@ -2,11 +2,24 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyWebhookInboxDeliveryFailure,
+  fingerprintWebhookPayload,
   validateWebhookInboxEvents,
   webhookInboxRetryDelaySeconds,
 } from "../webhook-inbox";
 
 describe("webhook inbox delivery policy", () => {
+  it("persists a content fingerprint instead of the raw provider payload", () => {
+    const fingerprint = fingerprintWebhookPayload({
+      customer: { email: "private@example.com" },
+      token: "secret-token",
+    });
+
+    expect(fingerprint.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(fingerprint.byteLength).toBeGreaterThan(0);
+    expect(JSON.stringify(fingerprint)).not.toContain("private@example.com");
+    expect(JSON.stringify(fingerprint)).not.toContain("secret-token");
+  });
+
   it("requires stable, bounded event identities", () => {
     expect(
       validateWebhookInboxEvents([

@@ -16,7 +16,8 @@ webhook receipt created after signature verification and before Inngest publicat
 - Retryable failures use bounded exponential backoff. Permanent HTTP 4xx failures, except 408,
   409, 425 and 429, dead-letter immediately.
 - Raw provider errors, credentials, signatures and payload contents are not copied into
-  `last_error`. Only a safe error category is retained.
+  inbox metadata or `last_error`. The inbox retains only replay-required events, a SHA-256
+  payload fingerprint, bounded content length and allowlisted correlation headers.
 
 The existing database `status` values remain backward-compatible. A non-null `lease_token`
 represents active processing; a failed row with non-null `dead_lettered_at` represents a dead
@@ -26,6 +27,7 @@ letter.
 
 | Variable                                 | Default |    Bounds | Purpose                        |
 | ---------------------------------------- | ------: | --------: | ------------------------------ |
+| `WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED` |   false |       n/a | Activate backoff/dead letters  |
 | `WEBHOOK_INBOX_DRAIN_INTERVAL_MINUTES`   |       5 |      1–59 | Scheduled sweep frequency      |
 | `WEBHOOK_INBOX_CLAIM_BATCH_SIZE`         |      50 |     1–500 | Receipts claimed per sweep     |
 | `WEBHOOK_INBOX_LEASE_SECONDS`            |     120 |    30–900 | Crash-recovery lease duration  |
@@ -38,6 +40,11 @@ letter.
 When a claim fills the configured batch, the function emits one successor drain event. Backed-off,
 leased and dead-letter rows are not selected by that successor, so a poison receipt cannot starve
 newer work or create an unbounded retry loop.
+
+The rollout flag is disabled by default. Both modes use exact database leases so a disabled
+revision and an enabled revision cannot claim the same receipt. While disabled, failures remain
+immediately retryable and do not enter the bounded dead-letter policy. Enabling the flag activates
+bounded backoff, attempt limits, dead letters and published-row retention.
 
 ## Dead-letter recovery
 
@@ -66,10 +73,22 @@ they can become eligible for normal published retention.
 ## Deployment and rollback
 
 1. Apply migration `000048_harden_webhook_inbox_delivery` before deploying the runtime.
-2. Deploy the zero-traffic candidate and verify readiness before promotion.
-3. Confirm the operations health view reports no unexpected dead letters or expired leases.
-4. Keep stable event IDs unchanged across rollout; they are the protection if an old in-flight
+2. First deploy and promote the runtime with `WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED=false`.
+   This replaces the pre-PR drainer and registers the lease-compatible function without activating
+   the new retry policy.
+3. Confirm the prior revision has zero traffic, the post-promotion Inngest sync succeeded, and the
+   operations health view reports no expired leases. The deployment workflow refuses first-release
+   activation when the currently deployed Cloud Run template does not contain the rollout flag.
+4. Set the GitHub repository variable `WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED=true` and run a
+   second deployment. Mixed disabled/enabled revisions remain safe because both require an exact
+   lease token.
+5. Confirm the operations health view reports no unexpected dead letters or expired leases.
+6. Keep stable event IDs unchanged across rollout; they are the protection if an old in-flight
    publisher loses its acknowledgement during promotion.
+
+For emergency runtime rollback of the retry policy, set the repository variable to `false` and
+deploy again. Exact leases remain active; backed-off rows become immediately eligible after their
+existing `next_attempt_at`, and existing dead letters remain held for audited replay.
 
 Before rolling back to a runtime older than PR 3, stop new webhook traffic and require this query to
 return zero for both counters:

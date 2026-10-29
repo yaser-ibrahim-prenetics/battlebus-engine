@@ -24,16 +24,20 @@ export async function executeRecoveryCommand(command: RecoveryCommand) {
     ).rows[0];
     if (!row) throw new Error("Inbox entry missing");
     if (row.status === "published") return { alreadyPublished: true };
-    if (row.status !== "failed" || !row.dead_lettered_at)
-      throw new Error("Inbox replay is restricted to terminal dead letters");
-    const requeued = await requeueWebhookInboxDeadLetter(row.id);
+    const requeued = await requeueWebhookInboxDeadLetter(row.id, command.id);
     if (!requeued) throw new Error("Inbox dead letter is no longer replayable");
-    const sent = await inngest.send({
-      id: `replay-inbox:${command.id}`,
-      name: "webhook/inbox.drain",
-      data: { inboxId: row.id },
-    });
-    return { eventIds: sent.ids, requeued: true };
+    try {
+      const sent = await inngest.send({
+        id: `replay-inbox:${command.id}`,
+        name: "webhook/inbox.drain",
+        data: { inboxId: row.id },
+      });
+      return { eventIds: sent.ids, requeued: true };
+    } catch {
+      // The row is already durable and due; the scheduled drain will pick it
+      // up even if this wake-up event is temporarily unavailable.
+      return { eventIds: [], requeued: true, deliveryDeferred: true };
+    }
   }
   if (operation.operation === "resume_order") {
     // Uses the existing fresh-Shopify validation and durable segment/action guards.
