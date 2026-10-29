@@ -45,3 +45,23 @@ COMMENT ON COLUMN public.pending_lifecycle_actions.source_event_id IS
   'Stable producer event ID used with order_id and action_type to deduplicate enqueue attempts.';
 COMMENT ON COLUMN public.pending_lifecycle_actions.action_id IS
   'Stable queue identity reused as the emitted Inngest event ID across retries.';
+
+CREATE OR REPLACE FUNCTION public.battle_platform_scrub_pending_action_payload()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF NEW.status IN ('published', 'superseded') THEN
+    NEW.event_data := '{}'::jsonb;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER battle_platform_scrub_pending_action_payload
+  BEFORE INSERT OR UPDATE ON public.pending_lifecycle_actions
+  FOR EACH ROW EXECUTE FUNCTION public.battle_platform_scrub_pending_action_payload();
+
+COMMENT ON FUNCTION public.battle_platform_scrub_pending_action_payload() IS
+  'Removes lifecycle event payloads when queue rows reach a non-replayable terminal state.';
