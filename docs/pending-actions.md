@@ -1,116 +1,86 @@
-# Pending Actions (Stacked Order Lifecycle)
+# Pending Lifecycle Actions
 
-## Problem
+## Purpose
 
-Shopify can fire lifecycle events (`orders/fulfilled`, `orders/cancelled`, `refunds/create`) before Battle Bus has finished creating the D365 and GPS records for an order. When this happens, the downstream Inngest functions previously returned silently (e.g. `no_d365_order`) and the action was lost — leaving D365/GPS permanently out of sync.
+Shopify can send fulfillment or cancellation events before Battle Bus has created the required D365 or GPS record. Battle Bus persists those actions and replays them after the downstream record can be addressed instead of silently losing the lifecycle change.
 
-## Solution
+## Durable queue contract
 
-A **pending actions queue** stores these out-of-order events in the Supabase `orders.pending_actions` JSONB column. When the order creation flow completes, it emits an `order/lifecycle.ready` event that triggers the `drain-pending-actions` function. This function reads the stored actions, re-emits the original events (with a `fromDrain: true` flag), and clears the queue.
+`public.pending_lifecycle_actions` is the source of truth. Each row has:
 
-## Architecture
+- a stable `action_id`, reused as the Inngest event ID on every publication attempt;
+- a producer `source_event_id`, deduplicated with `order_id` and `action_type`;
+- the canonical event name and data;
+- a generated priority: cancel, refund, then fulfill;
+- queue status, attempt count, availability time, and version;
+- a lease token and expiry while a worker owns the action; and
+- terminal publication, supersession, or dead-letter state.
 
-```
-Shopify Webhook            Inngest Functions                 Supabase
-─────────────────          ──────────────────                ────────
-orders/fulfilled  ──────>  process-shopify-fulfillment
-                             │
-                             ├─ D365 exists? ──> process normally
-                             │
-                             └─ D365 missing? ──> store in ──> orders.pending_actions
-                                                               [{ action: "fulfill", ... }]
+The runtime database role can select, insert, and update queue rows. It cannot delete them. Anonymous and authenticated application roles cannot read the table.
 
-orders/created    ──────>  process-shopify-order
-                             │
-                             └─ on success ──> emit order/lifecycle.ready
-                                                   │
-                                                   └──> drain-pending-actions
-                                                          │
-                                                          ├─ read pending_actions
-                                                          ├─ re-emit events (fromDrain: true)
-                                                          └─ clear pending_actions
-```
+## Processing flow
 
-## Event: `order/lifecycle.ready`
+```text
+Shopify event
+  -> lifecycle handler cannot address D365/GPS record
+  -> enqueue with original Inngest event ID
+  -> PostgreSQL deduplicates the producer retry
 
-Emitted by:
-
-- `process-shopify-order` — after successful D365 + GPS creation
-- `process-backorder` — after successful GPS retry (manual or auto)
-
-Data:
-
-```typescript
-{
-  shopifyOrderId: string;
-  shopifyOrderName: string;
-  shopifyStore: string;
-  d365OrderNumber: string;
-  warehouseName: string;
-  dataAreaId: string;
-}
+Scheduled drain
+  -> import valid legacy JSON actions under row locks
+  -> supersede fulfillment when cancellation is pending
+  -> claim a bounded batch with FOR UPDATE SKIP LOCKED
+  -> assign a time-limited lease
+  -> batch-publish events using pending-action-<action_id>
+  -> acknowledge each exact action_id + lease_token
 ```
 
-## Pending Action Shape
+If publication is uncertain, the claimed rows return to the queue with exponential backoff. If acknowledgement fails after publication, the lease expires and another worker republishes the same stable event ID. That provides at-least-once delivery without creating a new downstream identity.
 
-Stored in `orders.pending_actions` (JSONB array):
+## Cancellation priority
 
-```typescript
-{
-  action: "fulfill" | "cancel" | "refund";
-  eventName: string; // Original Inngest event name
-  eventData: object; // Original event.data payload
-  createdAt: string; // ISO timestamp when deferred
-}
-```
+A queued or expired fulfillment is marked `superseded` when the same order has an active or published cancellation. Claim selection also excludes conflicting fulfillment rows, so a backlog larger than one sweep cannot bypass the rule.
 
-## Edge Cases
+An already active, unexpired fulfillment lease is not stolen. This keeps lease ownership correct; downstream handlers must remain idempotent for the narrow cancellation-versus-publication race.
 
-| Scenario                              | Behavior                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Order creation fails permanently      | Actions stay queued. Manual rerun of order creation drains on success.                                |
-| Multiple fulfillments/refunds stacked | Each is a separate array entry; drain emits all.                                                      |
-| Cancel + fulfill both pending         | Cancel takes priority; drain skips fulfillment events.                                                |
-| Action already processed              | Idempotency keys on re-emitted events prevent double-processing.                                      |
-| Drain fires but D365 still missing    | Functions detect `fromDrain: true` and return `failed` instead of deferring again (no infinite loop). |
-| Backorder resolves                    | `process-backorder` emits `order/lifecycle.ready`, triggering drain.                                  |
+## Legacy rollout bridge
 
-## Battle Hub Visibility
+`orders.pending_actions` remains during the expand phase so older Battle Bus or Battle Hub revisions can finish a rolling deployment safely. Before each claim, the drain:
 
-Pending actions are visible to operators in Battle Hub:
+1. locks a bounded set of order rows with non-empty, fully valid JSON action arrays;
+2. inserts each action into the normalized queue with a deterministic legacy source ID; and
+3. clears exactly those locked arrays in the same SQL statement.
 
-- `OrderDetailDialog` shows a pending-actions indicator when `orders.pending_actions` is non-empty.
-- The indicator summarizes queued action counts (fulfill/cancel/refund) and explains they are drained after order creation succeeds.
-- Order details also show live step progress from `order-events-store` so operators can see when drain processing is running/completed.
+A concurrent legacy append waits for the row lock and remains in the array for the next sweep. Malformed arrays are not cleared, preventing silent loss. Remove the bridge and legacy column only after all writers and operator views use the normalized table.
 
-This prevents "silent queue" behavior and gives clear operational visibility while the order is waiting for D365/GPS creation.
+## Configuration
 
-## Hub API
+| Variable                                    | Default | Range  | Purpose                              |
+| ------------------------------------------- | ------: | ------ | ------------------------------------ |
+| `PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES`    |      10 | 1-59   | Scheduled sweep interval             |
+| `PENDING_ACTIONS_CLAIM_BATCH_SIZE`          |     100 | 1-500  | Maximum actions claimed per sweep    |
+| `PENDING_ACTIONS_LEASE_SECONDS`             |     120 | 30-900 | Claim ownership window               |
+| `PENDING_ACTIONS_MAX_ATTEMPTS`              |      10 | 1-100  | Attempts before dead-letter state    |
+| `PENDING_ACTIONS_LEGACY_IMPORT_ORDER_LIMIT` |     100 | 1-500  | Legacy order rows imported per sweep |
 
-`/api/orders/pending-actions` — service-secret protected
+These are non-secret runtime settings. The defaults are appropriate for the current Cloud Run and Cloud SQL footprint.
 
-- `GET ?shopifyOrderId=X` — returns `{ actions: PendingAction[] }`
-- `PATCH { shopifyOrderId, operation: "append", action }` — adds an action
-- `PATCH { shopifyOrderId, operation: "clear" }` — clears all actions
+## Operational checks
 
-## Database
-
-```sql
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_actions JSONB DEFAULT '[]'::jsonb;
-```
+- A successful enqueue returns an `action_id`; a repeated producer event returns the same ID.
+- `publishing` rows always have a lease token and expiry.
+- `published` rows have `published_at`; `superseded` rows have `superseded_at`.
+- `dead_letter` rows require operator investigation and replay tooling before cutover.
+- An elevated count of expired publishing leases indicates publication or database acknowledgement failures.
+- Non-empty legacy arrays after several sweeps indicate malformed payloads or a legacy writer that is still active.
 
 ## Files
 
-| File                                                           | Role                                                             |
-| -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `inngest/src/inngest/events.ts`                                | `OrderLifecycleReadyEvent` type definition                       |
-| `inngest/src/lib/services/pending-actions.ts`                  | `storePendingAction`, `getPendingActions`, `clearPendingActions` |
-| `inngest/src/inngest/functions/drain-pending-actions.ts`       | Drains queued actions on `order/lifecycle.ready`                 |
-| `inngest/src/inngest/functions/process-shopify-fulfillment.ts` | Defers fulfillment when D365 missing                             |
-| `inngest/src/inngest/functions/process-order-cancellation.ts`  | Defers cancellation when D365+GPS both missing                   |
-| `inngest/src/inngest/functions/process-refund.ts`              | Defers refund when D365 missing                                  |
-| `inngest/src/inngest/functions/process-shopify-order.ts`       | Emits `order/lifecycle.ready` on success                         |
-| `inngest/src/inngest/functions/process-backorder.ts`           | Emits `order/lifecycle.ready` on GPS success                     |
-| `hub/api/orders/pending-actions.ts`                            | Hub API for reading/writing pending actions                      |
-| `hub/supabase/migrations/002_add_pending_actions.sql`          | Schema migration                                                 |
-| `hub/src/features/orders/components/order-detail-dialog.tsx`   | UI indicator for queued pending actions                          |
+| File                                                   | Responsibility                                     |
+| ------------------------------------------------------ | -------------------------------------------------- |
+| `db/migrations/000040_*` through `000042_*`            | Queue schema, indexes, access policy, and rollback |
+| `src/lib/services/pending-actions.ts`                  | Validation, enqueue, claim, acknowledgement, retry |
+| `src/lib/sql/pending-actions/`                         | Atomic PostgreSQL queue operations                 |
+| `src/inngest/functions/drain-pending-actions.ts`       | Scheduled import, batch publication, and metrics   |
+| `src/inngest/functions/process-order-cancellation.ts`  | Cancellation producer                              |
+| `src/inngest/functions/process-shopify-fulfillment.ts` | Fulfillment producer                               |
