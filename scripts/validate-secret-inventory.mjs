@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const inventoryPath = "config/gcp-secret-env-names.txt";
+const bindingsPath = "config/gcp-secret-bindings.txt";
 const inventory = new Set(
   readFileSync(inventoryPath, "utf8")
     .split(/\r?\n/)
@@ -20,11 +21,7 @@ const sourceFiles = execFileSync("git", ["ls-files", "src", "scripts"], {
 const isCredentialName = (name) =>
   /(?:^|_)(?:SECRET|TOKEN|PASSWORD|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)/.test(name) ||
   (/^SLACK_.+_CHANNEL$/.test(name) && !name.startsWith("SLACK_TEST_")) ||
-  [
-    "INNGEST_EVENT_KEY",
-    "INNGEST_SIGNING_KEY",
-    "LOOP_WEBHOOK_KEY",
-  ].includes(name);
+  ["INNGEST_EVENT_KEY", "INNGEST_SIGNING_KEY", "LOOP_WEBHOOK_KEY"].includes(name);
 
 const discovered = new Set();
 for (const file of sourceFiles) {
@@ -49,4 +46,22 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+const bindingNames = new Set();
+for (const rawLine of readFileSync(bindingsPath, "utf8").split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#")) continue;
+  const match = line.match(/^([A-Z][A-Z0-9_]*)=([a-z0-9-]+):([1-9][0-9]*)$/);
+  if (!match) {
+    console.error(`Invalid pinned GCP secret binding: ${line}`);
+    process.exit(1);
+  }
+  const envName = match[1];
+  if (!inventory.has(envName) || bindingNames.has(envName)) {
+    console.error(`Pinned GCP secret binding is missing from inventory or duplicated: ${envName}`);
+    process.exit(1);
+  }
+  bindingNames.add(envName);
+}
+
 console.log(`Validated ${discovered.size} credential environment names in ${inventoryPath}`);
+console.log(`Validated ${bindingNames.size} pinned GCP secret bindings in ${bindingsPath}`);
