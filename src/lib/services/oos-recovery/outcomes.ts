@@ -9,12 +9,14 @@ export type OosRecoveryOutcome = {
 export type OosRetryContext = {
   provider: "gps" | "d365";
   warehouse: string;
-  blockedLineIds: string[];
+  blockedItems: Array<{ orderLineId: string; providerSku: string }>;
+  manualReview: boolean;
 };
 
 export async function loadOosRetryContext(params: {
   shopifyStore: string;
   orderId: string;
+  includeManualReview?: boolean;
 }): Promise<OosRetryContext | null> {
   const pool = await getDatabasePool();
   if (!pool) return null;
@@ -22,13 +24,15 @@ export async function loadOosRetryContext(params: {
     provider: "gps" | "d365";
     warehouse: string;
     order_line_id: string;
+    sku: string;
+    status: string;
   }>(
-    `SELECT provider, warehouse, order_line_id
+    `SELECT provider, warehouse, order_line_id, sku, status
      FROM public.oos_recovery_dependencies
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND status IN ('parked', 'leased', 'retrying')
+       AND (status IN ('parked', 'leased', 'retrying') OR ($3 AND status = 'manual_review'))
      ORDER BY first_parked_at, id`,
-    [params.shopifyStore, params.orderId]
+    [params.shopifyStore, params.orderId, params.includeManualReview ?? false]
   );
   if (result.rows.length === 0) return null;
   const provider = result.rows[0].provider;
@@ -39,8 +43,37 @@ export async function loadOosRetryContext(params: {
   return {
     provider,
     warehouse,
-    blockedLineIds: [...new Set(result.rows.map((row) => row.order_line_id))].sort(),
+    blockedItems: result.rows
+      .map((row) => ({ orderLineId: row.order_line_id, providerSku: row.sku }))
+      .sort((a, b) =>
+        `${a.orderLineId}:${a.providerSku}`.localeCompare(`${b.orderLineId}:${b.providerSku}`)
+      ),
+    manualReview: result.rows.some((row) => row.status === "manual_review"),
   };
+}
+
+export async function rearmManualReviewOosDependencies(params: {
+  shopifyStore: string;
+  orderId: string;
+  retentionDays: number;
+}): Promise<number> {
+  const pool = await getDatabasePool();
+  if (!pool) throw new Error("OOS manual recovery requires the configured PostgreSQL database");
+  const result = await pool.query(
+    `UPDATE public.oos_recovery_dependencies
+     SET status = 'retrying', manual_review_at = NULL, resolved_at = NULL,
+       attempt_count = attempt_count + 1, last_attempt_at = now(), cooldown_until = NULL,
+       next_attempt_at = now(), expires_at = GREATEST(
+         expires_at,
+         now() + make_interval(days => $3)
+       ),
+       lease_owner = NULL, lease_token = NULL, lease_until = NULL,
+       last_error_code = 'manual_rearmed', version = version + 1
+     WHERE lower(shopify_store) = lower($1) AND order_id = $2
+       AND status = 'manual_review'`,
+    [params.shopifyStore, params.orderId, Math.max(1, params.retentionDays)]
+  );
+  return result.rowCount ?? 0;
 }
 
 async function updateOrderState(

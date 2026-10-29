@@ -48,6 +48,7 @@ import {
 import {
   loadOosRetryContext,
   moveOosDependenciesToManualReview,
+  rearmManualReviewOosDependencies,
   reparkOosDependencies,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
@@ -123,12 +124,15 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     event.name === "backorder/retry" ||
     event.data.triggeredBy === "manual" ||
     event.data.triggeredBy === "manual_bulk";
+  const isHubManualRetry =
+    event.data.triggeredBy === "manual" || event.data.triggeredBy === "manual_bulk";
   const storedOosContext =
     config.oosRecovery?.enabled && event.name === "backorder/retry"
       ? await step.run("load-targeted-oos-retry-context", () =>
           loadOosRetryContext({
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
+            includeManualReview: isHubManualRetry,
           })
         )
       : null;
@@ -395,6 +399,15 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
   if (isManualRetryRequest) {
     const manualAttempt = retryCount + 1;
     const lease = await acquireLease(`manual-retry:${manualAttempt}`);
+    if (storedOosContext?.manualReview && isHubManualRetry) {
+      await step.run("rearm-manual-review-oos-dependencies", () =>
+        rearmManualReviewOosDependencies({
+          shopifyStore: shop,
+          orderId: String(shopifyOrderId),
+          retentionDays: config.oosRecovery.retentionDays,
+        })
+      );
+    }
     const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
       await renewBackorderRecoveryLease(lease);
       try {
@@ -412,16 +425,26 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               isInventoryError: false,
             };
           }
-          const blockedLineIds = new Set(
-            storedOosContext?.blockedLineIds ??
-              (Array.isArray(event.data.blockedLineIds)
-                ? event.data.blockedLineIds.map((id: unknown) => String(id))
-                : [])
+          const blockedItems: Array<{ orderLineId: string; providerSku: string }> =
+            storedOosContext?.blockedItems ??
+            (Array.isArray(event.data.blockedItems)
+              ? event.data.blockedItems.map(
+                  (item: { orderLineId?: unknown; providerSku?: unknown }) => ({
+                    orderLineId: String(item.orderLineId ?? ""),
+                    providerSku: String(item.providerSku ?? "").toUpperCase(),
+                  })
+                )
+              : []);
+          const blockedIdentities = new Set(
+            blockedItems.map(
+              (item) => `${item.orderLineId}:${item.providerSku.trim().toUpperCase()}`
+            )
           );
-          if (blockedLineIds.size === 0) {
+          if (blockedIdentities.size === 0) {
             return {
               success: false,
-              error: "Targeted D365 retry is missing blocked Shopify line identifiers",
+              error:
+                "Targeted D365 retry is missing exact blocked line and provider SKU identities",
               isInventoryError: false,
             };
           }
@@ -435,7 +458,11 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             d365Company,
             accounting,
             false
-          ).filter((line) => line.sourceLineId && blockedLineIds.has(line.sourceLineId));
+          ).filter(
+            (line) =>
+              line.sourceLineId &&
+              blockedIdentities.has(`${line.sourceLineId}:${line.itemNumber.trim().toUpperCase()}`)
+          );
           if (blockedLines.length === 0) {
             return {
               success: false,
@@ -457,9 +484,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyStore: shop,
               orderJson: order,
               receivedAt: new Date().toISOString(),
+              oosRecoveryReplay: true,
             },
           });
-          return { success: true, replayDispatched: true };
+          return { success: true, replayDispatched: true, deferResolution: true };
         }
         if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
           await inngest.send({
@@ -543,6 +571,22 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     await step.run(`release-manual-retry-lease-${manualAttempt}`, () => releaseLease(lease));
 
     if (retryResult.success) {
+      if ((retryResult as { deferResolution?: boolean }).deferResolution) {
+        await step.run("notify-targeted-oos-replay-dispatched", () =>
+          slack.sendOrderMessage(
+            SlackChannelEnum.SHOPIFY,
+            `Backorder replay dispatched after D365 inventory recovery: ${shopifyOrderName}`,
+            slack.slackNotificationId(event.id, "backorder-replay-dispatched", manualAttempt)
+          )
+        );
+        return {
+          status: "replay_dispatched",
+          shopifyOrderId,
+          shopifyOrderName,
+          retryCount: manualAttempt,
+          processedAt: new Date().toISOString(),
+        };
+      }
       if (isTargetedRecovery) {
         await step.run("resolve-targeted-oos-dependencies", () =>
           resolveOosDependencies({

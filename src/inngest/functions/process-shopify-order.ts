@@ -85,6 +85,10 @@ import {
   type InventoryFailureCategory,
 } from "@/lib/services/oos-recovery/inventory-failure";
 import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
+import {
+  moveOosDependenciesToManualReview,
+  resolveOosDependencies,
+} from "@/lib/services/oos-recovery/outcomes";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -972,6 +976,7 @@ export const processShopifyOrder = inngest.createFunction(
     if (segmented) return segmented;
 
     let salesOrderNumber: string | undefined;
+    const isOosRecoveryReplay = config.oosRecovery.enabled && event.data.oosRecoveryReplay === true;
     /** Captured from D365 line create responses — persisted on Hub `orders.state` for fulfillment Lotid fallback. */
     let d365InventoryLotsBySku: Record<string, string> = {};
     try {
@@ -1777,6 +1782,7 @@ export const processShopifyOrder = inngest.createFunction(
                   retryMode: "gps_outbound",
                   backorderQueue: "sync",
                   maxRetries: config.oosRecovery.maxAttempts,
+                  resolvedProviderBeforeParking: isOosRecoveryReplay ? "d365" : undefined,
                 },
                 retentionDays: config.oosRecovery.retentionDays,
               });
@@ -1864,6 +1870,38 @@ export const processShopifyOrder = inngest.createFunction(
             : gpsRetryResult.type === "skipped"
               ? "skipped"
               : "failed";
+
+        if (isOosRecoveryReplay) {
+          if (gpsRetryResult.type === "failed") {
+            await step.run("manual-review-oos-replay-failure", () =>
+              moveOosDependenciesToManualReview({
+                shopifyStore: canonicalShopifyStore,
+                orderId: shopifyOrderId,
+                errorCode: "downstream_replay_failure",
+              })
+            );
+          } else {
+            await step.run("resolve-successful-oos-replay", () =>
+              resolveOosDependencies({
+                shopifyStore: canonicalShopifyStore,
+                orderId: shopifyOrderId,
+              })
+            );
+            await step.run("emit-resolved-successful-oos-replay", () =>
+              inngest.send({
+                id: `oos-replay-resolved:${event.id}`,
+                name: "backorder/resolved",
+                data: {
+                  shopifyOrderId,
+                  shopifyOrderName,
+                  shopifyStore: canonicalShopifyStore,
+                  resolvedAt: new Date().toISOString(),
+                  resolution: "manual",
+                },
+              })
+            );
+          }
+        }
 
         await publishResult("success", {
           d365OrderNumber: reusedSalesOrderNumber,

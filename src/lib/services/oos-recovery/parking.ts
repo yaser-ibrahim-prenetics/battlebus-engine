@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
-import type { InventoryDependency } from "./inventory-failure";
+import type { InventoryDependency, InventoryProvider } from "./inventory-failure";
 
 export type OosRecoveryContext = {
   d365OrderNumber?: string;
@@ -9,6 +9,8 @@ export type OosRecoveryContext = {
   failureStage?: "order_creation" | "fulfillment";
   retryMode?: "gps_outbound" | "fulfillment_replay";
   backorderQueue?: "sync" | "fulfilment";
+  /** Atomically close a recovered provider before parking a downstream provider failure. */
+  resolvedProviderBeforeParking?: InventoryProvider;
   maxRetries: number;
 };
 
@@ -100,6 +102,18 @@ export async function parkOosOrderWithClient(
     now.getTime() + Math.max(1, params.retentionDays) * 24 * 60 * 60 * 1000
   );
   const event = buildOosParkedEvent({ ...params, now });
+
+  if (params.context.resolvedProviderBeforeParking) {
+    await client.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET status = 'resolved', resolved_at = $4, cooldown_until = NULL,
+         lease_owner = NULL, lease_token = NULL, lease_until = NULL,
+         last_error_code = NULL, version = version + 1
+       WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND provider = $3
+         AND status IN ('parked', 'leased', 'retrying')`,
+      [first.shopifyStore, first.shopifyOrderId, params.context.resolvedProviderBeforeParking, now]
+    );
+  }
 
   await client.query(
     `INSERT INTO public.orders (
