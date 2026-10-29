@@ -1,0 +1,8 @@
+DROP FUNCTION public.discard_dead_letter_pending_lifecycle_action(uuid, text);
+DROP TRIGGER battle_platform_enforce_pending_action_transition
+  ON public.pending_lifecycle_actions;
+DROP FUNCTION public.battle_platform_enforce_pending_action_transition();
+DROP TABLE public.pending_lifecycle_action_discards;
+
+ALTER TABLE public.pending_lifecycle_actions
+  DROP CONSTRAINT pending_lifecycle_actions_event_data_size;

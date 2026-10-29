@@ -38,5 +38,12 @@ BEGIN
   IF to_regprocedure('public.pending_lifecycle_action_rollback_status()') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left pending-action rollback gate behind';
   END IF;
+
+  IF to_regprocedure('public.discard_dead_letter_pending_lifecycle_action(uuid,text)') IS NOT NULL
+    OR to_regprocedure('public.battle_platform_enforce_pending_action_transition()') IS NOT NULL
+    OR to_regclass('public.pending_lifecycle_action_discards') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'Rollback left pending-action hardening functions behind';
+  END IF;
 END
 $$;

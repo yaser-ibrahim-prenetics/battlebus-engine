@@ -286,7 +286,19 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
 
     await pool.query(
       `UPDATE public.pending_lifecycle_actions
-       SET status = 'published', published_at = now()
+       SET status = 'publishing',
+           attempts = attempts + 1,
+           lease_token = gen_random_uuid(),
+           lease_expires_at = now() + interval '2 minutes'
+       WHERE action_id = $1`,
+      [actionId]
+    );
+    await pool.query(
+      `UPDATE public.pending_lifecycle_actions
+       SET status = 'published',
+           published_at = now(),
+           lease_token = NULL,
+           lease_expires_at = NULL
        WHERE action_id = $1`,
       [actionId]
     );
@@ -295,5 +307,89 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       "SELECT * FROM public.pending_lifecycle_action_rollback_status()"
     );
     expect(afterSettlement.rows[0].safe_to_resume_legacy).toBe(true);
+  });
+
+  it("fails rollback closed on missing and stale legacy projections", async () => {
+    const queuedOrderId = `${orderPrefix}missing-projection`;
+    const queuedActionId = await insertAction({
+      orderId: queuedOrderId,
+      actionType: "refund",
+    });
+    const queuedSource = await pool.query<{ source_event_id: string }>(
+      "SELECT source_event_id FROM public.pending_lifecycle_actions WHERE action_id = $1",
+      [queuedActionId]
+    );
+
+    const missing = await pool.query<{
+      missing_queued_projections: string;
+      safe_to_resume_legacy: boolean;
+    }>("SELECT * FROM public.pending_lifecycle_action_rollback_status()");
+    expect(missing.rows[0]).toMatchObject({
+      missing_queued_projections: "1",
+      safe_to_resume_legacy: false,
+    });
+
+    await pool.query(
+      `INSERT INTO public.orders (id, order_number, title, pending_actions)
+       VALUES ($1, $1, $1, $2::jsonb)`,
+      [
+        queuedOrderId,
+        JSON.stringify([
+          {
+            action: "refund",
+            eventName: "test/refund",
+            eventData: { orderId: queuedOrderId },
+            sourceEventId: queuedSource.rows[0].source_event_id,
+          },
+        ]),
+      ]
+    );
+
+    const consistent = await pool.query<{ safe_to_resume_legacy: boolean }>(
+      "SELECT * FROM public.pending_lifecycle_action_rollback_status()"
+    );
+    expect(consistent.rows[0].safe_to_resume_legacy).toBe(true);
+
+    const terminalOrderId = `${orderPrefix}stale-projection`;
+    const terminalSourceId = "terminal-stale-source";
+    await pool.query(
+      `INSERT INTO public.pending_lifecycle_actions (
+         order_id, action_type, source_event_id, event_name, event_data,
+         status, published_at
+       ) VALUES ($1, 'refund', $2, 'test/refund', '{}'::jsonb, 'published', now())`,
+      [terminalOrderId, terminalSourceId]
+    );
+    await pool.query(
+      `INSERT INTO public.orders (id, order_number, title, pending_actions)
+       VALUES ($1, $1, $1, $2::jsonb)`,
+      [
+        terminalOrderId,
+        JSON.stringify([
+          {
+            action: "refund",
+            eventName: "test/refund",
+            eventData: { orderId: terminalOrderId },
+            sourceEventId: terminalSourceId,
+          },
+        ]),
+      ]
+    );
+
+    const stale = await pool.query<{
+      stale_terminal_projections: string;
+      safe_to_resume_legacy: boolean;
+    }>("SELECT * FROM public.pending_lifecycle_action_rollback_status()");
+    expect(stale.rows[0]).toMatchObject({
+      stale_terminal_projections: "1",
+      safe_to_resume_legacy: false,
+    });
+
+    await pool.query("UPDATE public.orders SET pending_actions = '[]'::jsonb WHERE id = $1", [
+      terminalOrderId,
+    ]);
+    const repaired = await pool.query<{ safe_to_resume_legacy: boolean }>(
+      "SELECT * FROM public.pending_lifecycle_action_rollback_status()"
+    );
+    expect(repaired.rows[0].safe_to_resume_legacy).toBe(true);
   });
 });
