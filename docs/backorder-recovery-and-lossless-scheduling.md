@@ -8,18 +8,25 @@ recovery run, and it removes Inngest rate limits that could discard valid lifecy
 
 - `process-backorder` consumes only `backorder/created`. When automatic recovery is enabled, it
   uses durable sleeps between bounded attempts.
-- `process-backorder-retry` consumes only `backorder/retry`. One event performs one immediate
-  recovery attempt; it never wakes the automatic worker.
+- `process-backorder-retry` consumes only `backorder/retry`. One event durably waits for an active
+  order lease, then performs exactly one recovery attempt; it never wakes the automatic worker.
 - Both workers retain per-store/per-order Inngest concurrency and acquire the same PostgreSQL
   order lease before dispatching or executing recovery work.
 - A lease is identified by the canonical Shopify store and Shopify order ID. Acquisition is
   atomic; a different worker cannot replace a live lease.
+- Lease ownership includes the exact token, stable operation key and worker identity. Every
+  provider mutation renews or reacquires that same ownership, so Inngest step replay cannot create
+  a second owner or contend with its own released lease.
 - Lease release requires the exact token. A crashed worker becomes recoverable after the bounded
-  expiry instead of leaving the order permanently locked.
+  expiry instead of leaving the order permanently locked. A competing event sleeps durably until
+  that expiry rather than consuming generic retries or discarding the requested attempt.
 - Manual and automatic replay events use deterministic event IDs derived from the source event and
-  attempt number. GPS mutations also remain protected by the fulfillment-action ledger.
+  attempt number.
 - Segmented order recovery uses the same lease and continues to validate fresh Shopify
-  eligibility before provider work.
+  eligibility while renewing ownership before provider work.
+- `BACKORDER_RETRY_ENABLED=false` stops both automatic and manual mutation paths before credentials,
+  database access or provider work. A manual resolution event also cancels a sleeping automatic
+  recovery run for the same order.
 
 The lease duration is configured with `BACKORDER_RECOVERY_LEASE_SECONDS`. The default is 600
 seconds and accepted values are clamped to 60–3,600 seconds. The default exceeds the Cloud Run
@@ -47,9 +54,11 @@ rate limit from being reintroduced to these workflows.
 2. Deploy the runtime and confirm both backorder functions are registered in Inngest.
 3. Keep `BACKORDER_AUTO_RETRY_ENABLED` at its existing value; this change does not enable automatic
    recovery by itself.
-4. Verify manual retry, duplicate retry and concurrent automatic/manual retry scenarios in the
-   development environment before production activation.
-5. To roll back, restore the previous runtime first. Drop migration 47 only after no new runtime
+4. Keep `BACKORDER_RETRY_ENABLED=true` only in environments where recovery is approved. Set it to
+   `false` for an immediate runtime kill switch.
+5. Verify manual retry, duplicate retry, busy-lease deferral and concurrent automatic/manual retry
+   scenarios in the development environment before production activation.
+6. To roll back, restore the previous runtime first. Drop migration 47 only after no new runtime
    revision can acquire leases.
 
 The lease table contains operational identifiers only. It does not store order payloads, customer
@@ -60,8 +69,11 @@ access to it.
 
 - Migration up/down/up validation succeeds.
 - Concurrent lease acquisition permits exactly one owner.
-- An incorrect token cannot release another worker's lease.
+- An incorrect token cannot renew or release another worker's lease.
+- The same replay-stable owner can renew or reacquire its lease after a durable step replay.
 - An expired lease can be reclaimed.
+- A busy lease causes a durable wait and later acquisition, not a lost retry event.
 - One manual retry event produces one provider/replay attempt.
 - Automatic recovery does not consume `backorder/retry` events.
+- The global recovery kill switch prevents both automatic and manual provider work.
 - Lifecycle workflow tests confirm there are no `rateLimit` options.
