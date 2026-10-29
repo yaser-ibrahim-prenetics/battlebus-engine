@@ -49,13 +49,11 @@ function eventFor(action: ClaimedPendingAction) {
   };
 }
 
-async function releaseFailedPublication(actions: ClaimedPendingAction[]): Promise<number> {
-  const results = await Promise.allSettled(actions.map((action) => retryPendingAction(action)));
-  return results.filter((result) => result.status === "rejected").length;
-}
-
-async function acknowledgePublication(actions: ClaimedPendingAction[]): Promise<number> {
-  const results = await Promise.allSettled(actions.map((action) => completePendingAction(action)));
+async function countRejectedOperations(
+  actions: ClaimedPendingAction[],
+  operation: (action: ClaimedPendingAction) => Promise<void>
+): Promise<number> {
+  const results = await Promise.allSettled(actions.map((action) => operation(action)));
   return results.filter((result) => result.status === "rejected").length;
 }
 
@@ -70,7 +68,7 @@ async function claimAndPublish(): Promise<DrainResult> {
   } catch {
     // Provider errors may include credentials or endpoint data. Persist/log only
     // a fixed message; stable event IDs make uncertain publication safe to retry.
-    const releaseFailed = await releaseFailedPublication(actions);
+    const releaseFailed = await countRejectedOperations(actions, retryPendingAction);
     console.error(
       `[PendingActions] Batch publication failed claimed=${actions.length} leaseReleaseFailed=${releaseFailed}`
     );
@@ -82,7 +80,7 @@ async function claimAndPublish(): Promise<DrainResult> {
     };
   }
 
-  const acknowledgementFailed = await acknowledgePublication(actions);
+  const acknowledgementFailed = await countRejectedOperations(actions, completePendingAction);
   if (acknowledgementFailed > 0) {
     console.error(
       `[PendingActions] Publication acknowledgement failed count=${acknowledgementFailed}`
@@ -97,6 +95,9 @@ async function claimAndPublish(): Promise<DrainResult> {
 }
 
 export async function runDrainPendingActions({ step, event }: DrainContext) {
+  if (!config.pendingActions.durableQueueEnabled) {
+    return { status: "disabled", reason: "durable-queue-disabled", processed: 0 };
+  }
   if (config.features.dryRunMode) {
     return { status: "disabled", reason: "dry-run", processed: 0 };
   }
@@ -136,7 +137,7 @@ export async function runDrainPendingActions({ step, event }: DrainContext) {
     payload: {
       status,
       legacyImported: legacy.imported,
-      legacyOrdersCleared: legacy.clearedOrders,
+      legacySourceOrders: legacy.sourceOrders,
       ...result,
     },
   });

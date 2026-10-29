@@ -1,5 +1,6 @@
-// This expand-phase bridge atomically snapshots and clears only fully valid legacy arrays.
-// A concurrent append waits for the row lock and remains available for the next sweep.
+// Expand-phase copy: legacy data remains intact for rollback-capable revisions.
+// Rows already represented in the normalized queue are skipped, so a retained
+// projection cannot starve newer legacy writes from the bounded import window.
 export const importLegacyPendingActionsSQL = `
 WITH legacy_orders AS MATERIALIZED (
   SELECT
@@ -16,9 +17,28 @@ WITH legacy_orders AS MATERIALIZED (
     AND NOT EXISTS (
       SELECT 1
       FROM jsonb_array_elements(orders.pending_actions) AS item(action)
-      WHERE item.action->>'action' NOT IN ('cancel', 'refund', 'fulfill')
+      WHERE COALESCE(item.action->>'action', '') NOT IN ('cancel', 'refund', 'fulfill')
         OR length(btrim(COALESCE(item.action->>'eventName', ''))) NOT BETWEEN 1 AND 255
         OR jsonb_typeof(item.action->'eventData') IS DISTINCT FROM 'object'
+        OR length(btrim(COALESCE(item.action->>'sourceEventId', ''))) > 1024
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(orders.pending_actions) AS item(action)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.pending_lifecycle_actions AS normalized
+        WHERE normalized.order_id = COALESCE(
+            NULLIF(btrim(orders.shopify_order_id), ''),
+            NULLIF(btrim(orders.platform_order_id), ''),
+            orders.id::text
+          )
+          AND normalized.action_type = item.action->>'action'
+          AND normalized.source_event_id = COALESCE(
+            NULLIF(btrim(item.action->>'sourceEventId'), ''),
+            'legacy:' || md5(item.action::text)
+          )
+      )
     )
   ORDER BY orders.updated_at, orders.id
   LIMIT $1
@@ -40,20 +60,16 @@ WITH legacy_orders AS MATERIALIZED (
   SELECT
     legacy_actions.order_id,
     legacy_actions.action->>'action',
-    'legacy:' || md5(legacy_actions.action::text),
+    COALESCE(
+      NULLIF(btrim(legacy_actions.action->>'sourceEventId'), ''),
+      'legacy:' || md5(legacy_actions.action::text)
+    ),
     legacy_actions.action->>'eventName',
     legacy_actions.action->'eventData'
   FROM legacy_actions
   ON CONFLICT (order_id, action_type, source_event_id) DO NOTHING
   RETURNING action_id
-), cleared AS (
-  UPDATE public.orders AS orders
-  SET pending_actions = '[]'::jsonb,
-      updated_at = now()
-  FROM legacy_orders
-  WHERE orders.id = legacy_orders.id
-  RETURNING orders.id
 )
 SELECT
   (SELECT count(*) FROM inserted) AS imported,
-  (SELECT count(*) FROM cleared) AS cleared_orders`;
+  (SELECT count(*) FROM legacy_orders) AS source_orders`;

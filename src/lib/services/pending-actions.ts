@@ -8,7 +8,10 @@
 import { config } from "@/lib/config";
 import { queryDatabase } from "@/lib/db/database";
 import { claimPendingActionsSQL } from "@/lib/sql/pending-actions/claim";
-import { enqueuePendingActionSQL } from "@/lib/sql/pending-actions/enqueue";
+import {
+  enqueueLegacyPendingActionSQL,
+  enqueuePendingActionSQL,
+} from "@/lib/sql/pending-actions/enqueue";
 import { completePendingActionSQL, retryPendingActionSQL } from "@/lib/sql/pending-actions/finish";
 import { importLegacyPendingActionsSQL } from "@/lib/sql/pending-actions/import-legacy";
 
@@ -67,14 +70,44 @@ export async function storePendingAction(
   );
   const eventName = requiredString(action.eventName, "pending action event name", 255);
   assertEventData(action.eventData);
+  if (!(["cancel", "refund", "fulfill"] as const).includes(action.action)) {
+    throw new Error("Invalid pending action type");
+  }
 
-  const { rows } = await queryDatabase<{ action_id: string }>(enqueuePendingActionSQL, [
-    normalizedOrderId,
-    action.action,
-    sourceEventId,
+  const legacyPayload = JSON.stringify({
+    action: action.action,
     eventName,
-    JSON.stringify(action.eventData),
-  ]);
+    eventData: action.eventData,
+    sourceEventId,
+    createdAt: new Date().toISOString(),
+  });
+
+  if (!config.pendingActions.durableQueueEnabled) {
+    const legacyResult = await queryDatabase<{ id: string }>(enqueueLegacyPendingActionSQL, [
+      normalizedOrderId,
+      sourceEventId,
+      action.action,
+      legacyPayload,
+    ]);
+    if (legacyResult.rowCount !== 1) {
+      throw new Error(`Legacy pending action order not found: ${normalizedOrderId}`);
+    }
+    console.log(`[PendingActions] Queued legacy ${action.action} orderId=${normalizedOrderId}`);
+    return `legacy:${sourceEventId}`;
+  }
+
+  const { rows } = await queryDatabase<{ action_id: string; legacy_projected: boolean }>(
+    enqueuePendingActionSQL,
+    [
+      normalizedOrderId,
+      action.action,
+      sourceEventId,
+      eventName,
+      JSON.stringify(action.eventData),
+      legacyPayload,
+      config.pendingActions.legacyProjectionEnabled,
+    ]
+  );
   const actionId = rows[0]?.action_id;
   if (!actionId) throw new Error("Pending action enqueue returned no action ID");
 
@@ -86,15 +119,15 @@ export async function storePendingAction(
 
 export async function importLegacyPendingActions(): Promise<{
   imported: number;
-  clearedOrders: number;
+  sourceOrders: number;
 }> {
-  const { rows } = await queryDatabase<{ imported: string; cleared_orders: string }>(
+  const { rows } = await queryDatabase<{ imported: string; source_orders: string }>(
     importLegacyPendingActionsSQL,
     [config.pendingActions.legacyImportOrderLimit]
   );
   return {
     imported: Number(rows[0]?.imported || 0),
-    clearedOrders: Number(rows[0]?.cleared_orders || 0),
+    sourceOrders: Number(rows[0]?.source_orders || 0),
   };
 }
 
@@ -102,6 +135,7 @@ export async function claimPendingActions(): Promise<ClaimedPendingAction[]> {
   const { rows } = await queryDatabase<PendingActionRow>(claimPendingActionsSQL, [
     config.pendingActions.claimBatchSize,
     config.pendingActions.leaseSeconds,
+    config.pendingActions.maxAttempts,
   ]);
   return rows.map((row) => ({
     actionId: row.action_id,

@@ -31,6 +31,7 @@ import { runDrainPendingActions } from "../drain-pending-actions";
 
 const mutableConfig = config as unknown as {
   features: { dryRunMode: boolean };
+  pendingActions: { durableQueueEnabled: boolean };
 };
 
 const cancellation = {
@@ -55,11 +56,13 @@ function immediateStep() {
 
 describe("runDrainPendingActions", () => {
   const originalDryRun = config.features.dryRunMode;
+  const originalQueueEnabled = config.pendingActions.durableQueueEnabled;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mutableConfig.features.dryRunMode = false;
-    importLegacy.mockResolvedValue({ imported: 0, clearedOrders: 0 });
+    mutableConfig.pendingActions.durableQueueEnabled = true;
+    importLegacy.mockResolvedValue({ imported: 0, sourceOrders: 0 });
     claim.mockResolvedValue([]);
     complete.mockResolvedValue(undefined);
     retry.mockResolvedValue(undefined);
@@ -68,6 +71,7 @@ describe("runDrainPendingActions", () => {
 
   afterEach(() => {
     mutableConfig.features.dryRunMode = originalDryRun;
+    mutableConfig.pendingActions.durableQueueEnabled = originalQueueEnabled;
   });
 
   it("does not claim or import lifecycle actions in dry-run", async () => {
@@ -81,8 +85,22 @@ describe("runDrainPendingActions", () => {
     expect(claim).not.toHaveBeenCalled();
   });
 
+  it("does not claim or import before durable queue activation", async () => {
+    mutableConfig.pendingActions.durableQueueEnabled = false;
+    const step = immediateStep();
+
+    await expect(
+      runDrainPendingActions({ step, event: { id: "disabled", data: {} } })
+    ).resolves.toEqual({
+      status: "disabled",
+      reason: "durable-queue-disabled",
+      processed: 0,
+    });
+    expect(step.run).not.toHaveBeenCalled();
+  });
+
   it("imports legacy rows before claiming normalized actions", async () => {
-    importLegacy.mockResolvedValue({ imported: 2, clearedOrders: 1 });
+    importLegacy.mockResolvedValue({ imported: 2, sourceOrders: 1 });
     const step = immediateStep();
 
     await expect(
