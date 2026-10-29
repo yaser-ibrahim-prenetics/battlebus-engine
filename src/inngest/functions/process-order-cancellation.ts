@@ -249,7 +249,7 @@ export const processOrderCancellation = inngest.createFunction(
           action: "cancel",
           eventName: "shopify/order.cancelled",
           eventData: event.data,
-          createdAt: new Date().toISOString(),
+          sourceEventId: event.id,
         });
       });
       console.log(
