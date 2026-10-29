@@ -100,6 +100,18 @@ describe("durable pending actions", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("rejects replay payloads larger than 512 KiB", async () => {
+    await expect(
+      storePendingAction("1001", {
+        action: "refund",
+        eventName: "shopify/order.refunded",
+        eventData: { payload: "x".repeat(512 * 1024) },
+        sourceEventId: "shopify-order-refunded-1001",
+      })
+    ).rejects.toThrow("exceeds 512 KiB");
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("maps claimed rows without exposing database naming to callers", async () => {
     query.mockResolvedValueOnce({
       rows: [
