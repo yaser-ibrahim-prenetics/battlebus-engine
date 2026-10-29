@@ -299,6 +299,22 @@ export const config = {
       1,
       59
     ),
+    claimBatchSize: clampInt(
+      safeParseInt(process.env.PENDING_ACTIONS_CLAIM_BATCH_SIZE, 100),
+      1,
+      500
+    ),
+    leaseSeconds: clampInt(
+      safeParseInt(process.env.PENDING_ACTIONS_LEASE_SECONDS, 120),
+      30,
+      900
+    ),
+    maxAttempts: clampInt(safeParseInt(process.env.PENDING_ACTIONS_MAX_ATTEMPTS, 10), 1, 100),
+    legacyImportOrderLimit: clampInt(
+      safeParseInt(process.env.PENDING_ACTIONS_LEGACY_IMPORT_ORDER_LIMIT, 100),
+      1,
+      500
+    ),
   },
 
   // Webhook inbox drain sweep (safety net for inngest.send() failures)

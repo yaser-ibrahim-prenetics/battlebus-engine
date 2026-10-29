@@ -329,7 +329,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           action: "fulfill",
           eventName: "shopify/order.fulfilled",
           eventData: event.data,
-          createdAt: new Date().toISOString(),
+          sourceEventId: event.id,
         });
       });
       console.log(

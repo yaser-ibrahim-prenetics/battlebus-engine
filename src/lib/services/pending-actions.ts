@@ -1,12 +1,16 @@
 // ============================================================================
-// PENDING ACTIONS SERVICE
+// DURABLE PENDING LIFECYCLE ACTIONS
 // ============================================================================
-// Stores and retrieves deferred lifecycle actions (fulfill, cancel, refund)
-// for orders whose D365/GPS creation has not yet completed.
-// Uses Battle Hub API to persist in the Supabase orders.pending_actions column.
+// Normalized PostgreSQL queue for lifecycle actions that must be replayed after
+// their target order is available. Stable producer IDs deduplicate enqueue;
+// stable action IDs deduplicate downstream publication; leases isolate workers.
 
 import { config } from "@/lib/config";
-import crypto from "crypto";
+import { queryDatabase } from "@/lib/db/database";
+import { claimPendingActionsSQL } from "@/lib/sql/pending-actions/claim";
+import { enqueuePendingActionSQL } from "@/lib/sql/pending-actions/enqueue";
+import { completePendingActionSQL, retryPendingActionSQL } from "@/lib/sql/pending-actions/finish";
+import { importLegacyPendingActionsSQL } from "@/lib/sql/pending-actions/import-legacy";
 
 export type PendingActionType = "fulfill" | "cancel" | "refund";
 
@@ -14,109 +18,119 @@ export interface PendingAction {
   action: PendingActionType;
   eventName: string;
   eventData: Record<string, unknown>;
-  createdAt: string;
+  sourceEventId: string;
 }
 
-function generateSignature(payload: string): string {
-  if (!config.csPlatform.webhookSecret) return "";
-  return crypto.createHmac("sha256", config.csPlatform.webhookSecret).update(payload).digest("hex");
+export interface ClaimedPendingAction {
+  actionId: string;
+  orderId: string;
+  action: PendingActionType;
+  eventName: string;
+  eventData: Record<string, unknown>;
+  leaseToken: string;
+  attempts: number;
 }
 
-async function callHubApi(
-  method: string,
-  path: string,
-  body?: Record<string, unknown>
-): Promise<unknown> {
-  if (!config.csPlatform.baseUrl) {
-    throw new Error("[PendingActions] CS_PLATFORM_URL not configured");
-  }
+type PendingActionRow = {
+  action_id: string;
+  order_id: string;
+  action_type: PendingActionType;
+  event_name: string;
+  event_data: Record<string, unknown>;
+  lease_token: string;
+  attempts: number;
+};
 
-  const url = `${config.csPlatform.baseUrl}${path}`;
-  const payload = body ? JSON.stringify(body) : undefined;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-battle-bus-signature": payload ? generateSignature(payload) : "",
-  };
-
-  const serviceSecret = process.env.INTERNAL_SERVICE_SECRET || config.csPlatform.webhookSecret;
-  if (serviceSecret) {
-    headers["Authorization"] = `Bearer ${serviceSecret}`;
+function requiredString(value: unknown, label: string, maxLength: number): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || normalized.length > maxLength) {
+    throw new Error(`Invalid ${label}`);
   }
+  return normalized;
+}
 
-  const response = await fetch(url, { method, headers, body: payload });
-  if (!response.ok) {
-    const text = await response.text();
-    if (response.status === 400 && text.includes("shopifyOrderId and operation are required")) {
-      let hubHost = "unknown";
-      try {
-        hubHost = new URL(config.csPlatform.baseUrl).hostname;
-      } catch {
-        /* ignore */
-      }
-      console.error(
-        `[PendingActions] Hub API rejected clear-batch-style body with **legacy** validation. ` +
-          `Deploy latest battle-hub \`api/orders/pending-actions\` to ${hubHost} ` +
-          `(POST must accept operation=clear-batch + shopifyOrderIds[] without shopifyOrderId).`
-      );
-    }
-    throw new Error(
-      `[PendingActions] Hub API ${method} ${path} failed ${response.status}: ${text}`
-    );
+function assertEventData(value: unknown): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid pending action event data");
   }
-  return response.json();
 }
 
 export async function storePendingAction(
-  shopifyOrderId: string,
+  orderId: string | number,
   action: PendingAction
-): Promise<void> {
-  console.log(`[PendingActions] Storing ${action.action} for shopifyOrderId=${shopifyOrderId}`);
-  await callHubApi("PATCH", "/api/orders/pending-actions", {
-    shopifyOrderId,
-    operation: "append",
-    action,
-  });
-}
-
-export async function getPendingActions(shopifyOrderId: string): Promise<PendingAction[]> {
-  const result = (await callHubApi(
-    "GET",
-    `/api/orders/pending-actions?shopifyOrderId=${encodeURIComponent(shopifyOrderId)}`
-  )) as { actions: PendingAction[] };
-  return result.actions || [];
-}
-
-export interface PendingActionOrder {
-  shopify_order_id: string | null;
-  /** Hub may only have this set for some rows */
-  platform_order_id?: string | null;
-  shopify_order_name: string;
-  pending_actions: PendingAction[];
-}
-
-export async function getAllPendingActionOrders(): Promise<PendingActionOrder[]> {
-  const result = (await callHubApi("GET", "/api/orders/pending-actions")) as {
-    orders: PendingActionOrder[];
-    count: number;
-  };
-  return result.orders || [];
-}
-
-export async function clearPendingActions(shopifyOrderId: string): Promise<void> {
-  console.log(`[PendingActions] Clearing pending actions for shopifyOrderId=${shopifyOrderId}`);
-  await callHubApi("PATCH", "/api/orders/pending-actions", {
-    shopifyOrderId,
-    operation: "clear",
-  });
-}
-
-export async function clearPendingActionsBatch(shopifyOrderIds: string[]): Promise<void> {
-  if (shopifyOrderIds.length === 0) return;
-  console.log(
-    `[PendingActions] Bulk-clearing pending actions for ${shopifyOrderIds.length} orders`
+): Promise<string> {
+  const normalizedOrderId = requiredString(String(orderId), "pending action order ID", 255);
+  const sourceEventId = requiredString(
+    action.sourceEventId,
+    "pending action source event ID",
+    1024
   );
-  await callHubApi("PATCH", "/api/orders/pending-actions", {
-    shopifyOrderIds,
-    operation: "clear-batch",
-  });
+  const eventName = requiredString(action.eventName, "pending action event name", 255);
+  assertEventData(action.eventData);
+
+  const { rows } = await queryDatabase<{ action_id: string }>(enqueuePendingActionSQL, [
+    normalizedOrderId,
+    action.action,
+    sourceEventId,
+    eventName,
+    JSON.stringify(action.eventData),
+  ]);
+  const actionId = rows[0]?.action_id;
+  if (!actionId) throw new Error("Pending action enqueue returned no action ID");
+
+  console.log(
+    `[PendingActions] Queued ${action.action} actionId=${actionId} orderId=${normalizedOrderId}`
+  );
+  return actionId;
+}
+
+export async function importLegacyPendingActions(): Promise<{
+  imported: number;
+  clearedOrders: number;
+}> {
+  const { rows } = await queryDatabase<{ imported: string; cleared_orders: string }>(
+    importLegacyPendingActionsSQL,
+    [config.pendingActions.legacyImportOrderLimit]
+  );
+  return {
+    imported: Number(rows[0]?.imported || 0),
+    clearedOrders: Number(rows[0]?.cleared_orders || 0),
+  };
+}
+
+export async function claimPendingActions(): Promise<ClaimedPendingAction[]> {
+  const { rows } = await queryDatabase<PendingActionRow>(claimPendingActionsSQL, [
+    config.pendingActions.claimBatchSize,
+    config.pendingActions.leaseSeconds,
+  ]);
+  return rows.map((row) => ({
+    actionId: row.action_id,
+    orderId: row.order_id,
+    action: row.action_type,
+    eventName: row.event_name,
+    eventData: row.event_data,
+    leaseToken: row.lease_token,
+    attempts: row.attempts,
+  }));
+}
+
+export async function completePendingAction(action: ClaimedPendingAction): Promise<void> {
+  const result = await queryDatabase<{ action_id: string }>(completePendingActionSQL, [
+    action.actionId,
+    action.leaseToken,
+  ]);
+  if (result.rowCount !== 1) {
+    throw new Error(`Pending action lease lost before acknowledgement: ${action.actionId}`);
+  }
+}
+
+export async function retryPendingAction(action: ClaimedPendingAction): Promise<void> {
+  const result = await queryDatabase<{ action_id: string; status: string }>(retryPendingActionSQL, [
+    action.actionId,
+    action.leaseToken,
+    config.pendingActions.maxAttempts,
+  ]);
+  if (result.rowCount !== 1) {
+    throw new Error(`Pending action lease lost before retry: ${action.actionId}`);
+  }
 }
