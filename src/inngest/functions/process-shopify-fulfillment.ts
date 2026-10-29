@@ -597,6 +597,7 @@ export const processShopifyFulfillment = inngest.createFunction(
 
               const buildFulfillmentLines = () =>
                 filteredItems.map((item) => ({
+                  sourceLineId: String(item.id),
                   // Prefer fulfillment item SKU, but fall back to order line item SKU when needed.
                   // `item.id` on fulfillment line items maps to Shopify order line_item.id.
                   itemNumber: (() => {
@@ -755,6 +756,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                   const rowLot = String(sl.dynamics_inventory_lot_id ?? "").trim();
                   const lotId = rowLot || String(serviceLotMap[itemUpper] ?? "").trim() || "";
                   return {
+                    sourceLineId: String(sl.shopify_line_item_id),
                     itemNumber: sl.d365_item_number,
                     quantity: Number(sl.quantity) || 1,
                     lotId,

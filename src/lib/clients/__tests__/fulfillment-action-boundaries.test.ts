@@ -104,6 +104,7 @@ describe("fulfillment mutation boundaries", () => {
       lines: [
         {
           ...fulfillment.lines[0],
+          sourceLineId: "shopify-line-1001",
           itemNumber: "sku-exact",
           quantity: 2,
           shippingWarehouseId: "WH-EXACT",
@@ -124,7 +125,7 @@ describe("fulfillment mutation boundaries", () => {
           provider: "d365",
           warehouse: "WH-EXACT",
           sku: "SKU-EXACT",
-          orderLineId: "LOT-1",
+          orderLineId: "shopify-line-1001",
           quantityNeeded: 2,
         },
       ],
