@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
 import type { InventoryProvider } from "./inventory-failure";
@@ -19,6 +19,7 @@ export type OosDrainRequestInput = {
   observedAt?: string;
   sourceEventId?: string;
   requestedBy?: string;
+  requestReason?: string;
   batchLimit: number;
 };
 
@@ -39,6 +40,12 @@ function normalizedTimestamp(name: string, value: string | undefined): string | 
 }
 
 export function normalizeOosDrainRequest(input: OosDrainRequestInput): OosDrainRequestInput {
+  if (!(["inventory_event", "manual", "sweep"] as const).includes(input.mode)) {
+    throw new Error("OOS drain mode must be inventory_event, manual or sweep");
+  }
+  if (typeof input.dryRun !== "boolean") {
+    throw new Error("OOS drain dryRun must be a boolean");
+  }
   if (!Number.isInteger(input.batchLimit) || input.batchLimit < 1 || input.batchLimit > 1000) {
     throw new Error("OOS drain batchLimit must be between 1 and 1000");
   }
@@ -88,6 +95,7 @@ export function normalizeOosDrainRequest(input: OosDrainRequestInput): OosDrainR
     observedAt,
     sourceEventId: input.sourceEventId?.trim() || undefined,
     requestedBy: input.requestedBy?.trim() || undefined,
+    requestReason: input.requestReason?.trim() || undefined,
   };
 }
 
@@ -101,6 +109,21 @@ export function oosDrainLaneKey(input: OosDrainRequestInput): string {
     return `${lane}:inventory:${normalized.provider}:${normalized.warehouse}:${normalized.sku}`;
   }
   return `${lane}:sweep`;
+}
+
+export function createOosDrainPreviewRequest(rawInput: OosDrainRequestInput): OosDrainRequest {
+  const normalized = normalizeOosDrainRequest(rawInput);
+  if (!normalized.dryRun) throw new Error("OOS drain previews require dryRun=true");
+  const request = { ...normalized };
+  delete request.requestedBy;
+  return {
+    ...request,
+    id: `preview-${randomUUID()}`,
+    laneKey: oosDrainLaneKey(normalized),
+    slot: "active",
+    status: "leased",
+    attemptCount: 0,
+  };
 }
 
 function requestedByHash(requestedBy: string | undefined): string | null {
@@ -162,6 +185,7 @@ async function writeRequest(
     input.sourceEventId ?? null,
     requestedByHash(input.requestedBy),
     input.batchLimit,
+    JSON.stringify(input.requestReason ? { requestReason: input.requestReason } : {}),
   ];
   const result = id
     ? await client.query(
@@ -169,8 +193,9 @@ async function writeRequest(
            mode = $1, dry_run = $2, provider = $3, warehouse = $4, sku = $5,
            order_id = $6, shopify_store = $7, parked_from = $8, parked_to = $9,
            observed_quantity = $10, observed_at = $11, source_event_id = $12,
-           requested_by_hash = $13, batch_limit = $14, last_error_code = NULL
-         WHERE id = $15 AND status = 'queued'
+           requested_by_hash = $13, batch_limit = $14,
+           result_evidence = result_evidence || $15::jsonb, last_error_code = NULL
+         WHERE id = $16 AND status = 'queued'
          ${RETURNING}`,
         [...values.slice(2), id]
       )
@@ -178,7 +203,7 @@ async function writeRequest(
         `INSERT INTO public.oos_drain_requests (
            lane_key, slot, mode, dry_run, provider, warehouse, sku, order_id,
            shopify_store, parked_from, parked_to, observed_quantity, observed_at,
-           source_event_id, requested_by_hash, batch_limit
+           source_event_id, requested_by_hash, batch_limit, result_evidence
          ) VALUES (${values.map((_, index) => `$${index + 1}`).join(", ")})
          ${RETURNING}`,
         values
@@ -187,13 +212,28 @@ async function writeRequest(
   return rowToRequest(result.rows[0]);
 }
 
-async function enqueueRequestEvent(client: PoolClient, request: OosDrainRequest): Promise<void> {
+async function enqueueRequestEvent(
+  client: PoolClient,
+  request: Pick<OosDrainRequest, "id" | "laneKey">
+): Promise<void> {
+  const dispatch = await client.query<{ dispatch_count: number }>(
+    `UPDATE public.oos_drain_requests
+     SET dispatch_count = dispatch_count + 1
+     WHERE id = $1 AND slot = 'active' AND status = 'queued'
+     RETURNING dispatch_count`,
+    [request.id]
+  );
+  if (dispatch.rowCount !== 1) return;
   await client.query(
     `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
      VALUES ($1, 'oos/drain.requested',
        jsonb_build_object('requestId', $2::text, 'laneKey', $3::text))
      ON CONFLICT (event_id) DO NOTHING`,
-    [`oos-drain-requested-${request.id}`, request.id, request.laneKey]
+    [
+      `oos-drain-requested-${request.id}-${dispatch.rows[0].dispatch_count}`,
+      request.id,
+      request.laneKey,
+    ]
   );
 }
 
@@ -201,6 +241,9 @@ export async function submitOosDrainRequest(
   rawInput: OosDrainRequestInput
 ): Promise<{ request: OosDrainRequest; created: boolean }> {
   const input = normalizeOosDrainRequest(rawInput);
+  if (input.dryRun) {
+    throw new Error("Dry-run OOS drains must use the non-persistent preview path");
+  }
   const laneKey = oosDrainLaneKey(input);
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS drain requests require the configured PostgreSQL database");
@@ -278,7 +321,7 @@ export async function finishOosDrainRequest(params: {
     await client.query("BEGIN");
     const finished = await client.query(
       `UPDATE public.oos_drain_requests
-       SET status = $3, completed_at = now(), result_evidence = $4::jsonb,
+       SET status = $3, completed_at = now(), result_evidence = result_evidence || $4::jsonb,
          last_error_code = $5, lease_token = NULL, lease_until = NULL
        WHERE id = $1 AND status = 'leased' AND lease_token = $2
        RETURNING lane_key`,
@@ -306,14 +349,10 @@ export async function finishOosDrainRequest(params: {
       [params.request.laneKey]
     );
     if (successor.rows[0]?.id) {
-      await client.query(
-        `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
-         SELECT $1, 'oos/drain.requested',
-           jsonb_build_object('requestId', id::text, 'laneKey', lane_key)
-         FROM public.oos_drain_requests WHERE id = $2
-         ON CONFLICT (event_id) DO NOTHING`,
-        [`oos-drain-requested-${successor.rows[0].id}`, successor.rows[0].id]
-      );
+      await enqueueRequestEvent(client, {
+        id: successor.rows[0].id,
+        laneKey: params.request.laneKey,
+      });
     }
     await client.query("COMMIT");
     return successor.rows[0]?.id ?? null;
@@ -331,12 +370,58 @@ export async function retryOosDrainRequest(
 ): Promise<boolean> {
   const pool = await getDatabasePool();
   if (!pool) return false;
-  const result = await pool.query(
-    `UPDATE public.oos_drain_requests
-     SET status = 'queued', lease_token = NULL, lease_until = NULL,
-       last_error_code = $3
-     WHERE id = $1 AND status = 'leased' AND lease_token = $2`,
-    [request.id, request.leaseToken, errorCode.slice(0, 160)]
-  );
-  return result.rowCount === 1;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE public.oos_drain_requests
+       SET status = 'queued', lease_token = NULL, lease_until = NULL,
+         last_error_code = $3
+       WHERE id = $1 AND status = 'leased' AND lease_token = $2`,
+      [request.id, request.leaseToken, errorCode.slice(0, 160)]
+    );
+    if (result.rowCount === 1) await enqueueRequestEvent(client, request);
+    await client.query("COMMIT");
+    return result.rowCount === 1;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function redispatchStalledOosDrainRequests(limit: number): Promise<number> {
+  const pool = await getDatabasePool();
+  if (!pool) return 0;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE public.oos_drain_requests
+       SET status = 'queued', lease_token = NULL, lease_until = NULL,
+         last_error_code = 'lease_expired'
+       WHERE slot = 'active' AND status = 'leased' AND lease_until <= now()`
+    );
+    const stalled = await client.query<{ id: string; lane_key: string }>(
+      `SELECT id, lane_key
+       FROM public.oos_drain_requests
+       WHERE slot = 'active' AND status = 'queued'
+         AND (last_error_code = 'lease_expired' OR updated_at <= now() - interval '5 minutes')
+       ORDER BY updated_at, id
+       FOR UPDATE SKIP LOCKED
+       LIMIT $1`,
+      [Math.max(1, Math.min(500, limit))]
+    );
+    for (const request of stalled.rows) {
+      await enqueueRequestEvent(client, { id: request.id, laneKey: request.lane_key });
+    }
+    await client.query("COMMIT");
+    return stalled.rowCount ?? 0;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

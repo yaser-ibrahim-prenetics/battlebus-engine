@@ -6,6 +6,7 @@ import {
   markOosOutboxPublished,
 } from "@/lib/services/oos-recovery/outbox";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { redispatchStalledOosDrainRequests } from "@/lib/services/oos-recovery/requests";
 
 function safeErrorCode(error: unknown): string {
   const candidate = error as { name?: unknown; code?: unknown };
@@ -43,6 +44,9 @@ export const drainOosOutbox = inngest.createFunction(
     if (!config.oosRecovery.enabled) {
       return { status: "disabled", published: 0, failed: 0 };
     }
+    await step.run("redispatch-stalled-oos-drains", () =>
+      redispatchStalledOosDrainRequests(config.oosRecovery.claimBatchSize)
+    );
     const entries = await step.run("claim-oos-outbox", () =>
       claimOosOutboxEntries(config.oosRecovery.claimBatchSize, config.oosRecovery.leaseSeconds)
     );
@@ -59,11 +63,7 @@ export const drainOosOutbox = inngest.createFunction(
           });
           return (await markOosOutboxPublished(entry)) ? "published" : "stale";
         } catch (error) {
-          return markOosOutboxFailed(
-            entry,
-            safeErrorCode(error),
-            config.oosRecovery.maxAttempts
-          );
+          return markOosOutboxFailed(entry, safeErrorCode(error), config.oosRecovery.maxAttempts);
         }
       });
       if (outcome === "published") published++;

@@ -106,6 +106,7 @@ CREATE TABLE public.oos_drain_requests (
   lease_token uuid,
   lease_until timestamptz,
   attempt_count integer NOT NULL DEFAULT 0,
+  dispatch_count integer NOT NULL DEFAULT 0,
   result_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
   last_error_code text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -120,6 +121,7 @@ CREATE TABLE public.oos_drain_requests (
     observed_quantity IS NULL OR observed_quantity >= 0
   ),
   CONSTRAINT oos_drain_attempts_nonnegative CHECK (attempt_count >= 0),
+  CONSTRAINT oos_drain_dispatches_nonnegative CHECK (dispatch_count >= 0),
   CONSTRAINT oos_drain_lease_consistent CHECK (
     (status = 'leased' AND lease_token IS NOT NULL AND lease_until IS NOT NULL)
     OR (status <> 'leased' AND lease_token IS NULL AND lease_until IS NULL)
