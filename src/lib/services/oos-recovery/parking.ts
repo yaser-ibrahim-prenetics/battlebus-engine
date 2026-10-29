@@ -71,7 +71,10 @@ export function buildOosParkedEvent(params: ParkOosOrderParams) {
       d365OrderNumber: params.context.d365OrderNumber ?? "",
       warehouse: first.warehouse,
       errorMessage: "Inventory dependency parked for targeted recovery",
-      errorType: first.safeFailureCategory,
+      errorType:
+        first.safeFailureCategory === "item_not_found"
+          ? ("d365_item_not_found" as const)
+          : first.safeFailureCategory,
       failedSkus,
       retryCount: 0,
       maxRetries: params.context.maxRetries,
@@ -81,6 +84,7 @@ export function buildOosParkedEvent(params: ParkOosOrderParams) {
       failureSystem: first.provider,
       retryMode: params.context.retryMode ?? "gps_outbound",
       backorderQueue: params.context.backorderQueue ?? "sync",
+      targetedRecovery: true,
     },
   };
 }
