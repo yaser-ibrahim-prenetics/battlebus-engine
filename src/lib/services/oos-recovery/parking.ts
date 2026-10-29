@@ -32,6 +32,8 @@ export type ParkOosOrderParams = {
   now?: Date;
 };
 
+const OOS_PARKED_EVENT_FAILED_SKU_LIMIT = 10;
+
 function validateDependencies(dependencies: InventoryDependency[]): void {
   if (dependencies.length === 0 || dependencies.length > MAX_OOS_BLOCKED_ITEMS) {
     throw new Error(`OOS parking requires between 1 and ${MAX_OOS_BLOCKED_ITEMS} dependencies`);
@@ -46,11 +48,7 @@ function validateDependencies(dependencies: InventoryDependency[]): void {
     ) {
       throw new Error("OOS dependencies must belong to one Shopify order and store");
     }
-    if (
-      !dependency.orderLineId.trim() ||
-      !dependency.sku.trim() ||
-      !dependency.warehouse.trim()
-    ) {
+    if (!dependency.orderLineId.trim() || !dependency.sku.trim() || !dependency.warehouse.trim()) {
       throw new Error("OOS dependency keys and quantities must be valid");
     }
   }
@@ -72,7 +70,8 @@ export function buildOosParkedEvent(params: ParkOosOrderParams) {
       ])
     )
     .digest("hex");
-  const failedSkus = [...new Set(params.dependencies.map((item) => item.sku))].sort();
+  const allFailedSkus = [...new Set(params.dependencies.map((item) => item.sku))].sort();
+  const failedSkus = allFailedSkus.slice(0, OOS_PARKED_EVENT_FAILED_SKU_LIMIT);
   return {
     id: `oos-parked-${digest}`,
     name: "backorder/created" as const,
@@ -88,6 +87,7 @@ export function buildOosParkedEvent(params: ParkOosOrderParams) {
           ? ("d365_item_not_found" as const)
           : first.safeFailureCategory,
       failedSkus,
+      failedSkuCount: allFailedSkus.length,
       retryCount: 0,
       maxRetries: params.context.maxRetries,
       createdAt: (params.now ?? new Date()).toISOString(),

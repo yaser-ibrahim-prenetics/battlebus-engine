@@ -273,6 +273,8 @@ export type BackorderCreatedEvent = {
       | "d365_fulfilment_incomplete"
       | "order_validation";
     failedSkus: string[];
+    /** Total unique failed SKUs when `failedSkus` is a bounded diagnostic sample. */
+    failedSkuCount?: number;
     retryCount: number;
     maxRetries: number;
     createdAt: string;
