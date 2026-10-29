@@ -20,6 +20,11 @@ import { bindShopifySegments } from "./shopify";
 import { segmentLineRequests } from "./lines";
 import type { OrderSegment, StepRunner, SegmentProgress, RecordedSegmentLine } from "./types";
 import { saveOrderLines } from "@/lib/services/order-lines";
+import {
+  buildProviderBlockedItems,
+  InventoryUnavailableError,
+  isInventoryUnavailableError,
+} from "@/lib/services/oos-recovery/inventory-failure";
 
 /** Returns null for legacy/unsplit orders; a stored plan always wins on replay. */
 type ProcessSegmentsInput = {
@@ -224,10 +229,29 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         payload.platformOrderNo =
           segment.index === 0 ? order.name : `${order.name}-${segment.index}`;
         if (!payload.productList.length) return undefined;
-        const result = await gps.createOutboundOrder(
-          payload,
-          segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-        );
+        let result: Awaited<ReturnType<typeof gps.createOutboundOrder>>;
+        try {
+          result = await gps.createOutboundOrder(
+            payload,
+            segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
+          );
+        } catch (error) {
+          if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {
+            throw new InventoryUnavailableError(
+              error.provider,
+              error.category,
+              error.message,
+              buildProviderBlockedItems({
+                order: projected,
+                provider: error.provider,
+                warehouse: error.providerWarehouse ?? segment.warehouse,
+              }),
+              error.providerOrderNumber,
+              error.providerWarehouse ?? segment.warehouse
+            );
+          }
+          throw error;
+        }
         const id = result.response.data?.[0]?.orderNo;
         if (!id) throw new Error("GPS response missing segment order ID");
         await saveProgress(shop, plan.orderId, segment.index, { gpsOrderId: id });

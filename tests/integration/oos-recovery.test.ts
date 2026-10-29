@@ -17,6 +17,7 @@ import {
   loadOosRetryContext,
   moveOosDependenciesToManualReview,
   rearmManualReviewOosDependencies,
+  resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
 import { queueHealthSQL } from "@/lib/sql/operations/health";
@@ -356,7 +357,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       [submitted.request.id]
     );
 
-    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBeGreaterThanOrEqual(1);
+    await expect(redispatchStalledOosDrainRequests(10, 10)).resolves.toBeGreaterThanOrEqual(1);
     const savedRequest = await pool.query<{ status: string; dispatch_count: number }>(
       "SELECT status, dispatch_count FROM public.oos_drain_requests WHERE id = $1",
       [submitted.request.id]
@@ -370,6 +371,45 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     expect(savedRequest.rows[0]).toEqual({ status: "queued", dispatch_count: 2 });
     expect(events.rows).toHaveLength(2);
     expect(new Set(events.rows.map((row) => row.event_id)).size).toBe(2);
+  });
+
+  it("bounds expired-lease recovery and terminalizes requests at the attempt limit", async () => {
+    const submitted = [];
+    for (let index = 0; index < 3; index++) {
+      const request = await submitOosDrainRequest({
+        mode: "manual",
+        dryRun: false,
+        provider: "gps",
+        warehouse: `${prefix}warehouse`,
+        sku: `${prefix}bounded-lease-${index}`,
+        batchLimit: 1,
+      });
+      await pool.query(
+        `UPDATE public.oos_recovery_outbox
+         SET status = 'published', published_at = now()
+         WHERE event_data->>'requestId' = $1`,
+        [request.request.id]
+      );
+      expect(await claimOosDrainRequest(request.request.id, 30)).not.toBeNull();
+      await pool.query(
+        `UPDATE public.oos_drain_requests
+         SET lease_until = now() - interval '1 second', attempt_count = 1
+         WHERE id = $1`,
+        [request.request.id]
+      );
+      submitted.push(request.request.id);
+    }
+
+    await expect(redispatchStalledOosDrainRequests(1, 1)).resolves.toBe(0);
+    const states = await pool.query<{ status: string; count: number }>(
+      `SELECT status, count(*)::int AS count FROM public.oos_drain_requests
+       WHERE id = ANY($1::uuid[]) GROUP BY status ORDER BY status`,
+      [submitted]
+    );
+    expect(states.rows).toEqual([
+      { status: "failed", count: 1 },
+      { status: "leased", count: 2 },
+    ]);
   });
 
   it("does not duplicate an outstanding dispatch and fails visibly after outbox exhaustion", async () => {
@@ -386,7 +426,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       [submitted.request.id]
     );
 
-    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBe(0);
+    await expect(redispatchStalledOosDrainRequests(10, 10)).resolves.toBe(0);
     const beforeExhaustion = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM public.oos_recovery_outbox
        WHERE event_data->>'requestId' = $1`,
@@ -401,7 +441,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
        WHERE event_data->>'requestId' = $1`,
       [submitted.request.id]
     );
-    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBe(0);
+    await expect(redispatchStalledOosDrainRequests(10, 10)).resolves.toBe(0);
     const failed = await pool.query<{ status: string; last_error_code: string }>(
       "SELECT status, last_error_code FROM public.oos_drain_requests WHERE id = $1",
       [submitted.request.id]
@@ -450,9 +490,12 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       actor: "service:battle-bus-operations",
       reason: "Operator requested a bounded inventory recovery preview",
     };
-    await expect(reserveOosDrainPreviewCommand(input, command)).resolves.toEqual({
+    const reservation = await reserveOosDrainPreviewCommand(input, command);
+    expect(reservation).toEqual({
       status: "execute",
+      executionToken: expect.any(String),
     });
+    if (reservation.status !== "execute") throw new Error("expected a preview execution lease");
     const evidence = {
       examinedOrders: 3,
       selectedOrders: 1,
@@ -460,11 +503,64 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       manualReviewExpired: 0,
       queuedKeys: 0,
     };
-    await finishOosDrainPreviewCommand({ requestId: command.requestId, result: evidence });
+    await expect(
+      finishOosDrainPreviewCommand({
+        requestId: command.requestId,
+        executionToken: reservation.executionToken,
+        result: evidence,
+      })
+    ).resolves.toBe(true);
     await expect(reserveOosDrainPreviewCommand(input, command)).resolves.toEqual({
       status: "completed",
       result: evidence,
     });
+  });
+
+  it("prevents a stale preview attempt from overwriting a reclaimed execution", async () => {
+    const input = {
+      mode: "manual" as const,
+      dryRun: true,
+      provider: "gps" as const,
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}preview-lease`,
+      batchLimit: 1,
+    };
+    const command = {
+      requestId: randomUUID(),
+      actor: "service:battle-bus-operations",
+      reason: "Operator requested a lease-protected inventory preview",
+    };
+    const first = await reserveOosDrainPreviewCommand(input, command);
+    if (first.status !== "execute") throw new Error("expected the first preview lease");
+    await pool.query(
+      `UPDATE public.oos_drain_command_receipts
+       SET preview_started_at = now() - interval '6 minutes'
+       WHERE request_id = $1`,
+      [command.requestId]
+    );
+    const second = await reserveOosDrainPreviewCommand(input, command);
+    if (second.status !== "execute") throw new Error("expected the reclaimed preview lease");
+    expect(second.executionToken).not.toBe(first.executionToken);
+    await expect(
+      finishOosDrainPreviewCommand({
+        requestId: command.requestId,
+        executionToken: first.executionToken,
+        errorCode: "stale_attempt",
+      })
+    ).resolves.toBe(false);
+    await expect(
+      finishOosDrainPreviewCommand({
+        requestId: command.requestId,
+        executionToken: second.executionToken,
+        result: {
+          examinedOrders: 0,
+          selectedOrders: 0,
+          selectedDependencies: 0,
+          manualReviewExpired: 0,
+          queuedKeys: 0,
+        },
+      })
+    ).resolves.toBe(true);
   });
 
   it("moves expired dependencies to review in bounded batches", async () => {
@@ -530,6 +626,23 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       [orderId]
     );
     expect(dependencyState.rows[0]).toEqual({ status: "retrying", manual_review_at: null });
+  });
+
+  it("lets the same correlated replay resolve a prior manual-review outcome", async () => {
+    const orderId = `${prefix}manual-resolve`;
+    await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    await moveOosDependenciesToManualReview({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      errorCode: "transient_downstream_failure",
+    });
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 1, manualReview: false });
   });
 
   it("atomically resolves the recovered provider before parking a downstream failure", async () => {

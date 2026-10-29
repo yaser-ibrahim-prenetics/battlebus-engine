@@ -108,6 +108,8 @@ async function updateOrderState(
 export async function resolveOosDependencies(params: {
   shopifyStore: string;
   orderId: string;
+  /** A correlated replay may close rows moved to review by an earlier failed attempt. */
+  includeManualReview?: boolean;
 }): Promise<OosRecoveryOutcome> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS recovery outcomes require the configured PostgreSQL database");
@@ -118,10 +120,10 @@ export async function resolveOosDependencies(params: {
       `UPDATE public.oos_recovery_dependencies
      SET status = 'resolved', resolved_at = now(), cooldown_until = NULL,
        next_attempt_at = now(), lease_owner = NULL, lease_token = NULL, lease_until = NULL,
-       last_error_code = NULL, version = version + 1
+       manual_review_at = NULL, last_error_code = NULL, version = version + 1
      WHERE lower(shopify_store) = lower($1) AND order_id = $2
-       AND status IN ('parked', 'leased', 'retrying')`,
-      [params.shopifyStore, params.orderId]
+       AND (status IN ('parked', 'leased', 'retrying') OR ($3 AND status = 'manual_review'))`,
+      [params.shopifyStore, params.orderId, params.includeManualReview ?? false]
     );
     await updateOrderState(client, {
       orderId: params.orderId,

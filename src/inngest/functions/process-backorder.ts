@@ -199,31 +199,88 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     const segmented = await readPlan(shop, String(shopifyOrderId));
     if (segmented && isManualRetryRequest) {
       const lease = await acquireLease("segment-recovery");
-      const ensureLease = () => renewBackorderRecoveryLease(lease);
-      const ensureEligible = () =>
-        loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
-      const latest = await ensureEligible();
-      const accounting = await step.run("reload-segment-accounting", () =>
-        loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
-      );
-      const shortAddress = await loadSaudiShortAddress({
-        step,
-        order: latest as unknown as ShopifyOrderPayload,
-        shopifyOrderId: String(shopifyOrderId),
-        shopifyStore: shop,
-      });
-      const result = await processOrderSegments({
-        order: latest as unknown as ShopifyOrderPayload,
-        step,
-        accounting,
-        shopDomain: shop,
-        fallbackDataArea: segmented.plan.segments[0].dataAreaId,
-        shortAddress,
-        ensureEligible,
-        beforeExternalMutation: ensureLease,
-      });
-      await step.run("release-segment-recovery-lease", () => releaseLease(lease));
-      return result;
+      try {
+        if (storedOosContext?.manualReview && isHubManualRetry) {
+          await step.run("rearm-segment-manual-review-oos-dependencies", () =>
+            rearmManualReviewOosDependencies({
+              shopifyStore: shop,
+              orderId: String(shopifyOrderId),
+              retentionDays: config.oosRecovery.retentionDays,
+            })
+          );
+        }
+        const ensureLease = () => renewBackorderRecoveryLease(lease);
+        const ensureEligible = () =>
+          loadEligibleRecoveryOrder(shop, String(shopifyOrderId), segmented.plan.inputHash);
+        const latest = await ensureEligible();
+        const accounting = await step.run("reload-segment-accounting", () =>
+          loadOrderAccounting(latest as unknown as ShopifyOrderPayload, shop)
+        );
+        const shortAddress = await loadSaudiShortAddress({
+          step,
+          order: latest as unknown as ShopifyOrderPayload,
+          shopifyOrderId: String(shopifyOrderId),
+          shopifyStore: shop,
+        });
+        const result = await processOrderSegments({
+          order: latest as unknown as ShopifyOrderPayload,
+          step,
+          accounting,
+          shopDomain: shop,
+          fallbackDataArea: segmented.plan.segments[0].dataAreaId,
+          shortAddress,
+          ensureEligible,
+          beforeExternalMutation: ensureLease,
+        });
+        if (isTargetedRecovery) {
+          await step.run("resolve-segment-targeted-oos-dependencies", () =>
+            resolveOosDependencies({
+              shopifyStore: shop,
+              orderId: String(shopifyOrderId),
+              includeManualReview: true,
+            })
+          );
+          await step.run("emit-segment-targeted-oos-resolved", () =>
+            inngest.send({
+              id: `backorder-segment-retry:${event.id}:resolved`,
+              name: "backorder/resolved",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: shop,
+                resolvedAt: new Date().toISOString(),
+                resolution: "manual",
+              },
+            })
+          );
+        }
+        return result;
+      } catch (error) {
+        if (isTargetedRecovery) {
+          if (isInventoryUnavailableError(error)) {
+            await step.run("repark-segment-targeted-oos-dependencies", () =>
+              reparkOosDependencies({
+                shopifyStore: shop,
+                orderId: String(shopifyOrderId),
+                cooldownSeconds: config.oosRecovery.cooldownSeconds,
+                maxAttempts: config.oosRecovery.maxAttempts,
+                errorCode: "inventory_unavailable",
+              })
+            );
+          } else {
+            await step.run("manual-review-segment-targeted-oos-dependencies", () =>
+              moveOosDependenciesToManualReview({
+                shopifyStore: shop,
+                orderId: String(shopifyOrderId),
+                errorCode: "segment_replay_failure",
+              })
+            );
+          }
+        }
+        throw error;
+      } finally {
+        await step.run("release-segment-recovery-lease", () => releaseLease(lease));
+      }
     }
     if (segmented)
       return {
@@ -281,6 +338,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         fulfillments,
         shopifyStore: shop,
         inngestRunId: _runId || undefined,
+        oosRecoveryReplay: isTargetedRecovery,
       });
     });
     await step.run("release-sequenced-rerun-lease", () => releaseLease(lease));

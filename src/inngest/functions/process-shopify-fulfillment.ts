@@ -60,6 +60,11 @@ import {
   reparkOosDependencies,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
+import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
+import {
+  isInventoryUnavailableError,
+  toInventoryDependencies,
+} from "@/lib/services/oos-recovery/inventory-failure";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -124,10 +129,12 @@ export const processShopifyFulfillment = inngest.createFunction(
     const _runId = String(runId ?? "");
     const resolveReplay = async () => {
       if (!isOosRecoveryReplay) return;
+      if (Array.isArray(event.data.runSequence) && event.data.runSequence.length > 0) return;
       await step.run("resolve-successful-fulfillment-oos-replay", () =>
         resolveOosDependencies({
           shopifyStore: canonicalShopifyStore,
           orderId: String(shopifyOrderId),
+          includeManualReview: true,
         })
       );
       await step.run("emit-resolved-fulfillment-oos-replay", () =>
@@ -485,6 +492,11 @@ export const processShopifyFulfillment = inngest.createFunction(
 
           for (const fulfillment of fulfillments) {
             let fulfillmentSkuCandidates: string[] = [];
+            let fulfillmentDependencyCandidates: Array<{
+              orderLineId: string;
+              sku: string;
+              quantityNeeded: number;
+            }> = [];
             // Skip dummy/adjustment fulfillments
             if (isDummyFulfillment(fulfillment)) {
               results.push({
@@ -502,6 +514,18 @@ export const processShopifyFulfillment = inngest.createFunction(
               fulfillmentSkuCandidates = filteredItems
                 .map((item) => String(item.sku || "").trim())
                 .filter(Boolean);
+              fulfillmentDependencyCandidates = filteredItems.flatMap((item) => {
+                const orderLineId = String(item.id || "").trim();
+                const rawSku = String(item.sku || "").trim() || orderLineSkuById[orderLineId] || "";
+                const sku = normalizeSkuForLotLookup(rawSku);
+                const quantityNeeded = Number(item.quantity);
+                return orderLineId &&
+                  sku &&
+                  Number.isSafeInteger(quantityNeeded) &&
+                  quantityNeeded > 0
+                  ? [{ orderLineId, sku, quantityNeeded }]
+                  : [];
+              });
 
               if (filteredItems.length === 0) {
                 results.push({
@@ -864,34 +888,64 @@ export const processShopifyFulfillment = inngest.createFunction(
                 const shipFromWarehouseName =
                   getWarehouseNameFromLocation(fulfillment.location_id || "") || undefined;
 
-                await inngest.send({
-                  name: "backorder/created",
-                  data: {
-                    shopifyOrderId,
-                    shopifyOrderName,
-                    shopifyStore: canonicalShopifyStore,
-                    d365OrderNumber: d365Order.SalesOrderNumber,
-                    // Prefer real ship-from; fall back to D365 site only if unknown.
-                    warehouse: shipFromWarehouseName || d365WarehouseName,
-                    errorMessage: errorMsg,
-                    errorType: fulfilmentIncomplete
-                      ? "d365_fulfilment_incomplete"
-                      : "inventory_insufficient",
-                    failedSkus,
-                    retryCount: 0,
-                    maxRetries: BACKORDER_CONFIGS.maxRetries,
-                    orderJson: order,
-                    createdAt: new Date().toISOString(),
-                    source: "shopify/order.fulfilled",
-                    sourceEventName: "shopify/order.fulfilled",
-                    failureStage: "fulfillment",
-                    failureSystem: "d365",
-                    retryMode: "fulfillment_replay",
-                    backorderQueue: "fulfilment",
-                    d365WarehouseName,
-                    shipFromWarehouseName,
-                  },
-                });
+                const parkedTargeted =
+                  config.oosRecovery.enabled &&
+                  invTerminal &&
+                  fulfillmentDependencyCandidates.length > 0;
+                if (parkedTargeted) {
+                  await parkOosOrder({
+                    dependencies: fulfillmentDependencyCandidates.map((item) => ({
+                      provider: "d365" as const,
+                      warehouse: dataAreaId.toUpperCase(),
+                      sku: item.sku,
+                      orderLineId: item.orderLineId,
+                      quantityNeeded: item.quantityNeeded,
+                      shopifyOrderId: String(shopifyOrderId),
+                      shopifyOrderName,
+                      shopifyStore: canonicalShopifyStore,
+                      safeFailureCategory: "inventory_insufficient" as const,
+                    })),
+                    context: {
+                      d365OrderNumber: d365Order.SalesOrderNumber,
+                      sourceEventName: "shopify/order.fulfilled",
+                      failureStage: "fulfillment",
+                      retryMode: "fulfillment_replay",
+                      backorderQueue: "fulfilment",
+                      maxRetries: config.oosRecovery.maxAttempts,
+                      resolvedProviderBeforeParking: isOosRecoveryReplay ? "d365" : undefined,
+                    },
+                    retentionDays: config.oosRecovery.retentionDays,
+                  });
+                } else {
+                  await inngest.send({
+                    name: "backorder/created",
+                    data: {
+                      shopifyOrderId,
+                      shopifyOrderName,
+                      shopifyStore: canonicalShopifyStore,
+                      d365OrderNumber: d365Order.SalesOrderNumber,
+                      // Prefer real ship-from; fall back to D365 site only if unknown.
+                      warehouse: shipFromWarehouseName || d365WarehouseName,
+                      errorMessage: errorMsg,
+                      errorType: fulfilmentIncomplete
+                        ? "d365_fulfilment_incomplete"
+                        : "inventory_insufficient",
+                      failedSkus,
+                      retryCount: 0,
+                      maxRetries: BACKORDER_CONFIGS.maxRetries,
+                      orderJson: order,
+                      createdAt: new Date().toISOString(),
+                      source: "shopify/order.fulfilled",
+                      sourceEventName: "shopify/order.fulfilled",
+                      failureStage: "fulfillment",
+                      failureSystem: "d365",
+                      retryMode: "fulfillment_replay",
+                      backorderQueue: "fulfilment",
+                      d365WarehouseName,
+                      shipFromWarehouseName,
+                    },
+                  });
+                }
                 console.warn(
                   `[Backorder] Queued from fulfillment (${fulfilmentIncomplete ? "d365_fulfilment_incomplete" : "inventory"}) for ${shopifyOrderName}: ${errorMsg}; SKUs=${failedSkus.join(", ")}`
                 );
@@ -1192,11 +1246,13 @@ export const processShopifyFulfillment = inngest.createFunction(
               fulfillments,
               shopifyStore: (event.data as any).shopifyStore,
               inngestRunId: _runId || undefined,
+              oosRecoveryReplay: isOosRecoveryReplay,
             });
           } catch (err) {
             console.warn(
               `[RunSequence] Failed to advance after fulfillment_replay for ${shopifyOrderName}: ${err}`
             );
+            if (isOosRecoveryReplay) throw err;
           }
         }
       }
@@ -1237,6 +1293,34 @@ export const processShopifyFulfillment = inngest.createFunction(
       const errorMsg = error instanceof Error ? error.message : String(error);
       const isInventoryIssue = isFulfillmentInventoryIssueError(errorMsg);
       const errorType = isInventoryIssue ? "inventory_insufficient" : "d365_fulfillment_error";
+      const parkedTargetedInventory =
+        config.oosRecovery.enabled && isInventoryUnavailableError(error);
+
+      if (parkedTargetedInventory) {
+        await step.run("park-segmented-fulfillment-inventory-dependencies", () =>
+          parkOosOrder({
+            dependencies: toInventoryDependencies({
+              error,
+              order,
+              shopifyStore: canonicalShopifyStore,
+              warehouse:
+                error.blockedItems[0]?.warehouse ??
+                error.providerWarehouse ??
+                config.dynamics.dataAreaId,
+            }),
+            context: {
+              d365OrderNumber: error.providerOrderNumber ?? "",
+              sourceEventName: "shopify/order.fulfilled",
+              failureStage: "fulfillment",
+              retryMode: "fulfillment_replay",
+              backorderQueue: "fulfilment",
+              maxRetries: config.oosRecovery.maxAttempts,
+              resolvedProviderBeforeParking: isOosRecoveryReplay ? error.provider : undefined,
+            },
+            retentionDays: config.oosRecovery.retentionDays,
+          })
+        );
+      }
 
       await failReplay(
         isInventoryIssue ? "inventory_unavailable" : "downstream_fulfillment_failure",
@@ -1267,32 +1351,34 @@ export const processShopifyFulfillment = inngest.createFunction(
       });
 
       try {
-        await step.run("emit-backorder-fulfillment-catch-all", async () => {
-          await inngest.send({
-            name: "backorder/created",
-            data: {
-              shopifyOrderId,
-              shopifyOrderName,
-              shopifyStore: canonicalShopifyStore,
-              d365OrderNumber: "",
-              warehouse: failedShipFromWarehouse || "Unknown",
-              errorMessage: errorMsg,
-              errorType,
-              failedSkus: [],
-              retryCount: 0,
-              maxRetries: 0,
-              orderJson: order,
-              createdAt: new Date().toISOString(),
-              source: "shopify/order.fulfilled",
-              sourceEventName: "shopify/order.fulfilled",
-              failureStage: "fulfillment",
-              failureSystem: "d365",
-              retryMode: "fulfillment_replay",
-              backorderQueue: "fulfilment",
-              shipFromWarehouseName: failedShipFromWarehouse,
-            },
+        if (!parkedTargetedInventory) {
+          await step.run("emit-backorder-fulfillment-catch-all", async () => {
+            await inngest.send({
+              name: "backorder/created",
+              data: {
+                shopifyOrderId,
+                shopifyOrderName,
+                shopifyStore: canonicalShopifyStore,
+                d365OrderNumber: "",
+                warehouse: failedShipFromWarehouse || "Unknown",
+                errorMessage: errorMsg,
+                errorType,
+                failedSkus: [],
+                retryCount: 0,
+                maxRetries: 0,
+                orderJson: order,
+                createdAt: new Date().toISOString(),
+                source: "shopify/order.fulfilled",
+                sourceEventName: "shopify/order.fulfilled",
+                failureStage: "fulfillment",
+                failureSystem: "d365",
+                retryMode: "fulfillment_replay",
+                backorderQueue: "fulfilment",
+                shipFromWarehouseName: failedShipFromWarehouse,
+              },
+            });
           });
-        });
+        }
 
         await step.run("notify-hub-fulfillment-catch-all", async () => {
           await csPlatform.sendOrderUpdate(
