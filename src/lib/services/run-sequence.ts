@@ -9,6 +9,7 @@
 
 import { inngest } from "@/inngest/client";
 import * as csPlatform from "@/lib/clients/cs-platform";
+import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
 import type { RunSequenceStage, ShopifyOrderPayload, ShopifyFulfillment } from "@/inngest/events";
 
 export type AdvanceRunSequenceParams = {
@@ -22,7 +23,7 @@ export type AdvanceRunSequenceParams = {
   /** Hub will need an order/fulfillment payload to replay these stages. */
   orderJson?: ShopifyOrderPayload | null;
   fulfillments?: ShopifyFulfillment[] | null;
-  shopifyStore?: string;
+  shopifyStore: string;
   /** Carried through for status_update CS Platform calls. */
   inngestRunId?: string;
   inngestIdempotencyKey?: string;
@@ -81,6 +82,7 @@ export async function advanceRunSequence(
     inngestIdempotencyKey,
     history = [],
   } = params;
+  const canonicalShopifyStore = resolveShopifyAdminCredentials(shopifyStore).shopDomain;
 
   const fullHistory = completedStage
     ? [
@@ -127,7 +129,7 @@ export async function advanceRunSequence(
       data: {
         shopifyOrderId,
         shopifyOrderName,
-        shopifyStore: shopifyStore || "im8-battle-bus",
+        shopifyStore: canonicalShopifyStore,
         orderJson,
         receivedAt: nowIso(),
         runSequence: rest,
@@ -145,7 +147,7 @@ export async function advanceRunSequence(
       data: {
         shopifyOrderId,
         shopifyOrderName,
-        shopifyStore: shopifyStore || "im8-battle-bus",
+        shopifyStore: canonicalShopifyStore,
         orderJson,
         fulfillments:
           fulfillments ??
@@ -164,7 +166,7 @@ export async function advanceRunSequence(
       data: {
         shopifyOrderId,
         shopifyOrderName,
-        shopifyStore,
+        shopifyStore: canonicalShopifyStore,
         d365OrderNumber: "",
         warehouse: "",
         retryCount: 0,

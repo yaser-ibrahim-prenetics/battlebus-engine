@@ -109,6 +109,9 @@ export const processShopifyFulfillment = inngest.createFunction(
   },
   async ({ event, step, runId }: { event: any; step: any; runId?: string }) => {
     const { shopifyOrderId, shopifyOrderName, orderJson, fulfillments } = event.data;
+    const canonicalShopifyStore = shopifyClient.resolveShopifyAdminCredentials(
+      event.data.shopifyStore
+    ).shopDomain;
     const order = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
     // Inngest function run id (ULID) for /runs/{id} — NOT event.id (that is the *event* id, e.g. idempotency key).
@@ -268,6 +271,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: "",
               warehouse: failedShipFromWarehouse || "Unknown",
               errorMessage: errorMsg,
@@ -800,6 +804,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               data: {
                 shopifyOrderId,
                 shopifyOrderName,
+                shopifyStore: canonicalShopifyStore,
                 d365OrderNumber: d365Order.SalesOrderNumber,
                 // Prefer real ship-from; fall back to D365 site only if unknown.
                 warehouse: shipFromWarehouseName || d365WarehouseName,
@@ -927,6 +932,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: d365Order.SalesOrderNumber,
               warehouse: failedShipFromWarehouse || d365Site?.name || "Unknown",
               errorMessage: firstErrorMessage,
@@ -1184,6 +1190,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: "",
               warehouse: failedShipFromWarehouse || "Unknown",
               errorMessage: errorMsg,

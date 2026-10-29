@@ -101,6 +101,7 @@ export const syncGpsFulfillments = inngest.createFunction(
             data: {
               shopifyOrderId: exc.shopifyOrderId,
               shopifyOrderName: exc.shopifyOrderName,
+              shopifyStore: config.shopify.im8.shopDomain,
               d365OrderNumber: "",
               warehouse: exc.warehouse,
               errorMessage: exc.exceptionDesc,

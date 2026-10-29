@@ -250,6 +250,8 @@ export type BackorderCreatedEvent = {
   data: {
     shopifyOrderId: string;
     shopifyOrderName: string;
+    /** Canonical Shopify myshopify.com domain used for serialization and cancellation. */
+    shopifyStore: string;
     d365OrderNumber: string;
     warehouse: string;
     errorMessage: string;
@@ -279,8 +281,6 @@ export type BackorderCreatedEvent = {
     retryMode?: "gps_outbound" | "fulfillment_replay";
     /** Hub Backorders sub-queue tag used for route segmentation and replay policy. */
     backorderQueue?: "sync" | "fulfilment";
-    /** Store hint for replays (e.g. shopify/order.paid after validation fix). */
-    shopifyStore?: string;
   };
 };
 
@@ -300,8 +300,8 @@ export type BackorderRetryEvent = {
   data: {
     shopifyOrderId: string;
     shopifyOrderName: string;
-    /** Store hint used to serialize and replay the order on the correct Shopify shop. */
-    shopifyStore?: string;
+    /** Canonical Shopify myshopify.com domain used to serialize and replay the order. */
+    shopifyStore: string;
     d365OrderNumber: string;
     warehouse: string;
     retryCount: number;
