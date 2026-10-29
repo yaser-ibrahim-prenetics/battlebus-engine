@@ -44,8 +44,9 @@ The same validated request model supports:
 
 For one live lane and canonical inventory key, the database stores at most one active request and one
 coalesced successor. A newer observation refreshes the successor rather than creating unbounded
-runs. Dry-run previews use a separate in-memory lane identity and are never inserted into the request
-or outbox tables.
+runs. Dry-run previews use a separate in-memory lane identity and are never inserted into the drain
+request or outbox tables. Their immutable command receipt is retained for authorization, rate-limit
+and idempotency evidence.
 
 ## FIFO and quantity allocation
 
@@ -56,8 +57,8 @@ and outstanding `retrying` quantities are reserved before allocation. An order w
 lines is replayed only when all of them can be satisfied, including when independent drain lanes
 compete for the same provider quantity.
 
-Dry runs execute the same selection algorithm but never mutate dependencies, requests, orders or
-outbox rows.
+Dry runs execute the same selection algorithm but never mutate dependencies, drain requests, orders
+or outbox rows. Only the restricted command-audit receipt and aggregate preview result are written.
 
 ## Rollout
 
@@ -81,12 +82,14 @@ outbox rows.
 5. Enable live targeted drains, then retire redundant per-order polling only after the evidence
    window is complete.
 
-The authenticated `POST /api/operations/oos-drain` endpoint supports provider/warehouse/SKU,
-order/store and parked-date filters. It requires trusted `x-actor-id` and `x-actor-email` identity
-headers plus a UUID `requestId` and a 10–1000 character `reason` in the strict JSON body. Set
-`dryRun: true` for selection evidence without dependency, request, order or retry-outbox mutation.
-Queue depth, oldest due age, retries, manual-review work, expired leases and exhausted outbox entries
-are returned by the authenticated operations health view.
+The `POST /api/operations/oos-drain` endpoint accepts only manual mode and authenticates exclusively
+with the dedicated `BATTLE_BUS_OPERATIONS_API_KEY`; the general event-publishing key is rejected.
+The server records the operations service principal rather than trusting caller-supplied actor
+headers. A strict body requires a UUID `requestId` and a 10–1000 character `reason`, and immutable
+command receipts reject conflicting UUID reuse while returning the original job for exact retries.
+Set `dryRun: true` for aggregate selection evidence without dependency, drain-request, order or
+retry-outbox mutation. Queue depth, oldest due age, retries, manual-review work, expired leases and
+exhausted outbox entries are returned by the authenticated operations health view.
 
 ## Acceptance criteria
 
@@ -95,7 +98,7 @@ are returned by the authenticated operations health view.
 - An order with two blocked SKUs wakes only when both are satisfiable.
 - Available inventory is allocated oldest-first without overselling.
 - Repeated observations create at most one active drain and one successor per lane/key.
-- Dry-run returns evidence without database mutation.
+- Dry-run returns aggregate evidence with only its immutable command audit/result receipt mutated.
 - A bounded batch can process a queue of at least 10,000 rows without loading the whole queue.
 - Continued inventory failures apply cooldown and increment attempts; non-inventory failures and
   expired entries become visible manual-review work.

@@ -4,8 +4,9 @@ Battle Bus is deployed as an internet-reachable Cloud Run service in
 `battle-bus-509406`. Public reachability is required for Shopify, warehouse
 webhooks, and Inngest's `serve()` callback model. Authentication is enforced by
 the application: Inngest requests use its signing key, provider webhooks use
-their provider signatures/secrets, and internal/operator endpoints use
-`BATTLE_BUS_API_KEY`.
+their provider signatures/secrets, general internal endpoints use
+`BATTLE_BUS_API_KEY`, and the restricted OOS operator endpoint uses the separate
+`BATTLE_BUS_OPERATIONS_API_KEY` principal.
 GitHub Actions uses Workload Identity Federation (OIDC); the repository must not
 contain a Google Cloud service-account key.
 
@@ -76,6 +77,7 @@ Secret Manager-backed environment names:
 - `INNGEST_SIGNING_KEY`
 - `INNGEST_EVENT_KEY`
 - `BATTLE_BUS_API_KEY`
+- `BATTLE_BUS_OPERATIONS_API_KEY` (a distinct value stored in `battle-bus-operations-api-key`)
 - `SHOPIFY_TEST_WEBHOOK_SECRET` while the deployment remains in test/dry-run mode
 
 Release 1 database activation additionally requires:

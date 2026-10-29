@@ -1,17 +1,37 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { submitOosDrainRequest, createOosDrainPreviewRequest, executeOosDrain, logRecoveryFailure } =
-  vi.hoisted(() => ({
+const {
+  submitOosDrainRequest,
+  createOosDrainPreviewRequest,
+  reserveOosDrainPreviewCommand,
+  finishOosDrainPreviewCommand,
+  executeOosDrain,
+  logRecoveryFailure,
+  OosDrainCommandConflictError,
+  OosDrainCommandInProgressError,
+} = vi.hoisted(() => {
+  class ConflictError extends Error {}
+  class InProgressError extends Error {}
+  return {
     submitOosDrainRequest: vi.fn(),
     createOosDrainPreviewRequest: vi.fn(),
+    reserveOosDrainPreviewCommand: vi.fn(),
+    finishOosDrainPreviewCommand: vi.fn(),
     executeOosDrain: vi.fn(),
     logRecoveryFailure: vi.fn(),
-  }));
+    OosDrainCommandConflictError: ConflictError,
+    OosDrainCommandInProgressError: InProgressError,
+  };
+});
 
 vi.mock("@/lib/services/oos-recovery/requests", () => ({
   submitOosDrainRequest,
   createOosDrainPreviewRequest,
+  reserveOosDrainPreviewCommand,
+  finishOosDrainPreviewCommand,
+  OosDrainCommandConflictError,
+  OosDrainCommandInProgressError,
 }));
 vi.mock("@/lib/services/oos-recovery/drain", () => ({ executeOosDrain }));
 vi.mock("@/lib/services/operations/diagnostics", () => ({ logRecoveryFailure }));
@@ -21,7 +41,7 @@ vi.mock("@/lib/config", () => ({
 
 import { POST } from "../route";
 
-const originalApiKey = process.env.BATTLE_BUS_API_KEY;
+const originalApiKey = process.env.BATTLE_BUS_OPERATIONS_API_KEY;
 const requestId = "00000000-0000-4000-8000-000000000004";
 
 function request(body: Record<string, unknown>, headers: Record<string, string> = {}) {
@@ -30,8 +50,6 @@ function request(body: Record<string, unknown>, headers: Record<string, string> 
     headers: {
       authorization: "Bearer operations-key",
       "content-type": "application/json",
-      "x-actor-id": "operator-1",
-      "x-actor-email": "operator@example.com",
       ...headers,
     },
     body: JSON.stringify(body),
@@ -49,7 +67,7 @@ const validBody = {
 };
 
 beforeEach(() => {
-  process.env.BATTLE_BUS_API_KEY = "operations-key";
+  process.env.BATTLE_BUS_OPERATIONS_API_KEY = "operations-key";
   vi.clearAllMocks();
   submitOosDrainRequest.mockResolvedValue({
     created: true,
@@ -61,34 +79,51 @@ beforeEach(() => {
     dryRun: true,
   };
   createOosDrainPreviewRequest.mockReturnValue(preview);
-  executeOosDrain.mockResolvedValue({ selectedOrders: 1, decisions: [] });
+  reserveOosDrainPreviewCommand.mockResolvedValue({ status: "execute" });
+  finishOosDrainPreviewCommand.mockResolvedValue(undefined);
+  executeOosDrain.mockResolvedValue({
+    examinedOrders: 1,
+    selectedOrders: 1,
+    selectedDependencies: 1,
+    manualReviewExpired: 0,
+    queuedKeys: 0,
+    decisions: [],
+  });
 });
 
 afterEach(() => {
-  if (originalApiKey === undefined) delete process.env.BATTLE_BUS_API_KEY;
-  else process.env.BATTLE_BUS_API_KEY = originalApiKey;
+  if (originalApiKey === undefined) delete process.env.BATTLE_BUS_OPERATIONS_API_KEY;
+  else process.env.BATTLE_BUS_OPERATIONS_API_KEY = originalApiKey;
 });
 
 describe("OOS drain operations route", () => {
-  it("rejects missing operator identity and unknown body fields", async () => {
-    const missingIdentity = await POST(request(validBody, { "x-actor-id": "" }));
+  it("rejects the general service key, internal modes and unknown body fields", async () => {
+    const generalKey = await POST(
+      request(validBody, { authorization: "Bearer general-service-key" })
+    );
+    const internalMode = await POST(request({ ...validBody, mode: "sweep" }));
     const unknownField = await POST(request({ ...validBody, requestedBy: "spoofed" }));
 
-    expect(missingIdentity.status).toBe(400);
+    expect(generalKey.status).toBe(401);
+    expect(internalMode.status).toBe(400);
     expect(unknownField.status).toBe(400);
     expect(submitOosDrainRequest).not.toHaveBeenCalled();
   });
 
-  it("derives the audited actor from headers for a persisted live request", async () => {
+  it("derives a non-spoofable operations principal for a persisted live request", async () => {
     const response = await POST(request(validBody));
 
     expect(response.status).toBe(202);
     expect(submitOosDrainRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        sourceEventId: requestId,
-        requestedBy: "operator-1:operator@example.com",
+        requestedBy: "service:battle-bus-operations",
         requestReason: validBody.reason,
-      })
+      }),
+      {
+        actor: "service:battle-bus-operations",
+        reason: validBody.reason,
+        requestId,
+      }
     );
     expect(executeOosDrain).not.toHaveBeenCalled();
   });
@@ -97,8 +132,10 @@ describe("OOS drain operations route", () => {
     const response = await POST(request({ ...validBody, dryRun: true }));
 
     expect(response.status).toBe(200);
+    expect(reserveOosDrainPreviewCommand).toHaveBeenCalledOnce();
     expect(createOosDrainPreviewRequest).toHaveBeenCalledOnce();
     expect(executeOosDrain).toHaveBeenCalledOnce();
+    expect(finishOosDrainPreviewCommand).toHaveBeenCalledOnce();
     expect(submitOosDrainRequest).not.toHaveBeenCalled();
   });
 
@@ -106,7 +143,7 @@ describe("OOS drain operations route", () => {
     submitOosDrainRequest.mockRejectedValue(new Error("postgres://secret@internal/database"));
     const response = await POST(request(validBody));
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain("secret");
     expect(logRecoveryFailure).toHaveBeenCalledOnce();
   });
