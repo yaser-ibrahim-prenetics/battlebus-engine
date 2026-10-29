@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type * as dynamics from "@/lib/clients/dynamics";
 import {
+  d365DepositInvoiceReplayRequest,
   depositInvoiceEvidenceCodec,
   d365FulfillmentEvidenceCodec,
   gpsOutboundOrderEvidenceCodec,
@@ -9,6 +10,7 @@ import {
   MAX_OOS_MUTATION_FAILURE_BYTES,
   serializeOosRecoveryMutationFailure,
 } from "../outcomes";
+import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
 
 describe("OOS mutation evidence", () => {
   it("normalizes arbitrarily large D365 responses into a bounded semantic projection", () => {
@@ -52,6 +54,40 @@ describe("OOS mutation evidence", () => {
     });
     expect(new TextEncoder().encode(JSON.stringify(evidence)).length).toBeLessThan(512);
     expect(depositInvoiceEvidenceCodec.decode(evidence)).toMatchObject({ verified: true });
+  });
+
+  it.each([
+    ["direct", "SO-DIRECT", "U001"],
+    ["segmented", "SO-SEGMENT", "U002"],
+  ])("keeps %s deposit verification identity stable after fulfillment replay", (_, order, area) => {
+    const original = {
+      response: {
+        status: 1,
+        Message:
+          "Dimension warehouse is still specified; number of vouchers posted to the journal: 9",
+        Result: "original provider result",
+        $id: "original-provider-id",
+      },
+      request: {},
+    } satisfies Awaited<ReturnType<typeof dynamics.createFulfilment>>;
+    const replayed = d365FulfillmentEvidenceCodec.decode(
+      d365FulfillmentEvidenceCodec.encode(original)
+    );
+    const originalRequest = d365DepositInvoiceReplayRequest({
+      salesOrderNumber: order,
+      dataAreaId: area,
+      response: original.response,
+    });
+    const replayedRequest = d365DepositInvoiceReplayRequest({
+      salesOrderNumber: order,
+      dataAreaId: area,
+      response: replayed.response,
+    });
+
+    expect(replayedRequest).toEqual(originalRequest);
+    expect(fingerprint(["oos-provider-request-v1", replayedRequest])).toBe(
+      fingerprint(["oos-provider-request-v1", originalRequest])
+    );
   });
 
   it("keeps 500 maximum-size ordinary dependency references within the durable cap", () => {

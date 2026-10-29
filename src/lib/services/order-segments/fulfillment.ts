@@ -16,6 +16,7 @@ import {
   isInventoryUnavailableError,
 } from "@/lib/services/oos-recovery/inventory-failure";
 import {
+  d365DepositInvoiceReplayRequest,
   depositInvoiceEvidenceCodec,
   d365FulfillmentEvidenceCodec,
   type OosMutationEvidenceCodec,
@@ -174,7 +175,11 @@ export async function fulfillOrderSegments(input: {
           ) {
             await withExternalMutation(
               `segment:${segment.index}:deposit-invoice:${allocation.fulfillment_id}`,
-              { salesOrderNumber, dataAreaId: segment.dataAreaId, response: result.response },
+              d365DepositInvoiceReplayRequest({
+                salesOrderNumber,
+                dataAreaId: segment.dataAreaId,
+                response: result.response,
+              }),
               () =>
               dynamics.assertDepositShipmentInvoicingComplete(
                 salesOrderNumber,

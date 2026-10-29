@@ -74,6 +74,7 @@ import {
   toInventoryDependencies,
 } from "@/lib/services/oos-recovery/inventory-failure";
 import {
+  d365DepositInvoiceReplayRequest,
   d365FulfillmentEvidenceCodec,
   depositInvoiceEvidenceCodec,
 } from "@/lib/services/oos-recovery/mutation-evidence";
@@ -828,11 +829,11 @@ export const processShopifyFulfillment = inngest.createFunction(
               const depositShipInvoiceCheck = isDepositOrder
                 ? await runWithOosMutationLease(
                     `d365:deposit-invoice:${fulfillment.id}`,
-                    {
+                    d365DepositInvoiceReplayRequest({
                       salesOrderNumber: d365Order.SalesOrderNumber!,
                       dataAreaId,
                       response: fulfilmentPost.response,
-                    },
+                    }),
                     () =>
                     dynamics.assertDepositShipmentInvoicingComplete(
                       d365Order.SalesOrderNumber!,
