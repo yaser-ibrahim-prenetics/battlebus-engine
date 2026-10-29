@@ -10,14 +10,26 @@ const mocks = vi.hoisted(() => ({
     shopifyStore: "lease-test.myshopify.com",
     orderId: "1001",
     token: "lease-token",
-    expiresAt: new Date("2026-10-29T00:10:00.000Z"),
+    expiresAt: "2026-10-29T00:10:00.000Z",
+    operationKey: "manual-retry-1:manual-retry:1",
+    owner: "backorder/retry:manual-run-1",
+    leaseSeconds: 600,
   })),
+  renewLease: vi.fn(async (lease: unknown) => lease),
   releaseLease: vi.fn(async () => undefined),
   createOutboundOrder: vi.fn(async () => ({
     response: { data: [{ orderNo: "GPS-1001" }] },
   })),
   setGpsOrderMetafield: vi.fn(async () => undefined),
   sendOrderUpdate: vi.fn(async () => undefined),
+  backorderConfig: {
+    autoRetryEnabled: true,
+    autoRetryMaxAttempts: 1,
+    autoRetryIntervalHours: 1,
+    maxRetries: 1,
+    retryIntervalHours: 1,
+    recoveryLeaseSeconds: 600,
+  },
 }));
 
 vi.mock("../../client", () => ({
@@ -73,20 +85,16 @@ vi.mock("@/lib/transformers/address", () => ({
 }));
 vi.mock("@/lib/utils/constants", () => ({
   RETRY_CONFIGS: { DEFAULT: 3 },
-  BACKORDER_CONFIGS: {
-    autoRetryEnabled: true,
-    autoRetryMaxAttempts: 1,
-    autoRetryIntervalHours: 1,
-    maxRetries: 1,
-    retryIntervalHours: 1,
-    recoveryLeaseSeconds: 600,
-  },
+  BACKORDER_CONFIGS: mocks.backorderConfig,
 }));
 vi.mock("@/lib/services/flow-logs", () => ({ logFlowEvent: vi.fn() }));
 vi.mock("@/lib/services/run-sequence", () => ({ advanceRunSequence: vi.fn() }));
 vi.mock("@/lib/services/backorder-recovery/lease", () => ({
   acquireBackorderRecoveryLease: mocks.acquireLease,
+  isBackorderRecoveryBusyError: (error: unknown) =>
+    (error as { name?: string })?.name === "BackorderRecoveryBusyError",
   releaseBackorderRecoveryLease: mocks.releaseLease,
+  renewBackorderRecoveryLease: mocks.renewLease,
 }));
 
 import { processBackorder, processBackorderRetry } from "../process-backorder";
@@ -126,6 +134,9 @@ describe("backorder recovery serialization", () => {
   it("registers created and manual retry events on separate workers", () => {
     expect(mocks.registrations).toHaveLength(2);
     expect(mocks.registrations[0].options.triggers).toEqual([{ event: "backorder/created" }]);
+    expect(mocks.registrations[0].options.cancelOn).toEqual([
+      { event: "backorder/resolved", match: "data.shopifyOrderId" },
+    ]);
     expect(mocks.registrations[1].options.triggers).toEqual([{ event: "backorder/retry" }]);
     for (const registration of mocks.registrations) {
       expect(registration.options.concurrency).toEqual([
@@ -149,6 +160,7 @@ describe("backorder recovery serialization", () => {
     expect(result).toMatchObject({ status: "resolved", retryCount: 1 });
     expect(manualStep.sleep).not.toHaveBeenCalled();
     expect(mocks.acquireLease).toHaveBeenCalledTimes(1);
+    expect(mocks.renewLease).toHaveBeenCalledTimes(1);
     expect(mocks.createOutboundOrder).toHaveBeenCalledTimes(1);
     expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledWith(
@@ -167,6 +179,29 @@ describe("backorder recovery serialization", () => {
     expect(result).toMatchObject({ status: "resolved", retryCount: 1 });
     expect(automaticStep.sleep).toHaveBeenCalledWith("wait-before-auto-retry-1", "1h");
     expect(mocks.acquireLease).toHaveBeenCalledTimes(1);
+    expect(mocks.createOutboundOrder).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("durably waits for an active lease instead of consuming the retry", async () => {
+    mocks.acquireLease.mockRejectedValueOnce({
+      name: "BackorderRecoveryBusyError",
+      retryAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    const manualStep = step();
+
+    const result = await (processBackorderRetry as unknown as (args: any) => Promise<any>)({
+      event: event("backorder/retry"),
+      step: manualStep,
+      runId: "manual-run-2",
+    });
+
+    expect(result).toMatchObject({ status: "resolved", retryCount: 1 });
+    expect(manualStep.sleep).toHaveBeenCalledWith(
+      "wait-for-backorder-lease-manual-retry:1-0",
+      expect.stringMatching(/^\d+s$/)
+    );
+    expect(mocks.acquireLease).toHaveBeenCalledTimes(2);
     expect(mocks.createOutboundOrder).toHaveBeenCalledTimes(1);
     expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
   });

@@ -14,11 +14,7 @@ import {
 } from "@/lib/transformers/order";
 import { executeFulfillmentAction } from "../fulfillment-actions/ledger";
 import type { OrderAccounting } from "../order-accounting/types";
-import {
-  assertSegmentPlanReplayCompatible,
-  planOrderSegments,
-  segmentOrder,
-} from "./planner";
+import { assertSegmentPlanReplayCompatible, planOrderSegments, segmentOrder } from "./planner";
 import { readPlan, reservePlan, saveProgress } from "./store";
 import { bindShopifySegments } from "./shopify";
 import { segmentLineRequests } from "./lines";
@@ -35,6 +31,7 @@ type ProcessSegmentsInput = {
   fallbackDataArea: string;
   shortAddress?: string;
   ensureEligible?: () => Promise<unknown>;
+  beforeExternalMutation?: () => Promise<unknown>;
 };
 
 export async function processOrderSegments(input: ProcessSegmentsInput) {
@@ -106,7 +103,10 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   });
   if (!stored) return null;
   const { plan } = stored;
-  const bindings = await step.run("bind-shopify-segments", () => bindShopifySegments(shop, plan));
+  const bindings = await step.run("bind-shopify-segments", async () => {
+    await input.beforeExternalMutation?.();
+    return bindShopifySegments(shop, plan);
+  });
   const outcomes = await Promise.allSettled(
     plan.segments.map(async (segment): Promise<SegmentProgress> => {
       await input.ensureEligible?.();
@@ -122,7 +122,10 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
             action: `${prefix}:${phase}`,
           },
           request,
-          execute
+          async () => {
+            await input.beforeExternalMutation?.();
+            return execute();
+          }
         );
       const salesOrderNumber = await step.run(`${prefix}-header`, async () => {
         const header = toD365SalesOrderHeaderV3(
@@ -189,7 +192,8 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
             is_service_line: false,
           }))
         );
-        if (!saved.ok) throw new Error(`Could not persist segmented subscription rewards: ${saved.reason}`);
+        if (!saved.ok)
+          throw new Error(`Could not persist segmented subscription rewards: ${saved.reason}`);
         return saved;
       });
       await step.run(`${prefix}-confirm`, () =>
@@ -210,6 +214,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         await input.ensureEligible?.();
         if (!config.features.enableGpsSync || !shouldSendToGps(projected, segment.warehouse))
           return undefined;
+        await input.beforeExternalMutation?.();
         const payload = toGpsOutboundOrder(
           projected,
           salesOrderNumber,
