@@ -18,6 +18,7 @@
 // 5. After max retries: escalate to Slack and mark as exhausted
 
 import { inngest } from "../client";
+import { requireAppliedOosRecoveryOutcome } from "../oos-replay";
 import { readPlan } from "@/lib/services/order-segments/store";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
@@ -137,12 +138,36 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           })
         )
       : null;
-  const isTargetedRecovery = event.data.targetedRecovery === true || storedOosContext !== null;
-  let oosRecoveryAttemptToken =
-    (typeof event.data.oosRecoveryAttemptToken === "string" &&
-      event.data.oosRecoveryAttemptToken.trim()) ||
-    storedOosContext?.attemptToken ||
-    null;
+  const suppliedOosRecoveryAttemptToken =
+    typeof event.data.oosRecoveryAttemptToken === "string"
+      ? event.data.oosRecoveryAttemptToken.trim() || null
+      : null;
+  if (event.name === "backorder/retry") {
+    if (event.data.targetedRecovery === true && !storedOosContext) {
+      throw new NonRetriableError("Targeted OOS retry has no current database context");
+    }
+    if (
+      suppliedOosRecoveryAttemptToken &&
+      (!storedOosContext || storedOosContext.attemptToken !== suppliedOosRecoveryAttemptToken)
+    ) {
+      throw new NonRetriableError("Targeted OOS retry has a stale replay attempt token");
+    }
+    if (
+      storedOosContext?.attemptToken &&
+      !suppliedOosRecoveryAttemptToken &&
+      !(isHubManualRetry && storedOosContext.manualReview)
+    ) {
+      throw new NonRetriableError("Targeted OOS retry is missing its replay attempt token");
+    }
+    if (storedOosContext && !storedOosContext.attemptToken && !isHubManualRetry) {
+      throw new NonRetriableError("Targeted OOS retry has not started a replay attempt");
+    }
+  }
+  const isTargetedRecovery =
+    event.name === "backorder/retry"
+      ? storedOosContext !== null
+      : event.data.targetedRecovery === true;
+  let oosRecoveryAttemptToken = suppliedOosRecoveryAttemptToken;
   const requireOosRecoveryAttemptToken = (): string => {
     if (!oosRecoveryAttemptToken) {
       throw new NonRetriableError("Targeted OOS recovery is missing its replay attempt token");
@@ -259,7 +284,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           beforeExternalMutation: ensureLease,
         });
         if (isTargetedRecovery) {
-          await step.run("resolve-segment-targeted-oos-dependencies", () =>
+          const outcome = await step.run("resolve-segment-targeted-oos-dependencies", () =>
             resolveOosDependencies({
               shopifyStore: shop,
               orderId: String(shopifyOrderId),
@@ -267,6 +292,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               includeManualReview: true,
             })
           );
+          requireAppliedOosRecoveryOutcome(outcome);
           await step.run("emit-segment-targeted-oos-resolved", () =>
             inngest.send({
               id: `backorder-segment-retry:${event.id}:resolved`,
@@ -729,13 +755,14 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         };
       }
       if (isTargetedRecovery) {
-        await step.run("resolve-targeted-oos-dependencies", () =>
+        const outcome = await step.run("resolve-targeted-oos-dependencies", () =>
           resolveOosDependencies({
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
             attemptToken: requireOosRecoveryAttemptToken(),
           })
         );
+        requireAppliedOosRecoveryOutcome(outcome);
       }
       await step.run("notify-backorder-resolved-manual", async () => {
         const paidReplay =

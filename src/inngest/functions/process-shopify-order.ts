@@ -8,6 +8,11 @@
 // 4. Handles Out of Stock retries
 
 import { inngest } from "../client";
+import {
+  requireAppliedOosRecoveryOutcome,
+  requireOosRecoveryAttemptToken,
+  validateOosRecoveryReplayAttempt,
+} from "../oos-replay";
 import { config } from "@/lib/config";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
@@ -282,32 +287,18 @@ export const processShopifyOrder = inngest.createFunction(
           })
         )
       : null;
-    const oosRecoveryAttemptToken =
-      (typeof event.data.oosRecoveryAttemptToken === "string" &&
-        event.data.oosRecoveryAttemptToken.trim()) ||
-      oosReplayContext?.attemptToken ||
-      null;
-    if (
-      isOosRecoveryReplay &&
-      (!oosReplayContext ||
-        !oosRecoveryAttemptToken ||
-        oosReplayContext.attemptToken !== oosRecoveryAttemptToken)
-    ) {
-      throw new NonRetriableError("Targeted OOS replay is stale or missing its attempt token");
-    }
-    const requireOosRecoveryAttemptToken = (): string => {
-      if (!oosRecoveryAttemptToken) {
-        throw new NonRetriableError("Targeted OOS replay is missing its attempt token");
-      }
-      return oosRecoveryAttemptToken;
-    };
+    const oosRecoveryAttemptToken = validateOosRecoveryReplayAttempt(
+      isOosRecoveryReplay,
+      event.data,
+      oosReplayContext
+    );
     const moveReplayToManualReview = async (errorCode: string) => {
       if (!isOosRecoveryReplay) return;
       await step.run(`manual-review-oos-replay-${errorCode}`, () =>
         moveOosDependenciesToManualReview({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
-          attemptToken: requireOosRecoveryAttemptToken(),
+          attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
           errorCode,
         })
       );
@@ -315,14 +306,15 @@ export const processShopifyOrder = inngest.createFunction(
     const resolveReplay = async () => {
       if (!isOosRecoveryReplay) return;
       if (incomingRunSequence.length > 0) return;
-      await step.run("resolve-successful-oos-replay", () =>
+      const outcome = await step.run("resolve-successful-oos-replay", () =>
         resolveOosDependencies({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
-          attemptToken: requireOosRecoveryAttemptToken(),
+          attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
           includeManualReview: true,
         })
       );
+      requireAppliedOosRecoveryOutcome(outcome);
       await step.run("emit-resolved-successful-oos-replay", () =>
         inngest.send({
           id: `oos-replay-resolved:${event.id}`,
@@ -1059,7 +1051,7 @@ export const processShopifyOrder = inngest.createFunction(
             reparkOosDependencies({
               shopifyStore: canonicalShopifyStore,
               orderId: shopifyOrderId,
-              attemptToken: requireOosRecoveryAttemptToken(),
+              attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
               cooldownSeconds: config.oosRecovery.cooldownSeconds,
               maxAttempts: config.oosRecovery.maxAttempts,
               errorCode: error.category,
@@ -1085,7 +1077,7 @@ export const processShopifyOrder = inngest.createFunction(
                   ? oosReplayContext?.provider
                   : undefined,
                 resolvedReplayToken: isOosRecoveryReplay
-                  ? requireOosRecoveryAttemptToken()
+                  ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                   : undefined,
                 maxRetries: config.oosRecovery.maxAttempts,
               },
@@ -1903,7 +1895,7 @@ export const processShopifyOrder = inngest.createFunction(
                 await reparkOosDependencies({
                   shopifyStore: canonicalShopifyStore,
                   orderId: shopifyOrderId,
-                  attemptToken: requireOosRecoveryAttemptToken(),
+                  attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
                   cooldownSeconds: config.oosRecovery.cooldownSeconds,
                   maxAttempts: config.oosRecovery.maxAttempts,
                   errorCode: classifyGpsError(oosError),
@@ -1928,7 +1920,7 @@ export const processShopifyOrder = inngest.createFunction(
                     ? oosReplayContext?.provider
                     : undefined,
                   resolvedReplayToken: isOosRecoveryReplay
-                    ? requireOosRecoveryAttemptToken()
+                    ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                     : undefined,
                 },
                 retentionDays: config.oosRecovery.retentionDays,
@@ -2231,7 +2223,7 @@ export const processShopifyOrder = inngest.createFunction(
               await reparkOosDependencies({
                 shopifyStore: canonicalShopifyStore,
                 orderId: shopifyOrderId,
-                attemptToken: requireOosRecoveryAttemptToken(),
+                attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: classifyGpsError(oosError),
@@ -2256,7 +2248,7 @@ export const processShopifyOrder = inngest.createFunction(
                   ? oosReplayContext?.provider
                   : undefined,
                 resolvedReplayToken: isOosRecoveryReplay
-                  ? requireOosRecoveryAttemptToken()
+                  ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                   : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
@@ -2526,7 +2518,7 @@ export const processShopifyOrder = inngest.createFunction(
               await reparkOosDependencies({
                 shopifyStore: canonicalShopifyStore,
                 orderId: shopifyOrderId,
-                attemptToken: requireOosRecoveryAttemptToken(),
+                attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: error.category,
@@ -2551,7 +2543,7 @@ export const processShopifyOrder = inngest.createFunction(
                   ? oosReplayContext?.provider
                   : undefined,
                 resolvedReplayToken: isOosRecoveryReplay
-                  ? requireOosRecoveryAttemptToken()
+                  ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                   : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
