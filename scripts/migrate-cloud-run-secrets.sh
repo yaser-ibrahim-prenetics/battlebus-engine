@@ -49,6 +49,20 @@ already_managed_names=()
 missing_names=()
 configured_names=()
 
+require_enabled_pinned_secret() {
+  local env_name="$1"
+  local explicit_binding="$2"
+  local secret_id="${explicit_binding%:*}"
+  local secret_version="${explicit_binding##*:}"
+  local secret_state
+  secret_state="$(gcloud secrets versions describe "${secret_version}" \
+    --secret="${secret_id}" --project="${project_id}" --format='value(state)')"
+  if [[ "${secret_state}" != "ENABLED" ]]; then
+    printf 'Pinned secret version is not enabled for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
+    exit 1
+  fi
+}
+
 while IFS= read -r env_name; do
   [[ -z "${env_name}" || "${env_name}" == \#* ]] && continue
   if [[ ! "${env_name}" =~ ^[A-Z][A-Z0-9_]+$ ]]; then
@@ -75,13 +89,7 @@ while IFS= read -r env_name; do
     missing)
       if [[ -n "${explicit_binding}" ]]; then
         secret_id="${explicit_binding%:*}"
-        secret_version="${explicit_binding##*:}"
-        secret_state="$(gcloud secrets versions describe "${secret_version}" \
-          --secret="${secret_id}" --project="${project_id}" --format='value(state)')"
-        if [[ "${secret_state}" != "ENABLED" ]]; then
-          printf 'Pinned secret version is not enabled for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
-          exit 1
-        fi
+        require_enabled_pinned_secret "${env_name}" "${explicit_binding}"
         gcloud secrets add-iam-policy-binding "${secret_id}" \
           --member="serviceAccount:${runtime_service_account}" \
           --role=roles/secretmanager.secretAccessor \
@@ -106,14 +114,7 @@ while IFS= read -r env_name; do
             "${env_name}" "${current_binding}" "${explicit_binding}" >&2
           exit 1
         fi
-        secret_id="${explicit_binding%:*}"
-        secret_version="${explicit_binding##*:}"
-        secret_state="$(gcloud secrets versions describe "${secret_version}" \
-          --secret="${secret_id}" --project="${project_id}" --format='value(state)')"
-        if [[ "${secret_state}" != "ENABLED" ]]; then
-          printf 'Pinned secret version is not enabled for %s: %s\n' "${env_name}" "${explicit_binding}" >&2
-          exit 1
-        fi
+        require_enabled_pinned_secret "${env_name}" "${explicit_binding}"
       fi
       already_managed_names+=("${env_name}")
       continue
