@@ -1,0 +1,46 @@
+DO $$
+BEGIN
+  IF to_regclass('public.oos_recovery_dependencies') IS NULL
+    OR to_regclass('public.oos_drain_requests') IS NULL
+    OR to_regclass('public.oos_recovery_outbox') IS NULL
+    OR to_regclass('public.battle_hub_oos_recovery') IS NULL
+  THEN
+    RAISE EXCEPTION 'OOS recovery schema is incomplete';
+  END IF;
+
+  IF to_regclass('public.idx_oos_dependency_active_identity') IS NULL
+    OR to_regclass('public.idx_oos_dependency_inventory_fifo') IS NULL
+    OR to_regclass('public.idx_oos_dependency_ready') IS NULL
+    OR to_regclass('public.idx_oos_dependency_expiry') IS NULL
+    OR to_regclass('public.idx_oos_drain_open_slot') IS NULL
+    OR to_regclass('public.idx_oos_outbox_ready') IS NULL
+  THEN
+    RAISE EXCEPTION 'OOS recovery indexes are incomplete';
+  END IF;
+
+  IF NOT has_table_privilege('battle_bus_runtime', 'public.oos_recovery_dependencies', 'SELECT,INSERT,UPDATE')
+    OR has_table_privilege('battle_bus_runtime', 'public.oos_recovery_dependencies', 'DELETE,TRUNCATE')
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.oos_drain_requests', 'SELECT,INSERT,UPDATE')
+    OR has_table_privilege('battle_bus_runtime', 'public.oos_drain_requests', 'DELETE,TRUNCATE')
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.oos_recovery_outbox', 'SELECT,INSERT,UPDATE')
+    OR has_table_privilege('battle_bus_runtime', 'public.oos_recovery_outbox', 'DELETE,TRUNCATE')
+  THEN
+    RAISE EXCEPTION 'OOS runtime privilege contract failed';
+  END IF;
+
+  IF has_table_privilege('anon', 'public.oos_recovery_dependencies', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.oos_recovery_dependencies', 'SELECT')
+    OR has_table_privilege('anon', 'public.oos_recovery_outbox', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.oos_recovery_outbox', 'SELECT')
+  THEN
+    RAISE EXCEPTION 'OOS recovery data is exposed to client roles';
+  END IF;
+
+  IF NOT has_table_privilege('battle_hub_runtime', 'public.battle_hub_oos_recovery', 'SELECT')
+    OR has_table_privilege('battle_hub_runtime', 'public.oos_recovery_dependencies', 'SELECT')
+    OR has_table_privilege('battle_hub_runtime', 'public.oos_recovery_outbox', 'SELECT')
+  THEN
+    RAISE EXCEPTION 'Battle Hub OOS visibility is not restricted to the safe view';
+  END IF;
+END
+$$;
