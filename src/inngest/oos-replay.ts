@@ -1,5 +1,6 @@
 import { NonRetriableError } from "inngest";
 import type { OosRecoveryReplayMarker } from "./events";
+import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
 import {
   InventoryUnavailableError,
   isInventoryUnavailableError,
@@ -14,6 +15,11 @@ import {
 } from "@/lib/services/oos-recovery/outcomes";
 
 export class RejectedOosRecoveryAttemptError extends NonRetriableError {}
+
+export type OosMutationEvidenceCodec<T> = {
+  encode: (result: T) => unknown;
+  decode: (evidence: unknown) => T;
+};
 
 export function validateOosRecoveryReplayAttempt(
   isReplay: boolean,
@@ -79,27 +85,39 @@ export function createOosRecoveryAttemptGuard(params: {
     return context;
   };
   const runWithMutationLease = async <T>(
-    operationKey: string,
-    execute: () => Promise<T>
+    operationLabel: string,
+    request: unknown,
+    execute: () => Promise<T>,
+    evidenceCodec?: OosMutationEvidenceCodec<T>
   ): Promise<T> => {
     if (!params.active) return execute();
+    const operationKey = fingerprint(["oos-provider-operation-v1", operationLabel]);
+    const requestFingerprint = fingerprint(["oos-provider-request-v1", request]);
     const claim = await claimOosRecoveryMutation({
       shopifyStore: params.shopifyStore,
       orderId: params.orderId,
       attemptToken: requireAttemptToken(),
       expectedContext: requireContext(),
       operationKey,
+      requestFingerprint,
       leaseOwner: params.leaseOwner,
       leaseSeconds: params.leaseSeconds,
     });
     if (claim.status === "accepted") {
-      return (claim.result.hasValue ? claim.result.value : undefined) as T;
+      if (!evidenceCodec) return undefined as T;
+      try {
+        return evidenceCodec.decode(claim.evidence);
+      } catch {
+        throw new RejectedOosRecoveryAttemptError(
+          "Targeted OOS replay has invalid provider mutation evidence"
+        );
+      }
     }
     if (claim.status === "rejected") {
       throw new InventoryUnavailableError(
         claim.failure.provider,
         claim.failure.category,
-        claim.failure.message,
+        "Provider-confirmed inventory rejection replayed from durable evidence",
         claim.failure.blockedItems,
         claim.failure.providerOrderNumber,
         claim.failure.providerWarehouse
@@ -155,7 +173,6 @@ export function createOosRecoveryAttemptGuard(params: {
               failure: {
                 provider: executionError.provider,
                 category: executionError.category,
-                message: executionError.message,
                 blockedItems: executionError.blockedItems,
                 providerOrderNumber: executionError.providerOrderNumber,
                 providerWarehouse: executionError.providerWarehouse,
@@ -164,7 +181,7 @@ export function createOosRecoveryAttemptGuard(params: {
           : { state: "uncertain" }
         : {
             state: "accepted",
-            result: { hasValue: result !== undefined, value: result },
+            evidence: evidenceCodec ? evidenceCodec.encode(result as T) : {},
           });
     } catch {
       // An uncertain release must not allow the workflow to repeat a provider mutation.

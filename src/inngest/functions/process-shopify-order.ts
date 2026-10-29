@@ -1212,8 +1212,21 @@ export const processShopifyOrder = inngest.createFunction(
           } else {
             d365Header = await retryWithBackoff(
               () =>
-                runWithOosMutationLease(`d365:header:${dataAreaId}`, () =>
-                  dynamics.createSalesOrderHeaderV3(headerRequest)
+                runWithOosMutationLease(
+                  `d365:header:${dataAreaId}`,
+                  headerRequest,
+                  () => dynamics.createSalesOrderHeaderV3(headerRequest),
+                  {
+                    encode: (value) => ({ salesOrderNumber: value.SalesOrderNumber }),
+                    decode: (evidence) => {
+                      const salesOrderNumber = (evidence as { salesOrderNumber?: unknown })
+                        ?.salesOrderNumber;
+                      if (typeof salesOrderNumber !== "string" || !salesOrderNumber.trim()) {
+                        throw new Error("Invalid D365 header evidence");
+                      }
+                      return { SalesOrderNumber: salesOrderNumber, request: {} };
+                    },
+                  }
                 ),
               { label: `D365 header ${shopifyOrderName}` }
             );
@@ -1283,18 +1296,30 @@ export const processShopifyOrder = inngest.createFunction(
           }
 
           const settledLineResults = await Promise.allSettled(
-            lineItems.map((line, lineIndex) =>
+            lineItems.map((line) =>
               (async () => {
                 try {
                   const created = await retryWithBackoff(
                     () =>
                       runWithOosMutationLease(
-                        `d365:line:${salesOrderNo}:${line.itemNumber}:${lineIndex}`,
+                        `d365:line:${salesOrderNo}:${line.sourceLineId}:${line.itemNumber}`,
+                        { ...line, salesOrderNumber: salesOrderNo },
                         () =>
                         dynamics.createSalesOrderLine({
                           ...line,
                           salesOrderNumber: salesOrderNo,
-                        })
+                        }),
+                        {
+                          encode: (value) => ({ inventoryLotId: value.InventoryLotId }),
+                          decode: (evidence) => {
+                            const inventoryLotId = (evidence as { inventoryLotId?: unknown })
+                              ?.inventoryLotId;
+                            if (typeof inventoryLotId !== "string" || !inventoryLotId.trim()) {
+                              throw new Error("Invalid D365 line evidence");
+                            }
+                            return { InventoryLotId: inventoryLotId, request: {} };
+                          },
+                        }
                       ),
                     {
                       label: `D365 line ${line.itemNumber}`,
@@ -1501,7 +1526,10 @@ export const processShopifyOrder = inngest.createFunction(
 
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
-                await runWithOosMutationLease(`d365:confirm:${salesOrderNo}`, () =>
+                await runWithOosMutationLease(
+                  `d365:confirm:${salesOrderNo}`,
+                  { salesOrderNumber: salesOrderNo, dataAreaId },
+                  () =>
                   dynamics.confirmSalesOrder(salesOrderNo, dataAreaId)
                 );
                 if (attempt > 1) {
@@ -1561,7 +1589,10 @@ export const processShopifyOrder = inngest.createFunction(
             const depositCheck = await step.run("d365-create-prepayment", async () => {
               await retryWithBackoff(
                 () =>
-                  runWithOosMutationLease(`d365:prepayment:${salesOrderNo}`, () =>
+                  runWithOosMutationLease(
+                    `d365:prepayment:${salesOrderNo}`,
+                    { salesOrderNumber: salesOrderNo, dataAreaId },
+                    () =>
                     dynamics.createPrepayment(salesOrderNo, dataAreaId)
                   ),
                 {
@@ -1668,17 +1699,31 @@ export const processShopifyOrder = inngest.createFunction(
             try {
               const result = await runWithOosMutationLease(
                 `gps:outbound:${warehouseName}:${salesOrderNo}`,
+                payloadForStep,
                 () =>
                 gps.createOutboundOrder(
                   payloadForStep,
                   warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
-                )
+                ),
+                {
+                  encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
+                  decode: (evidence) => {
+                    const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
+                    if (typeof orderNo !== "string" || !orderNo.trim()) {
+                      throw new Error("Invalid GPS order evidence");
+                    }
+                    return { response: { data: [{ orderNo }] } } as Awaited<
+                      ReturnType<typeof gps.createOutboundOrder>
+                    >;
+                  },
+                }
               );
 
               const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
               if (gpsOrderNo) {
                 await runWithOosMutationLease(
                   `shopify:gps-metafield:${warehouseName}:${salesOrderNo}`,
+                  { shopifyOrderId, gpsOrderNo, warehouseName, salesOrderNo },
                   () =>
                   setGpsOrderMetafield(shopifyOrderId, {
                     gpsOrderId: gpsOrderNo,
@@ -1801,7 +1846,10 @@ export const processShopifyOrder = inngest.createFunction(
           try {
             await retryWithBackoff(
               () =>
-                runWithOosMutationLease(`d365:prepayment:${reusedSalesOrderNumber}`, () =>
+                runWithOosMutationLease(
+                  `d365:prepayment:${reusedSalesOrderNumber}`,
+                  { salesOrderNumber: reusedSalesOrderNumber, dataAreaId },
+                  () =>
                   dynamics.createPrepayment(reusedSalesOrderNumber, dataAreaId)
                 ),
               {
@@ -1876,17 +1924,31 @@ export const processShopifyOrder = inngest.createFunction(
             );
             const result = await runWithOosMutationLease(
               `gps:outbound:${warehouseName}:${reusedSalesOrderNumber}`,
+              gpsOrderPayload,
               () =>
               gps.createOutboundOrder(
                 gpsOrderPayload,
                 warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
-              )
+              ),
+              {
+                encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
+                decode: (evidence) => {
+                  const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
+                  if (typeof orderNo !== "string" || !orderNo.trim()) {
+                    throw new Error("Invalid GPS order evidence");
+                  }
+                  return { response: { data: [{ orderNo }] } } as Awaited<
+                    ReturnType<typeof gps.createOutboundOrder>
+                  >;
+                },
+              }
             );
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
 
             if (gpsOrderNo) {
               await runWithOosMutationLease(
                 `shopify:gps-metafield:${warehouseName}:${reusedSalesOrderNumber}`,
+                { shopifyOrderId, gpsOrderNo, warehouseName, reusedSalesOrderNumber },
                 () =>
                 setGpsOrderMetafield(shopifyOrderId, {
                   gpsOrderId: gpsOrderNo,

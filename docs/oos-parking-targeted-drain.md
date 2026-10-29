@@ -35,11 +35,14 @@ expired dependencies move to `manual_review` and are never silently deleted.
 An exact replay attempt also records a stable operation key and takes a renewable PostgreSQL
 provider-mutation lease around every external write. Expiry, manual rearm, provider rollover and
 outcome transitions use the same order-scoped lock and cannot invalidate an attempt while one of
-its provider calls is in flight. Accepted results and provider-confirmed inventory rejections are
-replayed from durable evidence without calling the provider again; a rejected operation may be
-tried by a later replay token. Uncertain operations remain hard-blocked, and an expired pending
-operation is promoted to uncertain instead of being executed again. Independent line writes for
-the same attempt may hold concurrent leases; the same operation or a different attempt cannot.
+its provider calls is in flight. Operation labels and canonical requests are stored only as SHA-256
+fingerprints. Accepted results use small typed projections (provider IDs, status flags or counts),
+never raw requests, credentials or customer payloads. Provider-confirmed inventory rejections store
+only structured dependency evidence and are replayed without calling the provider again; a rejected
+operation may be tried by a later replay token. Request mismatches and uncertain operations remain
+hard-blocked, and an expired pending operation is promoted to uncertain instead of being executed
+again. Independent line writes for the same attempt may hold concurrent leases; the same operation
+or a different attempt cannot.
 
 ## Drain entry points
 

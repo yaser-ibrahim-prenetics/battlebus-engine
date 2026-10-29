@@ -137,6 +137,7 @@ vi.mock("@/lib/services/oos-recovery/outcomes", () => ({
       attemptToken: params.attemptToken,
       expectedContext: params.expectedContext,
       operationKey: params.operationKey,
+      requestFingerprint: params.requestFingerprint,
       leaseToken: "mutation-lease-token",
     },
   })),
@@ -385,10 +386,16 @@ describe("backorder recovery serialization", () => {
     mocks.processOrderSegments.mockImplementation(async (rawInput: unknown) => {
       const input = rawInput as {
         step: ReturnType<typeof step>;
-        withExternalMutation: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
+        withExternalMutation: <T>(
+          operationKey: string,
+          request: unknown,
+          execute: () => Promise<T>
+        ) => Promise<T>;
       };
       return input.step.run("segment-provider-mutation", () =>
-        input.withExternalMutation("test:segmented", async () => ({ status: "segmented" }))
+        input.withExternalMutation("test:segmented", { segment: 1 }, async () => ({
+          status: "segmented",
+        }))
       );
     });
     const args = {
