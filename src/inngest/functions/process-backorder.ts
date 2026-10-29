@@ -481,6 +481,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         data: {
           shopifyOrderId,
           shopifyOrderName,
+          shopifyStore: shop,
           resolvedAt: new Date().toISOString(),
           resolution: "manual",
         },
@@ -747,6 +748,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         data: {
           shopifyOrderId,
           shopifyOrderName,
+          shopifyStore: shop,
           resolvedAt: new Date().toISOString(),
           resolution: "fulfilled",
         },
@@ -886,7 +888,12 @@ export const processBackorder = inngest.createFunction(
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: backorderConcurrency,
     triggers: [{ event: "backorder/created" }],
-    cancelOn: [{ event: "backorder/resolved", match: "data.shopifyOrderId" }],
+    cancelOn: [
+      {
+        event: "backorder/resolved",
+        if: "async.data.shopifyOrderId == event.data.shopifyOrderId && async.data.shopifyStore == event.data.shopifyStore",
+      },
+    ],
   },
   handleBackorder
 );

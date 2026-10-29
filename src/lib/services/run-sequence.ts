@@ -164,6 +164,7 @@ export async function advanceRunSequence(
       data: {
         shopifyOrderId,
         shopifyOrderName,
+        shopifyStore,
         d365OrderNumber: "",
         warehouse: "",
         retryCount: 0,
