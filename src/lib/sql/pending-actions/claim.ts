@@ -1,3 +1,5 @@
+import { legacyOrderIdentitySQL, legacyProjectionIdentitySQL } from "./legacy-projection";
+
 export const claimPendingActionsSQL = `
 WITH expired_candidates AS (
   SELECT queue.action_id
@@ -80,20 +82,16 @@ WITH expired_candidates AS (
         WHERE NOT EXISTS (
           SELECT 1
           FROM jsonb_array_elements(superseded_by_order.action_keys) AS key(value)
-          WHERE item.action->>'action' = key.value->>'actionType'
-            AND (
-              item.action->>'sourceEventId' = key.value->>'sourceEventId'
-              OR (
-                NULLIF(btrim(item.action->>'sourceEventId'), '') IS NULL
-                AND 'legacy:' || md5(item.action::text) = key.value->>'sourceEventId'
-              )
-            )
+          WHERE ${legacyProjectionIdentitySQL(
+            "item.action",
+            "key.value->>'actionType'",
+            "key.value->>'sourceEventId'"
+          )}
         )
       ),
       updated_at = now()
   FROM superseded_by_order
-  WHERE orders.shopify_order_id = superseded_by_order.order_id
-     OR orders.platform_order_id = superseded_by_order.order_id
+  WHERE ${legacyOrderIdentitySQL("orders", "superseded_by_order.order_id")}
   RETURNING orders.id
 ), ready AS (
   SELECT queue.action_id
@@ -135,6 +133,5 @@ RETURNING
   queue.action_type,
   queue.event_name,
   queue.event_data,
-  queue.source_event_id,
   queue.lease_token,
   queue.attempts`;
