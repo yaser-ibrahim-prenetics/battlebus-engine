@@ -13,6 +13,8 @@ per-order inventory polling with durable per-line dependencies and bounded targe
   and lines combined into one provider request.
 - Parking is one PostgreSQL transaction: dependency rows, the parked order state, safe failure
   evidence and a durable outbox notification either all commit or all roll back.
+- The parked notification carries a bounded diagnostic SKU sample and the total unique SKU count;
+  PostgreSQL remains the source of truth for the exact dependency set.
 - Existing Battle Hub backorder events and manual retry controls remain supported. The targeted
   drain emits the same canonical `backorder/retry` event only after it has reserved enough stock for
   every unresolved dependency on the order. The durable event keeps only replay metadata; exact

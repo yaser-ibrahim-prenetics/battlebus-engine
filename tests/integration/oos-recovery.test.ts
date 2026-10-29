@@ -462,16 +462,31 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     expect(retrying.rowCount).toBe(1);
   });
 
-  it("keeps a 500-line targeted retry inside the durable outbox payload limit", async () => {
+  it("keeps 500-line parking and retry events inside the durable outbox payload limit", async () => {
     const orderId = `${prefix}large-retry`;
-    const sku = `${prefix}large-retry-sku`;
     const dependencies = Array.from({ length: 500 }, (_, index) =>
       dependency(orderId, {
         orderLineId: `gid://shopify/LineItem/${String(index).padStart(4, "0")}-${"L".repeat(180)}`,
-        sku,
+        sku: `${prefix}${String(index).padStart(4, "0")}-${"S".repeat(180)}`,
       })
     );
-    await park(dependencies, new Date("2026-10-29T00:00:00Z"));
+    const parked = await park(dependencies, new Date("2026-10-29T00:00:00Z"));
+    const parkedOutbox = await pool.query<{
+      payload_bytes: number;
+      event_data: Record<string, unknown>;
+    }>(
+      `SELECT octet_length(event_data::text)::integer AS payload_bytes, event_data
+       FROM public.oos_recovery_outbox WHERE id = $1`,
+      [parked.outboxId]
+    );
+    expect(parkedOutbox.rows[0].payload_bytes).toBeLessThanOrEqual(32_768);
+    expect(parkedOutbox.rows[0].event_data).toMatchObject({
+      shopifyOrderId: orderId,
+      targetedRecovery: true,
+      failedSkuCount: 500,
+    });
+    expect(parkedOutbox.rows[0].event_data.failedSkus).toHaveLength(10);
+
     const submitted = await submitOosDrainRequest({
       mode: "manual",
       dryRun: false,
@@ -484,7 +499,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
 
     const result = await executeOosDrain(
       request,
-      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 500]))
+      async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 1]))
     );
     const outbox = await pool.query<{
       payload_bytes: number;
