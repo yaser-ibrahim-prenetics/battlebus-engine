@@ -14,7 +14,8 @@ Battle Hub uses a separate passwordless IAM database identity. Migration
 `000043` grants its `battle_hub_runtime` group role access only to the minimal
 `battle_hub_pending_lifecycle_actions` view; migration `000044` binds the pinned
 IAM database user. Run `scripts/bootstrap-hub-database.sh` before applying those
-migrations in Cloud SQL. Battle Hub cannot read queue payloads or terminal rows.
+migrations in Cloud SQL. Battle Hub can see active and dead-letter status but
+cannot read queue payloads or completed rows.
 
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may

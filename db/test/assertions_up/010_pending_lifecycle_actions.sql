@@ -37,6 +37,32 @@ BEGIN
     RAISE EXCEPTION 'Battle Hub pending-action view is missing';
   END IF;
 
+  IF to_regclass('public.pending_lifecycle_action_resolutions') IS NULL
+    OR to_regprocedure('public.requeue_pending_lifecycle_action(uuid,text)') IS NULL
+  THEN
+    RAISE EXCEPTION 'Pending-action replay audit objects are missing';
+  END IF;
+
+  IF has_function_privilege(
+    'battle_bus_runtime',
+    'public.requeue_pending_lifecycle_action(uuid,text)',
+    'EXECUTE'
+  ) OR has_function_privilege(
+    'battle_hub_runtime',
+    'public.requeue_pending_lifecycle_action(uuid,text)',
+    'EXECUTE'
+  ) OR has_table_privilege(
+    'battle_bus_runtime',
+    'public.pending_lifecycle_action_resolutions',
+    'SELECT'
+  ) OR has_table_privilege(
+    'battle_hub_runtime',
+    'public.pending_lifecycle_action_resolutions',
+    'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'Runtime role can access owner-only replay audit objects';
+  END IF;
+
   IF EXISTS (
     SELECT 1
     FROM information_schema.columns
@@ -144,6 +170,67 @@ BEGIN
       AND status = 'pending'
   ) THEN
     RAISE EXCEPTION 'Battle Hub active-action projection is incorrect';
+  END IF;
+END $$;
+
+INSERT INTO public.pending_lifecycle_actions (
+  order_id,
+  action_type,
+  source_event_id,
+  event_name,
+  event_data,
+  status,
+  attempts,
+  last_error
+) VALUES (
+  '1003',
+  'cancel',
+  'shopify-order-cancelled-1003',
+  'shopify/order.cancelled',
+  '{"shopifyOrderId":"1003","secret":"not-visible"}'::jsonb,
+  'dead_letter',
+  10,
+  'provider unavailable'
+);
+
+DO $$
+DECLARE
+  replay_action_id uuid;
+BEGIN
+  SELECT id
+  INTO replay_action_id
+  FROM public.battle_hub_pending_lifecycle_actions
+  WHERE shopify_order_id = '1003'
+    AND status = 'dead_letter'
+    AND last_error = 'provider unavailable';
+
+  IF replay_action_id IS NULL THEN
+    RAISE EXCEPTION 'Battle Hub dead-letter projection is incorrect';
+  END IF;
+
+  PERFORM public.requeue_pending_lifecycle_action(
+    replay_action_id,
+    'INC-1003: provider outcome verified'
+  );
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.pending_lifecycle_actions
+    WHERE action_id = replay_action_id
+      AND status = 'queued'
+      AND attempts = 0
+      AND last_error IS NULL
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM public.pending_lifecycle_action_resolutions
+    WHERE action_id = replay_action_id
+      AND resolution = 'requeued'
+      AND previous_status = 'dead_letter'
+      AND previous_attempts = 10
+      AND reason = 'INC-1003: provider outcome verified'
+      AND performed_by = current_user
+  ) THEN
+    RAISE EXCEPTION 'Audited pending-action replay contract failed';
   END IF;
 END $$;
 

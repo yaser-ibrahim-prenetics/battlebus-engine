@@ -21,17 +21,18 @@ SELECT
   CASE status
     WHEN 'queued' THEN 'pending'
     WHEN 'publishing' THEN 'processing'
+    WHEN 'dead_letter' THEN 'dead_letter'
   END AS status,
   attempts,
   last_error,
   created_at
 FROM public.pending_lifecycle_actions
-WHERE status IN ('queued', 'publishing');
+WHERE status IN ('queued', 'publishing', 'dead_letter');
 
 REVOKE ALL ON public.battle_hub_pending_lifecycle_actions FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.battle_hub_pending_lifecycle_actions TO battle_hub_runtime;
 
 COMMENT ON VIEW public.battle_hub_pending_lifecycle_actions IS
-  'Minimal active-action projection for Battle Hub; event payloads and terminal rows are excluded.';
+  'Minimal active and dead-letter action projection for Battle Hub; event payloads and completed rows are excluded.';
 COMMENT ON ROLE battle_hub_runtime IS
   'NOLOGIN group role inherited by the Battle Hub Cloud Run IAM database user.';
