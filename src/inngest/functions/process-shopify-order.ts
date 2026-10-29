@@ -97,6 +97,7 @@ import {
   reparkOosDependencies,
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
+import { gpsOutboundOrderEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -1705,18 +1706,7 @@ export const processShopifyOrder = inngest.createFunction(
                   payloadForStep,
                   warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
                 ),
-                {
-                  encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
-                  decode: (evidence) => {
-                    const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
-                    if (typeof orderNo !== "string" || !orderNo.trim()) {
-                      throw new Error("Invalid GPS order evidence");
-                    }
-                    return { response: { data: [{ orderNo }] } } as Awaited<
-                      ReturnType<typeof gps.createOutboundOrder>
-                    >;
-                  },
-                }
+                gpsOutboundOrderEvidenceCodec
               );
 
               const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
@@ -1930,18 +1920,7 @@ export const processShopifyOrder = inngest.createFunction(
                 gpsOrderPayload,
                 warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
               ),
-              {
-                encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
-                decode: (evidence) => {
-                  const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
-                  if (typeof orderNo !== "string" || !orderNo.trim()) {
-                    throw new Error("Invalid GPS order evidence");
-                  }
-                  return { response: { data: [{ orderNo }] } } as Awaited<
-                    ReturnType<typeof gps.createOutboundOrder>
-                  >;
-                },
-              }
+              gpsOutboundOrderEvidenceCodec
             );
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
 

@@ -22,6 +22,39 @@ export type ProviderBlockedItem = {
   quantityNeeded: number;
 };
 
+export const MAX_OOS_BLOCKED_ITEMS = 500;
+export const OOS_BLOCKED_ITEM_MAX_BYTES = {
+  warehouse: 128,
+  sku: 256,
+  orderLineId: 256,
+} as const;
+
+function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+export function assertProviderBlockedItemsPersistable(items: ProviderBlockedItem[]): void {
+  if (items.length > MAX_OOS_BLOCKED_ITEMS) {
+    throw new Error(`OOS mutation failure exceeds ${MAX_OOS_BLOCKED_ITEMS} blocked items`);
+  }
+  for (const item of items) {
+    if (
+      !item.warehouse.trim() ||
+      !item.sku.trim() ||
+      !item.orderLineId.trim() ||
+      !Number.isSafeInteger(item.quantityNeeded) ||
+      item.quantityNeeded <= 0
+    ) {
+      throw new Error("OOS mutation failure contains an invalid blocked item");
+    }
+    for (const [field, limit] of Object.entries(OOS_BLOCKED_ITEM_MAX_BYTES)) {
+      if (utf8Length(item[field as keyof typeof OOS_BLOCKED_ITEM_MAX_BYTES]) > limit) {
+        throw new Error(`OOS mutation failure ${field} exceeds ${limit} UTF-8 bytes`);
+      }
+    }
+  }
+}
+
 export type InventoryDependency = ProviderBlockedItem & {
   shopifyOrderId: string;
   shopifyOrderName: string;

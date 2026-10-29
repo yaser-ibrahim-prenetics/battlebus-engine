@@ -59,6 +59,7 @@ import {
 } from "@/lib/services/oos-recovery/outcomes";
 import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
 import { executeFulfillmentAction } from "@/lib/services/fulfillment-actions/ledger";
+import { gpsOutboundOrderEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
 
 type LeaseAcquisitionResult =
   | { status: "acquired"; lease: BackorderRecoveryLease }
@@ -758,18 +759,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               gpsPayload,
               warehouse as "GPS Warehouse" | "GPS UK Warehouse"
             ),
-          {
-            encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
-            decode: (evidence) => {
-              const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
-              if (typeof orderNo !== "string" || !orderNo.trim()) {
-                throw new Error("Invalid GPS order evidence");
-              }
-              return { response: { data: [{ orderNo }] } } as Awaited<
-                ReturnType<typeof gps.createOutboundOrder>
-              >;
-            },
-          }
+          gpsOutboundOrderEvidenceCodec
         );
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
@@ -1098,18 +1088,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               gpsPayload,
               warehouse as "GPS Warehouse" | "GPS UK Warehouse"
             ),
-          {
-            encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
-            decode: (evidence) => {
-              const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
-              if (typeof orderNo !== "string" || !orderNo.trim()) {
-                throw new Error("Invalid GPS order evidence");
-              }
-              return { response: { data: [{ orderNo }] } } as Awaited<
-                ReturnType<typeof gps.createOutboundOrder>
-              >;
-            },
-          }
+          gpsOutboundOrderEvidenceCodec
         );
 
         // Store GPS metafield on success

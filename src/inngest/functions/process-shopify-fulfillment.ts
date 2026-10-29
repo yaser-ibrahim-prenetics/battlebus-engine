@@ -73,6 +73,7 @@ import {
   isInventoryUnavailableError,
   toInventoryDependencies,
 } from "@/lib/services/oos-recovery/inventory-failure";
+import { d365FulfillmentEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
 
 function normalizeSkuForLotLookup(rawSku: unknown): string {
   const sku = String(rawSku || "").trim();
@@ -804,25 +805,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                     `d365:fulfillment:${fulfillment.id}`,
                     fulfillmentRequest,
                     () => dynamics.createFulfilment(fulfillmentRequest),
-                    {
-                      encode: (value) => ({ response: value.response }),
-                      decode: (evidence) => {
-                        const response = (evidence as { response?: unknown })?.response as
-                          | { status?: unknown; Message?: unknown; Result?: unknown; $id?: unknown }
-                          | undefined;
-                        if (
-                          response?.status !== 1 ||
-                          typeof response.Message !== "string" ||
-                          typeof response.Result !== "string" ||
-                          typeof response.$id !== "string"
-                        ) {
-                          throw new Error("Invalid D365 fulfillment evidence");
-                        }
-                        return { response, request: {} } as Awaited<
-                          ReturnType<typeof dynamics.createFulfilment>
-                        >;
-                      },
-                    }
+                    d365FulfillmentEvidenceCodec
                   ),
                 {
                   label: `d365-create-fulfilment-${shopifyOrderName}-${fulfillment.id}`,

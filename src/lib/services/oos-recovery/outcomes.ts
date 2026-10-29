@@ -7,6 +7,9 @@ import type {
   InventoryProvider,
   ProviderBlockedItem,
 } from "./inventory-failure";
+import { assertProviderBlockedItemsPersistable } from "./inventory-failure";
+
+export const MAX_OOS_MUTATION_FAILURE_BYTES = 1_048_576;
 
 export type OosRecoveryOutcome = {
   dependencies: number;
@@ -54,6 +57,28 @@ export type OosRecoveryMutationCompletion =
   | { state: "accepted"; evidence: unknown }
   | { state: "rejected"; failure: OosRecoveryMutationFailure }
   | { state: "uncertain" };
+
+export function serializeOosRecoveryMutationFailure(
+  failure: OosRecoveryMutationFailure
+): string {
+  assertProviderBlockedItemsPersistable(failure.blockedItems);
+  const optionalIdentifiers = [
+    ["providerOrderNumber", failure.providerOrderNumber, 256],
+    ["providerWarehouse", failure.providerWarehouse, 128],
+  ] as const;
+  for (const [name, value, maxBytes] of optionalIdentifiers) {
+    if (value && new TextEncoder().encode(value).length > maxBytes) {
+      throw new Error(`OOS mutation failure ${name} exceeds ${maxBytes} UTF-8 bytes`);
+    }
+  }
+  const payload = JSON.stringify(failure);
+  if (new TextEncoder().encode(payload).length > MAX_OOS_MUTATION_FAILURE_BYTES) {
+    throw new Error(
+      `OOS mutation failure exceeds ${MAX_OOS_MUTATION_FAILURE_BYTES} UTF-8 bytes`
+    );
+  }
+  return payload;
+}
 
 type LockedOosDependency = {
   id: string;
@@ -398,7 +423,9 @@ export async function releaseOosRecoveryMutation(
         lease.requestFingerprint,
         completion.state,
         completion.state === "accepted" ? JSON.stringify(completion.evidence) : null,
-        completion.state === "rejected" ? JSON.stringify(completion.failure) : null,
+        completion.state === "rejected"
+          ? serializeOosRecoveryMutationFailure(completion.failure)
+          : null,
       ]
     );
     await client.query("COMMIT");

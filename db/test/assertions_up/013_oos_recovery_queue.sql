@@ -38,6 +38,18 @@ BEGIN
     RAISE EXCEPTION 'OOS mutation evidence columns are missing';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'oos_mutation_result_size'
+      AND pg_get_constraintdef(oid) LIKE '%4096%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'oos_mutation_failure_size'
+      AND pg_get_constraintdef(oid) LIKE '%1048576%'
+  ) THEN
+    RAISE EXCEPTION 'OOS mutation evidence size bounds are missing';
+  END IF;
+
   IF to_regclass('public.idx_oos_dependency_active_identity') IS NULL
     OR to_regclass('public.idx_oos_dependency_inventory_fifo') IS NULL
     OR to_regclass('public.idx_oos_dependency_ready') IS NULL

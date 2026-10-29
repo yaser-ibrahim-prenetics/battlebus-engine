@@ -15,6 +15,10 @@ import {
   InventoryUnavailableError,
   isInventoryUnavailableError,
 } from "@/lib/services/oos-recovery/inventory-failure";
+import {
+  d365FulfillmentEvidenceCodec,
+  type OosMutationEvidenceCodec,
+} from "@/lib/services/oos-recovery/mutation-evidence";
 
 export async function fulfillOrderSegments(input: {
   shopDomain?: string;
@@ -26,7 +30,7 @@ export async function fulfillOrderSegments(input: {
     operationKey: string,
     request: unknown,
     execute: () => Promise<T>,
-    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+    evidenceCodec?: OosMutationEvidenceCodec<T>
   ) => Promise<T>;
 }) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
@@ -34,7 +38,7 @@ export async function fulfillOrderSegments(input: {
     operationKey: string,
     request: unknown,
     execute: () => Promise<T>,
-    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+    evidenceCodec?: OosMutationEvidenceCodec<T>
   ) =>
     input.withExternalMutation
       ? input.withExternalMutation(operationKey, request, execute, evidenceCodec)
@@ -127,25 +131,7 @@ export async function fulfillOrderSegments(input: {
               `segment:${segment.index}:fulfillment:${allocation.fulfillment_id}`,
               fulfillmentRequest,
               () => dynamics.createFulfilment(fulfillmentRequest),
-              {
-                encode: (value) => ({ response: value.response }),
-                decode: (evidence) => {
-                  const response = (evidence as { response?: unknown })?.response as
-                    | { status?: unknown; Message?: unknown; Result?: unknown; $id?: unknown }
-                    | undefined;
-                  if (
-                    response?.status !== 1 ||
-                    typeof response.Message !== "string" ||
-                    typeof response.Result !== "string" ||
-                    typeof response.$id !== "string"
-                  ) {
-                    throw new Error("Invalid D365 fulfillment evidence");
-                  }
-                  return { response, request: {} } as Awaited<
-                    ReturnType<typeof dynamics.createFulfilment>
-                  >;
-                },
-              }
+              d365FulfillmentEvidenceCodec
             );
           } catch (error) {
             if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {
