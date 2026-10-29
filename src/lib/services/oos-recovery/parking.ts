@@ -108,7 +108,7 @@ export async function parkOosOrderWithClient(
        last_error_type, warehouse, state, retry_at
      ) VALUES ($1, $2, $2, 'failed', 'shopify', $1, $2, $1, $2, 'backorder',
        'Inventory dependency parked for targeted recovery', $3, $4,
-       jsonb_build_object('oosRecovery', true, 'provider', $5), now())
+       jsonb_build_object('oosRecovery', true, 'provider', $5::text), now())
      ON CONFLICT (id) DO UPDATE SET
        status = 'failed',
        processing_status = 'backorder',

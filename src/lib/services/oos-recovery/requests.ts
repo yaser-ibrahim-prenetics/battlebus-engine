@@ -104,9 +104,7 @@ export function oosDrainLaneKey(input: OosDrainRequestInput): string {
 }
 
 function requestedByHash(requestedBy: string | undefined): string | null {
-  return requestedBy
-    ? createHash("sha256").update(requestedBy.toLowerCase()).digest("hex")
-    : null;
+  return requestedBy ? createHash("sha256").update(requestedBy.toLowerCase()).digest("hex") : null;
 }
 
 function rowToRequest(row: Record<string, unknown>): OosDrainRequest {
@@ -168,13 +166,13 @@ async function writeRequest(
   const result = id
     ? await client.query(
         `UPDATE public.oos_drain_requests SET
-           mode = $3, dry_run = $4, provider = $5, warehouse = $6, sku = $7,
-           order_id = $8, shopify_store = $9, parked_from = $10, parked_to = $11,
-           observed_quantity = $12, observed_at = $13, source_event_id = $14,
-           requested_by_hash = $15, batch_limit = $16, last_error_code = NULL
-         WHERE id = $17 AND status = 'queued'
+           mode = $1, dry_run = $2, provider = $3, warehouse = $4, sku = $5,
+           order_id = $6, shopify_store = $7, parked_from = $8, parked_to = $9,
+           observed_quantity = $10, observed_at = $11, source_event_id = $12,
+           requested_by_hash = $13, batch_limit = $14, last_error_code = NULL
+         WHERE id = $15 AND status = 'queued'
          ${RETURNING}`,
-        [...values, id]
+        [...values.slice(2), id]
       )
     : await client.query(
         `INSERT INTO public.oos_drain_requests (
@@ -232,7 +230,12 @@ export async function submitOosDrainRequest(
       (row) => row.slot === "successor" && row.status === "queued"
     );
     const slot = active?.status === "leased" ? "successor" : "active";
-    const replaceId = slot === "successor" ? queuedSuccessor?.id : active?.status === "queued" ? active.id : undefined;
+    const replaceId =
+      slot === "successor"
+        ? queuedSuccessor?.id
+        : active?.status === "queued"
+          ? active.id
+          : undefined;
     const request = await writeRequest(client, replaceId, slot, input, laneKey);
     if (request.slot === "active") await enqueueRequestEvent(client, request);
     await client.query("COMMIT");
