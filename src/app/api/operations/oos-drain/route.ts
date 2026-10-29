@@ -40,7 +40,36 @@ const requestSchema = z
     observedAt: z.iso.datetime({ offset: true }).optional(),
     batchLimit: z.number().int().min(1).max(1000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const inventoryFields = [value.provider, value.warehouse, value.sku];
+    const hasInventoryField = inventoryFields.some((field) => field !== undefined);
+    const hasInventoryTarget = inventoryFields.every((field) => field !== undefined);
+    const hasOrderField = value.orderId !== undefined || value.shopifyStore !== undefined;
+    const hasOrderTarget = value.orderId !== undefined && value.shopifyStore !== undefined;
+    if (hasInventoryField && !hasInventoryTarget) {
+      context.addIssue({
+        code: "custom",
+        message: "provider, warehouse and sku must be supplied together",
+      });
+    }
+    if (hasOrderField && !hasOrderTarget) {
+      context.addIssue({
+        code: "custom",
+        message: "orderId and shopifyStore must be supplied together",
+      });
+    }
+    if (!hasInventoryTarget && !hasOrderTarget) {
+      context.addIssue({ code: "custom", message: "a bounded drain target is required" });
+    }
+    if (
+      value.parkedFrom &&
+      value.parkedTo &&
+      new Date(value.parkedFrom).getTime() > new Date(value.parkedTo).getTime()
+    ) {
+      context.addIssue({ code: "custom", message: "parkedFrom must be before parkedTo" });
+    }
+  });
 
 export async function POST(request: NextRequest) {
   const auth = requireServiceAuth(request, { envVars: ["BATTLE_BUS_OPERATIONS_API_KEY"] });
@@ -77,12 +106,14 @@ export async function POST(request: NextRequest) {
         );
       }
       const preview = createOosDrainPreviewRequest(input);
+      const executionToken = reservation.executionToken;
       let result: Awaited<ReturnType<typeof executeOosDrain>>;
       try {
         result = await executeOosDrain(preview);
       } catch (error) {
         await finishOosDrainPreviewCommand({
           requestId,
+          executionToken,
           errorCode: "preview_execution_failed",
         });
         throw error;
@@ -94,7 +125,14 @@ export async function POST(request: NextRequest) {
         manualReviewExpired: result.manualReviewExpired,
         queuedKeys: result.queuedKeys,
       };
-      await finishOosDrainPreviewCommand({ requestId, result: evidence });
+      const saved = await finishOosDrainPreviewCommand({
+        requestId,
+        executionToken,
+        result: evidence,
+      });
+      if (!saved) {
+        throw new OosDrainCommandInProgressError("OOS preview execution lease was superseded");
+      }
       return NextResponse.json(
         {
           requestId,
@@ -109,7 +147,8 @@ export async function POST(request: NextRequest) {
     const result = await submitOosDrainRequest(input, command);
     return NextResponse.json(
       {
-        requestId: result.request.id,
+        requestId,
+        drainRequestId: result.request.id,
         laneKey: result.request.laneKey,
         status: result.created ? "queued" : "coalesced",
         dryRun: result.request.dryRun,

@@ -10,7 +10,7 @@ DROP POLICY oos_dependencies_runtime ON public.oos_recovery_dependencies;
 
 REVOKE SELECT, INSERT, UPDATE ON public.oos_recovery_outbox FROM battle_bus_runtime;
 REVOKE SELECT, INSERT ON public.oos_drain_command_receipts FROM battle_bus_runtime;
-REVOKE UPDATE (status, result_evidence, completed_at)
+REVOKE UPDATE (status, result_evidence, completed_at, preview_token, preview_started_at)
   ON public.oos_drain_command_receipts FROM battle_bus_runtime;
 REVOKE SELECT, INSERT, UPDATE ON public.oos_drain_requests FROM battle_bus_runtime;
 REVOKE SELECT, INSERT, UPDATE ON public.oos_recovery_dependencies FROM battle_bus_runtime;

@@ -161,12 +161,18 @@ CREATE TABLE public.oos_drain_command_receipts (
   reason text NOT NULL,
   status text NOT NULL DEFAULT 'accepted',
   result_evidence jsonb,
+  preview_token uuid,
+  preview_started_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
   CONSTRAINT oos_command_hash_format CHECK (request_hash ~ '^[a-f0-9]{64}$'),
   CONSTRAINT oos_command_actor_hash_format CHECK (actor_hash ~ '^[a-f0-9]{64}$'),
   CONSTRAINT oos_command_reason_length CHECK (length(reason) BETWEEN 10 AND 1000),
   CONSTRAINT oos_command_status CHECK (status IN ('accepted', 'completed', 'failed')),
+  CONSTRAINT oos_command_preview_lease_consistent CHECK (
+    (preview_token IS NULL AND preview_started_at IS NULL)
+    OR (dry_run AND preview_token IS NOT NULL AND preview_started_at IS NOT NULL)
+  ),
   CONSTRAINT oos_command_result_consistent CHECK (
     (status = 'accepted' AND completed_at IS NULL)
     OR (status IN ('completed', 'failed') AND completed_at IS NOT NULL)
@@ -174,7 +180,7 @@ CREATE TABLE public.oos_drain_command_receipts (
 );
 
 CREATE INDEX idx_oos_command_actor_rate_limit
-  ON public.oos_drain_command_receipts (actor_hash, created_at DESC)
+  ON public.oos_drain_command_receipts (actor_hash, preview_started_at DESC)
   WHERE dry_run AND status = 'accepted';
 
 CREATE TABLE public.oos_recovery_outbox (
@@ -231,7 +237,7 @@ REVOKE ALL ON public.oos_recovery_outbox FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.oos_recovery_dependencies TO battle_bus_runtime;
 GRANT SELECT, INSERT, UPDATE ON public.oos_drain_requests TO battle_bus_runtime;
 GRANT SELECT, INSERT ON public.oos_drain_command_receipts TO battle_bus_runtime;
-GRANT UPDATE (status, result_evidence, completed_at)
+GRANT UPDATE (status, result_evidence, completed_at, preview_token, preview_started_at)
   ON public.oos_drain_command_receipts TO battle_bus_runtime;
 GRANT SELECT, INSERT, UPDATE ON public.oos_recovery_outbox TO battle_bus_runtime;
 
