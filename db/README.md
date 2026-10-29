@@ -17,6 +17,10 @@ IAM database user. Run `scripts/bootstrap-hub-database.sh` before applying those
 migrations in Cloud SQL. Battle Hub can see active and dead-letter status but
 cannot read queue payloads or completed rows.
 
+Migration `000046` enforces queue transitions at the database boundary, caps
+replay payload size, adds an audited owner-only discard path, and makes legacy
+rollback fail closed when normalized and legacy projections disagree.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If

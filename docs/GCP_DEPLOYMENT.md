@@ -136,7 +136,7 @@ database user and apply the safe read-only active-action projection:
 ```
 
 Keep the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false` for
-the first deployment containing migrations `000040` through `000045`. After the
+the first deployment containing migrations `000040` through `000046`. After the
 old drain revision no longer receives traffic, verify Battle Hub readiness can
 read `battle_hub_pending_lifecycle_actions`, and verify the owner-only
 `requeue_pending_lifecycle_action(uuid,text)` function and
