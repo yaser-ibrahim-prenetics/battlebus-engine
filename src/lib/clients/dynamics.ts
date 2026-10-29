@@ -820,7 +820,9 @@ export async function createSalesOrderLine(
       throw new InventoryUnavailableError("d365", inventoryFailure, error, [
         {
           provider: "d365",
-          warehouse: (shippingWarehouseId || dataAreaId).toUpperCase(),
+          // D365 inventory reads are company-scoped; persist the canonical data area rather than
+          // a line-level shipping warehouse that cannot safely scope the recovery query.
+          warehouse: dataAreaId.toUpperCase(),
           sku: itemNumber.toUpperCase(),
           orderLineId: req.sourceLineId || itemNumber,
           quantityNeeded: quantity,
