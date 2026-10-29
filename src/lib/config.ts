@@ -286,6 +286,11 @@ export const config = {
       1,
       59
     ),
+    outboxIntervalMinutes: clampInt(
+      safeParseInt(process.env.OOS_OUTBOX_DRAIN_INTERVAL_MINUTES, 5),
+      1,
+      59
+    ),
   },
 
   // Pending lifecycle action drain sweep
