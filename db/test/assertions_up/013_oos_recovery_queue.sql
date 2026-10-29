@@ -30,6 +30,7 @@ BEGIN
     OR to_regclass('public.idx_oos_outbox_ready') IS NULL
     OR to_regclass('public.idx_oos_recovery_mutation_operation') IS NULL
     OR to_regclass('public.idx_oos_recovery_mutation_order') IS NULL
+    OR to_regclass('public.idx_oos_recovery_mutation_cleanup') IS NULL
   THEN
     RAISE EXCEPTION 'OOS recovery indexes are incomplete';
   END IF;

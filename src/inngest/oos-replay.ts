@@ -1,6 +1,9 @@
 import { NonRetriableError } from "inngest";
 import type { OosRecoveryReplayMarker } from "./events";
-import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
+import {
+  InventoryUnavailableError,
+  isInventoryUnavailableError,
+} from "@/lib/services/oos-recovery/inventory-failure";
 import {
   claimOosRecoveryMutation,
   isCurrentOosRecoveryAttempt,
@@ -80,7 +83,7 @@ export function createOosRecoveryAttemptGuard(params: {
     execute: () => Promise<T>
   ): Promise<T> => {
     if (!params.active) return execute();
-    const lease = await claimOosRecoveryMutation({
+    const claim = await claimOosRecoveryMutation({
       shopifyStore: params.shopifyStore,
       orderId: params.orderId,
       attemptToken: requireAttemptToken(),
@@ -89,11 +92,25 @@ export function createOosRecoveryAttemptGuard(params: {
       leaseOwner: params.leaseOwner,
       leaseSeconds: params.leaseSeconds,
     });
-    if (!lease) {
+    if (claim.status === "accepted") {
+      return (claim.result.hasValue ? claim.result.value : undefined) as T;
+    }
+    if (claim.status === "rejected") {
+      throw new InventoryUnavailableError(
+        claim.failure.provider,
+        claim.failure.category,
+        claim.failure.message,
+        claim.failure.blockedItems,
+        claim.failure.providerOrderNumber,
+        claim.failure.providerWarehouse
+      );
+    }
+    if (claim.status === "blocked") {
       throw new RejectedOosRecoveryAttemptError(
         "Targeted OOS replay could not claim the current provider mutation"
       );
     }
+    const lease = claim.lease;
     const heartbeatIntervalMs = Math.max(1_000, Math.floor((params.leaseSeconds * 1_000) / 3));
     const heartbeatRetryMs = Math.max(250, Math.min(1_000, heartbeatIntervalMs));
     let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -131,14 +148,24 @@ export function createOosRecoveryAttemptGuard(params: {
     }
     let released = false;
     try {
-      released = await releaseOosRecoveryMutation(
-        lease,
-        executionError
-          ? isInventoryUnavailableError(executionError)
-            ? "rejected"
-            : "uncertain"
-          : "accepted"
-      );
+      released = await releaseOosRecoveryMutation(lease, executionError
+        ? isInventoryUnavailableError(executionError)
+          ? {
+              state: "rejected",
+              failure: {
+                provider: executionError.provider,
+                category: executionError.category,
+                message: executionError.message,
+                blockedItems: executionError.blockedItems,
+                providerOrderNumber: executionError.providerOrderNumber,
+                providerWarehouse: executionError.providerWarehouse,
+              },
+            }
+          : { state: "uncertain" }
+        : {
+            state: "accepted",
+            result: { hasValue: result !== undefined, value: result },
+          });
     } catch {
       // An uncertain release must not allow the workflow to repeat a provider mutation.
     }

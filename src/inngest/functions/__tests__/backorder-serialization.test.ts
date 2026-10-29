@@ -130,12 +130,15 @@ vi.mock("@/lib/services/backorder-recovery/lease", () => ({
 }));
 vi.mock("@/lib/services/oos-recovery/outcomes", () => ({
   claimOosRecoveryMutation: vi.fn(async (params: Record<string, unknown>) => ({
-    shopifyStore: params.shopifyStore,
-    orderId: params.orderId,
-    attemptToken: params.attemptToken,
-    expectedContext: params.expectedContext,
-    operationKey: params.operationKey,
-    leaseToken: "mutation-lease-token",
+    status: "claimed",
+    lease: {
+      shopifyStore: params.shopifyStore,
+      orderId: params.orderId,
+      attemptToken: params.attemptToken,
+      expectedContext: params.expectedContext,
+      operationKey: params.operationKey,
+      leaseToken: "mutation-lease-token",
+    },
   })),
   releaseOosRecoveryMutation: vi.fn(async () => true),
   renewOosRecoveryMutation: vi.fn(async () => true),
