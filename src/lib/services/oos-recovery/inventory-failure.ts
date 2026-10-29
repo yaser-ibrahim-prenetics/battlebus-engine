@@ -5,6 +5,7 @@ import {
   filterDummySkus,
   filterServiceSkus,
 } from "@/lib/transformers/sku";
+import { ConfirmedActionFailure } from "@/lib/services/fulfillment-actions/ledger";
 
 export type InventoryProvider = "gps" | "d365";
 export type InventoryFailureCategory =
@@ -29,12 +30,14 @@ export type InventoryDependency = ProviderBlockedItem & {
 };
 
 /** A provider-confirmed inventory rejection with structured, non-customer dependency keys. */
-export class InventoryUnavailableError extends Error {
+export class InventoryUnavailableError extends ConfirmedActionFailure {
   constructor(
     public readonly provider: InventoryProvider,
     public readonly category: InventoryFailureCategory,
     message: string,
-    public readonly blockedItems: ProviderBlockedItem[] = []
+    public readonly blockedItems: ProviderBlockedItem[] = [],
+    public readonly providerOrderNumber?: string,
+    public readonly providerWarehouse?: string
   ) {
     super(message);
     this.name = "InventoryUnavailableError";
@@ -44,7 +47,8 @@ export class InventoryUnavailableError extends Error {
 export function isInventoryUnavailableError(error: unknown): error is InventoryUnavailableError {
   const candidate = error as Partial<InventoryUnavailableError> | undefined;
   return (
-    (error instanceof InventoryUnavailableError || candidate?.name === "InventoryUnavailableError") &&
+    (error instanceof InventoryUnavailableError ||
+      candidate?.name === "InventoryUnavailableError") &&
     (candidate?.provider === "gps" || candidate?.provider === "d365") &&
     typeof candidate?.category === "string" &&
     Array.isArray(candidate?.blockedItems)
@@ -80,9 +84,7 @@ export function buildProviderBlockedItems(params: {
     if (!line.requires_shipping || line.gift_card || !line.sku?.trim()) return [];
     const expanded = filterDummySkus(
       filterServiceSkus(
-        explodeBundleLines([
-          transformSku({ itemNumber: line.sku.trim(), quantity: line.quantity }),
-        ])
+        explodeBundleLines([transformSku({ itemNumber: line.sku.trim(), quantity: line.quantity })])
       )
     );
     return expanded.map((item) => ({

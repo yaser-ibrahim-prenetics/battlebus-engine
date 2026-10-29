@@ -817,17 +817,24 @@ export async function createSalesOrderLine(
     const error = await response.text();
     const inventoryFailure = classifyD365InventoryFailure(error);
     if (inventoryFailure) {
-      throw new InventoryUnavailableError("d365", inventoryFailure, error, [
-        {
-          provider: "d365",
-          // D365 inventory reads are company-scoped; persist the canonical data area rather than
-          // a line-level shipping warehouse that cannot safely scope the recovery query.
-          warehouse: dataAreaId.toUpperCase(),
-          sku: itemNumber.toUpperCase(),
-          orderLineId: req.sourceLineId || itemNumber,
-          quantityNeeded: quantity,
-        },
-      ]);
+      throw new InventoryUnavailableError(
+        "d365",
+        inventoryFailure,
+        error,
+        [
+          {
+            provider: "d365",
+            // D365 inventory reads are company-scoped; persist the canonical data area rather than
+            // a line-level shipping warehouse that cannot safely scope the recovery query.
+            warehouse: dataAreaId.toUpperCase(),
+            sku: itemNumber.toUpperCase(),
+            orderLineId: req.sourceLineId || itemNumber,
+            quantityNeeded: quantity,
+          },
+        ],
+        salesOrderNumber,
+        dataAreaId.toUpperCase()
+      );
     }
     throw new Error(
       `[D365] Failed to create sales order line ${itemNumber} for ${salesOrderNumber}: ${response.status} - ${error}`
@@ -1440,8 +1447,7 @@ export async function assertPrepaymentInvoicePosted(
     return {
       depositFulfillment: check.depositFulfillment,
       processingStatus: check.processingStatus,
-      orderingCustomerAccountNumber:
-        check.header?.OrderingCustomerAccountNumber ?? null,
+      orderingCustomerAccountNumber: check.header?.OrderingCustomerAccountNumber ?? null,
     };
   }
 
@@ -1626,7 +1632,9 @@ export async function getSalesOrderLineFulfilmentDimensionsMap(
   const lines = await getSalesOrderLines(salesOrderNumber, dataAreaId);
   const out: Record<string, SalesOrderLineFulfilmentDimensions> = {};
   for (const line of lines) {
-    const item = String(line.ItemNumber || "").trim().toUpperCase();
+    const item = String(line.ItemNumber || "")
+      .trim()
+      .toUpperCase();
     const warehouse = String(line.ShippingWarehouseId || "").trim();
     if (!item || !warehouse) continue;
     out[item] = {
@@ -2008,7 +2016,10 @@ export async function getSalesOrderByShopifyId(
     }
 
     const looseThkFilter = `THK_ShopifyReference eq '${odataQuotedLiteral(ref)}'`;
-    const looseThkOrder = await tryFilter(looseThkFilter, "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE");
+    const looseThkOrder = await tryFilter(
+      looseThkFilter,
+      "SalesOrderHeadersV3_BY_SHOPIFY_REF_LOOSE"
+    );
     if (looseThkOrder) {
       console.log(
         `[D365] Found order: ${looseThkOrder.SalesOrderNumber} (cross-company THK ref=${ref})`

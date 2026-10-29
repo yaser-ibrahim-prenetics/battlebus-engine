@@ -74,6 +74,7 @@ describe("minimal pending action replay payloads", () => {
         fromGpsSync: true,
         gpsOrderId: "GPS-1",
         runSequence: ["warehouse", "d365"],
+        oosRecoveryReplay: true,
         accessToken: "must-not-be-stored",
         webhookHeaders: { authorization: "must-not-be-stored" },
       })
@@ -104,6 +105,7 @@ describe("minimal pending action replay payloads", () => {
       fromGpsSync: true,
       gpsOrderId: "GPS-1",
       runSequence: ["warehouse", "d365"],
+      oosRecoveryReplay: true,
     });
   });
 });
