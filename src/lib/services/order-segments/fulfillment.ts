@@ -11,6 +11,10 @@ import { readPlan, findGpsSegment } from "./store";
 import { fulfillmentOrderIds } from "./shopify";
 import { reserveAllocations } from "./allocation";
 import type { StepRunner } from "./types";
+import {
+  InventoryUnavailableError,
+  isInventoryUnavailableError,
+} from "@/lib/services/oos-recovery/inventory-failure";
 
 export async function fulfillOrderSegments(input: {
   shopDomain?: string;
@@ -92,14 +96,44 @@ export async function fulfillOrderSegments(input: {
               },
             ];
           });
-          const result = await dynamics.createFulfilment({
-            fulfillmentId: `shopify:${allocation.fulfillment_id}`,
-            dataAreaId: segment.dataAreaId,
-            salesOrderNumber: progress.salesOrderNumber,
-            type: "shipment",
-            confirmedShippedDate: allocation.posting_date,
-            lines,
-          });
+          let result: Awaited<ReturnType<typeof dynamics.createFulfilment>>;
+          try {
+            result = await dynamics.createFulfilment({
+              fulfillmentId: `shopify:${allocation.fulfillment_id}`,
+              dataAreaId: segment.dataAreaId,
+              salesOrderNumber: progress.salesOrderNumber,
+              type: "shipment",
+              confirmedShippedDate: allocation.posting_date,
+              lines,
+            });
+          } catch (error) {
+            if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {
+              throw new InventoryUnavailableError(
+                error.provider,
+                error.category,
+                error.message,
+                progress.lines.flatMap((line) => {
+                  const shipped = allocation.quantities[line.sourceLineId] ?? 0;
+                  if (line.isService || !shipped) return [];
+                  return [
+                    {
+                      provider: "d365" as const,
+                      warehouse: segment.dataAreaId.toUpperCase(),
+                      sku: line.itemNumber.toUpperCase(),
+                      orderLineId: line.sourceLineId,
+                      quantityNeeded: Math.max(
+                        1,
+                        Math.ceil((line.quantity * shipped) / line.sourceQuantity)
+                      ),
+                    },
+                  ];
+                }),
+                error.providerOrderNumber ?? progress.salesOrderNumber,
+                error.providerWarehouse ?? segment.dataAreaId.toUpperCase()
+              );
+            }
+            throw error;
+          }
           const deposit = await dynamics.verifyDepositFulfillmentApplied(
             progress.salesOrderNumber,
             segment.dataAreaId

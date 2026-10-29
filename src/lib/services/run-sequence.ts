@@ -27,6 +27,8 @@ export type AdvanceRunSequenceParams = {
   /** Carried through for status_update CS Platform calls. */
   inngestRunId?: string;
   inngestIdempotencyKey?: string;
+  /** Keep targeted OOS rows open until the final dispatched stage reports its outcome. */
+  oosRecoveryReplay?: boolean;
   /** Stages already completed in this chain — used to render full timeline. */
   history?: RunSequenceStage[];
 };
@@ -80,6 +82,7 @@ export async function advanceRunSequence(
     shopifyStore,
     inngestRunId,
     inngestIdempotencyKey,
+    oosRecoveryReplay = false,
     history = [],
   } = params;
   const canonicalShopifyStore = resolveShopifyAdminCredentials(shopifyStore).shopDomain;
@@ -134,6 +137,7 @@ export async function advanceRunSequence(
         receivedAt: nowIso(),
         runSequence: rest,
         fromSequencedRetry: true,
+        oosRecoveryReplay,
       },
     });
   } else if (nextStage.eventName === "shopify/order.fulfilled") {
@@ -158,6 +162,7 @@ export async function advanceRunSequence(
         runSequence: rest,
         fromSequencedRetry: true,
         fromBackorderRetry: true,
+        oosRecoveryReplay,
       },
     });
   } else if (nextStage.eventName === "backorder/retry") {
@@ -172,6 +177,8 @@ export async function advanceRunSequence(
         retryCount: 0,
         triggeredBy: "manual",
         runSequence: rest,
+        targetedRecovery: oosRecoveryReplay,
+        oosRecoveryReplay,
       },
     });
   }

@@ -283,10 +283,12 @@ export const processShopifyOrder = inngest.createFunction(
     };
     const resolveReplay = async () => {
       if (!isOosRecoveryReplay) return;
+      if (incomingRunSequence.length > 0) return;
       await step.run("resolve-successful-oos-replay", () =>
         resolveOosDependencies({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
+          includeManualReview: true,
         })
       );
       await step.run("emit-resolved-successful-oos-replay", () =>
@@ -439,6 +441,7 @@ export const processShopifyOrder = inngest.createFunction(
           shopifyStore,
           inngestRunId,
           inngestIdempotencyKey,
+          oosRecoveryReplay: isOosRecoveryReplay,
         });
         logFlowEvent({
           flow: "order_paid",
@@ -453,6 +456,10 @@ export const processShopifyOrder = inngest.createFunction(
         console.warn(
           `[RunSequence] Failed to advance after order_creation for ${shopifyOrderName}: ${err}`
         );
+        if (isOosRecoveryReplay) {
+          await moveReplayToManualReview("sequenced_handoff_failure");
+          throw err;
+        }
       }
     };
 
@@ -2112,6 +2119,7 @@ export const processShopifyOrder = inngest.createFunction(
                 retryMode: "gps_outbound",
                 backorderQueue: "sync",
                 maxRetries: config.oosRecovery.maxAttempts,
+                resolvedProviderBeforeParking: isOosRecoveryReplay ? "d365" : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
             });
@@ -2332,6 +2340,7 @@ export const processShopifyOrder = inngest.createFunction(
         d365OrderNumber: salesOrderNumber,
       });
 
+      await resolveReplay();
       return result;
     } catch (error) {
       if (
@@ -2389,6 +2398,7 @@ export const processShopifyOrder = inngest.createFunction(
                 retryMode: "gps_outbound",
                 backorderQueue: "sync",
                 maxRetries: config.oosRecovery.maxAttempts,
+                resolvedProviderBeforeParking: isOosRecoveryReplay ? error.provider : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,
             });
@@ -2463,6 +2473,10 @@ export const processShopifyOrder = inngest.createFunction(
           slack.slackNotificationId(event.id, "order-backorder-inventory-error")
         );
 
+        if (!isInventoryUnavailableError(error)) {
+          await moveReplayToManualReview("untyped_inventory_failure");
+        }
+
         throw new NonRetriableError(
           `[BACKORDER_TERMINAL] ${shopifyOrderName} moved to backorder queue: ${inventoryErrorType}`
         );
@@ -2500,6 +2514,8 @@ export const processShopifyOrder = inngest.createFunction(
             { inngestIdempotencyKey, inngestRunId }
           );
         });
+
+        await resolveReplay();
 
         return {
           status: "completed",
@@ -2593,6 +2609,8 @@ export const processShopifyOrder = inngest.createFunction(
           slack.slackNotificationId(event.id, "order-non-retryable")
         );
 
+        await moveReplayToManualReview("non_retryable_data_error");
+
         return {
           status: "backorder",
           shopifyOrderId,
@@ -2679,6 +2697,7 @@ export const processShopifyOrder = inngest.createFunction(
         `Process Order parked in sync backorder queue: ${shopifyOrderName} - ${errorMsg}`,
         slack.slackNotificationId(event.id, "order-sync-backorder-parked")
       );
+      await moveReplayToManualReview("terminal_order_sync_failure");
       throw new NonRetriableError(
         `[BACKORDER_TERMINAL] ${shopifyOrderName} parked in sync queue due to order sync failure`
       );
