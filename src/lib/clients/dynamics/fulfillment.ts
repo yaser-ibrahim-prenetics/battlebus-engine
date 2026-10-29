@@ -8,6 +8,10 @@ import {
   executeFulfillmentAction,
   ConfirmedActionFailure,
 } from "@/lib/services/fulfillment-actions/ledger";
+import {
+  classifyD365InventoryFailure,
+  InventoryUnavailableError,
+} from "@/lib/services/oos-recovery/inventory-failure";
 import type { D365FulfilmentRequest, D365ThkApiResponse } from "@/lib/types/dynamics";
 
 type Transport = { authenticate: () => Promise<string>; fetch: typeof fetch };
@@ -66,8 +70,39 @@ export async function postDurableFulfilment(req: D365FulfilmentRequest, transpor
       );
       if (response.status === 401 || response.status === 403)
         throw new ConfirmedActionFailure("D365 authorization rejected");
-      if (!response.ok) throw new Error("D365 fulfillment outcome not confirmed");
-      const result: D365ThkApiResponse = await response.json();
+      const responseText = await response.text();
+      let result: D365ThkApiResponse | null = null;
+      try {
+        result = JSON.parse(responseText) as D365ThkApiResponse;
+      } catch {
+        // A malformed provider response does not prove whether the mutation ran.
+      }
+      const providerDetail = String(
+        result?.Message || result?.Result || responseText || `HTTP ${response.status}`
+      ).trim();
+      const inventoryFailure = classifyD365InventoryFailure(providerDetail);
+      if (inventoryFailure) {
+        const warehouse =
+          lines.find((line) => line.shippingWarehouseId?.trim())?.shippingWarehouseId?.trim() ||
+          req.dataAreaId;
+        throw new InventoryUnavailableError(
+          "d365",
+          inventoryFailure,
+          `D365 fulfillment inventory rejected for ${req.salesOrderNumber}: ${providerDetail}`,
+          lines.map((line) => ({
+            provider: "d365" as const,
+            warehouse,
+            sku: line.itemNumber.trim().toUpperCase(),
+            orderLineId: line.lotId!,
+            quantityNeeded: Math.max(1, Math.ceil(Math.abs(line.quantity))),
+          })),
+          req.salesOrderNumber,
+          warehouse
+        );
+      }
+      if (!response.ok || !result) {
+        throw new Error("D365 fulfillment outcome not confirmed");
+      }
       // Over-quantity / already-invoiced / partial errors are not proof that THIS
       // operation succeeded. Preserve them as uncertain instead of posting again.
       assertThkFulfilmentSucceeded(result, req.salesOrderNumber);

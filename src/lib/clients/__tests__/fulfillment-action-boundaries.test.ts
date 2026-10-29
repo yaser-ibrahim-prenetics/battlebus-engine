@@ -89,6 +89,48 @@ describe("fulfillment mutation boundaries", () => {
     }
   });
 
+  it("preserves confirmed D365 inventory failures with their exact request lines", async () => {
+    const { postDurableFulfilment } = await import("../dynamics/fulfillment");
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json(
+          { status: 0, Message: "Inventory insufficient; item number does not exist" },
+          { status: 409 }
+        )
+      );
+    const request = {
+      ...fulfillment,
+      lines: [
+        {
+          ...fulfillment.lines[0],
+          itemNumber: "sku-exact",
+          quantity: 2,
+          shippingWarehouseId: "WH-EXACT",
+        },
+      ],
+    };
+
+    await expect(
+      postDurableFulfilment(request, { authenticate: async () => "token", fetch })
+    ).rejects.toMatchObject({
+      name: "InventoryUnavailableError",
+      provider: "d365",
+      category: "item_not_found",
+      providerOrderNumber: "SO-1",
+      providerWarehouse: "WH-EXACT",
+      blockedItems: [
+        {
+          provider: "d365",
+          warehouse: "WH-EXACT",
+          sku: "SKU-EXACT",
+          orderLineId: "LOT-1",
+          quantityNeeded: 2,
+        },
+      ],
+    });
+  });
+
   it("keeps stable source IDs distinct and supplies a shared tracking alias", async () => {
     const { postDurableFulfilment } = await import("../dynamics/fulfillment");
     const fetch = vi
