@@ -165,7 +165,7 @@
 
 ```
 1. Import legacy actions
-   └─ Atomically move valid `orders.pending_actions` arrays into the normalized queue
+   └─ Copy not-yet-normalized `orders.pending_actions` entries while retaining rollback data
 
 2. Claim a bounded batch
    ├─ PostgreSQL `FOR UPDATE SKIP LOCKED`

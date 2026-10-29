@@ -128,6 +128,19 @@ Application revisions receive only these non-secret database settings:
 - `DB_USER=battle-bus-runtime@battle-bus-509406.iam`
 - `DB_MAX_CONNECTIONS=5`
 
+Before enabling the durable pending-action queue, provision the Battle Hub IAM
+database user and apply the safe read-only active-action projection:
+
+```bash
+./scripts/bootstrap-hub-database.sh
+```
+
+Keep the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false` for
+the first deployment containing migrations `000040` through `000044`. After the
+old drain revision no longer receives traffic and Battle Hub readiness can read
+`battle_hub_pending_lifecycle_actions`, set it to `true` and redeploy. Keep
+`PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED=true` through the rollback window.
+
 The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
 Cloud Run service account. `DATABASE_URL` remains reserved for local tooling
 and the isolated migration job.
