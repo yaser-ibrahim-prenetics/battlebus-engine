@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, QueryResult, QueryResultRow } from "pg";
 import { config } from "@/lib/config";
 import { getDatabasePool } from "@/lib/db/database";
 
@@ -29,11 +29,48 @@ const defaultLimits: Record<CapacityProvider, number> = {
   stord: 4,
   loop: 4,
 };
+const CAPACITY_QUERY_TIMEOUT_MS = 2_000;
 
 export class ProviderCapacityTimeoutError extends Error {
   constructor(provider: CapacityProvider) {
     super(`Shared ${provider} provider capacity is temporarily exhausted`);
     this.name = "ProviderCapacityTimeoutError";
+  }
+}
+
+export class ProviderCapacityDatabaseTimeoutError extends Error {
+  constructor() {
+    super("Shared provider capacity database query timed out");
+    this.name = "ProviderCapacityDatabaseTimeoutError";
+  }
+}
+
+async function capacityQuery<Row extends QueryResultRow = QueryResultRow>(
+  pool: Pool,
+  text: string,
+  values: readonly unknown[],
+  timeoutMs: number
+): Promise<QueryResult<Row>> {
+  const boundedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const query = pool.query<Row>({
+    text,
+    values: [...values],
+    query_timeout: boundedTimeoutMs,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      query,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new ProviderCapacityDatabaseTimeoutError()),
+          boundedTimeoutMs
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -54,16 +91,18 @@ async function claimProviderCapacity(
   provider: CapacityProvider,
   operation: string,
   options: Required<Pick<ProviderCapacityOverrides, "limit" | "leaseSeconds">>,
-  leaseOwner: string
+  leaseOwner: string,
+  queryTimeoutMs: number
 ): Promise<ProviderCapacityLease | null> {
   const leaseToken = randomUUID();
-  const result = await pool.query<{
+  const result = await capacityQuery<{
     provider: CapacityProvider;
     slot: number;
     lease_token: string;
     lease_owner: string;
     lease_until: string;
   }>(
+    pool,
     `WITH candidate AS (
        SELECT provider, slot
        FROM public.provider_capacity_leases
@@ -88,7 +127,8 @@ async function claimProviderCapacity(
       leaseOwner,
       operationDigest(operation),
       options.leaseSeconds,
-    ]
+    ],
+    queryTimeoutMs
   );
   const row = result.rows[0];
   return row
@@ -135,7 +175,8 @@ export async function acquireProviderCapacity(
       provider,
       operation,
       { limit, leaseSeconds },
-      leaseOwner
+      leaseOwner,
+      Math.min(CAPACITY_QUERY_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
     );
     if (lease) return lease;
     if (Date.now() >= deadline) throw new ProviderCapacityTimeoutError(provider);
@@ -152,12 +193,14 @@ export async function renewProviderCapacity(
 ): Promise<boolean> {
   const pool = poolOverride ?? (await getDatabasePool());
   if (!pool) return false;
-  const result = await pool.query(
+  const result = await capacityQuery(
+    pool,
     `UPDATE public.provider_capacity_leases
      SET lease_until = clock_timestamp() + make_interval(secs => $5)
      WHERE provider = $1 AND slot = $2 AND lease_token = $3::uuid AND lease_owner = $4::uuid
        AND lease_until > clock_timestamp()`,
-    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner, clamp(leaseSeconds, 120, 600)]
+    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner, clamp(leaseSeconds, 120, 600)],
+    CAPACITY_QUERY_TIMEOUT_MS
   );
   return result.rowCount === 1;
 }
@@ -168,12 +211,14 @@ export async function releaseProviderCapacity(
 ): Promise<boolean> {
   const pool = poolOverride ?? (await getDatabasePool());
   if (!pool) return false;
-  const result = await pool.query(
+  const result = await capacityQuery(
+    pool,
     `UPDATE public.provider_capacity_leases
      SET lease_token = NULL, lease_owner = NULL, operation_digest = NULL,
        leased_at = NULL, lease_until = NULL
      WHERE provider = $1 AND slot = $2 AND lease_token = $3::uuid AND lease_owner = $4::uuid`,
-    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner]
+    [lease.provider, lease.slot, lease.leaseToken, lease.leaseOwner],
+    CAPACITY_QUERY_TIMEOUT_MS
   );
   return result.rowCount === 1;
 }
@@ -217,16 +262,12 @@ export async function withProviderCapacity<T>(
   } finally {
     clearInterval(timer);
     try {
-      await renewal;
-    } finally {
-      try {
-        await releaseProviderCapacity(lease, pool);
-      } catch {
-        // Never turn a confirmed provider response into a retryable failure. The bounded lease expires.
-        console.error(
-          `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot}`
-        );
-      }
+      await releaseProviderCapacity(lease, pool);
+    } catch {
+      // Never turn a confirmed provider response into a retryable failure. The bounded lease expires.
+      console.error(
+        `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot}`
+      );
     }
   }
 }
