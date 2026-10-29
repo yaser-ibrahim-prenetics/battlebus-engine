@@ -80,8 +80,10 @@ they can become eligible for normal published retention.
    This replaces the pre-PR drainer and registers the lease-compatible function without activating
    the new retry policy.
 3. Confirm the prior revision has zero traffic, the post-promotion Inngest sync succeeded, and the
-   operations health view reports no expired leases. The deployment workflow refuses first-release
-   activation when the currently deployed Cloud Run template does not contain the rollout flag.
+   operations health view reports no expired leases. A successful sync records the serving
+   revision on the Cloud Run service. The deployment workflow refuses activation unless one
+   lease-compatible revision has 100% of serving traffic and that exact revision owns the sync
+   marker; a failed zero-traffic candidate cannot satisfy this gate.
 4. Set the GitHub repository variable `WEBHOOK_INBOX_DURABLE_DELIVERY_ENABLED=true` and run a
    second deployment. Mixed disabled/enabled revisions remain safe because both require an exact
    lease token.
