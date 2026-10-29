@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
 import type { InventoryDependency, InventoryProvider } from "./inventory-failure";
+import { lockOosRecoveryOrder } from "./locking";
 
 export type OosRecoveryContext = {
   d365OrderNumber?: string;
@@ -104,6 +105,8 @@ export async function parkOosOrderWithClient(
     now.getTime() + Math.max(1, params.retentionDays) * 24 * 60 * 60 * 1000
   );
   const event = buildOosParkedEvent({ ...params, now });
+
+  await lockOosRecoveryOrder(client, first.shopifyStore, first.shopifyOrderId);
 
   if (
     Boolean(params.context.resolvedProviderBeforeParking) !==

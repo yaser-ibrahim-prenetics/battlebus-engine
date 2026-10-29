@@ -14,6 +14,7 @@ import {
   submitOosDrainRequest,
 } from "@/lib/services/oos-recovery/requests";
 import {
+  isCurrentOosRecoveryAttempt,
   loadOosRetryContext,
   moveOosDependenciesToManualReview,
   rearmManualReviewOosDependencies,
@@ -91,6 +92,16 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       retentionDays: 30,
       now,
     });
+  }
+
+  async function retryContext(orderId: string, includeManualReview = false) {
+    const context = await loadOosRetryContext({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      includeManualReview,
+    });
+    if (!context) throw new Error(`expected OOS retry context for ${orderId}`);
+    return context;
   }
 
   it("commits parked order lines and the notification outbox together", async () => {
@@ -677,6 +688,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       shopifyStore: "im8health.myshopify.com",
       orderId,
       attemptToken: firstAttempt,
+      expectedContext: await retryContext(orderId),
       errorCode: "provider_rejected",
     });
 
@@ -725,6 +737,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       shopifyStore: "im8health.myshopify.com",
       orderId,
       attemptToken,
+      expectedContext: await retryContext(orderId),
       errorCode: "transient_downstream_failure",
     });
     await expect(
@@ -732,6 +745,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         shopifyStore: "im8health.myshopify.com",
         orderId,
         attemptToken,
+        expectedContext: await retryContext(orderId, true),
         includeManualReview: true,
       })
     ).resolves.toEqual({ dependencies: 1, manualReview: false });
@@ -750,6 +764,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       shopifyStore: "im8health.myshopify.com",
       orderId,
       attemptToken: olderAttempt,
+      expectedContext: await retryContext(orderId),
       errorCode: "older_attempt_failed",
     });
     const newerAttempt = await rearmManualReviewOosDependencies({
@@ -764,6 +779,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         shopifyStore: "im8health.myshopify.com",
         orderId,
         attemptToken: olderAttempt,
+        expectedContext: await retryContext(orderId),
         includeManualReview: true,
       })
     ).resolves.toEqual({ dependencies: 0, manualReview: false });
@@ -773,6 +789,60 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       [orderId]
     );
     expect(state.rows[0]).toEqual({ status: "retrying", replay_token: newerAttempt });
+  });
+
+  it("rejects a partial stale-token outcome without resolving the order", async () => {
+    const orderId = `${prefix}partial-stale-replay`;
+    await park(
+      [
+        dependency(orderId, { orderLineId: "line-a", sku: "SKU-A" }),
+        dependency(orderId, { orderLineId: "line-b", sku: "SKU-B" }),
+      ],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    const attemptToken = await rearmManualReviewOosDependencies({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      retentionDays: 30,
+    });
+    if (!attemptToken) throw new Error("expected a replay attempt token");
+    const expectedContext = await retryContext(orderId);
+    await pool.query(
+      `UPDATE public.oos_recovery_dependencies
+       SET replay_token = $2::uuid, version = version + 1
+       WHERE order_id = $1 AND order_line_id = 'line-b'`,
+      [orderId, randomUUID()]
+    );
+
+    await expect(
+      isCurrentOosRecoveryAttempt({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+      })
+    ).resolves.toBe(false);
+    await expect(
+      resolveOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        includeManualReview: true,
+      })
+    ).resolves.toEqual({ dependencies: 0, manualReview: false });
+    const states = await pool.query<{ status: string; count: number }>(
+      `SELECT status, count(*)::int AS count
+       FROM public.oos_recovery_dependencies WHERE order_id = $1
+       GROUP BY status`,
+      [orderId]
+    );
+    expect(states.rows).toEqual([{ status: "retrying", count: 2 }]);
+    const order = await pool.query<{ processing_status: string }>(
+      `SELECT processing_status FROM public.orders WHERE id = $1`,
+      [orderId]
+    );
+    expect(order.rows[0]?.processing_status).toBe("backorder");
   });
 
   it("preserves the attempt ceiling across repeated same-provider failures", async () => {
@@ -788,6 +858,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       shopifyStore: "im8health.myshopify.com",
       orderId,
       attemptToken: firstAttempt,
+      expectedContext: await retryContext(orderId),
       cooldownSeconds: 1,
       maxAttempts: 2,
       errorCode: "inventory_insufficient",
@@ -802,6 +873,7 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       shopifyStore: "im8health.myshopify.com",
       orderId,
       attemptToken: secondAttempt,
+      expectedContext: await retryContext(orderId),
       cooldownSeconds: 1,
       maxAttempts: 2,
       errorCode: "inventory_insufficient",

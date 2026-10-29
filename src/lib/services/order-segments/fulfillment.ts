@@ -22,6 +22,7 @@ export async function fulfillOrderSegments(input: {
   orderId: string;
   fulfillments: ShopifyFulfillment[];
   step: StepRunner;
+  beforeExternalMutation?: () => Promise<unknown>;
 }) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
@@ -99,6 +100,7 @@ export async function fulfillOrderSegments(input: {
           });
           let result: Awaited<ReturnType<typeof dynamics.createFulfilment>>;
           try {
+            await input.beforeExternalMutation?.();
             result = await dynamics.createFulfilment({
               fulfillmentId: `shopify:${allocation.fulfillment_id}`,
               dataAreaId: segment.dataAreaId,
@@ -144,13 +146,15 @@ export async function fulfillOrderSegments(input: {
               depositFulfillment: deposit.depositFulfillment,
               processingStatus: deposit.processingStatus,
             })
-          )
+          ) {
+            await input.beforeExternalMutation?.();
             await dynamics.assertDepositShipmentInvoicingComplete(
               progress.salesOrderNumber,
               segment.dataAreaId,
               result.response,
               { depositFulfillment: true }
             );
+          }
           await queryDatabase(completeAllocationSQL, [
             shop,
             input.orderId,
