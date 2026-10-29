@@ -6,6 +6,7 @@ import { GpsWarehouseNameEnum, IGpsManualProcessRequest } from "@/lib/types/gps"
 import { IResponse } from "@/lib/types";
 import * as gps from "@/lib/clients/gps";
 import { publishWebhookEvents } from "@/lib/webhooks/publish-with-inbox";
+import { createGpsIndividualBatchId } from "@/lib/webhooks/stable-id";
 
 /**
  * POST - Process GPS orders by batch and process it individually
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<IResponse
 
     // Process orders in batches
     console.log(`[GPS Individual] Starting processing with ${validOrderIds.length} GPS order IDs`);
-    const batchId = `GPSB${Date.now()}`;
+    const batchId = createGpsIndividualBatchId(warehouse, validOrderIds);
     const result = await publishWebhookEvents({
       source: "gps_individual",
       topic: "gps/batch.process",
