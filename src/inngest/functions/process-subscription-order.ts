@@ -19,7 +19,11 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import { setGpsOrderMetafield, getOrder as shopifyGetOrder } from "@/lib/clients/shopify";
+import {
+  setGpsOrderMetafield,
+  getOrder as shopifyGetOrder,
+  resolveShopifyAdminCredentials,
+} from "@/lib/clients/shopify";
 import { OutOfStockError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -202,6 +206,7 @@ export const processSubscriptionOrder = inngest.createFunction(
       subscriptionContractId,
       shopifyStore,
     } = event.data;
+    const canonicalShopifyStore = resolveShopifyAdminCredentials(shopifyStore).shopDomain;
     const isRerun =
       Boolean(event.data.originalShopifyOrderId) ||
       String(rawShopifyOrderId || "").includes("-rerun-");
@@ -776,6 +781,7 @@ export const processSubscriptionOrder = inngest.createFunction(
         data: {
           shopifyOrderId,
           shopifyOrderName,
+          shopifyStore: canonicalShopifyStore,
           d365OrderNumber,
           warehouse: warehouseName,
           errorMessage: gpsResult.reason || "OOS",

@@ -240,7 +240,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         remaining: incomingSequence,
         orderJson: freshOrder,
         fulfillments,
-        shopifyStore: event.data.shopifyStore,
+        shopifyStore: shop,
         inngestRunId: _runId || undefined,
       });
     });

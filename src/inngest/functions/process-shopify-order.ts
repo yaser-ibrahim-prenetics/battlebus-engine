@@ -16,7 +16,11 @@ import * as dynamics from "@/lib/clients/dynamics";
 import * as gps from "@/lib/clients/gps";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
-import { getVariantSkusByVariantIds, setGpsOrderMetafield } from "@/lib/clients/shopify";
+import {
+  getVariantSkusByVariantIds,
+  resolveShopifyAdminCredentials,
+  setGpsOrderMetafield,
+} from "@/lib/clients/shopify";
 import { OutOfStockError, classifyGpsError, isGpsInventoryError } from "@/lib/clients/gps";
 import {
   toD365SalesOrderHeaderV3,
@@ -226,6 +230,7 @@ export const processShopifyOrder = inngest.createFunction(
       orderJson,
       shopifyStore,
     } = event.data;
+    const canonicalShopifyStore = resolveShopifyAdminCredentials(shopifyStore).shopDomain;
     const ch = orderChannel({ orderName: shopifyOrderName });
     /** Inngest Realtime `publish` is only injected when the run opts into channels; guard to avoid TypeError. */
     const publishToRealtime = async (channel: unknown, payload: Record<string, unknown>) => {
@@ -829,7 +834,7 @@ export const processShopifyOrder = inngest.createFunction(
               failureSystem: "validation",
               retryMode: "gps_outbound",
               backorderQueue: "sync",
-              shopifyStore,
+              shopifyStore: canonicalShopifyStore,
             },
           });
         });
@@ -1711,6 +1716,7 @@ export const processShopifyOrder = inngest.createFunction(
               data: {
                 shopifyOrderId,
                 shopifyOrderName,
+                shopifyStore: canonicalShopifyStore,
                 d365OrderNumber: reusedSalesOrderNumber,
                 warehouse: warehouseName,
                 errorMessage: oosError,
@@ -1939,6 +1945,7 @@ export const processShopifyOrder = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: salesOrderNumber,
               warehouse: warehouseName,
               errorMessage: oosError,
@@ -2190,6 +2197,7 @@ export const processShopifyOrder = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: salesOrderNumber,
               warehouse: warehouseName || "GPS Warehouse",
               errorMessage: errorMsg,
@@ -2328,6 +2336,7 @@ export const processShopifyOrder = inngest.createFunction(
             data: {
               shopifyOrderId,
               shopifyOrderName,
+              shopifyStore: canonicalShopifyStore,
               d365OrderNumber: salesOrderNumber,
               warehouse: warehouseName || "GPS Warehouse",
               errorMessage: errorMsg,
@@ -2411,6 +2420,7 @@ export const processShopifyOrder = inngest.createFunction(
           data: {
             shopifyOrderId,
             shopifyOrderName,
+            shopifyStore: canonicalShopifyStore,
             d365OrderNumber: salesOrderNumber,
             warehouse: warehouseName || "GPS Warehouse",
             errorMessage: errorMsg,
