@@ -19,3 +19,15 @@ BEGIN
   END IF;
 END
 $$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.battle_hub_pending_lifecycle_actions') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left Battle Hub pending-action view behind';
+  END IF;
+
+  IF to_regprocedure('public.battle_platform_scrub_pending_action_payload()') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left pending-action scrub function behind';
+  END IF;
+END
+$$;

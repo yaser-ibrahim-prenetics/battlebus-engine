@@ -10,6 +10,12 @@ user with `scripts/bootstrap-runtime-database.sh` before applying migration
 `battle_bus_runtime` group role. The application never uses the privileged
 `DATABASE_URL` migration secret.
 
+Battle Hub uses a separate passwordless IAM database identity. Migration
+`000043` grants its `battle_hub_runtime` group role access only to the minimal
+`battle_hub_pending_lifecycle_actions` view; migration `000044` binds the pinned
+IAM database user. Run `scripts/bootstrap-hub-database.sh` before applying those
+migrations in Cloud SQL. Battle Hub cannot read queue payloads or terminal rows.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If
