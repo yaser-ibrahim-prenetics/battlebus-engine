@@ -59,6 +59,8 @@ export type ShopifyOrderPaidEvent = {
     runSequence?: RunSequenceStage[];
     /** Marker so downstream knows this came from a sequenced retry. */
     fromSequencedRetry?: boolean;
+    /** Paid-order replay dispatched after targeted D365 inventory recovery. */
+    oosRecoveryReplay?: boolean;
   };
 };
 
@@ -322,6 +324,10 @@ export type BackorderRetryEvent = {
     targetedRecovery?: boolean;
     /** Exact original Shopify lines selected for a D365 inventory retry. */
     blockedLineIds?: string[];
+    /** Exact original-line/provider-SKU pairs selected for recovery. */
+    blockedItems?: Array<{ orderLineId: string; providerSku: string }>;
+    /** Downstream paid-order replay must report its terminal OOS outcome. */
+    oosRecoveryReplay?: boolean;
     /**
      * Optional ordered list of pipeline stages to run when an order needs
      * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).

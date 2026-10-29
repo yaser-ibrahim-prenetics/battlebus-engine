@@ -4,8 +4,17 @@ import { Pool } from "pg";
 import { closeDatabase } from "@/lib/db/database";
 import { executeOosDrain, oosInventoryKey } from "@/lib/services/oos-recovery/drain";
 import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
-import { claimOosDrainRequest, submitOosDrainRequest } from "@/lib/services/oos-recovery/requests";
-import { loadOosRetryContext } from "@/lib/services/oos-recovery/outcomes";
+import {
+  claimOosDrainRequest,
+  createOosDrainPreviewRequest,
+  redispatchStalledOosDrainRequests,
+  submitOosDrainRequest,
+} from "@/lib/services/oos-recovery/requests";
+import {
+  loadOosRetryContext,
+  moveOosDependenciesToManualReview,
+  rearmManualReviewOosDependencies,
+} from "@/lib/services/oos-recovery/outcomes";
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
 import { queueHealthSQL } from "@/lib/sql/operations/health";
 
@@ -110,7 +119,11 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
     ).resolves.toEqual({
       provider: "gps",
       warehouse: `${prefix}warehouse`.toUpperCase(),
-      blockedLineIds: ["duplicate-a", "duplicate-b"],
+      blockedItems: [
+        { orderLineId: "duplicate-a", providerSku: `${prefix}same`.toUpperCase() },
+        { orderLineId: "duplicate-b", providerSku: `${prefix}same`.toUpperCase() },
+      ],
+      manualReview: false,
     });
   });
 
@@ -205,13 +218,14 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
   it("runs dry selection without mutating dependencies or publishing retries", async () => {
     const orderId = `${prefix}dry`;
     await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
-    const before = await pool.query<{ dependencies: string; outbox: string }>(
+    const before = await pool.query<{ dependencies: string; outbox: string; requests: string }>(
       `SELECT
          (SELECT count(*)::text FROM public.oos_recovery_dependencies WHERE order_id = $1) AS dependencies,
-         (SELECT count(*)::text FROM public.oos_recovery_outbox WHERE event_id LIKE 'oos-retry-%') AS outbox`,
+         (SELECT count(*)::text FROM public.oos_recovery_outbox) AS outbox,
+         (SELECT count(*)::text FROM public.oos_drain_requests) AS requests`,
       [orderId]
     );
-    const submitted = await submitOosDrainRequest({
+    const request = createOosDrainPreviewRequest({
       mode: "manual",
       dryRun: true,
       provider: "gps",
@@ -219,21 +233,153 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       sku: `${prefix}sku`,
       batchLimit: 10,
     });
-    const request = await claimOosDrainRequest(submitted.request.id, 300);
-    if (!request) throw new Error("expected a dry-run request lease");
     const result = await executeOosDrain(
       request,
       async (rows) => new Map(rows.map((row) => [oosInventoryKey(row), 100]))
     );
-    const after = await pool.query<{ status: string; outbox: string }>(
+    const after = await pool.query<{ status: string; outbox: string; requests: string }>(
       `SELECT
          (SELECT status FROM public.oos_recovery_dependencies WHERE order_id = $1) AS status,
-         (SELECT count(*)::text FROM public.oos_recovery_outbox WHERE event_id LIKE 'oos-retry-%') AS outbox`,
+         (SELECT count(*)::text FROM public.oos_recovery_outbox) AS outbox,
+         (SELECT count(*)::text FROM public.oos_drain_requests) AS requests`,
       [orderId]
     );
 
     expect(result.selectedOrders).toBe(1);
-    expect(after.rows[0]).toEqual({ status: "parked", outbox: before.rows[0].outbox });
+    expect(after.rows[0]).toEqual({
+      status: "parked",
+      outbox: before.rows[0].outbox,
+      requests: before.rows[0].requests,
+    });
+  });
+
+  it("serializes independent lanes that compete for the same provider inventory", async () => {
+    const firstOrderId = `${prefix}concurrent-a`;
+    const secondOrderId = `${prefix}concurrent-b`;
+    await park([dependency(firstOrderId)], new Date("2026-10-29T00:00:00Z"));
+    await park([dependency(secondOrderId)], new Date("2026-10-29T00:01:00Z"));
+    const firstSubmission = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId: firstOrderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const secondSubmission = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      orderId: secondOrderId,
+      shopifyStore: "im8health.myshopify.com",
+      batchLimit: 1,
+    });
+    const [firstRequest, secondRequest] = await Promise.all([
+      claimOosDrainRequest(firstSubmission.request.id, 300),
+      claimOosDrainRequest(secondSubmission.request.id, 300),
+    ]);
+    if (!firstRequest || !secondRequest) throw new Error("expected both drain request leases");
+    const inventoryReader = async (rows: Parameters<typeof oosInventoryKey>[0][]) =>
+      new Map(rows.map((row) => [oosInventoryKey(row), 1]));
+
+    const results = await Promise.all([
+      executeOosDrain(firstRequest, inventoryReader),
+      executeOosDrain(secondRequest, inventoryReader),
+    ]);
+    const retrying = await pool.query<{ order_id: string }>(
+      `SELECT order_id FROM public.oos_recovery_dependencies
+       WHERE order_id = ANY($1::text[]) AND status = 'retrying'`,
+      [[firstOrderId, secondOrderId]]
+    );
+
+    expect(results.reduce((sum, result) => sum + result.selectedOrders, 0)).toBe(1);
+    expect(retrying.rowCount).toBe(1);
+  });
+
+  it("redispatches an expired request lease with a fresh durable event identity", async () => {
+    const submitted = await submitOosDrainRequest({
+      mode: "manual",
+      dryRun: false,
+      provider: "gps",
+      warehouse: `${prefix}warehouse`,
+      sku: `${prefix}redispatch`,
+      batchLimit: 1,
+    });
+    expect(await claimOosDrainRequest(submitted.request.id, 30)).not.toBeNull();
+    await pool.query(
+      `UPDATE public.oos_drain_requests SET lease_until = now() - interval '1 second'
+       WHERE id = $1`,
+      [submitted.request.id]
+    );
+
+    await expect(redispatchStalledOosDrainRequests(10)).resolves.toBeGreaterThanOrEqual(1);
+    const savedRequest = await pool.query<{ status: string; dispatch_count: number }>(
+      "SELECT status, dispatch_count FROM public.oos_drain_requests WHERE id = $1",
+      [submitted.request.id]
+    );
+    const events = await pool.query<{ event_id: string }>(
+      `SELECT event_id FROM public.oos_recovery_outbox
+       WHERE event_data->>'requestId' = $1 ORDER BY event_id`,
+      [submitted.request.id]
+    );
+
+    expect(savedRequest.rows[0]).toEqual({ status: "queued", dispatch_count: 2 });
+    expect(events.rows).toHaveLength(2);
+    expect(new Set(events.rows.map((row) => row.event_id)).size).toBe(2);
+  });
+
+  it("lets an explicit Hub retry rearm a manual-review dependency", async () => {
+    const orderId = `${prefix}manual-rearm`;
+    await park([dependency(orderId)], new Date("2026-10-29T00:00:00Z"));
+    await moveOosDependenciesToManualReview({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      errorCode: "provider_rejected",
+    });
+
+    await expect(
+      loadOosRetryContext({ shopifyStore: "im8health.myshopify.com", orderId })
+    ).resolves.toBeNull();
+    const context = await loadOosRetryContext({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      includeManualReview: true,
+    });
+    expect(context?.manualReview).toBe(true);
+    await expect(
+      rearmManualReviewOosDependencies({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        retentionDays: 30,
+      })
+    ).resolves.toBe(1);
+    const dependencyState = await pool.query<{ status: string; manual_review_at: Date | null }>(
+      `SELECT status, manual_review_at FROM public.oos_recovery_dependencies WHERE order_id = $1`,
+      [orderId]
+    );
+    expect(dependencyState.rows[0]).toEqual({ status: "retrying", manual_review_at: null });
+  });
+
+  it("atomically resolves the recovered provider before parking a downstream failure", async () => {
+    const orderId = `${prefix}provider-rollover`;
+    await park(
+      [dependency(orderId, { provider: "d365", warehouse: "U001", sku: "D365-SKU" })],
+      new Date("2026-10-29T00:00:00Z")
+    );
+    await parkOosOrder({
+      dependencies: [dependency(orderId, { provider: "gps", sku: "GPS-SKU" })],
+      context: { maxRetries: 10, resolvedProviderBeforeParking: "d365" },
+      retentionDays: 30,
+      now: new Date("2026-10-29T00:01:00Z"),
+    });
+
+    const states = await pool.query<{ provider: string; status: string }>(
+      `SELECT provider, status FROM public.oos_recovery_dependencies
+       WHERE order_id = $1 ORDER BY provider`,
+      [orderId]
+    );
+    expect(states.rows).toEqual([
+      { provider: "d365", status: "resolved" },
+      { provider: "gps", status: "parked" },
+    ]);
   });
 
   it("exposes bounded queue health and manual-review evidence", async () => {
