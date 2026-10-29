@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeOosDrainRequest, oosDrainLaneKey } from "../requests";
+import {
+  createOosDrainPreviewRequest,
+  normalizeOosDrainRequest,
+  oosDrainLaneKey,
+} from "../requests";
 
 describe("OOS drain request validation", () => {
   it("normalizes canonical keyed lanes and separates dry runs", () => {
@@ -20,9 +24,7 @@ describe("OOS drain request validation", () => {
       observedAt: "2026-10-29T01:02:03.000Z",
     });
     expect(oosDrainLaneKey(input)).toBe("live:inventory:gps:JFK01W:SKU-1");
-    expect(oosDrainLaneKey({ ...input, dryRun: true })).toBe(
-      "dry:inventory:gps:JFK01W:SKU-1"
-    );
+    expect(oosDrainLaneKey({ ...input, dryRun: true })).toBe("dry:inventory:gps:JFK01W:SKU-1");
   });
 
   it("supports targeted order and bounded sweep requests", () => {
@@ -35,9 +37,26 @@ describe("OOS drain request validation", () => {
         batchLimit: 1,
       })
     ).toBe("live:order:im8health.myshopify.com:42");
-    expect(oosDrainLaneKey({ mode: "sweep", dryRun: true, batchLimit: 1000 })).toBe(
-      "dry:sweep"
-    );
+    expect(oosDrainLaneKey({ mode: "sweep", dryRun: true, batchLimit: 1000 })).toBe("dry:sweep");
+  });
+
+  it("builds an in-memory preview without a durable lease identity", () => {
+    const preview = createOosDrainPreviewRequest({
+      mode: "manual",
+      dryRun: true,
+      provider: "gps",
+      warehouse: "us",
+      sku: "sku-1",
+      batchLimit: 10,
+    });
+
+    expect(preview).toMatchObject({
+      laneKey: "dry:inventory:gps:US:SKU-1",
+      status: "leased",
+      attemptCount: 0,
+      dryRun: true,
+    });
+    expect(preview.id).toMatch(/^preview-/);
   });
 
   it("rejects partial keys and invalid ranges", () => {
@@ -59,5 +78,14 @@ describe("OOS drain request validation", () => {
         batchLimit: 10,
       })
     ).toThrow("parkedFrom");
+    expect(() =>
+      normalizeOosDrainRequest({
+        mode: "unknown" as "manual",
+        dryRun: false,
+        orderId: "42",
+        shopifyStore: "im8health.myshopify.com",
+        batchLimit: 10,
+      })
+    ).toThrow("mode");
   });
 });
