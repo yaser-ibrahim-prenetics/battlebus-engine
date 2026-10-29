@@ -133,10 +133,6 @@ export function getCircuitState(): {
   consecutiveFailures: number;
   openedAt: number;
 } {
-  // Re-evaluate in case the open duration has elapsed
-  if (circuit.state === "OPEN" && Date.now() - circuit.openedAt >= CIRCUIT_OPEN_DURATION_MS) {
-    circuit.state = "HALF_OPEN";
-  }
   return {
     state: circuit.state,
     consecutiveFailures: circuit.consecutiveFailures,
@@ -282,7 +278,9 @@ export async function pacedFetch(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = err instanceof Error ? err.message : String(err);
-    const capacityBackpressure = err instanceof ProviderCapacityTimeoutError;
+    const capacityBackpressure =
+      err instanceof ProviderCapacityTimeoutError ||
+      (err instanceof Error && err.name === "ProviderCapacityTimeoutError");
 
     if (!capacityBackpressure) {
       logD365HttpTrace({
@@ -311,6 +309,11 @@ export async function pacedFetch(
         requestBody: requestBodyForLog,
       },
     });
+    if (capacityBackpressure && isProbe) {
+      // No provider request occurred. Re-arm the already-cooled circuit so the
+      // next caller can become the probe instead of leaving HALF_OPEN wedged.
+      circuit.state = "OPEN";
+    }
     if (!capacityBackpressure) circuitRecordFailure();
     throw err;
   }

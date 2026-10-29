@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.hoisted(() => {
+  process.env.D365_CLIENT_MIN_INTERVAL_MS = "0";
+});
+
 const capacity = vi.hoisted(() => {
   class ProviderCapacityTimeoutError extends Error {
     constructor() {
@@ -35,5 +39,39 @@ describe("D365 shared capacity backpressure", () => {
     }
 
     expect(getCircuitState()).toMatchObject({ state: "CLOSED", consecutiveFailures: 0 });
+  });
+
+  it("re-arms a half-open probe when local capacity is exhausted", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const providerFailure = new Error("provider unavailable");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(providerFailure));
+    capacity.withProviderCapacity.mockImplementation(
+      async (_provider: string, _operation: string, execute: () => Promise<Response>) => execute()
+    );
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(pacedFetch("https://d365.example/data/test")).rejects.toBe(providerFailure);
+    }
+    expect(getCircuitState().state).toBe("OPEN");
+
+    now += 30_001;
+    capacity.withProviderCapacity.mockRejectedValueOnce(
+      new capacity.ProviderCapacityTimeoutError()
+    );
+    await expect(pacedFetch("https://d365.example/data/probe")).rejects.toBeInstanceOf(
+      capacity.ProviderCapacityTimeoutError
+    );
+    expect(getCircuitState().state).toBe("OPEN");
+
+    capacity.withProviderCapacity.mockImplementation(
+      async (_provider: string, _operation: string, execute: () => Promise<Response>) => execute()
+    );
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await expect(pacedFetch("https://d365.example/data/probe")).resolves.toBeInstanceOf(Response);
+    expect(getCircuitState()).toMatchObject({ state: "CLOSED", consecutiveFailures: 0 });
+
+    clock.mockRestore();
+    vi.unstubAllGlobals();
   });
 });
