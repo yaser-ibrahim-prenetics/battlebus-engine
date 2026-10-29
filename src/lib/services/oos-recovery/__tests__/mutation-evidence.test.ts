@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type * as dynamics from "@/lib/clients/dynamics";
 import {
+  depositInvoiceEvidenceCodec,
   d365FulfillmentEvidenceCodec,
   gpsOutboundOrderEvidenceCodec,
 } from "../mutation-evidence";
@@ -42,6 +43,15 @@ describe("OOS mutation evidence", () => {
     expect(gpsOutboundOrderEvidenceCodec.decode(evidence).response.data?.[0]?.orderNo).toBe(
       "GPS-123"
     );
+  });
+
+  it("bounds deposit invoice status evidence", () => {
+    const evidence = depositInvoiceEvidenceCodec.encode({
+      verified: true,
+      processingStatus: "FullyInvoiced".repeat(1_000),
+    });
+    expect(new TextEncoder().encode(JSON.stringify(evidence)).length).toBeLessThan(512);
+    expect(depositInvoiceEvidenceCodec.decode(evidence)).toMatchObject({ verified: true });
   });
 
   it("keeps 500 maximum-size ordinary dependency references within the durable cap", () => {

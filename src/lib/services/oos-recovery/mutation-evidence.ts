@@ -69,3 +69,27 @@ export const d365FulfillmentEvidenceCodec: OosMutationEvidenceCodec<D365Fulfillm
     return { response, request: {} } as D365FulfillmentResult;
   },
 };
+
+type DepositInvoiceResult = Awaited<
+  ReturnType<typeof dynamics.assertDepositShipmentInvoicingComplete>
+>;
+
+export const depositInvoiceEvidenceCodec: OosMutationEvidenceCodec<DepositInvoiceResult> = {
+  encode: (value) => ({
+    verified: value.verified,
+    processingStatus:
+      typeof value.processingStatus === "string"
+        ? value.processingStatus.trim().slice(0, 128)
+        : null,
+  }),
+  decode: (evidence) => {
+    const value = evidence as { verified?: unknown; processingStatus?: unknown };
+    if (
+      value?.verified !== true ||
+      (value.processingStatus !== null && typeof value.processingStatus !== "string")
+    ) {
+      throw new Error("Invalid deposit invoice evidence");
+    }
+    return value as DepositInvoiceResult;
+  },
+};
