@@ -9,7 +9,9 @@ import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
 import { inngest } from "../client";
 import {
   requireAppliedOosRecoveryOutcome,
+  requireCurrentOosRecoveryAttempt,
   requireOosRecoveryAttemptToken,
+  isRejectedOosRecoveryAttempt,
   validateOosRecoveryReplayAttempt,
 } from "../oos-replay";
 import { publishSegmentCompletion } from "@/lib/services/order-segments/completion";
@@ -143,6 +145,21 @@ export const processShopifyFulfillment = inngest.createFunction(
       event.data,
       oosReplayContext
     );
+    const requireOosReplayContext = () => {
+      if (!oosReplayContext) {
+        throw new Error("Targeted OOS replay is missing its dependency context");
+      }
+      return oosReplayContext;
+    };
+    const assertOosReplayCurrent = async () => {
+      if (!isOosRecoveryReplay) return;
+      await requireCurrentOosRecoveryAttempt({
+        shopifyStore: canonicalShopifyStore,
+        orderId: String(shopifyOrderId),
+        attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+        expectedContext: requireOosReplayContext(),
+      });
+    };
     const order = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
     // Inngest function run id (ULID) for /runs/{id} — NOT event.id (that is the *event* id, e.g. idempotency key).
@@ -155,6 +172,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           shopifyStore: canonicalShopifyStore,
           orderId: String(shopifyOrderId),
           attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+          expectedContext: requireOosReplayContext(),
           includeManualReview: true,
         })
       );
@@ -176,26 +194,30 @@ export const processShopifyFulfillment = inngest.createFunction(
     const failReplay = async (errorCode: string, inventoryFailure = false) => {
       if (!isOosRecoveryReplay) return;
       if (inventoryFailure) {
-        await step.run(`repark-fulfillment-oos-replay-${errorCode}`, () =>
+        const outcome = await step.run(`repark-fulfillment-oos-replay-${errorCode}`, () =>
           reparkOosDependencies({
             shopifyStore: canonicalShopifyStore,
             orderId: String(shopifyOrderId),
             attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+            expectedContext: requireOosReplayContext(),
             cooldownSeconds: config.oosRecovery.cooldownSeconds,
             maxAttempts: config.oosRecovery.maxAttempts,
             errorCode,
           })
         );
+        requireAppliedOosRecoveryOutcome(outcome);
         return;
       }
-      await step.run(`manual-review-fulfillment-oos-replay-${errorCode}`, () =>
+      const outcome = await step.run(`manual-review-fulfillment-oos-replay-${errorCode}`, () =>
         moveOosDependenciesToManualReview({
           shopifyStore: canonicalShopifyStore,
           orderId: String(shopifyOrderId),
           attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+          expectedContext: requireOosReplayContext(),
           errorCode,
         })
       );
+      requireAppliedOosRecoveryOutcome(outcome);
     };
 
     logFlowEvent({
@@ -313,6 +335,7 @@ export const processShopifyFulfillment = inngest.createFunction(
         fulfillments,
         step,
         gpsOrderId: event.data.fromGpsSync ? event.data.gpsOrderId : undefined,
+        beforeExternalMutation: assertOosReplayCurrent,
       });
       if (segmented && !segmented.results.length) {
         await resolveReplay();
@@ -770,15 +793,17 @@ export const processShopifyFulfillment = inngest.createFunction(
 
               // Create D365 packing slip (retry only transient API failures, not inventory/OData business errors)
               const fulfilmentPost = await retryWithBackoff(
-                () =>
-                  dynamics.createFulfilment({
+                async () => {
+                  await assertOosReplayCurrent();
+                  return dynamics.createFulfilment({
                     fulfillmentId: `shopify:${fulfillment.id}`,
                     dataAreaId,
                     salesOrderNumber: d365Order.SalesOrderNumber!,
                     type: "shipment",
                     confirmedShippedDate: fulfillmentPostingDate(fulfillment.created_at),
                     lines: fulfilmentLinesWithService,
-                  }),
+                  });
+                },
                 {
                   label: `d365-create-fulfilment-${shopifyOrderName}-${fulfillment.id}`,
                   maxAttempts: 4,
@@ -795,12 +820,15 @@ export const processShopifyFulfillment = inngest.createFunction(
                 processingStatus: depositPrecheck.processingStatus,
               });
               const depositShipInvoiceCheck = isDepositOrder
-                ? await dynamics.assertDepositShipmentInvoicingComplete(
-                    d365Order.SalesOrderNumber!,
-                    dataAreaId,
-                    fulfilmentPost.response,
-                    { depositFulfillment: true }
-                  )
+                ? await (async () => {
+                    await assertOosReplayCurrent();
+                    return dynamics.assertDepositShipmentInvoicingComplete(
+                      d365Order.SalesOrderNumber!,
+                      dataAreaId,
+                      fulfilmentPost.response,
+                      { depositFulfillment: true }
+                    );
+                  })()
                 : { verified: false, processingStatus: depositPrecheck.processingStatus };
 
               const thkWarning = getThkFulfilmentWarningMessage(fulfilmentPost.response?.Message);
@@ -940,14 +968,16 @@ export const processShopifyFulfillment = inngest.createFunction(
                   config.oosRecovery.enabled && invTerminal && targetedDependencies.length > 0;
                 if (parkedTargeted) {
                   if (isOosRecoveryReplay && oosReplayContext?.provider === "d365") {
-                    await reparkOosDependencies({
+                    const outcome = await reparkOosDependencies({
                       shopifyStore: canonicalShopifyStore,
                       orderId: String(shopifyOrderId),
                       attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+                      expectedContext: requireOosReplayContext(),
                       cooldownSeconds: config.oosRecovery.cooldownSeconds,
                       maxAttempts: config.oosRecovery.maxAttempts,
                       errorCode: typedInventoryFailure ? error.category : "inventory_insufficient",
                     });
+                    requireAppliedOosRecoveryOutcome(outcome);
                   } else {
                     await parkOosOrder({
                       dependencies: targetedDependencies,
@@ -1214,6 +1244,7 @@ export const processShopifyFulfillment = inngest.createFunction(
               }
             }
 
+            await assertOosReplayCurrent();
             const response = await paypal.syncTrackingBatch(trackers);
 
             return {
@@ -1344,6 +1375,7 @@ export const processShopifyFulfillment = inngest.createFunction(
         processedAt: new Date().toISOString(),
       };
     } catch (error) {
+      if (isRejectedOosRecoveryAttempt(error)) throw error;
       // Top-level safety net: any uncaught error in the fulfillment pipeline
       // (D365 lookup throws, Supabase blip, transformer crash, etc.) must
       // still produce a fulfilment backorder + Hub status update so the
@@ -1358,16 +1390,20 @@ export const processShopifyFulfillment = inngest.createFunction(
 
       if (parkedTargetedInventory) {
         if (isOosRecoveryReplay && oosReplayContext?.provider === error.provider) {
-          await step.run("repark-segmented-fulfillment-inventory-dependencies", () =>
-            reparkOosDependencies({
-              shopifyStore: canonicalShopifyStore,
-              orderId: String(shopifyOrderId),
-              attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
-              cooldownSeconds: config.oosRecovery.cooldownSeconds,
-              maxAttempts: config.oosRecovery.maxAttempts,
-              errorCode: error.category,
-            })
+          const outcome = await step.run(
+            "repark-segmented-fulfillment-inventory-dependencies",
+            () =>
+              reparkOosDependencies({
+                shopifyStore: canonicalShopifyStore,
+                orderId: String(shopifyOrderId),
+                attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+                expectedContext: requireOosReplayContext(),
+                cooldownSeconds: config.oosRecovery.cooldownSeconds,
+                maxAttempts: config.oosRecovery.maxAttempts,
+                errorCode: error.category,
+              })
           );
+          requireAppliedOosRecoveryOutcome(outcome);
         } else {
           await step.run("park-segmented-fulfillment-inventory-dependencies", () =>
             parkOosOrder({

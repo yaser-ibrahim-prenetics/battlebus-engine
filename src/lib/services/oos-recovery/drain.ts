@@ -5,6 +5,7 @@ import { queryD365Inventory, queryGpsWarehouseInventory } from "@/lib/services/i
 import type { InventoryProvider } from "./inventory-failure";
 import type { OosDrainRequest } from "./requests";
 import { submitOosDrainRequest } from "./requests";
+import { tryLockOosRecoveryOrder } from "./locking";
 
 export type OosDependencyRow = {
   id: string;
@@ -323,11 +324,7 @@ async function queueSelectedOrders(
   const remaining = new Map(availability);
   for (const decision of decisions.filter((item) => item.selected)) {
     const first = decision.dependencies[0];
-    const locked = await client.query<{ locked: boolean }>(
-      `SELECT pg_try_advisory_xact_lock(hashtext($1), hashtext($2)) AS locked`,
-      ["oos-order", decision.orderKey]
-    );
-    if (!locked.rows[0]?.locked) continue;
+    if (!(await tryLockOosRecoveryOrder(client, first.shopifyStore, first.orderId))) continue;
     const current = await client.query(
       `SELECT ${DEPENDENCY_COLUMNS}
        FROM public.oos_recovery_dependencies d

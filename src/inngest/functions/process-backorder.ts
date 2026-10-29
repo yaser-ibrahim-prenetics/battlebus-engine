@@ -18,7 +18,11 @@
 // 5. After max retries: escalate to Slack and mark as exhausted
 
 import { inngest } from "../client";
-import { requireAppliedOosRecoveryOutcome } from "../oos-replay";
+import {
+  requireAppliedOosRecoveryOutcome,
+  requireCurrentOosRecoveryAttempt,
+  isRejectedOosRecoveryAttempt,
+} from "../oos-replay";
 import { readPlan } from "@/lib/services/order-segments/store";
 import { processOrderSegments } from "@/lib/services/order-segments/process";
 import { loadOrderAccounting } from "@/lib/services/order-accounting/load";
@@ -174,6 +178,21 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     }
     return oosRecoveryAttemptToken;
   };
+  const requireOosRecoveryContext = () => {
+    if (!storedOosContext) {
+      throw new NonRetriableError("Targeted OOS recovery is missing its dependency context");
+    }
+    return storedOosContext;
+  };
+  const assertTargetedRecoveryCurrent = async () => {
+    if (!isTargetedRecovery) return;
+    await requireCurrentOosRecoveryAttempt({
+      shopifyStore: shop,
+      orderId: String(shopifyOrderId),
+      attemptToken: requireOosRecoveryAttemptToken(),
+      expectedContext: requireOosRecoveryContext(),
+    });
+  };
   const beginManualOosRecoveryAttempt = async (stepId: string) => {
     const token = await step.run(stepId, () =>
       rearmManualReviewOosDependencies({
@@ -281,7 +300,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           fallbackDataArea: segmented.plan.segments[0].dataAreaId,
           shortAddress,
           ensureEligible,
-          beforeExternalMutation: ensureLease,
+          beforeExternalMutation: async () => {
+            await ensureLease();
+            await assertTargetedRecoveryCurrent();
+          },
         });
         if (isTargetedRecovery) {
           const outcome = await step.run("resolve-segment-targeted-oos-dependencies", () =>
@@ -289,6 +311,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyStore: shop,
               orderId: String(shopifyOrderId),
               attemptToken: requireOosRecoveryAttemptToken(),
+              expectedContext: requireOosRecoveryContext(),
               includeManualReview: true,
             })
           );
@@ -311,25 +334,29 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
       } catch (error) {
         if (isTargetedRecovery) {
           if (isInventoryUnavailableError(error)) {
-            await step.run("repark-segment-targeted-oos-dependencies", () =>
+            const outcome = await step.run("repark-segment-targeted-oos-dependencies", () =>
               reparkOosDependencies({
                 shopifyStore: shop,
                 orderId: String(shopifyOrderId),
                 attemptToken: requireOosRecoveryAttemptToken(),
+                expectedContext: requireOosRecoveryContext(),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: "inventory_unavailable",
               })
             );
+            requireAppliedOosRecoveryOutcome(outcome);
           } else {
-            await step.run("manual-review-segment-targeted-oos-dependencies", () =>
+            const outcome = await step.run("manual-review-segment-targeted-oos-dependencies", () =>
               moveOosDependenciesToManualReview({
                 shopifyStore: shop,
                 orderId: String(shopifyOrderId),
                 attemptToken: requireOosRecoveryAttemptToken(),
+                expectedContext: requireOosRecoveryContext(),
                 errorCode: "segment_replay_failure",
               })
             );
+            requireAppliedOosRecoveryOutcome(outcome);
           }
         }
         throw error;
@@ -600,7 +627,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
                 action: `oos-recovery-line:${d365NumManual}`,
               },
               line,
-              () => dynamics.createSalesOrderLine(line)
+              async () => {
+                await assertTargetedRecoveryCurrent();
+                return dynamics.createSalesOrderLine(line);
+              }
             );
           }
           await executeFulfillmentAction(
@@ -612,7 +642,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               action: "oos-recovery-confirm",
             },
             { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
-            () => dynamics.confirmSalesOrder(d365NumManual, d365Company)
+            async () => {
+              await assertTargetedRecoveryCurrent();
+              return dynamics.confirmSalesOrder(d365NumManual, d365Company);
+            }
           );
           await executeFulfillmentAction(
             {
@@ -623,7 +656,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               action: "oos-recovery-prepayment",
             },
             { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
-            () => dynamics.createPrepayment(d365NumManual, d365Company)
+            async () => {
+              await assertTargetedRecoveryCurrent();
+              return dynamics.createPrepayment(d365NumManual, d365Company);
+            }
           );
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid-after-d365`,
@@ -707,6 +743,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
+        await assertTargetedRecoveryCurrent();
         const result = await gps.createOutboundOrder(
           gpsPayload,
           warehouse as "GPS Warehouse" | "GPS UK Warehouse"
@@ -714,6 +751,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
+          await assertTargetedRecoveryCurrent();
           await setGpsOrderMetafield(shopifyOrderId, {
             gpsOrderId: gpsOrderNo,
             warehouse,
@@ -724,6 +762,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
         return { success: true, gpsOrderNo };
       } catch (error) {
+        if (isRejectedOosRecoveryAttempt(error)) throw error;
         const msg = error instanceof Error ? error.message : String(error);
         return {
           success: false,
@@ -760,6 +799,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
             attemptToken: requireOosRecoveryAttemptToken(),
+            expectedContext: requireOosRecoveryContext(),
           })
         );
         requireAppliedOosRecoveryOutcome(outcome);
@@ -829,16 +869,18 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     // Still inventory-related: keep parked in queue, no automatic requeue.
     if (retryResult.isInventoryError) {
       if (isTargetedRecovery) {
-        await step.run("repark-targeted-oos-dependencies", () =>
+        const outcome = await step.run("repark-targeted-oos-dependencies", () =>
           reparkOosDependencies({
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
             attemptToken: requireOosRecoveryAttemptToken(),
+            expectedContext: requireOosRecoveryContext(),
             cooldownSeconds: config.oosRecovery.cooldownSeconds,
             maxAttempts: config.oosRecovery.maxAttempts,
             errorCode: "inventory_unavailable",
           })
         );
+        requireAppliedOosRecoveryOutcome(outcome);
       }
       await step.run("notify-hub-manual-retry-still-backorder", async () => {
         await csPlatform.sendOrderUpdate(
@@ -869,14 +911,16 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     }
 
     if (isTargetedRecovery) {
-      await step.run("manual-review-targeted-oos-dependencies", () =>
+      const outcome = await step.run("manual-review-targeted-oos-dependencies", () =>
         moveOosDependenciesToManualReview({
           shopifyStore: shop,
           orderId: String(shopifyOrderId),
           attemptToken: requireOosRecoveryAttemptToken(),
+          expectedContext: requireOosRecoveryContext(),
           errorCode: "non_inventory_retry_failure",
         })
       );
+      requireAppliedOosRecoveryOutcome(outcome);
     }
 
     await step.run("notify-manual-retry-non-inventory-error", async () => {
@@ -1020,6 +1064,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           d365OrderNumber,
           warehouse,
         });
+        await assertTargetedRecoveryCurrent();
         const result = await gps.createOutboundOrder(
           gpsPayload,
           warehouse as "GPS Warehouse" | "GPS UK Warehouse"
@@ -1028,6 +1073,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         // Store GPS metafield on success
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
+          await assertTargetedRecoveryCurrent();
           await setGpsOrderMetafield(shopifyOrderId, {
             gpsOrderId: gpsOrderNo,
             warehouse,
@@ -1043,6 +1089,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           triggeredBy,
         };
       } catch (error) {
+        if (isRejectedOosRecoveryAttempt(error)) throw error;
         const msg = error instanceof Error ? error.message : String(error);
         console.log(`[Backorder] Retry ${retryCount} failed: ${msg}`);
 

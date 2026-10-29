@@ -10,7 +10,9 @@
 import { inngest } from "../client";
 import {
   requireAppliedOosRecoveryOutcome,
+  requireCurrentOosRecoveryAttempt,
   requireOosRecoveryAttemptToken,
+  isRejectedOosRecoveryAttempt,
   validateOosRecoveryReplayAttempt,
 } from "../oos-replay";
 import { config } from "@/lib/config";
@@ -292,16 +294,33 @@ export const processShopifyOrder = inngest.createFunction(
       event.data,
       oosReplayContext
     );
+    const requireOosReplayContext = () => {
+      if (!oosReplayContext) {
+        throw new NonRetriableError("Targeted OOS replay is missing its dependency context");
+      }
+      return oosReplayContext;
+    };
+    const assertOosReplayCurrent = async () => {
+      if (!isOosRecoveryReplay) return;
+      await requireCurrentOosRecoveryAttempt({
+        shopifyStore: canonicalShopifyStore,
+        orderId: shopifyOrderId,
+        attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+        expectedContext: requireOosReplayContext(),
+      });
+    };
     const moveReplayToManualReview = async (errorCode: string) => {
       if (!isOosRecoveryReplay) return;
-      await step.run(`manual-review-oos-replay-${errorCode}`, () =>
+      const outcome = await step.run(`manual-review-oos-replay-${errorCode}`, () =>
         moveOosDependenciesToManualReview({
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
           attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+          expectedContext: requireOosReplayContext(),
           errorCode,
         })
       );
+      requireAppliedOosRecoveryOutcome(outcome);
     };
     const resolveReplay = async () => {
       if (!isOosRecoveryReplay) return;
@@ -311,6 +330,7 @@ export const processShopifyOrder = inngest.createFunction(
           shopifyStore: canonicalShopifyStore,
           orderId: shopifyOrderId,
           attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+          expectedContext: requireOosReplayContext(),
           includeManualReview: true,
         })
       );
@@ -1043,20 +1063,23 @@ export const processShopifyOrder = inngest.createFunction(
         testMode: event.data.testMode,
         fallbackDataArea: dataAreaId,
         shortAddress: saudiShortAddress,
+        beforeExternalMutation: assertOosReplayCurrent,
       });
     } catch (error) {
       if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
         if (isOosRecoveryReplay && oosReplayContext?.provider === error.provider) {
-          await step.run("repark-segmented-inventory-dependencies", () =>
+          const outcome = await step.run("repark-segmented-inventory-dependencies", () =>
             reparkOosDependencies({
               shopifyStore: canonicalShopifyStore,
               orderId: shopifyOrderId,
               attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+              expectedContext: requireOosReplayContext(),
               cooldownSeconds: config.oosRecovery.cooldownSeconds,
               maxAttempts: config.oosRecovery.maxAttempts,
               errorCode: error.category,
             })
           );
+          requireAppliedOosRecoveryOutcome(outcome);
         } else {
           await step.run("park-segmented-inventory-dependencies", () =>
             parkOosOrder({
@@ -1189,7 +1212,10 @@ export const processShopifyOrder = inngest.createFunction(
             d365Header = { SalesOrderNumber: `SKIP-${shopifyOrderId}`, request: headerRequest };
           } else {
             d365Header = await retryWithBackoff(
-              () => dynamics.createSalesOrderHeaderV3(headerRequest),
+              async () => {
+                await assertOosReplayCurrent();
+                return dynamics.createSalesOrderHeaderV3(headerRequest);
+              },
               { label: `D365 header ${shopifyOrderName}` }
             );
           }
@@ -1262,8 +1288,13 @@ export const processShopifyOrder = inngest.createFunction(
               (async () => {
                 try {
                   const created = await retryWithBackoff(
-                    () =>
-                      dynamics.createSalesOrderLine({ ...line, salesOrderNumber: salesOrderNo }),
+                    async () => {
+                      await assertOosReplayCurrent();
+                      return dynamics.createSalesOrderLine({
+                        ...line,
+                        salesOrderNumber: salesOrderNo,
+                      });
+                    },
                     {
                       label: `D365 line ${line.itemNumber}`,
                       shouldRetry: (err) => {
@@ -1469,6 +1500,7 @@ export const processShopifyOrder = inngest.createFunction(
 
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
+                await assertOosReplayCurrent();
                 await dynamics.confirmSalesOrder(salesOrderNo, dataAreaId);
                 if (attempt > 1) {
                   await publishStatus(
@@ -1525,10 +1557,16 @@ export const processShopifyOrder = inngest.createFunction(
           );
           try {
             const depositCheck = await step.run("d365-create-prepayment", async () => {
-              await retryWithBackoff(() => dynamics.createPrepayment(salesOrderNo, dataAreaId), {
-                label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
-                maxAttempts: 3,
-              });
+              await retryWithBackoff(
+                async () => {
+                  await assertOosReplayCurrent();
+                  return dynamics.createPrepayment(salesOrderNo, dataAreaId);
+                },
+                {
+                  label: `d365-create-prepayment-${shopifyOrderName}-${salesOrderNo}`,
+                  maxAttempts: 3,
+                }
+              );
               return dynamics.verifyDepositFulfillmentApplied(salesOrderNo, dataAreaId);
             });
             await publishStatus(
@@ -1625,6 +1663,7 @@ export const processShopifyOrder = inngest.createFunction(
           });
           gpsResult = await step.run("gps-dispatch", async () => {
             try {
+              await assertOosReplayCurrent();
               const result = await gps.createOutboundOrder(
                 payloadForStep,
                 warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -1632,6 +1671,7 @@ export const processShopifyOrder = inngest.createFunction(
 
               const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
               if (gpsOrderNo) {
+                await assertOosReplayCurrent();
                 await setGpsOrderMetafield(shopifyOrderId, {
                   gpsOrderId: gpsOrderNo,
                   warehouse: warehouseName,
@@ -1750,7 +1790,10 @@ export const processShopifyOrder = inngest.createFunction(
           );
           try {
             await retryWithBackoff(
-              () => dynamics.createPrepayment(reusedSalesOrderNumber, dataAreaId),
+              async () => {
+                await assertOosReplayCurrent();
+                return dynamics.createPrepayment(reusedSalesOrderNumber, dataAreaId);
+              },
               {
                 label: `d365-create-prepayment-existing-${shopifyOrderName}-${reusedSalesOrderNumber}`,
                 maxAttempts: 3,
@@ -1820,6 +1863,7 @@ export const processShopifyOrder = inngest.createFunction(
               warehouseName,
               saudiShortAddress
             );
+            await assertOosReplayCurrent();
             const result = await gps.createOutboundOrder(
               gpsOrderPayload,
               warehouseName as "GPS Warehouse" | "GPS UK Warehouse"
@@ -1827,6 +1871,7 @@ export const processShopifyOrder = inngest.createFunction(
             const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
 
             if (gpsOrderNo) {
+              await assertOosReplayCurrent();
               await setGpsOrderMetafield(shopifyOrderId, {
                 gpsOrderId: gpsOrderNo,
                 warehouse: warehouseName,
@@ -1892,14 +1937,16 @@ export const processShopifyOrder = inngest.createFunction(
           await step.run("emit-backorder-event-existing-d365-oos", async () => {
             if (config.oosRecovery.enabled) {
               if (isOosRecoveryReplay && oosReplayContext?.provider === "gps") {
-                await reparkOosDependencies({
+                const outcome = await reparkOosDependencies({
                   shopifyStore: canonicalShopifyStore,
                   orderId: shopifyOrderId,
                   attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+                  expectedContext: requireOosReplayContext(),
                   cooldownSeconds: config.oosRecovery.cooldownSeconds,
                   maxAttempts: config.oosRecovery.maxAttempts,
                   errorCode: classifyGpsError(oosError),
                 });
+                requireAppliedOosRecoveryOutcome(outcome);
                 return;
               }
               await parkOosOrder({
@@ -2220,14 +2267,16 @@ export const processShopifyOrder = inngest.createFunction(
         await step.run("emit-backorder-event", async () => {
           if (config.oosRecovery.enabled) {
             if (isOosRecoveryReplay && oosReplayContext?.provider === "gps") {
-              await reparkOosDependencies({
+              const outcome = await reparkOosDependencies({
                 shopifyStore: canonicalShopifyStore,
                 orderId: shopifyOrderId,
                 attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+                expectedContext: requireOosReplayContext(),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: classifyGpsError(oosError),
               });
+              requireAppliedOosRecoveryOutcome(outcome);
               return;
             }
             await parkOosOrder({
@@ -2473,6 +2522,7 @@ export const processShopifyOrder = inngest.createFunction(
       await resolveReplay();
       return result;
     } catch (error) {
+      if (isRejectedOosRecoveryAttempt(error)) throw error;
       if (
         error instanceof NonRetriableError &&
         String(error.message || "").includes("[BACKORDER_TERMINAL]")
@@ -2515,14 +2565,16 @@ export const processShopifyOrder = inngest.createFunction(
               : "gps";
           if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
             if (isOosRecoveryReplay && oosReplayContext?.provider === error.provider) {
-              await reparkOosDependencies({
+              const outcome = await reparkOosDependencies({
                 shopifyStore: canonicalShopifyStore,
                 orderId: shopifyOrderId,
                 attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
+                expectedContext: requireOosReplayContext(),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: error.category,
               });
+              requireAppliedOosRecoveryOutcome(outcome);
               return;
             }
             await parkOosOrder({

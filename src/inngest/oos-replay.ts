@@ -1,6 +1,10 @@
 import { NonRetriableError } from "inngest";
 import type { OosRecoveryReplayMarker } from "./events";
-import type { OosRetryContext } from "@/lib/services/oos-recovery/outcomes";
+import {
+  isCurrentOosRecoveryAttempt,
+  type OosRecoveryAttemptScope,
+  type OosRetryContext,
+} from "@/lib/services/oos-recovery/outcomes";
 
 export function validateOosRecoveryReplayAttempt(
   isReplay: boolean,
@@ -26,4 +30,22 @@ export function requireAppliedOosRecoveryOutcome(outcome: { dependencies: number
   if (outcome.dependencies < 1) {
     throw new NonRetriableError("Targeted OOS replay outcome rejected a stale attempt token");
   }
+}
+
+export async function requireCurrentOosRecoveryAttempt(params: {
+  shopifyStore: string;
+  orderId: string;
+  attemptToken: string;
+  expectedContext: OosRecoveryAttemptScope;
+}): Promise<void> {
+  if (!(await isCurrentOosRecoveryAttempt(params))) {
+    throw new NonRetriableError("Targeted OOS replay no longer owns the current recovery attempt");
+  }
+}
+
+export function isRejectedOosRecoveryAttempt(error: unknown): boolean {
+  return (
+    error instanceof NonRetriableError &&
+    String(error.message || "").startsWith("Targeted OOS replay")
+  );
 }
