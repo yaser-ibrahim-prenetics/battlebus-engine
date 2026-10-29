@@ -285,11 +285,6 @@ export const config = {
     maxRetries: safeParseInt(process.env.BACKORDER_MAX_RETRIES, 7),
     retryIntervalHours: safeParseInt(process.env.BACKORDER_RETRY_INTERVAL_HOURS, 24),
     maxDaysBeforeCancel: safeParseInt(process.env.BACKORDER_MAX_DAYS, 30),
-    recoveryLeaseSeconds: clampInt(
-      safeParseInt(process.env.BACKORDER_RECOVERY_LEASE_SECONDS, 600),
-      60,
-      3600
-    ),
   },
 
   // Pending lifecycle action drain sweep
