@@ -17,7 +17,7 @@ import {
 } from "@/lib/helpers/loop-return-refund";
 import type { ShopifyRefundCreatedEvent } from "@/inngest/events";
 
-type RefundCreatedIngressEvent = ShopifyRefundCreatedEvent & { id?: string };
+type RefundCreatedIngressEvent = ShopifyRefundCreatedEvent & { id: string };
 
 function activeIm8ShopDomainForEvents(): string {
   return (
@@ -55,7 +55,9 @@ export async function GET() {
       "Refund total must be > 0; we emit `shopify/refund.created` with `refundInitiator=loop_return_closed`.",
       "Shopify `refunds/create` is suppressed at webhook ingress when order events show Loop Returns authored the refund (same as spock-store `isLoopRefund`). In-function dedupe remains as fallback.",
     ],
-    requiredHeadersPost: [{ name: "x-loop-signature", purpose: "HMAC-SHA256 of raw UTF-8 body, base64" }],
+    requiredHeadersPost: [
+      { name: "x-loop-signature", purpose: "HMAC-SHA256 of raw UTF-8 body, base64" },
+    ],
   });
 }
 
@@ -69,8 +71,7 @@ export async function POST(request: NextRequest) {
         ok: false,
         error: "loop_returns_disabled",
         requestId,
-        hint:
-          "Set ENABLE_LOOP_RETURNS=true, configure LOOP_WEBHOOK_KEY, and register POST /api/webhooks/loop in Loop. See GET /api/webhooks/loop.",
+        hint: "Set ENABLE_LOOP_RETURNS=true, configure LOOP_WEBHOOK_KEY, and register POST /api/webhooks/loop in Loop. See GET /api/webhooks/loop.",
       },
       { status: 503 }
     );
@@ -98,18 +99,28 @@ export async function POST(request: NextRequest) {
   if (!config.loop.disableWebhookVerification) {
     if (!key) {
       console.error(`[LoopWebhook] [${requestId}] LOOP_WEBHOOK_KEY not configured`);
-      return NextResponse.json({ ok: false, error: "webhook_secret_not_configured", requestId }, {
-        status: 503,
-      });
+      return NextResponse.json(
+        { ok: false, error: "webhook_secret_not_configured", requestId },
+        {
+          status: 503,
+        }
+      );
     }
     if (!verifyLoopWebhookSignature(rawBody, key, signatureHeader)) {
       console.error(`[LoopWebhook] [${requestId}] Invalid signature`);
-      return NextResponse.json({ ok: false, error: "invalid_signature", requestId }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_signature", requestId },
+        { status: 401 }
+      );
     }
   } else {
-    console.warn(`[LoopWebhook] [${requestId}] Verification skipped (DISABLE_LOOP_WEBHOOK_VERIFICATION)`);
+    console.warn(
+      `[LoopWebhook] [${requestId}] Verification skipped (DISABLE_LOOP_WEBHOOK_VERIFICATION)`
+    );
     if (key && !verifyLoopWebhookSignature(rawBody, key, signatureHeader)) {
-      console.warn(`[LoopWebhook] [${requestId}] Signature mismatch (still accepted while verification disabled)`);
+      console.warn(
+        `[LoopWebhook] [${requestId}] Signature mismatch (still accepted while verification disabled)`
+      );
     }
   }
 
@@ -170,7 +181,10 @@ export async function POST(request: NextRequest) {
       status: "failed",
       payload: { loopReturnId: body.id, shopifyOrderId: body.provider_order_id },
     });
-    return NextResponse.json({ ok: false, error: "inngest_send_failed", requestId }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: "inngest_send_failed", requestId },
+      { status: 502 }
+    );
   }
 
   console.log(
