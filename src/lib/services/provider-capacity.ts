@@ -22,6 +22,14 @@ type ProviderCapacityOverrides = {
   pool?: Pool;
 };
 
+const defaultLimits: Record<CapacityProvider, number> = {
+  d365: 4,
+  gps: 4,
+  shopify: 8,
+  stord: 4,
+  loop: 4,
+};
+
 export class ProviderCapacityTimeoutError extends Error {
   constructor(provider: CapacityProvider) {
     super(`Shared ${provider} provider capacity is temporarily exhausted`);
@@ -38,7 +46,7 @@ function operationDigest(operation: string): string {
 }
 
 function providerLimit(provider: CapacityProvider): number {
-  return config.providerCapacity.limits[provider];
+  return config.providerCapacity?.limits?.[provider] ?? defaultLimits[provider];
 }
 
 async function claimProviderCapacity(
@@ -104,17 +112,17 @@ export async function acquireProviderCapacity(
     throw new Error("Shared provider capacity requires the configured PostgreSQL database");
   const limit = clamp(overrides.limit ?? providerLimit(provider), 1, 100);
   const leaseSeconds = clamp(
-    overrides.leaseSeconds ?? config.providerCapacity.leaseSeconds,
+    overrides.leaseSeconds ?? config.providerCapacity?.leaseSeconds ?? 120,
     30,
     600
   );
   const acquireTimeoutMs = clamp(
-    overrides.acquireTimeoutMs ?? config.providerCapacity.acquireTimeoutMs,
+    overrides.acquireTimeoutMs ?? config.providerCapacity?.acquireTimeoutMs ?? 30_000,
     1,
     60_000
   );
   const pollIntervalMs = clamp(
-    overrides.pollIntervalMs ?? config.providerCapacity.pollIntervalMs,
+    overrides.pollIntervalMs ?? config.providerCapacity?.pollIntervalMs ?? 250,
     25,
     2_000
   );
@@ -176,13 +184,13 @@ export async function withProviderCapacity<T>(
   execute: () => Promise<T>,
   overrides: ProviderCapacityOverrides = {}
 ): Promise<T> {
-  const enabled = overrides.enabled ?? config.providerCapacity.enabled;
+  const enabled = overrides.enabled ?? config.providerCapacity?.enabled ?? false;
   if (!enabled) return execute();
   const pool = overrides.pool ?? (await getDatabasePool());
   if (!pool)
     throw new Error("Shared provider capacity requires the configured PostgreSQL database");
   const leaseSeconds = clamp(
-    overrides.leaseSeconds ?? config.providerCapacity.leaseSeconds,
+    overrides.leaseSeconds ?? config.providerCapacity?.leaseSeconds ?? 120,
     30,
     600
   );
