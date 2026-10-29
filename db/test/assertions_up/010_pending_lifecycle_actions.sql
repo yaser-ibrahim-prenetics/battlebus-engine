@@ -373,6 +373,52 @@ INSERT INTO public.orders (
   }]'::jsonb
 );
 
+INSERT INTO public.pending_lifecycle_actions (
+  order_id,
+  action_type,
+  source_event_id,
+  event_name,
+  event_data
+) VALUES
+  (
+    '1005',
+    'cancel',
+    'shopify-order-cancelled-1005',
+    'shopify/order.cancelled',
+    '{"shopifyOrderId":"1005"}'::jsonb
+  ),
+  (
+    '1005',
+    'refund',
+    'shopify-order-refunded-1005',
+    'shopify/order.refunded',
+    '{"shopifyOrderId":"1005"}'::jsonb
+  );
+
+INSERT INTO public.orders (
+  id,
+  order_number,
+  title,
+  shopify_order_id,
+  pending_actions
+) VALUES (
+  'pending-action-1005',
+  '1005',
+  'IM8-1005',
+  '1005',
+  '[{
+    "action":"cancel",
+    "eventName":"shopify/order.cancelled",
+    "eventData":{"shopifyOrderId":"1005"},
+    "sourceEventId":"shopify-order-cancelled-1005"
+  },{
+    "action":"refund",
+    "eventName":"shopify/order.refunded",
+    "eventData":{"shopifyOrderId":"1005"},
+    "sourceEventId":"shopify-order-refunded-1005"
+  }]'::jsonb
+);
+
 SET LOCAL ROLE battle_bus_runtime;
 
 DO $$
@@ -429,6 +475,30 @@ BEGIN
     SET event_data = '{"forged":true}'::jsonb
     WHERE source_event_id = 'shopify-order-fulfilled-1002';
     RAISE check_violation USING MESSAGE = 'Runtime role mutated replay payload';
+  EXCEPTION
+    WHEN raise_exception THEN
+      NULL;
+  END;
+
+  BEGIN
+    UPDATE public.pending_lifecycle_actions
+    SET status = 'superseded',
+        superseded_at = now(),
+        last_error = 'forged cancellation supersession'
+    WHERE source_event_id = 'shopify-order-cancelled-1005';
+    RAISE check_violation USING MESSAGE = 'Runtime role superseded a cancellation';
+  EXCEPTION
+    WHEN raise_exception THEN
+      NULL;
+  END;
+
+  BEGIN
+    UPDATE public.pending_lifecycle_actions
+    SET status = 'superseded',
+        superseded_at = now(),
+        last_error = 'forged refund supersession'
+    WHERE source_event_id = 'shopify-order-refunded-1005';
+    RAISE check_violation USING MESSAGE = 'Runtime role superseded a refund';
   EXCEPTION
     WHEN raise_exception THEN
       NULL;

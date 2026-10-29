@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 
 import { claimPendingActionsSQL } from "@/lib/sql/pending-actions/claim";
+import { enqueuePendingActionSQL } from "@/lib/sql/pending-actions/enqueue";
 import { completePendingActionSQL } from "@/lib/sql/pending-actions/finish";
 import { importLegacyPendingActionsSQL } from "@/lib/sql/pending-actions/import-legacy";
 
@@ -272,6 +273,70 @@ describe.skipIf(!connectionString)("pending lifecycle action PostgreSQL contract
       pending_count: 1,
       remaining_action: "fulfill",
     });
+  });
+
+  it("does not recreate a legacy projection when a terminal action is retried", async () => {
+    const orderId = `${orderPrefix}terminal-retry`;
+    const sourceEventId = "terminal-retry-source";
+    const eventData = { shopifyOrderId: orderId };
+    const legacyPayload = {
+      action: "refund",
+      eventName: "test/refund",
+      eventData,
+      sourceEventId,
+    };
+    await pool.query(
+      `INSERT INTO public.orders (
+         id, order_number, title, shopify_order_id, pending_actions
+       ) VALUES ($1, $1, $1, $1, '[]'::jsonb)`,
+      [orderId]
+    );
+
+    const first = await pool.query<{ action_id: string; legacy_projected: boolean }>(
+      enqueuePendingActionSQL,
+      [
+        orderId,
+        "refund",
+        sourceEventId,
+        "test/refund",
+        JSON.stringify(eventData),
+        JSON.stringify(legacyPayload),
+        true,
+      ]
+    );
+    expect(first.rows[0].legacy_projected).toBe(true);
+
+    const claimed = await pool.query<{ action_id: string; lease_token: string }>(
+      claimPendingActionsSQL,
+      [10, 120, 10]
+    );
+    const action = claimed.rows.find((row) => row.action_id === first.rows[0].action_id);
+    expect(action).toBeDefined();
+    await pool.query(completePendingActionSQL, [action!.action_id, action!.lease_token]);
+
+    const retry = await pool.query<{ action_id: string; legacy_projected: boolean }>(
+      enqueuePendingActionSQL,
+      [
+        orderId,
+        "refund",
+        sourceEventId,
+        "test/refund",
+        JSON.stringify(eventData),
+        JSON.stringify(legacyPayload),
+        true,
+      ]
+    );
+    expect(retry.rows[0]).toEqual({
+      action_id: first.rows[0].action_id,
+      legacy_projected: false,
+    });
+
+    const projection = await pool.query<{ pending_count: number }>(
+      `SELECT jsonb_array_length(pending_actions) AS pending_count
+       FROM public.orders WHERE id = $1`,
+      [orderId]
+    );
+    expect(projection.rows[0].pending_count).toBe(0);
   });
 
   it("blocks legacy rollback until an audited dead-letter replay settles", async () => {
