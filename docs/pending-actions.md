@@ -26,8 +26,8 @@ Shopify event
   -> enqueue with original Inngest event ID
   -> PostgreSQL deduplicates the producer retry
 
-Scheduled drain
-  -> import valid legacy JSON actions under row locks
+Scheduled drain (after explicit activation)
+  -> copy valid, not-yet-normalized legacy JSON actions under row locks
   -> supersede fulfillment when cancellation is pending
   -> claim a bounded batch with FOR UPDATE SKIP LOCKED
   -> assign a time-limited lease
@@ -39,24 +39,35 @@ If publication is uncertain, the claimed rows return to the queue with exponenti
 
 ## Cancellation priority
 
-A queued or expired fulfillment is marked `superseded` when the same order has an active or published cancellation. Claim selection also excludes conflicting fulfillment rows, so a backlog larger than one sweep cannot bypass the rule.
+A queued or expired fulfillment is marked `superseded` when the same order has an active, published, or unresolved dead-letter cancellation. Claim selection also excludes conflicting fulfillment rows, so a backlog larger than one sweep cannot bypass the rule.
 
 An already active, unexpired fulfillment lease is not stolen. This keeps lease ownership correct; downstream handlers must remain idempotent for the narrow cancellation-versus-publication race.
 
 ## Legacy rollout bridge
 
-`orders.pending_actions` remains during the expand phase so older Battle Bus or Battle Hub revisions can finish a rolling deployment safely. Before each claim, the drain:
+`orders.pending_actions` remains populated during the expand and rollback phases so older Battle Bus revisions can safely resume. Before activation, producers write only this legacy projection. After activation, producers atomically write the normalized row and retain a deduplicated legacy projection. Before each claim, the drain:
 
 1. locks a bounded set of order rows with non-empty, fully valid JSON action arrays;
-2. inserts each action into the normalized queue with a deterministic legacy source ID; and
-3. clears exactly those locked arrays in the same SQL statement.
+2. inserts actions that are not already represented in the normalized queue with a deterministic source ID; and
+3. leaves the legacy arrays intact for rollback-capable revisions.
 
-A concurrent legacy append waits for the row lock and remains in the array for the next sweep. Malformed arrays are not cleared, preventing silent loss. Remove the bridge and legacy column only after all writers and operator views use the normalized table.
+A concurrent legacy append waits for the row lock and is copied on a later sweep. Malformed arrays are excluded without blocking normalized claims. Remove legacy projections only after all writers and rollback-capable revisions use the normalized table and the contract evidence window is complete.
+
+## Activation sequence
+
+1. Apply migrations `000040` through `000044` while `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`.
+2. Run `scripts/bootstrap-hub-database.sh` before migration `000044` in Cloud SQL, then verify Battle Hub can read the safe active-action view.
+3. Deploy Battle Bus with the durable queue disabled and legacy projection enabled; confirm no old drain revision receives traffic.
+4. Set the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=true` and deploy again.
+5. Keep `PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED=true` throughout the rollback window.
+6. Disable the legacy projection and remove legacy data only in a later reviewed contract release.
 
 ## Configuration
 
 | Variable                                    | Default | Range  | Purpose                              |
 | ------------------------------------------- | ------: | ------ | ------------------------------------ |
+| `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED`     | `false` | bool   | Activate normalized writes and drain |
+| `PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED` |  `true` | bool   | Retain rollback-readable writes      |
 | `PENDING_ACTIONS_DRAIN_INTERVAL_MINUTES`    |      10 | 1-59   | Scheduled sweep interval             |
 | `PENDING_ACTIONS_CLAIM_BATCH_SIZE`          |     100 | 1-500  | Maximum actions claimed per sweep    |
 | `PENDING_ACTIONS_LEASE_SECONDS`             |     120 | 30-900 | Claim ownership window               |
@@ -72,15 +83,16 @@ These are non-secret runtime settings. The defaults are appropriate for the curr
 - `published` rows have `published_at`; `superseded` rows have `superseded_at`.
 - `dead_letter` rows require operator investigation and replay tooling before cutover.
 - An elevated count of expired publishing leases indicates publication or database acknowledgement failures.
-- Non-empty legacy arrays after several sweeps indicate malformed payloads or a legacy writer that is still active.
+- Compare retained legacy arrays with normalized rows during the rollback window; an action missing from the normalized queue indicates malformed input or import lag.
+- Battle Hub reads only `battle_hub_pending_lifecycle_actions`; payloads and terminal rows are never exposed through that view.
 
 ## Files
 
-| File                                                   | Responsibility                                     |
-| ------------------------------------------------------ | -------------------------------------------------- |
-| `db/migrations/000040_*` through `000042_*`            | Queue schema, indexes, access policy, and rollback |
-| `src/lib/services/pending-actions.ts`                  | Validation, enqueue, claim, acknowledgement, retry |
-| `src/lib/sql/pending-actions/`                         | Atomic PostgreSQL queue operations                 |
-| `src/inngest/functions/drain-pending-actions.ts`       | Scheduled import, batch publication, and metrics   |
-| `src/inngest/functions/process-order-cancellation.ts`  | Cancellation producer                              |
-| `src/inngest/functions/process-shopify-fulfillment.ts` | Fulfillment producer                               |
+| File                                                   | Responsibility                                      |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| `db/migrations/000040_*` through `000044_*`            | Queue schema, indexes, runtime access, and rollback |
+| `src/lib/services/pending-actions.ts`                  | Validation, enqueue, claim, acknowledgement, retry  |
+| `src/lib/sql/pending-actions/`                         | Atomic PostgreSQL queue operations                  |
+| `src/inngest/functions/drain-pending-actions.ts`       | Scheduled import, batch publication, and metrics    |
+| `src/inngest/functions/process-order-cancellation.ts`  | Cancellation producer                               |
+| `src/inngest/functions/process-shopify-fulfillment.ts` | Fulfillment producer                                |
