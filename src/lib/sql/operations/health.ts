@@ -18,7 +18,17 @@ export const queueHealthSQL = `SELECT
   (SELECT count(*)::int FROM public.oos_recovery_dependencies WHERE status='leased' AND lease_until<=now()) AS oos_expired_lease_count,
   (SELECT count(*)::int FROM public.oos_drain_requests WHERE status IN ('queued','leased')) AS oos_open_drain_count,
   (SELECT count(*)::int FROM public.oos_recovery_outbox WHERE status IN ('queued','failed') AND next_attempt_at<=now()) AS oos_outbox_due_count,
-  (SELECT count(*)::int FROM public.oos_recovery_outbox WHERE status='failed' AND next_attempt_at='infinity'::timestamptz) AS oos_outbox_exhausted_count`;
+  (SELECT count(*)::int FROM public.oos_recovery_outbox WHERE status='failed' AND next_attempt_at='infinity'::timestamptz) AS oos_outbox_exhausted_count,
+  (SELECT COALESCE(
+    jsonb_object_agg(provider, jsonb_build_object('active', active, 'expired', expired)),
+    '{}'::jsonb
+  ) FROM (
+    SELECT provider,
+      count(*) FILTER (WHERE lease_until > clock_timestamp())::int AS active,
+      count(*) FILTER (WHERE lease_token IS NOT NULL AND lease_until <= clock_timestamp())::int AS expired
+    FROM public.provider_capacity_leases
+    GROUP BY provider
+  ) AS capacity) AS provider_capacity`;
 export const inboxSummariesSQL = `SELECT id,source,topic,
   CASE
     WHEN dead_lettered_at IS NOT NULL THEN 'dead_letter'

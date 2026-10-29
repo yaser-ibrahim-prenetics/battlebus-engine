@@ -1452,6 +1452,13 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         oos_manual_review_count: expect.any(Number),
         oos_expired_lease_count: expect.any(Number),
         oos_outbox_exhausted_count: expect.any(Number),
+        provider_capacity: expect.objectContaining({
+          d365: { active: expect.any(Number), expired: expect.any(Number) },
+          gps: { active: expect.any(Number), expired: expect.any(Number) },
+          shopify: { active: expect.any(Number), expired: expect.any(Number) },
+          stord: { active: expect.any(Number), expired: expect.any(Number) },
+          loop: { active: expect.any(Number), expired: expect.any(Number) },
+        }),
       })
     );
   });
