@@ -36,7 +36,7 @@ CREATE TABLE public.oos_recovery_mutation_leases (
     result_payload IS NULL OR octet_length(result_payload::text) <= 4096
   ),
   CONSTRAINT oos_mutation_failure_size CHECK (
-    failure_payload IS NULL OR octet_length(failure_payload::text) <= 65536
+    failure_payload IS NULL OR octet_length(failure_payload::text) <= 1048576
   )
 );
 

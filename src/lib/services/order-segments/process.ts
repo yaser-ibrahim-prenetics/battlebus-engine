@@ -25,6 +25,11 @@ import {
   InventoryUnavailableError,
   isInventoryUnavailableError,
 } from "@/lib/services/oos-recovery/inventory-failure";
+import {
+  gpsOutboundOrderEvidenceCodec,
+  stringMutationEvidenceCodec,
+  type OosMutationEvidenceCodec,
+} from "@/lib/services/oos-recovery/mutation-evidence";
 
 /** Returns null for legacy/unsplit orders; a stored plan always wins on replay. */
 type ProcessSegmentsInput = {
@@ -40,7 +45,7 @@ type ProcessSegmentsInput = {
     operationKey: string,
     request: unknown,
     execute: () => Promise<T>,
-    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+    evidenceCodec?: OosMutationEvidenceCodec<T>
   ) => Promise<T>;
   shouldReportFailure?: (error: unknown) => boolean;
 };
@@ -69,19 +74,11 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
     operationKey: string,
     request: unknown,
     execute: () => Promise<T>,
-    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+    evidenceCodec?: OosMutationEvidenceCodec<T>
   ) =>
     input.withExternalMutation
       ? input.withExternalMutation(operationKey, request, execute, evidenceCodec)
       : execute();
-  const stringEvidence = {
-    encode: (value: string) => ({ value }),
-    decode: (evidence: unknown): string => {
-      const value = (evidence as { value?: unknown })?.value;
-      if (typeof value !== "string" || !value.trim()) throw new Error("Invalid string evidence");
-      return value;
-    },
-  };
   if (!accounting) throw new Error("Payment accounting is required before splitting orders");
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await step.run("plan-order-segments", async () => {
@@ -162,7 +159,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         phase: string,
         request: unknown,
         execute: () => Promise<T>,
-        evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+        evidenceCodec?: OosMutationEvidenceCodec<T>
       ) =>
         withExternalMutation(`${prefix}:${phase}`, request, () =>
           executeFulfillmentAction(
@@ -191,7 +188,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
           if (!result.SalesOrderNumber)
             throw new Error("D365 header response missing sales order number");
           return result.SalesOrderNumber;
-        }, stringEvidence);
+        }, stringMutationEvidenceCodec);
         await saveProgress(shop, plan.orderId, segment.index, { salesOrderNumber: result });
         return result;
       });
@@ -204,7 +201,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
             if (!result.InventoryLotId)
               throw new Error("D365 line response missing inventory lot ID");
             return result.InventoryLotId;
-          }, stringEvidence)
+          }, stringMutationEvidenceCodec)
         );
         recordedLines.push({
           sourceLineId: line.sourceLineId,
@@ -280,18 +277,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
               payload,
               segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
             ),
-            {
-              encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
-              decode: (evidence) => {
-                const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
-                if (typeof orderNo !== "string" || !orderNo.trim()) {
-                  throw new Error("Invalid GPS order evidence");
-                }
-                return { response: { data: [{ orderNo }] } } as Awaited<
-                  ReturnType<typeof gps.createOutboundOrder>
-                >;
-              },
-            }
+            gpsOutboundOrderEvidenceCodec
           );
         } catch (error) {
           if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {

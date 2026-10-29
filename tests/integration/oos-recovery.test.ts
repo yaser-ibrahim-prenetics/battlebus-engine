@@ -1021,6 +1021,57 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         blockedItems: [],
       },
     });
+    const largeFailureClaim = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      operationKey: mutationOperationKey("d365:test-large-rejected"),
+      requestFingerprint: mutationRequestFingerprint,
+      leaseOwner: "integration-test-large-rejected",
+      leaseSeconds: 300,
+    });
+    if (largeFailureClaim.status !== "claimed") {
+      throw new Error("expected a large inventory-rejected provider mutation lease");
+    }
+    const largeBlockedItems = Array.from({ length: 500 }, (_, index) => ({
+      provider: "d365" as const,
+      warehouse: "D365-WAREHOUSE",
+      sku: `SKU-${String(index).padStart(4, "0")}-${"X".repeat(80)}`,
+      orderLineId: `gid://shopify/LineItem/${String(index).padStart(4, "0")}-${"9".repeat(48)}`,
+      quantityNeeded: 1,
+    }));
+    await expect(
+      releaseOosRecoveryMutation(largeFailureClaim.lease, {
+        state: "rejected",
+        failure: {
+          provider: "d365",
+          category: "inventory_insufficient",
+          blockedItems: largeBlockedItems,
+        },
+      })
+    ).resolves.toBe(true);
+    const largeFailureBytes = await pool.query<{ bytes: number }>(
+      `SELECT octet_length(failure_payload::text)::integer AS bytes
+       FROM public.oos_recovery_mutation_leases WHERE id = $1::uuid`,
+      [largeFailureClaim.lease.leaseToken]
+    );
+    expect(largeFailureBytes.rows[0].bytes).toBeGreaterThan(65_536);
+    expect(largeFailureBytes.rows[0].bytes).toBeLessThanOrEqual(1_048_576);
+    const largeFailureReplay = await claimOosRecoveryMutation({
+      shopifyStore: "im8health.myshopify.com",
+      orderId,
+      attemptToken,
+      expectedContext,
+      operationKey: mutationOperationKey("d365:test-large-rejected"),
+      requestFingerprint: mutationRequestFingerprint,
+      leaseOwner: "integration-test-large-rejected-resume",
+      leaseSeconds: 300,
+    });
+    expect(largeFailureReplay.status).toBe("rejected");
+    if (largeFailureReplay.status === "rejected") {
+      expect(largeFailureReplay.failure.blockedItems).toHaveLength(500);
+    }
     await pool.query(
       `UPDATE public.oos_recovery_mutation_leases
        SET lease_until = now() + interval '1 second' WHERE id = $1::uuid`,

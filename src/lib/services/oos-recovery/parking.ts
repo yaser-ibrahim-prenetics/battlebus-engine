@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { getDatabasePool } from "@/lib/db/database";
-import type { InventoryDependency, InventoryProvider } from "./inventory-failure";
+import {
+  assertProviderBlockedItemsPersistable,
+  MAX_OOS_BLOCKED_ITEMS,
+  type InventoryDependency,
+  type InventoryProvider,
+} from "./inventory-failure";
 import { lockOosRecoveryOrder } from "./locking";
 import { lockMatchingOosRecoveryAttempt, type OosRecoveryAttemptScope } from "./outcomes";
 
@@ -28,9 +33,10 @@ export type ParkOosOrderParams = {
 };
 
 function validateDependencies(dependencies: InventoryDependency[]): void {
-  if (dependencies.length === 0 || dependencies.length > 500) {
-    throw new Error("OOS parking requires between 1 and 500 dependencies");
+  if (dependencies.length === 0 || dependencies.length > MAX_OOS_BLOCKED_ITEMS) {
+    throw new Error(`OOS parking requires between 1 and ${MAX_OOS_BLOCKED_ITEMS} dependencies`);
   }
+  assertProviderBlockedItemsPersistable(dependencies);
   const first = dependencies[0];
   for (const dependency of dependencies) {
     if (
@@ -43,9 +49,7 @@ function validateDependencies(dependencies: InventoryDependency[]): void {
     if (
       !dependency.orderLineId.trim() ||
       !dependency.sku.trim() ||
-      !dependency.warehouse.trim() ||
-      !Number.isSafeInteger(dependency.quantityNeeded) ||
-      dependency.quantityNeeded <= 0
+      !dependency.warehouse.trim()
     ) {
       throw new Error("OOS dependency keys and quantities must be valid");
     }

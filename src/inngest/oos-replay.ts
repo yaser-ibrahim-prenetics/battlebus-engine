@@ -1,6 +1,7 @@
 import { NonRetriableError } from "inngest";
 import type { OosRecoveryReplayMarker } from "./events";
 import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
+import type { OosMutationEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
 import {
   InventoryUnavailableError,
   isInventoryUnavailableError,
@@ -15,11 +16,6 @@ import {
 } from "@/lib/services/oos-recovery/outcomes";
 
 export class RejectedOosRecoveryAttemptError extends NonRetriableError {}
-
-export type OosMutationEvidenceCodec<T> = {
-  encode: (result: T) => unknown;
-  decode: (evidence: unknown) => T;
-};
 
 export function validateOosRecoveryReplayAttempt(
   isReplay: boolean,
