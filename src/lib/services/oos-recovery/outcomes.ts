@@ -6,6 +6,43 @@ export type OosRecoveryOutcome = {
   manualReview: boolean;
 };
 
+export type OosRetryContext = {
+  provider: "gps" | "d365";
+  warehouse: string;
+  blockedLineIds: string[];
+};
+
+export async function loadOosRetryContext(params: {
+  shopifyStore: string;
+  orderId: string;
+}): Promise<OosRetryContext | null> {
+  const pool = await getDatabasePool();
+  if (!pool) return null;
+  const result = await pool.query<{
+    provider: "gps" | "d365";
+    warehouse: string;
+    order_line_id: string;
+  }>(
+    `SELECT provider, warehouse, order_line_id
+     FROM public.oos_recovery_dependencies
+     WHERE lower(shopify_store) = lower($1) AND order_id = $2
+       AND status IN ('parked', 'leased', 'retrying')
+     ORDER BY first_parked_at, id`,
+    [params.shopifyStore, params.orderId]
+  );
+  if (result.rows.length === 0) return null;
+  const provider = result.rows[0].provider;
+  const warehouse = result.rows[0].warehouse;
+  if (result.rows.some((row) => row.provider !== provider || row.warehouse !== warehouse)) {
+    throw new Error("OOS retry context spans more than one provider inventory scope");
+  }
+  return {
+    provider,
+    warehouse,
+    blockedLineIds: [...new Set(result.rows.map((row) => row.order_line_id))].sort(),
+  };
+}
+
 async function updateOrderState(
   client: PoolClient,
   params: {
