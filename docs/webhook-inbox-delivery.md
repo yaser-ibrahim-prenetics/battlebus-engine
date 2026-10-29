@@ -37,9 +37,10 @@ letter.
 | `WEBHOOK_INBOX_PUBLISHED_RETENTION_DAYS` |      30 |     1–365 | Published receipt retention    |
 | `WEBHOOK_INBOX_RETENTION_BATCH_SIZE`     |     100 |   1–1,000 | Maximum deletions per sweep    |
 
-When a claim fills the configured batch, the function emits one successor drain event. Backed-off,
-leased and dead-letter rows are not selected by that successor, so a poison receipt cannot starve
-newer work or create an unbounded retry loop.
+When durable delivery is enabled and a claim fills the configured batch, the function emits one
+successor drain event. Backed-off, leased and dead-letter rows are not selected by that successor,
+so a poison receipt cannot starve newer work or create an unbounded retry loop. Compatibility mode
+processes one bounded batch per cron sweep to preserve the pre-activation throughput contract.
 
 The rollout flag is disabled by default. Both modes use exact database leases so a disabled
 revision and an enabled revision cannot claim the same receipt. While disabled, failures remain
