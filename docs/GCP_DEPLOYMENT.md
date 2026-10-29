@@ -136,9 +136,12 @@ database user and apply the safe read-only active-action projection:
 ```
 
 Keep the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false` for
-the first deployment containing migrations `000040` through `000044`. After the
-old drain revision no longer receives traffic and Battle Hub readiness can read
-`battle_hub_pending_lifecycle_actions`, set it to `true` and redeploy. Keep
+the first deployment containing migrations `000040` through `000045`. After the
+old drain revision no longer receives traffic, verify Battle Hub readiness can
+read `battle_hub_pending_lifecycle_actions`, and verify the owner-only
+`requeue_pending_lifecycle_action(uuid,text)` function and
+`pending_lifecycle_action_resolutions` audit table exist but are inaccessible to
+both runtime roles. Then set it to `true` and redeploy. Keep
 `PENDING_ACTIONS_LEGACY_PROJECTION_ENABLED=true` through the rollback window.
 
 The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
