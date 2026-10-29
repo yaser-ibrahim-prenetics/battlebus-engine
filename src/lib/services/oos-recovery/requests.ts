@@ -32,6 +32,23 @@ export type OosDrainRequest = Omit<OosDrainRequestInput, "requestedBy"> & {
   attemptCount: number;
 };
 
+export type OosDrainCommand = {
+  requestId: string;
+  actor: string;
+  reason: string;
+};
+
+export type OosDrainPreviewEvidence = {
+  examinedOrders: number;
+  selectedOrders: number;
+  selectedDependencies: number;
+  manualReviewExpired: number;
+  queuedKeys: number;
+};
+
+export class OosDrainCommandConflictError extends Error {}
+export class OosDrainCommandInProgressError extends Error {}
+
 function normalizedTimestamp(name: string, value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const timestamp = new Date(value);
@@ -130,6 +147,45 @@ function requestedByHash(requestedBy: string | undefined): string | null {
   return requestedBy ? createHash("sha256").update(requestedBy.toLowerCase()).digest("hex") : null;
 }
 
+function commandRequestHash(input: OosDrainRequestInput, command: OosDrainCommand): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        requestId: command.requestId,
+        actor: command.actor,
+        reason: command.reason,
+        mode: input.mode,
+        dryRun: input.dryRun,
+        provider: input.provider ?? null,
+        warehouse: input.warehouse ?? null,
+        sku: input.sku ?? null,
+        orderId: input.orderId ?? null,
+        shopifyStore: input.shopifyStore ?? null,
+        parkedFrom: input.parkedFrom ?? null,
+        parkedTo: input.parkedTo ?? null,
+        observedQuantity: input.observedQuantity ?? null,
+        observedAt: input.observedAt ?? null,
+        batchLimit: input.batchLimit,
+      })
+    )
+    .digest("hex");
+}
+
+function validateCommand(command: OosDrainCommand): OosDrainCommand {
+  const requestId = command.requestId.trim().toLowerCase();
+  const actor = command.actor.trim().toLowerCase();
+  const reason = command.reason.trim();
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(requestId)
+  ) {
+    throw new Error("OOS drain command requires a UUID requestId");
+  }
+  if (!actor || reason.length < 10 || reason.length > 1000) {
+    throw new Error("OOS drain command requires an authenticated actor and audit reason");
+  }
+  return { requestId, actor, reason };
+}
+
 function rowToRequest(row: Record<string, unknown>): OosDrainRequest {
   return {
     id: String(row.id),
@@ -215,7 +271,22 @@ async function writeRequest(
 async function enqueueRequestEvent(
   client: PoolClient,
   request: Pick<OosDrainRequest, "id" | "laneKey">
-): Promise<void> {
+): Promise<"dispatched" | "outstanding" | "exhausted"> {
+  const latest = await client.query<{ status: string; exhausted: boolean }>(
+    `SELECT status, (status = 'failed' AND next_attempt_at = 'infinity'::timestamptz) AS exhausted
+     FROM public.oos_recovery_outbox
+     WHERE event_name = 'oos/drain.requested' AND event_data->>'requestId' = $1
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [request.id]
+  );
+  if (latest.rows[0]?.exhausted) return "exhausted";
+  if (
+    latest.rows[0]?.status === "queued" ||
+    latest.rows[0]?.status === "leased" ||
+    latest.rows[0]?.status === "failed"
+  ) {
+    return "outstanding";
+  }
   const dispatch = await client.query<{ dispatch_count: number }>(
     `UPDATE public.oos_drain_requests
      SET dispatch_count = dispatch_count + 1
@@ -223,7 +294,7 @@ async function enqueueRequestEvent(
      RETURNING dispatch_count`,
     [request.id]
   );
-  if (dispatch.rowCount !== 1) return;
+  if (dispatch.rowCount !== 1) return "outstanding";
   await client.query(
     `INSERT INTO public.oos_recovery_outbox (event_id, event_name, event_data)
      VALUES ($1, 'oos/drain.requested',
@@ -235,21 +306,55 @@ async function enqueueRequestEvent(
       request.laneKey,
     ]
   );
+  return "dispatched";
 }
 
 export async function submitOosDrainRequest(
-  rawInput: OosDrainRequestInput
+  rawInput: OosDrainRequestInput,
+  rawCommand?: OosDrainCommand
 ): Promise<{ request: OosDrainRequest; created: boolean }> {
   const input = normalizeOosDrainRequest(rawInput);
   if (input.dryRun) {
     throw new Error("Dry-run OOS drains must use the non-persistent preview path");
   }
+  const command = rawCommand ? validateCommand(rawCommand) : undefined;
+  const requestHash = command ? commandRequestHash(input, command) : undefined;
   const laneKey = oosDrainLaneKey(input);
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS drain requests require the configured PostgreSQL database");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (command && requestHash) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `oos-command:${command.requestId}`,
+      ]);
+      const receipt = await client.query<{
+        request_hash: string;
+        drain_request_id: string | null;
+      }>(
+        `SELECT request_hash, drain_request_id FROM public.oos_drain_command_receipts
+         WHERE request_id = $1`,
+        [command.requestId]
+      );
+      if (receipt.rows[0]) {
+        if (receipt.rows[0].request_hash !== requestHash) {
+          throw new OosDrainCommandConflictError(
+            "OOS drain requestId conflicts with an existing command"
+          );
+        }
+        const existing = receipt.rows[0].drain_request_id
+          ? await client.query("SELECT * FROM public.oos_drain_requests WHERE id = $1", [
+              receipt.rows[0].drain_request_id,
+            ])
+          : { rows: [] };
+        if (!existing.rows[0]) {
+          throw new OosDrainCommandConflictError("OOS drain command has no durable request");
+        }
+        await client.query("COMMIT");
+        return { request: rowToRequest(existing.rows[0]), created: false };
+      }
+    }
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
       "oos-drain",
       laneKey,
@@ -281,6 +386,22 @@ export async function submitOosDrainRequest(
           : undefined;
     const request = await writeRequest(client, replaceId, slot, input, laneKey);
     if (request.slot === "active") await enqueueRequestEvent(client, request);
+    if (command && requestHash) {
+      await client.query(
+        `INSERT INTO public.oos_drain_command_receipts (
+           request_id, request_hash, drain_request_id, lane_key, dry_run,
+           actor_hash, reason
+         ) VALUES ($1, $2, $3, $4, false, $5, $6)`,
+        [
+          command.requestId,
+          requestHash,
+          request.id,
+          laneKey,
+          requestedByHash(command.actor),
+          command.reason,
+        ]
+      );
+    }
     await client.query("COMMIT");
     return { request, created: !replaceId };
   } catch (error) {
@@ -289,6 +410,106 @@ export async function submitOosDrainRequest(
   } finally {
     client.release();
   }
+}
+
+export async function reserveOosDrainPreviewCommand(
+  rawInput: OosDrainRequestInput,
+  rawCommand: OosDrainCommand
+): Promise<{ status: "execute" } | { status: "completed"; result: OosDrainPreviewEvidence }> {
+  const input = normalizeOosDrainRequest(rawInput);
+  if (!input.dryRun) throw new Error("OOS preview command requires dryRun=true");
+  const command = validateCommand(rawCommand);
+  const requestHash = commandRequestHash(input, command);
+  const actorHash = requestedByHash(command.actor)!;
+  const laneKey = oosDrainLaneKey(input);
+  const pool = await getDatabasePool();
+  if (!pool) throw new Error("OOS drain previews require the configured PostgreSQL database");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `oos-command:${command.requestId}`,
+    ]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `oos-preview-actor:${actorHash}`,
+    ]);
+    const existing = await client.query<{
+      request_hash: string;
+      status: "accepted" | "completed" | "failed";
+      result_evidence: OosDrainPreviewEvidence | null;
+      stale: boolean;
+    }>(
+      `SELECT request_hash, status, result_evidence,
+         created_at <= now() - interval '5 minutes' AS stale
+       FROM public.oos_drain_command_receipts WHERE request_id = $1`,
+      [command.requestId]
+    );
+    if (existing.rows[0]) {
+      if (existing.rows[0].request_hash !== requestHash) {
+        throw new OosDrainCommandConflictError(
+          "OOS preview requestId conflicts with an existing command"
+        );
+      }
+      if (existing.rows[0].status === "completed" && existing.rows[0].result_evidence) {
+        await client.query("COMMIT");
+        return { status: "completed", result: existing.rows[0].result_evidence };
+      }
+      if (existing.rows[0].status === "accepted" && !existing.rows[0].stale) {
+        throw new OosDrainCommandInProgressError("OOS preview command is already running");
+      }
+      await client.query(
+        `UPDATE public.oos_drain_command_receipts
+         SET status = 'accepted', result_evidence = NULL, completed_at = NULL
+         WHERE request_id = $1`,
+        [command.requestId]
+      );
+    } else {
+      const active = await client.query(
+        `SELECT 1 FROM public.oos_drain_command_receipts
+         WHERE actor_hash = $1 AND dry_run AND status = 'accepted'
+           AND created_at > now() - interval '5 minutes'
+         LIMIT 1`,
+        [actorHash]
+      );
+      if (active.rowCount) {
+        throw new OosDrainCommandInProgressError(
+          "An OOS preview is already running for this operations principal"
+        );
+      }
+      await client.query(
+        `INSERT INTO public.oos_drain_command_receipts (
+           request_id, request_hash, lane_key, dry_run, actor_hash, reason
+         ) VALUES ($1, $2, $3, true, $4, $5)`,
+        [command.requestId, requestHash, laneKey, actorHash, command.reason]
+      );
+    }
+    await client.query("COMMIT");
+    return { status: "execute" };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function finishOosDrainPreviewCommand(params: {
+  requestId: string;
+  result?: OosDrainPreviewEvidence;
+  errorCode?: string;
+}): Promise<void> {
+  const pool = await getDatabasePool();
+  if (!pool) throw new Error("OOS drain previews require the configured PostgreSQL database");
+  await pool.query(
+    `UPDATE public.oos_drain_command_receipts
+     SET status = $2, result_evidence = $3::jsonb, completed_at = now()
+     WHERE request_id = $1 AND dry_run AND status = 'accepted'`,
+    [
+      params.requestId,
+      params.errorCode ? "failed" : "completed",
+      JSON.stringify(params.result ?? { errorCode: params.errorCode ?? "preview_failed" }),
+    ]
+  );
 }
 
 export async function claimOosDrainRequest(
@@ -413,11 +634,45 @@ export async function redispatchStalledOosDrainRequests(limit: number): Promise<
        LIMIT $1`,
       [Math.max(1, Math.min(500, limit))]
     );
+    let dispatched = 0;
     for (const request of stalled.rows) {
-      await enqueueRequestEvent(client, { id: request.id, laneKey: request.lane_key });
+      const outcome = await enqueueRequestEvent(client, {
+        id: request.id,
+        laneKey: request.lane_key,
+      });
+      if (outcome === "dispatched") {
+        dispatched++;
+        continue;
+      }
+      if (outcome === "exhausted") {
+        await client.query(
+          `UPDATE public.oos_drain_requests
+           SET status = 'failed', completed_at = now(), last_error_code = 'outbox_exhausted'
+           WHERE id = $1 AND status = 'queued'`,
+          [request.id]
+        );
+        const successor = await client.query<{ id: string }>(
+          `UPDATE public.oos_drain_requests
+           SET slot = 'active'
+           WHERE id = (
+             SELECT id FROM public.oos_drain_requests
+             WHERE lane_key = $1 AND slot = 'successor' AND status = 'queued'
+             ORDER BY created_at, id LIMIT 1 FOR UPDATE
+           )
+           RETURNING id`,
+          [request.lane_key]
+        );
+        if (successor.rows[0]?.id) {
+          const promoted = await enqueueRequestEvent(client, {
+            id: successor.rows[0].id,
+            laneKey: request.lane_key,
+          });
+          if (promoted === "dispatched") dispatched++;
+        }
+      }
     }
     await client.query("COMMIT");
-    return stalled.rowCount ?? 0;
+    return dispatched;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

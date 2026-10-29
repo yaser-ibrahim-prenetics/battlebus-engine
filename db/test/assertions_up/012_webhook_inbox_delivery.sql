@@ -1,8 +1,8 @@
 DO $$
 DECLARE
-  column_name text;
+  expected_column text;
 BEGIN
-  FOREACH column_name IN ARRAY ARRAY[
+  FOREACH expected_column IN ARRAY ARRAY[
     'next_attempt_at', 'lease_token', 'lease_expires_at',
     'dead_lettered_at', 'replay_count', 'last_replay_request_id', 'updated_at'
   ]
@@ -12,9 +12,9 @@ BEGIN
       FROM information_schema.columns
       WHERE table_schema = 'public'
         AND table_name = 'webhook_inbox'
-        AND information_schema.columns.column_name = column_name
+        AND information_schema.columns.column_name = expected_column
     ) THEN
-      RAISE EXCEPTION 'webhook_inbox.% is missing', column_name;
+      RAISE EXCEPTION 'webhook_inbox.% is missing', expected_column;
     END IF;
   END LOOP;
 

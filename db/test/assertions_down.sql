@@ -7,7 +7,7 @@ BEGIN
   FROM unnest(ARRAY[
     'refund_hold_decisions', 'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
     'fulfillment_evidence_claims', 'mission_runs', 'order_lines', 'order_segment_refunds',
-    'oos_drain_requests', 'oos_recovery_dependencies', 'oos_recovery_outbox',
+    'oos_drain_command_receipts', 'oos_drain_requests', 'oos_recovery_dependencies', 'oos_recovery_outbox',
     'orders', 'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions',
     'permissions', 'products', 'reconciliation_attempts', 'recovery_commands',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks', 'user_permissions',
