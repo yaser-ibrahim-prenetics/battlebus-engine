@@ -1,5 +1,4 @@
 import { fulfillmentPostingDate } from "@/lib/helpers/fulfillment-date";
-import { NonRetriableError } from "inngest";
 // ============================================================================
 // SHOPIFY FULFILLMENT → D365 SYNC
 // ============================================================================
@@ -8,6 +7,11 @@ import { NonRetriableError } from "inngest";
 // cron-gps-sync also emits this event with fromGpsSync for the automated GPS ship path.
 
 import { inngest } from "../client";
+import {
+  requireAppliedOosRecoveryOutcome,
+  requireOosRecoveryAttemptToken,
+  validateOosRecoveryReplayAttempt,
+} from "../oos-replay";
 import { publishSegmentCompletion } from "@/lib/services/order-segments/completion";
 import { fulfillOrderSegments } from "@/lib/services/order-segments/fulfillment";
 import { config } from "@/lib/config";
@@ -134,25 +138,11 @@ export const processShopifyFulfillment = inngest.createFunction(
           })
         )
       : null;
-    const oosRecoveryAttemptToken =
-      (typeof event.data.oosRecoveryAttemptToken === "string" &&
-        event.data.oosRecoveryAttemptToken.trim()) ||
-      oosReplayContext?.attemptToken ||
-      null;
-    if (
-      isOosRecoveryReplay &&
-      (!oosReplayContext ||
-        !oosRecoveryAttemptToken ||
-        oosReplayContext.attemptToken !== oosRecoveryAttemptToken)
-    ) {
-      throw new NonRetriableError("Targeted OOS replay is stale or missing its attempt token");
-    }
-    const requireOosRecoveryAttemptToken = (): string => {
-      if (!oosRecoveryAttemptToken) {
-        throw new NonRetriableError("Targeted OOS replay is missing its attempt token");
-      }
-      return oosRecoveryAttemptToken;
-    };
+    const oosRecoveryAttemptToken = validateOosRecoveryReplayAttempt(
+      isOosRecoveryReplay,
+      event.data,
+      oosReplayContext
+    );
     const order = orderJson as ShopifyOrderPayload;
     const _flowStart = Date.now();
     // Inngest function run id (ULID) for /runs/{id} — NOT event.id (that is the *event* id, e.g. idempotency key).
@@ -160,14 +150,15 @@ export const processShopifyFulfillment = inngest.createFunction(
     const resolveReplay = async () => {
       if (!isOosRecoveryReplay) return;
       if (Array.isArray(event.data.runSequence) && event.data.runSequence.length > 0) return;
-      await step.run("resolve-successful-fulfillment-oos-replay", () =>
+      const outcome = await step.run("resolve-successful-fulfillment-oos-replay", () =>
         resolveOosDependencies({
           shopifyStore: canonicalShopifyStore,
           orderId: String(shopifyOrderId),
-          attemptToken: requireOosRecoveryAttemptToken(),
+          attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
           includeManualReview: true,
         })
       );
+      requireAppliedOosRecoveryOutcome(outcome);
       await step.run("emit-resolved-fulfillment-oos-replay", () =>
         inngest.send({
           id: `oos-fulfillment-replay-resolved:${event.id}`,
@@ -189,7 +180,7 @@ export const processShopifyFulfillment = inngest.createFunction(
           reparkOosDependencies({
             shopifyStore: canonicalShopifyStore,
             orderId: String(shopifyOrderId),
-            attemptToken: requireOosRecoveryAttemptToken(),
+            attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
             cooldownSeconds: config.oosRecovery.cooldownSeconds,
             maxAttempts: config.oosRecovery.maxAttempts,
             errorCode,
@@ -201,7 +192,7 @@ export const processShopifyFulfillment = inngest.createFunction(
         moveOosDependenciesToManualReview({
           shopifyStore: canonicalShopifyStore,
           orderId: String(shopifyOrderId),
-          attemptToken: requireOosRecoveryAttemptToken(),
+          attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
           errorCode,
         })
       );
@@ -952,7 +943,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                     await reparkOosDependencies({
                       shopifyStore: canonicalShopifyStore,
                       orderId: String(shopifyOrderId),
-                      attemptToken: requireOosRecoveryAttemptToken(),
+                      attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
                       cooldownSeconds: config.oosRecovery.cooldownSeconds,
                       maxAttempts: config.oosRecovery.maxAttempts,
                       errorCode: typedInventoryFailure ? error.category : "inventory_insufficient",
@@ -971,7 +962,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                           ? oosReplayContext?.provider
                           : undefined,
                         resolvedReplayToken: isOosRecoveryReplay
-                          ? requireOosRecoveryAttemptToken()
+                          ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                           : undefined,
                       },
                       retentionDays: config.oosRecovery.retentionDays,
@@ -1371,7 +1362,7 @@ export const processShopifyFulfillment = inngest.createFunction(
             reparkOosDependencies({
               shopifyStore: canonicalShopifyStore,
               orderId: String(shopifyOrderId),
-              attemptToken: requireOosRecoveryAttemptToken(),
+              attemptToken: requireOosRecoveryAttemptToken(oosRecoveryAttemptToken),
               cooldownSeconds: config.oosRecovery.cooldownSeconds,
               maxAttempts: config.oosRecovery.maxAttempts,
               errorCode: error.category,
@@ -1400,7 +1391,7 @@ export const processShopifyFulfillment = inngest.createFunction(
                   ? oosReplayContext?.provider
                   : undefined,
                 resolvedReplayToken: isOosRecoveryReplay
-                  ? requireOosRecoveryAttemptToken()
+                  ? requireOosRecoveryAttemptToken(oosRecoveryAttemptToken)
                   : undefined,
               },
               retentionDays: config.oosRecovery.retentionDays,

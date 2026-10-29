@@ -10,7 +10,12 @@
 import { inngest } from "@/inngest/client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
-import type { RunSequenceStage, ShopifyOrderPayload, ShopifyFulfillment } from "@/inngest/events";
+import type {
+  OosRecoveryReplayMarker,
+  RunSequenceStage,
+  ShopifyOrderPayload,
+  ShopifyFulfillment,
+} from "@/inngest/events";
 
 export type AdvanceRunSequenceParams = {
   /** Shopify order id used by the Hub `orders` table. */
@@ -27,13 +32,9 @@ export type AdvanceRunSequenceParams = {
   /** Carried through for status_update CS Platform calls. */
   inngestRunId?: string;
   inngestIdempotencyKey?: string;
-  /** Keep targeted OOS rows open until the final dispatched stage reports its outcome. */
-  oosRecoveryReplay?: boolean;
-  /** Keep every stage correlated to the targeted OOS attempt that dispatched the chain. */
-  oosRecoveryAttemptToken?: string;
   /** Stages already completed in this chain — used to render full timeline. */
   history?: RunSequenceStage[];
-};
+} & OosRecoveryReplayMarker;
 
 const nowIso = () => new Date().toISOString();
 

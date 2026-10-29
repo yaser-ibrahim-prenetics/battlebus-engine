@@ -43,6 +43,13 @@ const mocks = vi.hoisted(() => ({
     retryIntervalHours: 1,
     recoveryLeaseSeconds: 600,
   },
+  oosRecoveryConfig: {
+    enabled: false,
+    retentionDays: 30,
+    cooldownSeconds: 60,
+    maxAttempts: 3,
+  },
+  loadOosRetryContext: vi.fn(async (): Promise<unknown> => null),
 }));
 
 vi.mock("../../client", () => ({
@@ -67,7 +74,12 @@ vi.mock("@/lib/services/saudi-short-address", () => ({
 vi.mock("@/lib/services/order-segments/recovery", () => ({
   loadEligibleRecoveryOrder: mocks.loadEligibleRecoveryOrder,
 }));
-vi.mock("@/lib/config", () => ({ config: { features: { dryRunMode: false } } }));
+vi.mock("@/lib/config", () => ({
+  config: {
+    features: { dryRunMode: false },
+    oosRecovery: mocks.oosRecoveryConfig,
+  },
+}));
 vi.mock("@/lib/clients/gps", () => ({
   createOutboundOrder: mocks.createOutboundOrder,
   isGpsInventoryError: vi.fn(() => true),
@@ -114,6 +126,16 @@ vi.mock("@/lib/services/backorder-recovery/lease", () => ({
     (error as { name?: string })?.name === "BackorderRecoveryBusyError",
   releaseBackorderRecoveryLease: mocks.releaseLease,
   renewBackorderRecoveryLease: mocks.renewLease,
+}));
+vi.mock("@/lib/services/oos-recovery/outcomes", () => ({
+  loadOosRetryContext: mocks.loadOosRetryContext,
+  moveOosDependenciesToManualReview: vi.fn(async () => ({
+    dependencies: 1,
+    manualReview: true,
+  })),
+  rearmManualReviewOosDependencies: vi.fn(async () => "attempt-rearmed"),
+  reparkOosDependencies: vi.fn(async () => ({ dependencies: 1, manualReview: false })),
+  resolveOosDependencies: vi.fn(async () => ({ dependencies: 1, manualReview: false })),
 }));
 
 import { processBackorder, processBackorderRetry } from "../process-backorder";
@@ -171,6 +193,8 @@ describe("backorder recovery serialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backorderConfig.enabled = true;
+    mocks.oosRecoveryConfig.enabled = false;
+    mocks.loadOosRetryContext.mockResolvedValue(null);
     mocks.readPlan.mockResolvedValue(null);
     mocks.processOrderSegments.mockResolvedValue(null);
     mocks.loadOrderAccounting.mockResolvedValue({});
@@ -294,6 +318,42 @@ describe("backorder recovery serialization", () => {
       manualHandler({ event: unknownStore, step: step(), runId: "unknown-store" })
     ).rejects.toThrow("unknown Shopify store");
 
+    expect(mocks.acquireLease).not.toHaveBeenCalled();
+    expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
+  });
+
+  it("rejects a targeted retry with no current database context before provider work", async () => {
+    const stale = event("backorder/retry");
+    Object.assign(stale.data, {
+      targetedRecovery: true,
+      oosRecoveryAttemptToken: "00000000-0000-4000-8000-000000000001",
+    });
+
+    await expect(
+      manualHandler({ event: stale, step: step(), runId: "stale-targeted-retry" })
+    ).rejects.toThrow("no current database context");
+    expect(mocks.acquireLease).not.toHaveBeenCalled();
+    expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale targeted retry token before provider work", async () => {
+    mocks.oosRecoveryConfig.enabled = true;
+    mocks.loadOosRetryContext.mockResolvedValue({
+      provider: "gps",
+      warehouse: "GPS WAREHOUSE",
+      blockedItems: [{ orderLineId: "line-1", providerSku: "SKU-1" }],
+      manualReview: false,
+      attemptToken: "00000000-0000-4000-8000-000000000002",
+    });
+    const stale = event("backorder/retry");
+    Object.assign(stale.data, {
+      targetedRecovery: true,
+      oosRecoveryAttemptToken: "00000000-0000-4000-8000-000000000001",
+    });
+
+    await expect(
+      manualHandler({ event: stale, step: step(), runId: "stale-targeted-token" })
+    ).rejects.toThrow("stale replay attempt token");
     expect(mocks.acquireLease).not.toHaveBeenCalled();
     expect(mocks.createOutboundOrder).not.toHaveBeenCalled();
   });

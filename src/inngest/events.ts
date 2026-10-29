@@ -4,6 +4,14 @@
 // These events replace the old Task Table polling system.
 // Each event triggers a durable Inngest function instead of creating a DB row.
 
+/** Fields that keep every event in a targeted OOS replay chain on one database attempt. */
+export type OosRecoveryReplayMarker = {
+  /** This event belongs to a targeted OOS replay. */
+  oosRecoveryReplay?: boolean;
+  /** Correlates the event with the exact targeted OOS recovery attempt. */
+  oosRecoveryAttemptToken?: string;
+};
+
 export type ShopifyOrderCreatedEvent = {
   name: "shopify/order.created";
   data: {
@@ -59,11 +67,7 @@ export type ShopifyOrderPaidEvent = {
     runSequence?: RunSequenceStage[];
     /** Marker so downstream knows this came from a sequenced retry. */
     fromSequencedRetry?: boolean;
-    /** Paid-order replay dispatched after targeted D365 inventory recovery. */
-    oosRecoveryReplay?: boolean;
-    /** Correlates this run with the exact targeted OOS recovery attempt. */
-    oosRecoveryAttemptToken?: string;
-  };
+  } & OosRecoveryReplayMarker;
 };
 
 export type ShopifyOrderUpdatedEvent = {
@@ -94,10 +98,6 @@ export type ShopifyOrderFulfilledEvent = {
     fromSequencedRetry?: boolean;
     /** Set when replaying a fulfillment from a backorder retry. */
     fromBackorderRetry?: boolean;
-    /** Resolve targeted OOS dependencies only after this fulfillment reaches a terminal outcome. */
-    oosRecoveryReplay?: boolean;
-    /** Correlates this run with the exact targeted OOS recovery attempt. */
-    oosRecoveryAttemptToken?: string;
     /** Hub / tooling hint (e.g. battle-hub-reconciliation). */
     source?: string;
     /** Battle Hub user who triggered a replay or manual fulfillment pipeline. */
@@ -109,7 +109,7 @@ export type ShopifyOrderFulfilledEvent = {
     /** GPS polling/webhook paths set this so Hub source attribution remains accurate. */
     fromGpsSync?: boolean;
     gpsOrderId?: string;
-  };
+  } & OosRecoveryReplayMarker;
 };
 
 export type GpsFulfilmentReceivedEvent = {
@@ -332,10 +332,6 @@ export type BackorderRetryEvent = {
     blockedLineIds?: string[];
     /** Exact original-line/provider-SKU pairs selected for recovery. */
     blockedItems?: Array<{ orderLineId: string; providerSku: string }>;
-    /** Downstream paid-order replay must report its terminal OOS outcome. */
-    oosRecoveryReplay?: boolean;
-    /** Correlates downstream outcomes with this exact targeted OOS recovery attempt. */
-    oosRecoveryAttemptToken?: string;
     /**
      * Optional ordered list of pipeline stages to run when an order needs
      * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).
@@ -344,7 +340,7 @@ export type BackorderRetryEvent = {
      * upstream run.
      */
     runSequence?: RunSequenceStage[];
-  };
+  } & OosRecoveryReplayMarker;
 };
 
 /**
