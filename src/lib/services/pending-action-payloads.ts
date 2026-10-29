@@ -83,5 +83,6 @@ export function fulfillmentPendingActionData(eventData: UnknownRecord): UnknownR
     fromGpsSync: eventData.fromGpsSync === true ? true : undefined,
     gpsOrderId: eventData.fromGpsSync === true ? eventData.gpsOrderId : undefined,
     runSequence: Array.isArray(eventData.runSequence) ? eventData.runSequence : undefined,
+    oosRecoveryReplay: eventData.oosRecoveryReplay === true ? true : undefined,
   });
 }

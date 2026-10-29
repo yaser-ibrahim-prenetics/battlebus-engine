@@ -270,6 +270,39 @@ export const processShopifyOrder = inngest.createFunction(
     const shopifyOrderId = String(
       event.data.originalShopifyOrderId || String(rawShopifyOrderId || "").split("-rerun-")[0]
     );
+    const isOosRecoveryReplay = config.oosRecovery.enabled && event.data.oosRecoveryReplay === true;
+    const moveReplayToManualReview = async (errorCode: string) => {
+      if (!isOosRecoveryReplay) return;
+      await step.run(`manual-review-oos-replay-${errorCode}`, () =>
+        moveOosDependenciesToManualReview({
+          shopifyStore: canonicalShopifyStore,
+          orderId: shopifyOrderId,
+          errorCode,
+        })
+      );
+    };
+    const resolveReplay = async () => {
+      if (!isOosRecoveryReplay) return;
+      await step.run("resolve-successful-oos-replay", () =>
+        resolveOosDependencies({
+          shopifyStore: canonicalShopifyStore,
+          orderId: shopifyOrderId,
+        })
+      );
+      await step.run("emit-resolved-successful-oos-replay", () =>
+        inngest.send({
+          id: `oos-replay-resolved:${event.id}`,
+          name: "backorder/resolved",
+          data: {
+            shopifyOrderId,
+            shopifyOrderName,
+            shopifyStore: canonicalShopifyStore,
+            resolvedAt: new Date().toISOString(),
+            resolution: "manual",
+          },
+        })
+      );
+    };
     // Initial order from webhook - will be refreshed after 5min delay
     let order = orderJson as ShopifyOrderPayload;
 
@@ -428,6 +461,7 @@ export const processShopifyOrder = inngest.createFunction(
 
     if (config.features.dryRunMode) {
       await publishResult("skipped", { error: "Dry run mode enabled" });
+      await moveReplayToManualReview("replay_blocked_by_dry_run");
       return {
         status: "dry_run",
         shopifyOrderId,
@@ -505,6 +539,7 @@ export const processShopifyOrder = inngest.createFunction(
       await publishResult("skipped", {
         error: "Order cancelled before processing started",
       });
+      await moveReplayToManualReview("replay_order_cancelled");
       return {
         status: "cancelled_before_processing",
         shopifyOrderId,
@@ -930,6 +965,8 @@ export const processShopifyOrder = inngest.createFunction(
         );
       }
 
+      await moveReplayToManualReview(`replay_${validation.status}`);
+
       return {
         status: validation.status,
         reason: validation.reason,
@@ -964,19 +1001,54 @@ export const processShopifyOrder = inngest.createFunction(
       return loadOrderAccounting(order, event.data.shopifyStore);
     });
 
-    const segmented = await processOrderSegments({
-      order,
-      step,
-      accounting,
-      shopDomain: event.data.shopifyStore,
-      testMode: event.data.testMode,
-      fallbackDataArea: dataAreaId,
-      shortAddress: saudiShortAddress,
-    });
-    if (segmented) return segmented;
+    let segmented: Awaited<ReturnType<typeof processOrderSegments>>;
+    try {
+      segmented = await processOrderSegments({
+        order,
+        step,
+        accounting,
+        shopDomain: event.data.shopifyStore,
+        testMode: event.data.testMode,
+        fallbackDataArea: dataAreaId,
+        shortAddress: saudiShortAddress,
+      });
+    } catch (error) {
+      if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
+        await step.run("park-segmented-inventory-dependencies", () =>
+          parkOosOrder({
+            dependencies: toInventoryDependencies({
+              error,
+              order,
+              shopifyStore: canonicalShopifyStore,
+              warehouse: error.blockedItems[0]?.warehouse ?? error.providerWarehouse ?? dataAreaId,
+            }),
+            context: {
+              d365OrderNumber: error.providerOrderNumber ?? "",
+              sourceEventName: "shopify/order.paid",
+              failureStage: "order_creation",
+              retryMode: "gps_outbound",
+              backorderQueue: "sync",
+              resolvedProviderBeforeParking: isOosRecoveryReplay ? error.provider : undefined,
+              maxRetries: config.oosRecovery.maxAttempts,
+            },
+            retentionDays: config.oosRecovery.retentionDays,
+          })
+        );
+        return {
+          status: "parked_targeted_recovery",
+          shopifyOrderId,
+          shopifyOrderName,
+        };
+      }
+      await moveReplayToManualReview("segmented_replay_failure");
+      throw error;
+    }
+    if (segmented) {
+      await resolveReplay();
+      return segmented;
+    }
 
     let salesOrderNumber: string | undefined;
-    const isOosRecoveryReplay = config.oosRecovery.enabled && event.data.oosRecoveryReplay === true;
     /** Captured from D365 line create responses — persisted on Hub `orders.state` for fulfillment Lotid fallback. */
     let d365InventoryLotsBySku: Record<string, string> = {};
     try {
@@ -1873,33 +1945,9 @@ export const processShopifyOrder = inngest.createFunction(
 
         if (isOosRecoveryReplay) {
           if (gpsRetryResult.type === "failed") {
-            await step.run("manual-review-oos-replay-failure", () =>
-              moveOosDependenciesToManualReview({
-                shopifyStore: canonicalShopifyStore,
-                orderId: shopifyOrderId,
-                errorCode: "downstream_replay_failure",
-              })
-            );
+            await moveReplayToManualReview("downstream_replay_failure");
           } else {
-            await step.run("resolve-successful-oos-replay", () =>
-              resolveOosDependencies({
-                shopifyStore: canonicalShopifyStore,
-                orderId: shopifyOrderId,
-              })
-            );
-            await step.run("emit-resolved-successful-oos-replay", () =>
-              inngest.send({
-                id: `oos-replay-resolved:${event.id}`,
-                name: "backorder/resolved",
-                data: {
-                  shopifyOrderId,
-                  shopifyOrderName,
-                  shopifyStore: canonicalShopifyStore,
-                  resolvedAt: new Date().toISOString(),
-                  resolution: "manual",
-                },
-              })
-            );
+            await resolveReplay();
           }
         }
 

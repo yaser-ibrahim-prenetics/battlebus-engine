@@ -92,6 +92,8 @@ export type ShopifyOrderFulfilledEvent = {
     fromSequencedRetry?: boolean;
     /** Set when replaying a fulfillment from a backorder retry. */
     fromBackorderRetry?: boolean;
+    /** Resolve targeted OOS dependencies only after this fulfillment reaches a terminal outcome. */
+    oosRecoveryReplay?: boolean;
     /** Hub / tooling hint (e.g. battle-hub-reconciliation). */
     source?: string;
     /** Battle Hub user who triggered a replay or manual fulfillment pipeline. */

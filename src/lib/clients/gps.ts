@@ -566,7 +566,9 @@ async function createOutboundOrderAttempt(
     };
   } catch (error) {
     if (error instanceof ConfirmedActionFailure) {
-      if (isGpsInventoryError(error.message)) throw new OutOfStockError(error.message);
+      if (isGpsInventoryError(error.message)) {
+        throw new OutOfStockError(error.message, warehouseName, logicalRequest.thirdOrderNo);
+      }
       if (!isRetry)
         return createOutboundOrderAttempt(
           { ...orderData, logisticsChannel: "No_Shipping_Service" },
@@ -819,12 +821,15 @@ export function classifyGpsError(msg: string | undefined): GpsInventoryErrorType
 export class OutOfStockError extends InventoryUnavailableError {
   public readonly errorType: GpsInventoryErrorType;
 
-  constructor(message: string) {
+  constructor(message: string, warehouse?: string, providerOrderNumber?: string) {
     const errorType = classifyGpsError(message);
     super(
       "gps",
       errorType === "unmaintained_product" ? "unmaintained_product" : "out_of_stock",
-      message
+      message,
+      [],
+      providerOrderNumber,
+      warehouse
     );
     this.name = "OutOfStockError";
     this.errorType = errorType;
@@ -1168,7 +1173,9 @@ export async function syncInventoryLevel(inventory: {
     return { success: true, message: "DRY RUN - Would adjust GPS inventory" };
   }
 
-  console.error("[GPS] Inventory adjustment rejected: no approved GPS adjustment API is configured");
+  console.error(
+    "[GPS] Inventory adjustment rejected: no approved GPS adjustment API is configured"
+  );
   return {
     success: false,
     message: "GPS inventory adjustment provider is not configured",

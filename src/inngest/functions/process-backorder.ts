@@ -53,6 +53,7 @@ import {
   resolveOosDependencies,
 } from "@/lib/services/oos-recovery/outcomes";
 import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
+import { executeFulfillmentAction } from "@/lib/services/fulfillment-actions/ledger";
 
 type LeaseAcquisitionResult =
   | { status: "acquired"; lease: BackorderRecoveryLease }
@@ -470,11 +471,41 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               isInventoryError: false,
             };
           }
-          for (const line of blockedLines) {
-            await dynamics.createSalesOrderLine(line);
+          for (const [lineIndex, line] of blockedLines.entries()) {
+            await executeFulfillmentAction(
+              {
+                provider: "dynamics",
+                scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
+                sourceOrderId: String(shopifyOrderId),
+                sourceLineIds: [`${line.sourceLineId}:${line.itemNumber}:${lineIndex}`],
+                action: `oos-recovery-line:${d365NumManual}`,
+              },
+              line,
+              () => dynamics.createSalesOrderLine(line)
+            );
           }
-          await dynamics.confirmSalesOrder(d365NumManual, d365Company);
-          await dynamics.createPrepayment(d365NumManual, d365Company);
+          await executeFulfillmentAction(
+            {
+              provider: "dynamics",
+              scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
+              sourceOrderId: String(shopifyOrderId),
+              sourceLineIds: [`order:${d365NumManual}`],
+              action: "oos-recovery-confirm",
+            },
+            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+            () => dynamics.confirmSalesOrder(d365NumManual, d365Company)
+          );
+          await executeFulfillmentAction(
+            {
+              provider: "dynamics",
+              scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
+              sourceOrderId: String(shopifyOrderId),
+              sourceLineIds: [`order:${d365NumManual}`],
+              action: "oos-recovery-prepayment",
+            },
+            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+            () => dynamics.createPrepayment(d365NumManual, d365Company)
+          );
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid-after-d365`,
             name: "shopify/order.paid",
@@ -499,9 +530,14 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyStore: event.data.shopifyStore || "im8-battle-bus",
               orderJson: order,
               receivedAt: new Date().toISOString(),
+              oosRecoveryReplay: isTargetedRecovery,
             },
           });
-          return { success: true, replayDispatched: true };
+          return {
+            success: true,
+            replayDispatched: true,
+            deferResolution: isTargetedRecovery,
+          };
         }
 
         if (effectiveRetryMode === "fulfillment_replay") {
@@ -527,10 +563,15 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               fulfillments,
               receivedAt: new Date().toISOString(),
               fromBackorderRetry: true,
+              oosRecoveryReplay: isTargetedRecovery,
             },
           });
 
-          return { success: true, replayDispatched: true };
+          return {
+            success: true,
+            replayDispatched: true,
+            deferResolution: isTargetedRecovery,
+          };
         }
 
         const gpsPayload = await buildBackorderGpsPayload({
@@ -785,6 +826,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyStore: event.data.shopifyStore || "im8-battle-bus",
               orderJson: order,
               receivedAt: new Date().toISOString(),
+              oosRecoveryReplay: isTargetedRecovery,
             },
           });
           return {
@@ -792,6 +834,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             retryCount,
             triggeredBy,
             replayDispatched: true,
+            deferResolution: isTargetedRecovery,
           };
         }
 
@@ -820,6 +863,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               fulfillments,
               receivedAt: new Date().toISOString(),
               fromBackorderRetry: true,
+              oosRecoveryReplay: isTargetedRecovery,
             },
           });
 
@@ -828,6 +872,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             retryCount,
             triggeredBy,
             replayDispatched: true,
+            deferResolution: isTargetedRecovery,
           };
         }
 
@@ -878,6 +923,15 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     await step.run(`release-auto-retry-lease-${retryCount}`, () => releaseLease(lease));
 
     if (retryResult.success) {
+      if ((retryResult as { deferResolution?: boolean }).deferResolution) {
+        return {
+          status: "replay_dispatched",
+          shopifyOrderId,
+          shopifyOrderName,
+          retryCount,
+          processedAt: new Date().toISOString(),
+        };
+      }
       // Resolved
       console.log(`[Backorder] Order ${shopifyOrderName} resolved on retry ${retryCount}`);
 
