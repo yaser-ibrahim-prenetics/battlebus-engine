@@ -87,6 +87,7 @@ export async function deepReadiness() {
       dependencies.every((d) => d.status !== "unavailable") &&
       queues.inbox_age_seconds < 300 &&
       !queues.inbox_dead_letter_count &&
+      !queues.inbox_expired_lease_count &&
       queues.uncertain_age_seconds < 300 &&
       !queues.stale_reconciliation_count &&
       !workflows.length &&

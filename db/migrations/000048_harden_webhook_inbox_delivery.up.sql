@@ -6,6 +6,7 @@ ALTER TABLE public.webhook_inbox
   ADD COLUMN lease_expires_at timestamptz,
   ADD COLUMN dead_lettered_at timestamptz,
   ADD COLUMN replay_count integer NOT NULL DEFAULT 0,
+  ADD COLUMN last_replay_request_id uuid,
   ADD COLUMN updated_at timestamptz NOT NULL DEFAULT now(),
   ADD CONSTRAINT webhook_inbox_replay_count_nonnegative CHECK (replay_count >= 0),
   ADD CONSTRAINT webhook_inbox_lease_consistent
@@ -34,7 +35,7 @@ CREATE INDEX idx_webhook_inbox_expired_lease
 
 CREATE INDEX idx_webhook_inbox_dead_letter
   ON public.webhook_inbox (dead_lettered_at DESC, id)
-  WHERE status = 'dead_letter';
+  WHERE status = 'failed' AND dead_lettered_at IS NOT NULL;
 
 CREATE INDEX idx_webhook_inbox_retention
   ON public.webhook_inbox (published_at, id)
@@ -54,5 +55,7 @@ COMMENT ON COLUMN public.webhook_inbox.dead_lettered_at IS
   'Terminal failed-publication time. Non-null failed rows require an audited operator replay.';
 COMMENT ON COLUMN public.webhook_inbox.replay_count IS
   'Number of audited operator replays after terminal delivery failure.';
+COMMENT ON COLUMN public.webhook_inbox.last_replay_request_id IS
+  'Stable recovery command ID that makes dead-letter replay idempotent.';
 
 COMMIT;

@@ -18,6 +18,7 @@ ALTER TABLE public.webhook_inbox
   DROP COLUMN lease_expires_at,
   DROP COLUMN lease_token,
   DROP COLUMN next_attempt_at,
+  DROP COLUMN last_replay_request_id,
   DROP COLUMN replay_count,
   DROP COLUMN updated_at;
 

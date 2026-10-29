@@ -29,6 +29,7 @@ type WebhookInboxDrainEvent = {
   name: string;
   data?: { inboxId?: string };
 };
+const COMPATIBILITY_MAX_ATTEMPTS = 2_000_000_000;
 
 export const drainWebhookInbox = inngest.createFunction(
   {
@@ -59,6 +60,68 @@ export const drainWebhookInbox = inngest.createFunction(
       runId,
       payload: { requestedInboxId },
     });
+
+    if (!config.webhookInbox.durableDeliveryEnabled) {
+      const compatibleEntries = await step.run("claim-compatible-receipts", () =>
+        claimWebhookInboxEntries(requestedInboxId ? 1 : config.webhookInbox.claimBatchSize, {
+          inboxId: requestedInboxId,
+          leaseSeconds: config.webhookInbox.leaseSeconds,
+          maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
+        })
+      );
+      let published = 0;
+      let failed = 0;
+      for (const entry of compatibleEntries) {
+        const outcome = await step.run(
+          `publish-compatible-${entry.id}-attempt-${entry.attempts}`,
+          async () => {
+            const validationError = validateWebhookInboxEvents(entry.events);
+            if (validationError) {
+              await markInboxFailed(entry, {
+                errorCode: validationError,
+                maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
+                retryDelaySeconds: 1,
+                terminal: true,
+              });
+              return "failed" as const;
+            }
+            try {
+              const sent = await inngest.send(entry.events as Parameters<typeof inngest.send>[0]);
+              return (await markInboxPublished(entry, sent?.ids ?? []))
+                ? ("published" as const)
+                : ("failed" as const);
+            } catch (error) {
+              const failure = classifyWebhookInboxDeliveryFailure(error);
+              await markInboxFailed(entry, {
+                errorCode: failure.errorCode,
+                maxAttempts: COMPATIBILITY_MAX_ATTEMPTS,
+                retryDelaySeconds: 1,
+                terminal: false,
+              });
+              return "failed" as const;
+            }
+          }
+        );
+        if (outcome === "published") published++;
+        else failed++;
+      }
+      const compatibleResult = {
+        status: compatibleEntries.length === 0 ? "idle" : "compatible_drain",
+        count: compatibleEntries.length,
+        published,
+        failed,
+        durableDeliveryEnabled: false,
+      };
+      logFlowEvent({
+        flow: "webhook_inbox_drain",
+        step: "done",
+        status: "completed",
+        runId,
+        durationMs: Date.now() - flowStart,
+        payload: compatibleResult,
+      });
+      return compatibleResult;
+    }
 
     const entries = await step.run("claim-ready-receipts", () =>
       claimWebhookInboxEntries(requestedInboxId ? 1 : config.webhookInbox.claimBatchSize, {

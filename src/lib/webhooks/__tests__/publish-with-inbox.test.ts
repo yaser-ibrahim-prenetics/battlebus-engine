@@ -10,18 +10,18 @@ const mocks = vi.hoisted(() => ({
   validate: vi.fn(),
   classify: vi.fn(),
   delay: vi.fn(),
+  webhookConfig: {
+    durableDeliveryEnabled: true,
+    leaseSeconds: 120,
+    maxAttempts: 3,
+    retryBaseSeconds: 60,
+    retryMaxSeconds: 3600,
+  },
 }));
 
 vi.mock("@/inngest/client", () => ({ inngest: { send: mocks.send } }));
 vi.mock("@/lib/config", () => ({
-  config: {
-    webhookInbox: {
-      leaseSeconds: 120,
-      maxAttempts: 3,
-      retryBaseSeconds: 60,
-      retryMaxSeconds: 3600,
-    },
-  },
+  config: { webhookInbox: mocks.webhookConfig },
 }));
 vi.mock("@/lib/db/database", () => ({ isDatabaseConfigured: mocks.configured }));
 vi.mock("@/lib/services/webhook-inbox", () => ({
@@ -34,7 +34,7 @@ vi.mock("@/lib/services/webhook-inbox", () => ({
   webhookInboxRetryDelaySeconds: mocks.delay,
 }));
 
-import { publishWebhookEvents } from "../publish-with-inbox";
+import { publishWebhookEvents, redactWebhookHeaders } from "../publish-with-inbox";
 
 const event = {
   id: "shopify-order-1",
@@ -56,6 +56,7 @@ describe("publishWebhookEvents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.configured.mockReturnValue(true);
+    mocks.webhookConfig.durableDeliveryEnabled = true;
     mocks.validate.mockReturnValue(null);
     mocks.record.mockResolvedValue(claimed.id);
     mocks.claim.mockResolvedValue(claimed);
@@ -98,6 +99,50 @@ describe("publishWebhookEvents", () => {
       maxAttempts: 3,
     });
     expect(mocks.published).toHaveBeenCalledWith(claimed, [event.id]);
+  });
+
+  it("preserves compatible publication while leased delivery is disabled", async () => {
+    mocks.webhookConfig.durableDeliveryEnabled = false;
+
+    await expect(publish()).resolves.toEqual({
+      published: true,
+      eventIds: [event.id],
+      inboxId: claimed.id,
+    });
+    expect(mocks.claim).toHaveBeenCalledWith(claimed.id, {
+      leaseSeconds: 120,
+      maxAttempts: 2_000_000_000,
+    });
+    expect(mocks.published).toHaveBeenCalledWith(claimed, [event.id]);
+  });
+
+  it("keeps compatibility failures immediately retryable without terminal classification", async () => {
+    mocks.webhookConfig.durableDeliveryEnabled = false;
+    mocks.send.mockRejectedValue({ name: "DeliveryError", status: 401 });
+    mocks.classify.mockReturnValue({ errorCode: "DeliveryError:http_401", terminal: true });
+
+    await expect(publish()).resolves.toMatchObject({ published: false });
+    expect(mocks.failed).toHaveBeenCalledWith(claimed, {
+      errorCode: "DeliveryError:http_401",
+      maxAttempts: 2_000_000_000,
+      retryDelaySeconds: 1,
+      terminal: false,
+    });
+  });
+
+  it("persists only bounded allowlisted transport metadata", () => {
+    expect(
+      redactWebhookHeaders({
+        "Content-Type": "application/json",
+        "X-Shopify-Webhook-Id": "webhook-1",
+        "X-Shopify-Hmac-Sha256": "secret-signature",
+        Authorization: "Bearer secret",
+        "X-Untrusted-Metadata": "customer-data",
+      })
+    ).toEqual({
+      "content-type": "application/json",
+      "x-shopify-webhook-id": "webhook-1",
+    });
   });
 
   it("records safe retry metadata when publication fails", async () => {
