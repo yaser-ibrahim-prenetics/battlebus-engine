@@ -9,7 +9,7 @@ BEGIN
   SELECT array_agg(expected.name ORDER BY expected.name)
   INTO missing_tables
   FROM unnest(ARRAY[
-    'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
+    'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
     'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
@@ -23,7 +23,7 @@ BEGIN
   END IF;
 
   FOREACH table_name IN ARRAY ARRAY[
-    'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
+    'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
     'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_action_discards',
     'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
@@ -175,3 +175,4 @@ ROLLBACK;
 \ir assertions_up/008_refund_allocation.sql
 \ir assertions_up/009_recovery_audit.sql
 \ir assertions_up/010_pending_lifecycle_actions.sql
+\ir assertions_up/011_backorder_recovery_leases.sql
