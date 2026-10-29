@@ -55,7 +55,7 @@ A concurrent legacy append waits for the row lock and is copied on a later sweep
 
 ## Activation sequence
 
-1. Apply migrations `000040` through `000045` while `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`.
+1. Apply migrations `000040` through `000046` while `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=false`.
 2. Run `scripts/bootstrap-hub-database.sh` before migration `000044` in Cloud SQL, then verify Battle Hub can read the safe active-action view.
 3. Deploy Battle Bus with the durable queue disabled and legacy projection enabled; confirm no old drain revision receives traffic.
 4. Set the repository variable `PENDING_ACTIONS_DURABLE_QUEUE_ENABLED=true` and deploy again.
@@ -114,6 +114,33 @@ It preserves the stable `action_id` and source identity, so replay does not crea
 a new downstream identity. Never update queue state directly or delete queue or
 audit rows to bypass an unresolved failure.
 
+If investigation proves that the source event is invalid or obsolete, use the
+separate owner-only discard path instead of forging queue state:
+
+```sql
+SELECT public.discard_dead_letter_pending_lifecycle_action(
+  '<action-id>'::uuid,
+  'INC-1234: invalid source event approved for discard'
+);
+```
+
+Discard records the database actor and reason, removes the exact rollback
+projection, marks the row superseded, and scrubs its replay payload. It must not
+be used merely to clear an unresolved provider failure.
+
+### Payload retention
+
+- Replay event data is capped at 512 KiB by both the service and a database
+  constraint. Producers must store only fields required by the target handler.
+- Queue and audit storage, backups, and replicas must remain encrypted under the
+  Cloud SQL project encryption policy; verify that control before activation.
+- Unresolved dead-letter payloads must be reviewed within 30 days. Alert on
+  `status='dead_letter' AND updated_at < now() - interval '30 days'`, then either
+  replay after verifying the provider outcome or use the audited discard path
+  after business approval. Never automatically delete unresolved rows.
+- Published, superseded, and reviewed-discard rows are scrubbed immediately;
+  audit metadata is retained without the event payload.
+
 ## Rollback to a legacy drain
 
 Do not send traffic to a rollback revision while a normalized action is
@@ -131,7 +158,8 @@ acknowledgement is still uncertain.
    ```
 
 3. Require `safe_to_resume_legacy=true`. Publishing, dead-letter, previously
-   attempted queued, and audited-but-unsettled replay rows all block rollback.
+   attempted queued, audited-but-unsettled replay rows, missing fresh queue
+   projections, and stale terminal projections all block rollback.
 4. If blocked, do not roll back. Re-enable the current revision, investigate
    dead letters, use the audited replay procedure where required, and let the
    normalized stable-ID path publish and acknowledge every uncertain action.
@@ -149,7 +177,7 @@ succeeded just before an acknowledgement failure.
 
 | File                                                   | Responsibility                                      |
 | ------------------------------------------------------ | --------------------------------------------------- |
-| `db/migrations/000040_*` through `000045_*`            | Queue schema, indexes, runtime access, and rollback |
+| `db/migrations/000040_*` through `000046_*`            | Queue schema, indexes, runtime access, and rollback |
 | `src/lib/services/pending-actions.ts`                  | Validation, enqueue, claim, acknowledgement, retry  |
 | `src/lib/sql/pending-actions/`                         | Atomic PostgreSQL queue operations                  |
 | `src/inngest/functions/drain-pending-actions.ts`       | Scheduled import, batch publication, and metrics    |
