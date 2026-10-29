@@ -27,8 +27,10 @@ Dependencies use these states:
 - `resolved`: the later order replay succeeded
 - `manual_review`: expired, non-inventory failure, or exhausted recovery
 
-Exact lease tokens prevent a stale worker from acknowledging another worker's claim. Expired leases
-return to `parked`; expired dependencies move to `manual_review` and are never silently deleted.
+Exact lease tokens prevent a stale worker from acknowledging another worker's claim. Dependency
+leases are transaction-local during reservation; an interrupted transaction rolls them back to
+`parked`. Expired drain-request leases are requeued with a fresh durable dispatch identity, while
+expired dependencies move to `manual_review` and are never silently deleted.
 
 ## Drain entry points
 
@@ -40,17 +42,19 @@ The same validated request model supports:
 - date, order and SKU filters; and
 - evidence-only dry runs.
 
-Live and dry-run requests use separate lanes. For one lane and canonical inventory key, the database
-stores at most one active request and one coalesced successor. A newer observation refreshes the
-successor rather than creating unbounded runs.
+For one live lane and canonical inventory key, the database stores at most one active request and one
+coalesced successor. A newer observation refreshes the successor rather than creating unbounded
+runs. Dry-run previews use a separate in-memory lane identity and are never inserted into the request
+or outbox tables.
 
 ## FIFO and quantity allocation
 
-Live drains claim bounded candidate orders oldest first with `FOR UPDATE SKIP LOCKED`. Before an
-order is replayed, the worker reads current inventory for every unresolved dependency on that order.
-The transaction reserves required quantities from a drain-local availability budget, so two workers
-cannot allocate the same observation. An order with multiple blocked lines is replayed only when all
-of them can be satisfied.
+Live drains load a bounded oldest-first candidate set, acquire transaction-level advisory locks for
+every canonical provider/warehouse/SKU key, and then revalidate dependency status, cooldown, expiry
+and version under order locks. Provider availability is read while those inventory locks are held,
+and outstanding `retrying` quantities are reserved before allocation. An order with multiple blocked
+lines is replayed only when all of them can be satisfied, including when independent drain lanes
+compete for the same provider quantity.
 
 Dry runs execute the same selection algorithm but never mutate dependencies, requests, orders or
 outbox rows.
@@ -78,10 +82,11 @@ outbox rows.
    window is complete.
 
 The authenticated `POST /api/operations/oos-drain` endpoint supports provider/warehouse/SKU,
-order/store and parked-date filters. Set `dryRun: true` for selection evidence without dependency,
-request, order or retry-outbox mutation. Queue depth, oldest due age, retries, manual-review work,
-expired leases and exhausted outbox entries are returned by the authenticated operations health
-view.
+order/store and parked-date filters. It requires trusted `x-actor-id` and `x-actor-email` identity
+headers plus a UUID `requestId` and a 10–1000 character `reason` in the strict JSON body. Set
+`dryRun: true` for selection evidence without dependency, request, order or retry-outbox mutation.
+Queue depth, oldest due age, retries, manual-review work, expired leases and exhausted outbox entries
+are returned by the authenticated operations health view.
 
 ## Acceptance criteria
 
