@@ -289,6 +289,7 @@ export type BackorderResolvedEvent = {
   data: {
     shopifyOrderId: string;
     shopifyOrderName: string;
+    shopifyStore: string;
     resolvedAt: string;
     resolution: "fulfilled" | "cancelled" | "manual";
   };
@@ -299,6 +300,8 @@ export type BackorderRetryEvent = {
   data: {
     shopifyOrderId: string;
     shopifyOrderName: string;
+    /** Store hint used to serialize and replay the order on the correct Shopify shop. */
+    shopifyStore?: string;
     d365OrderNumber: string;
     warehouse: string;
     retryCount: number;

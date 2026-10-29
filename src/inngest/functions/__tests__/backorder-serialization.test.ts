@@ -173,7 +173,10 @@ describe("backorder recovery serialization", () => {
     expect(mocks.registrations).toHaveLength(2);
     expect(mocks.registrations[0].options.triggers).toEqual([{ event: "backorder/created" }]);
     expect(mocks.registrations[0].options.cancelOn).toEqual([
-      { event: "backorder/resolved", match: "data.shopifyOrderId" },
+      {
+        event: "backorder/resolved",
+        if: "async.data.shopifyOrderId == event.data.shopifyOrderId && async.data.shopifyStore == event.data.shopifyStore",
+      },
     ]);
     expect(mocks.registrations[1].options.triggers).toEqual([{ event: "backorder/retry" }]);
     for (const registration of mocks.registrations) {
@@ -202,7 +205,10 @@ describe("backorder recovery serialization", () => {
     expect(mocks.createOutboundOrder).toHaveBeenCalledTimes(1);
     expect(mocks.releaseLease).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "backorder-retry:manual-retry-1:resolved" })
+      expect.objectContaining({
+        id: "backorder-retry:manual-retry-1:resolved",
+        data: expect.objectContaining({ shopifyStore: "lease-test.myshopify.com" }),
+      })
     );
   });
 
