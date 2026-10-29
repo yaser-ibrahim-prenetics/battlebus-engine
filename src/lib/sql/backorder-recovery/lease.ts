@@ -23,6 +23,36 @@ export const acquireBackorderRecoveryLeaseSQL = `
   RETURNING shopify_store, order_id, lease_token, lease_expires_at
 `;
 
+export const readBackorderRecoveryLeaseSQL = `
+  SELECT lease_expires_at
+  FROM public.backorder_recovery_leases
+  WHERE shopify_store = $1
+    AND order_id = $2
+`;
+
+export const renewBackorderRecoveryLeaseSQL = `
+  UPDATE public.backorder_recovery_leases
+  SET lease_token = $3,
+      lease_expires_at = now() + make_interval(secs => $4),
+      acquired_at = CASE
+        WHEN lease_token IS NULL OR lease_expires_at <= now() THEN now()
+        ELSE acquired_at
+      END,
+      released_at = NULL,
+      updated_at = now()
+  WHERE shopify_store = $1
+    AND order_id = $2
+    AND (
+      lease_token = $3
+      OR (
+        (lease_token IS NULL OR lease_expires_at <= now())
+        AND last_operation_key = $5
+        AND last_lease_owner = $6
+      )
+    )
+  RETURNING shopify_store, order_id, lease_token, lease_expires_at
+`;
+
 export const releaseBackorderRecoveryLeaseSQL = `
   UPDATE public.backorder_recovery_leases
   SET lease_token = NULL,

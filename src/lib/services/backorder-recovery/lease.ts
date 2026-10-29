@@ -3,21 +3,39 @@ import { randomUUID } from "node:crypto";
 import { getDatabasePool } from "@/lib/db/database";
 import {
   acquireBackorderRecoveryLeaseSQL,
+  readBackorderRecoveryLeaseSQL,
   releaseBackorderRecoveryLeaseSQL,
+  renewBackorderRecoveryLeaseSQL,
 } from "@/lib/sql/backorder-recovery/lease";
 
 export type BackorderRecoveryLease = {
   shopifyStore: string;
   orderId: string;
   token: string;
-  expiresAt: Date;
+  expiresAt: string;
+  operationKey: string;
+  owner: string;
+  leaseSeconds: number;
 };
 
 export class BackorderRecoveryBusyError extends Error {
-  constructor(shopifyStore: string, orderId: string) {
+  readonly retryAt: string;
+
+  constructor(shopifyStore: string, orderId: string, retryAt: string) {
     super(`Backorder recovery is already active for ${shopifyStore}:${orderId}`);
     this.name = "BackorderRecoveryBusyError";
+    this.retryAt = retryAt;
   }
+}
+
+export function isBackorderRecoveryBusyError(error: unknown): error is BackorderRecoveryBusyError {
+  return (
+    error instanceof BackorderRecoveryBusyError ||
+    (!!error &&
+      typeof error === "object" &&
+      (error as { name?: unknown }).name === "BackorderRecoveryBusyError" &&
+      typeof (error as { retryAt?: unknown }).retryAt === "string")
+  );
 }
 
 function required(value: string, label: string, maxLength: number): string {
@@ -64,12 +82,55 @@ export async function acquireBackorderRecoveryLease(params: {
     owner,
   ]);
 
-  if (result.rowCount !== 1) throw new BackorderRecoveryBusyError(shopifyStore, orderId);
+  if (result.rowCount !== 1) {
+    const active = await pool.query<{ lease_expires_at: Date | null }>(
+      readBackorderRecoveryLeaseSQL,
+      [shopifyStore, orderId]
+    );
+    const retryAt = active.rows[0]?.lease_expires_at;
+    throw new BackorderRecoveryBusyError(
+      shopifyStore,
+      orderId,
+      retryAt instanceof Date ? retryAt.toISOString() : new Date(Date.now() + 1_000).toISOString()
+    );
+  }
   return {
     shopifyStore: result.rows[0].shopify_store,
     orderId: result.rows[0].order_id,
     token: result.rows[0].lease_token,
-    expiresAt: result.rows[0].lease_expires_at,
+    expiresAt: result.rows[0].lease_expires_at.toISOString(),
+    operationKey,
+    owner,
+    leaseSeconds: params.leaseSeconds,
+  };
+}
+
+export async function renewBackorderRecoveryLease(
+  lease: BackorderRecoveryLease
+): Promise<BackorderRecoveryLease> {
+  const pool = await getDatabasePool();
+  if (!pool) throw new Error("Backorder recovery requires the configured PostgreSQL database");
+  const result = await pool.query<{
+    shopify_store: string;
+    order_id: string;
+    lease_token: string;
+    lease_expires_at: Date;
+  }>(renewBackorderRecoveryLeaseSQL, [
+    lease.shopifyStore,
+    lease.orderId,
+    lease.token,
+    lease.leaseSeconds,
+    lease.operationKey,
+    lease.owner,
+  ]);
+  if (result.rowCount !== 1) {
+    throw new Error(
+      `Backorder recovery lease is no longer owned for ${lease.shopifyStore}:${lease.orderId}`
+    );
+  }
+  return {
+    ...lease,
+    expiresAt: result.rows[0].lease_expires_at.toISOString(),
   };
 }
 

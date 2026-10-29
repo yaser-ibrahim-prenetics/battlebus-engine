@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import {
   acquireBackorderRecoveryLeaseSQL,
   releaseBackorderRecoveryLeaseSQL,
+  renewBackorderRecoveryLeaseSQL,
 } from "@/lib/sql/backorder-recovery/lease";
 
 const connectionString = process.env.BACKORDER_RECOVERY_TEST_DATABASE_URL;
@@ -67,6 +68,54 @@ describe.skipIf(!connectionString)("backorder recovery PostgreSQL lease", () => 
       token,
     ]);
     expect(release.rowCount).toBe(1);
+  });
+
+  it("renews or reacquires only the replay-stable lease owner", async () => {
+    const orderId = `${orderPrefix}renew`;
+    const token = randomUUID();
+    const operationKey = "retry:renew";
+    const owner = `worker:${operationKey}`;
+    expect((await acquire(orderId, token, operationKey)).rowCount).toBe(1);
+
+    const wrongRenewal = await pool.query(renewBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      randomUUID(),
+      600,
+      operationKey,
+      owner,
+    ]);
+    expect(wrongRenewal.rowCount).toBe(0);
+
+    const renewal = await pool.query(renewBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+      600,
+      operationKey,
+      owner,
+    ]);
+    expect(renewal.rowCount).toBe(1);
+
+    expect(
+      (
+        await pool.query(releaseBackorderRecoveryLeaseSQL, [
+          "lease-test.myshopify.com",
+          orderId,
+          token,
+        ])
+      ).rowCount
+    ).toBe(1);
+
+    const replayRenewal = await pool.query(renewBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+      600,
+      operationKey,
+      owner,
+    ]);
+    expect(replayRenewal.rowCount).toBe(1);
   });
 
   it("recovers a lease after its bounded expiry", async () => {
