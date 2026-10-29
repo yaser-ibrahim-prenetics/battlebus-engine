@@ -24,6 +24,10 @@ import {
   shopifyReferenceLookupCandidates,
 } from "../utils/d365-shopify-reference";
 import { logFlowEvent } from "../services/flow-logs";
+import {
+  classifyD365InventoryFailure,
+  InventoryUnavailableError,
+} from "../services/oos-recovery/inventory-failure";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -811,6 +815,18 @@ export async function createSalesOrderLine(
 
   if (!response.ok) {
     const error = await response.text();
+    const inventoryFailure = classifyD365InventoryFailure(error);
+    if (inventoryFailure) {
+      throw new InventoryUnavailableError("d365", inventoryFailure, error, [
+        {
+          provider: "d365",
+          warehouse: (shippingWarehouseId || dataAreaId).toUpperCase(),
+          sku: itemNumber.toUpperCase(),
+          orderLineId: req.sourceLineId || itemNumber,
+          quantityNeeded: quantity,
+        },
+      ]);
+    }
     throw new Error(
       `[D365] Failed to create sales order line ${itemNumber} for ${salesOrderNumber}: ${response.status} - ${error}`
     );

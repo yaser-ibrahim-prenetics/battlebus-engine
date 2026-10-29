@@ -192,6 +192,7 @@ export function toD365SalesOrderLine(
 
   return {
     salesOrderNumber,
+    sourceLineId: String(lineItem.id),
     dataAreaId,
     itemNumber,
     quantity: lineItem.quantity,

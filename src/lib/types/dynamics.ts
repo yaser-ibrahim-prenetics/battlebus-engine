@@ -77,6 +77,8 @@ export interface D365SalesOrderHeaderV3RequestForReturn {
 
 export interface D365SalesOrderLineRequest {
   salesOrderNumber?: string;
+  /** Original Shopify line identity retained for typed OOS dependency parking. */
+  sourceLineId?: string;
   dataAreaId: string;
   itemNumber: string;
   quantity: number;

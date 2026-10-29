@@ -14,6 +14,7 @@ import type { GpsOutboundOrder, GpsFulfilmentNotification } from "../types/gps";
 import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
 import { logFlowEvent } from "../services/flow-logs";
+import { InventoryUnavailableError } from "../services/oos-recovery/inventory-failure";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
 const OMS_MIN_INTERVAL_MS = Math.max(
@@ -815,13 +816,18 @@ export function classifyGpsError(msg: string | undefined): GpsInventoryErrorType
 }
 
 // Custom error for inventory-related GPS scenarios
-export class OutOfStockError extends Error {
+export class OutOfStockError extends InventoryUnavailableError {
   public readonly errorType: GpsInventoryErrorType;
 
   constructor(message: string) {
-    super(message);
+    const errorType = classifyGpsError(message);
+    super(
+      "gps",
+      errorType === "unmaintained_product" ? "unmaintained_product" : "out_of_stock",
+      message
+    );
     this.name = "OutOfStockError";
-    this.errorType = classifyGpsError(message);
+    this.errorType = errorType;
   }
 }
 
