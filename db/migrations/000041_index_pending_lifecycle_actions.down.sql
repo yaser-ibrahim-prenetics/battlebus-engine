@@ -1,0 +1,3 @@
+DROP INDEX public.pending_lifecycle_actions_order_status_idx;
+DROP INDEX public.pending_lifecycle_actions_expired_lease_idx;
+DROP INDEX public.pending_lifecycle_actions_ready_idx;

@@ -10,7 +10,7 @@ BEGIN
   INTO missing_tables
   FROM unnest(ARRAY[
     'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
-    'mission_runs', 'order_lines', 'orders', 'permissions', 'products',
+    'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'
@@ -23,7 +23,7 @@ BEGIN
 
   FOREACH table_name IN ARRAY ARRAY[
     'audit_entities', 'audit_log', 'flow_logs', 'inventory', 'locations',
-    'mission_runs', 'order_lines', 'orders', 'permissions', 'products',
+    'mission_runs', 'order_lines', 'orders', 'pending_lifecycle_actions', 'permissions', 'products',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks',
     'user_permissions', 'user_preferences', 'users', 'webhook_inbox',
     'workspace_members', 'workspaces'
@@ -172,3 +172,4 @@ ROLLBACK;
 \ir assertions_up/007_operational_history.sql
 \ir assertions_up/008_refund_allocation.sql
 \ir assertions_up/009_recovery_audit.sql
+\ir assertions_up/010_pending_lifecycle_actions.sql
