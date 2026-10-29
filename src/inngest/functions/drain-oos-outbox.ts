@@ -51,7 +51,11 @@ export const drainOosOutbox = inngest.createFunction(
       )
     );
     const entries = await step.run("claim-oos-outbox", () =>
-      claimOosOutboxEntries(config.oosRecovery.claimBatchSize, config.oosRecovery.leaseSeconds)
+      claimOosOutboxEntries(
+        config.oosRecovery.claimBatchSize,
+        config.oosRecovery.leaseSeconds,
+        config.oosRecovery.maxAttempts
+      )
     );
     let published = 0;
     let failed = 0;

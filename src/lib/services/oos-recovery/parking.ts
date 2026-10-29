@@ -11,6 +11,8 @@ export type OosRecoveryContext = {
   backorderQueue?: "sync" | "fulfilment";
   /** Atomically close a recovered provider before parking a downstream provider failure. */
   resolvedProviderBeforeParking?: InventoryProvider;
+  /** Correlates the recovered provider with the exact replay that is closing it. */
+  resolvedReplayToken?: string;
   maxRetries: number;
 };
 
@@ -103,16 +105,32 @@ export async function parkOosOrderWithClient(
   );
   const event = buildOosParkedEvent({ ...params, now });
 
+  if (
+    Boolean(params.context.resolvedProviderBeforeParking) !==
+    Boolean(params.context.resolvedReplayToken)
+  ) {
+    throw new Error("OOS downstream parking requires both a provider and replay token");
+  }
+
   if (params.context.resolvedProviderBeforeParking) {
-    await client.query(
+    const resolved = await client.query(
       `UPDATE public.oos_recovery_dependencies
        SET status = 'resolved', resolved_at = $4, cooldown_until = NULL,
          lease_owner = NULL, lease_token = NULL, lease_until = NULL,
-         last_error_code = NULL, version = version + 1
+         replay_token = NULL, last_error_code = NULL, version = version + 1
        WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND provider = $3
-         AND status IN ('parked', 'leased', 'retrying')`,
-      [first.shopifyStore, first.shopifyOrderId, params.context.resolvedProviderBeforeParking, now]
+         AND status = 'retrying' AND replay_token = $5::uuid`,
+      [
+        first.shopifyStore,
+        first.shopifyOrderId,
+        params.context.resolvedProviderBeforeParking,
+        now,
+        params.context.resolvedReplayToken,
+      ]
     );
+    if (!resolved.rowCount) {
+      throw new Error("OOS downstream parking rejected a stale replay attempt");
+    }
   }
 
   await client.query(
@@ -170,6 +188,7 @@ export async function parkOosOrderWithClient(
          lease_owner = NULL,
          lease_token = NULL,
          lease_until = NULL,
+         replay_token = NULL,
          version = public.oos_recovery_dependencies.version + 1,
          last_error_code = EXCLUDED.failure_category
        RETURNING id`,

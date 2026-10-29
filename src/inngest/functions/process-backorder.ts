@@ -138,6 +138,30 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         )
       : null;
   const isTargetedRecovery = event.data.targetedRecovery === true || storedOosContext !== null;
+  let oosRecoveryAttemptToken =
+    (typeof event.data.oosRecoveryAttemptToken === "string" &&
+      event.data.oosRecoveryAttemptToken.trim()) ||
+    storedOosContext?.attemptToken ||
+    null;
+  const requireOosRecoveryAttemptToken = (): string => {
+    if (!oosRecoveryAttemptToken) {
+      throw new NonRetriableError("Targeted OOS recovery is missing its replay attempt token");
+    }
+    return oosRecoveryAttemptToken;
+  };
+  const beginManualOosRecoveryAttempt = async (stepId: string) => {
+    const token = await step.run(stepId, () =>
+      rearmManualReviewOosDependencies({
+        shopifyStore: shop,
+        orderId: String(shopifyOrderId),
+        retentionDays: config.oosRecovery.retentionDays,
+      })
+    );
+    if (!token) {
+      throw new NonRetriableError("Targeted OOS recovery could not start a replay attempt");
+    }
+    oosRecoveryAttemptToken = token;
+  };
   const backorderQueueTag = event.data.backorderQueue;
   const manualRetryOnly = !autoRetryEnabled;
   const defaultFailureSystem: "d365" | "gps" | "validation" =
@@ -197,17 +221,19 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
   if (effectiveRetryMode === "gps_outbound" && !config.features.dryRunMode) {
     const segmented = await readPlan(shop, String(shopifyOrderId));
-    if (segmented && isManualRetryRequest) {
+    if (
+      segmented &&
+      isManualRetryRequest &&
+      !(Array.isArray(event.data.runSequence) && event.data.runSequence.length > 0)
+    ) {
       const lease = await acquireLease("segment-recovery");
       try {
-        if (storedOosContext?.manualReview && isHubManualRetry) {
-          await step.run("rearm-segment-manual-review-oos-dependencies", () =>
-            rearmManualReviewOosDependencies({
-              shopifyStore: shop,
-              orderId: String(shopifyOrderId),
-              retentionDays: config.oosRecovery.retentionDays,
-            })
-          );
+        if (
+          isHubManualRetry &&
+          storedOosContext &&
+          (storedOosContext.manualReview || !oosRecoveryAttemptToken)
+        ) {
+          await beginManualOosRecoveryAttempt("rearm-segment-manual-review-oos-dependencies");
         }
         const ensureLease = () => renewBackorderRecoveryLease(lease);
         const ensureEligible = () =>
@@ -237,6 +263,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
             resolveOosDependencies({
               shopifyStore: shop,
               orderId: String(shopifyOrderId),
+              attemptToken: requireOosRecoveryAttemptToken(),
               includeManualReview: true,
             })
           );
@@ -262,6 +289,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               reparkOosDependencies({
                 shopifyStore: shop,
                 orderId: String(shopifyOrderId),
+                attemptToken: requireOosRecoveryAttemptToken(),
                 cooldownSeconds: config.oosRecovery.cooldownSeconds,
                 maxAttempts: config.oosRecovery.maxAttempts,
                 errorCode: "inventory_unavailable",
@@ -272,6 +300,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               moveOosDependenciesToManualReview({
                 shopifyStore: shop,
                 orderId: String(shopifyOrderId),
+                attemptToken: requireOosRecoveryAttemptToken(),
                 errorCode: "segment_replay_failure",
               })
             );
@@ -282,7 +311,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         await step.run("release-segment-recovery-lease", () => releaseLease(lease));
       }
     }
-    if (segmented)
+    if (segmented && !(Array.isArray(event.data.runSequence) && event.data.runSequence.length > 0))
       return {
         status: "segment_recovery_required",
         reason:
@@ -318,6 +347,13 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     ? (event.data.runSequence as RunSequenceStage[])
     : [];
   if (incomingSequence.length > 0 && event.name === "backorder/retry") {
+    if (
+      isHubManualRetry &&
+      storedOosContext &&
+      (storedOosContext.manualReview || !oosRecoveryAttemptToken)
+    ) {
+      await beginManualOosRecoveryAttempt("rearm-sequenced-oos-dependencies");
+    }
     const lease = await acquireLease("sequenced-rerun");
     const result = await step.run("dispatch-sequenced-rerun", async () => {
       await renewBackorderRecoveryLease(lease);
@@ -339,6 +375,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         shopifyStore: shop,
         inngestRunId: _runId || undefined,
         oosRecoveryReplay: isTargetedRecovery,
+        oosRecoveryAttemptToken: oosRecoveryAttemptToken ?? undefined,
       });
     });
     await step.run("release-sequenced-rerun-lease", () => releaseLease(lease));
@@ -458,14 +495,12 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
   if (isManualRetryRequest) {
     const manualAttempt = retryCount + 1;
     const lease = await acquireLease(`manual-retry:${manualAttempt}`);
-    if (storedOosContext?.manualReview && isHubManualRetry) {
-      await step.run("rearm-manual-review-oos-dependencies", () =>
-        rearmManualReviewOosDependencies({
-          shopifyStore: shop,
-          orderId: String(shopifyOrderId),
-          retentionDays: config.oosRecovery.retentionDays,
-        })
-      );
+    if (
+      isHubManualRetry &&
+      storedOosContext &&
+      (storedOosContext.manualReview || !oosRecoveryAttemptToken)
+    ) {
+      await beginManualOosRecoveryAttempt("rearm-manual-review-oos-dependencies");
     }
     const retryResult = await step.run(`manual-retry-gps-order-${manualAttempt}`, async () => {
       await renewBackorderRecoveryLease(lease);
@@ -574,6 +609,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: true,
+              oosRecoveryAttemptToken: requireOosRecoveryAttemptToken(),
             },
           });
           return { success: true, replayDispatched: true, deferResolution: true };
@@ -589,6 +625,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: isTargetedRecovery,
+              oosRecoveryAttemptToken: isTargetedRecovery
+                ? requireOosRecoveryAttemptToken()
+                : undefined,
             },
           });
           return {
@@ -622,6 +661,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               receivedAt: new Date().toISOString(),
               fromBackorderRetry: true,
               oosRecoveryReplay: isTargetedRecovery,
+              oosRecoveryAttemptToken: isTargetedRecovery
+                ? requireOosRecoveryAttemptToken()
+                : undefined,
             },
           });
 
@@ -691,6 +733,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           resolveOosDependencies({
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
+            attemptToken: requireOosRecoveryAttemptToken(),
           })
         );
       }
@@ -763,6 +806,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           reparkOosDependencies({
             shopifyStore: shop,
             orderId: String(shopifyOrderId),
+            attemptToken: requireOosRecoveryAttemptToken(),
             cooldownSeconds: config.oosRecovery.cooldownSeconds,
             maxAttempts: config.oosRecovery.maxAttempts,
             errorCode: "inventory_unavailable",
@@ -802,6 +846,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         moveOosDependenciesToManualReview({
           shopifyStore: shop,
           orderId: String(shopifyOrderId),
+          attemptToken: requireOosRecoveryAttemptToken(),
           errorCode: "non_inventory_retry_failure",
         })
       );
@@ -885,6 +930,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: isTargetedRecovery,
+              oosRecoveryAttemptToken: isTargetedRecovery
+                ? requireOosRecoveryAttemptToken()
+                : undefined,
             },
           });
           return {
@@ -922,6 +970,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               receivedAt: new Date().toISOString(),
               fromBackorderRetry: true,
               oosRecoveryReplay: isTargetedRecovery,
+              oosRecoveryAttemptToken: isTargetedRecovery
+                ? requireOosRecoveryAttemptToken()
+                : undefined,
             },
           });
 

@@ -29,6 +29,8 @@ export type AdvanceRunSequenceParams = {
   inngestIdempotencyKey?: string;
   /** Keep targeted OOS rows open until the final dispatched stage reports its outcome. */
   oosRecoveryReplay?: boolean;
+  /** Keep every stage correlated to the targeted OOS attempt that dispatched the chain. */
+  oosRecoveryAttemptToken?: string;
   /** Stages already completed in this chain — used to render full timeline. */
   history?: RunSequenceStage[];
 };
@@ -83,6 +85,7 @@ export async function advanceRunSequence(
     inngestRunId,
     inngestIdempotencyKey,
     oosRecoveryReplay = false,
+    oosRecoveryAttemptToken,
     history = [],
   } = params;
   const canonicalShopifyStore = resolveShopifyAdminCredentials(shopifyStore).shopDomain;
@@ -138,6 +141,7 @@ export async function advanceRunSequence(
         runSequence: rest,
         fromSequencedRetry: true,
         oosRecoveryReplay,
+        oosRecoveryAttemptToken,
       },
     });
   } else if (nextStage.eventName === "shopify/order.fulfilled") {
@@ -163,6 +167,7 @@ export async function advanceRunSequence(
         fromSequencedRetry: true,
         fromBackorderRetry: true,
         oosRecoveryReplay,
+        oosRecoveryAttemptToken,
       },
     });
   } else if (nextStage.eventName === "backorder/retry") {
@@ -179,6 +184,7 @@ export async function advanceRunSequence(
         runSequence: rest,
         targetedRecovery: oosRecoveryReplay,
         oosRecoveryReplay,
+        oosRecoveryAttemptToken,
       },
     });
   }

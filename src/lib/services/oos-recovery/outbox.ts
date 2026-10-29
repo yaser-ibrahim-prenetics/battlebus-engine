@@ -1,9 +1,6 @@
 import { getDatabasePool } from "@/lib/db/database";
 
-export type OosOutboxEventName =
-  | "backorder/created"
-  | "backorder/retry"
-  | "oos/drain.requested";
+export type OosOutboxEventName = "backorder/created" | "backorder/retry" | "oos/drain.requested";
 
 export type ClaimedOosOutboxEntry = {
   id: string;
@@ -20,7 +17,8 @@ export function oosOutboxRetryDelaySeconds(attempt: number): number {
 
 export async function claimOosOutboxEntries(
   limit: number,
-  leaseSeconds: number
+  leaseSeconds: number,
+  maxAttempts: number
 ): Promise<ClaimedOosOutboxEntry[]> {
   const pool = await getDatabasePool();
   if (!pool) throw new Error("OOS outbox requires the configured PostgreSQL database");
@@ -32,14 +30,29 @@ export async function claimOosOutboxEntries(
     attempt_count: number;
     lease_token: string;
   }>(
-    `WITH candidates AS (
+    `WITH exhausted_candidates AS (
        SELECT id
        FROM public.oos_recovery_outbox
-       WHERE (
-         status IN ('queued', 'failed') AND next_attempt_at <= now()
-       ) OR (
-         status = 'leased' AND lease_until <= now()
-       )
+       WHERE status = 'leased' AND lease_until <= now() AND attempt_count >= $3
+       ORDER BY lease_until, created_at, id
+       FOR UPDATE SKIP LOCKED
+       LIMIT $1
+     ),
+     exhausted AS (
+       UPDATE public.oos_recovery_outbox AS outbox
+       SET status = 'failed', next_attempt_at = 'infinity'::timestamptz,
+         lease_token = NULL, lease_until = NULL,
+         last_error_code = 'lease_attempts_exhausted'
+       FROM exhausted_candidates
+       WHERE outbox.id = exhausted_candidates.id
+       RETURNING outbox.id
+     ),
+     candidates AS (
+       SELECT id
+       FROM public.oos_recovery_outbox
+       WHERE attempt_count < $3
+         AND ((status IN ('queued', 'failed') AND next_attempt_at <= now())
+           OR (status = 'leased' AND lease_until <= now()))
        ORDER BY next_attempt_at, created_at, id
        FOR UPDATE SKIP LOCKED
        LIMIT $1
@@ -53,7 +66,11 @@ export async function claimOosOutboxEntries(
      WHERE outbox.id = candidates.id
      RETURNING outbox.id, outbox.event_id, outbox.event_name, outbox.event_data,
        outbox.attempt_count, outbox.lease_token`,
-    [Math.max(1, Math.min(500, limit)), Math.max(30, Math.min(1800, leaseSeconds))]
+    [
+      Math.max(1, Math.min(500, limit)),
+      Math.max(30, Math.min(1800, leaseSeconds)),
+      Math.max(1, maxAttempts),
+    ]
   );
   return result.rows.map((row) => ({
     id: row.id,
