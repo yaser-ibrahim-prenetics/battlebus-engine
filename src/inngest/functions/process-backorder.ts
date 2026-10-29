@@ -26,10 +26,11 @@ import { loadEligibleRecoveryOrder } from "@/lib/services/order-segments/recover
 import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
 import * as gps from "@/lib/clients/gps";
+import * as dynamics from "@/lib/clients/dynamics";
 import * as slack from "@/lib/clients/slack";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { getOrderMetafields, setGpsOrderMetafield } from "@/lib/clients/shopify";
-import { toGpsOutboundOrder } from "@/lib/transformers/order";
+import { toD365SalesOrderLines, toGpsOutboundOrder } from "@/lib/transformers/order";
 import { getIm8ShortAddressFromMetafields } from "@/lib/transformers/address";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { RETRY_CONFIGS, BACKORDER_CONFIGS } from "@/lib/utils/constants";
@@ -44,6 +45,12 @@ import {
   renewBackorderRecoveryLease,
   type BackorderRecoveryLease,
 } from "@/lib/services/backorder-recovery/lease";
+import {
+  moveOosDependenciesToManualReview,
+  reparkOosDependencies,
+  resolveOosDependencies,
+} from "@/lib/services/oos-recovery/outcomes";
+import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
 
 type LeaseAcquisitionResult =
   | { status: "acquired"; lease: BackorderRecoveryLease }
@@ -115,6 +122,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     event.name === "backorder/retry" ||
     event.data.triggeredBy === "manual" ||
     event.data.triggeredBy === "manual_bulk";
+  const isTargetedRecovery = event.data.targetedRecovery === true;
   const backorderQueueTag = event.data.backorderQueue;
   const manualRetryOnly = !autoRetryEnabled;
   const defaultFailureSystem: "d365" | "gps" | "validation" =
@@ -339,6 +347,17 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
     });
   }
 
+  // Inventory observations, not per-order timers, own retries for targeted recovery.
+  if (event.name === "backorder/created" && isTargetedRecovery) {
+    return {
+      status: "parked_targeted_recovery",
+      shopifyOrderId,
+      shopifyOrderName,
+      errorType,
+      processedAt: new Date().toISOString(),
+    };
+  }
+
   // Manual-only mode: orders stay parked until Hub explicitly requests retry.
   if (manualRetryOnly && !isManualRetryRequest) {
     await step.run("notify-backorder-parked-manual-only", async () => {
@@ -374,6 +393,61 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         const order = freshOrder as unknown as ShopifyOrderPayload;
 
         const d365NumManual = String(d365OrderNumber || "").trim();
+        if (isTargetedRecovery && event.data.failureSystem === "d365") {
+          if (!d365NumManual) {
+            return {
+              success: false,
+              error: "Targeted D365 retry is missing the sales order number",
+              isInventoryError: false,
+            };
+          }
+          const blockedLineIds = new Set(
+            Array.isArray(event.data.blockedLineIds)
+              ? event.data.blockedLineIds.map((id: unknown) => String(id))
+              : []
+          );
+          if (blockedLineIds.size === 0) {
+            return {
+              success: false,
+              error: "Targeted D365 retry is missing blocked Shopify line identifiers",
+              isInventoryError: false,
+            };
+          }
+          const accounting = await loadOrderAccounting(order, shop);
+          const blockedLines = toD365SalesOrderLines(
+            order,
+            d365NumManual,
+            warehouse,
+            false,
+            warehouse,
+            accounting,
+            false
+          ).filter((line) => line.sourceLineId && blockedLineIds.has(line.sourceLineId));
+          if (blockedLines.length === 0) {
+            return {
+              success: false,
+              error: "Targeted D365 retry could not reconstruct any blocked order lines",
+              isInventoryError: false,
+            };
+          }
+          for (const line of blockedLines) {
+            await dynamics.createSalesOrderLine(line);
+          }
+          await dynamics.confirmSalesOrder(d365NumManual, warehouse);
+          await dynamics.createPrepayment(d365NumManual, warehouse);
+          await inngest.send({
+            id: `backorder-retry:${event.id}:shopify-order-paid-after-d365`,
+            name: "shopify/order.paid",
+            data: {
+              shopifyOrderId: String(shopifyOrderId),
+              shopifyOrderName,
+              shopifyStore: shop,
+              orderJson: order,
+              receivedAt: new Date().toISOString(),
+            },
+          });
+          return { success: true, replayDispatched: true };
+        }
         if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid`,
@@ -447,13 +521,23 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           success: false,
           error: msg,
           isInventoryError:
-            effectiveRetryMode === "fulfillment_replay" ? false : gps.isGpsInventoryError(msg),
+            effectiveRetryMode === "fulfillment_replay"
+              ? false
+              : isInventoryUnavailableError(error) || gps.isGpsInventoryError(msg),
         };
       }
     });
     await step.run(`release-manual-retry-lease-${manualAttempt}`, () => releaseLease(lease));
 
     if (retryResult.success) {
+      if (isTargetedRecovery) {
+        await step.run("resolve-targeted-oos-dependencies", () =>
+          resolveOosDependencies({
+            shopifyStore: shop,
+            orderId: String(shopifyOrderId),
+          })
+        );
+      }
       await step.run("notify-backorder-resolved-manual", async () => {
         const paidReplay =
           effectiveRetryMode === "gps_outbound" && !!(retryResult as any).replayDispatched;
@@ -518,6 +602,17 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
     // Still inventory-related: keep parked in queue, no automatic requeue.
     if (retryResult.isInventoryError) {
+      if (isTargetedRecovery) {
+        await step.run("repark-targeted-oos-dependencies", () =>
+          reparkOosDependencies({
+            shopifyStore: shop,
+            orderId: String(shopifyOrderId),
+            cooldownSeconds: config.oosRecovery.cooldownSeconds,
+            maxAttempts: config.oosRecovery.maxAttempts,
+            errorCode: "inventory_unavailable",
+          })
+        );
+      }
       await step.run("notify-hub-manual-retry-still-backorder", async () => {
         await csPlatform.sendOrderUpdate(
           {
@@ -544,6 +639,16 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         retryCount: manualAttempt,
         processedAt: new Date().toISOString(),
       };
+    }
+
+    if (isTargetedRecovery) {
+      await step.run("manual-review-targeted-oos-dependencies", () =>
+        moveOosDependenciesToManualReview({
+          shopifyStore: shop,
+          orderId: String(shopifyOrderId),
+          errorCode: "non_inventory_retry_failure",
+        })
+      );
     }
 
     await step.run("notify-manual-retry-non-inventory-error", async () => {

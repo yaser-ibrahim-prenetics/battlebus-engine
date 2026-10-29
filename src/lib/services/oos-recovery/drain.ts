@@ -239,6 +239,8 @@ function buildRetryEvent(rows: OosDependencyRow[]) {
       failureSystem: first.provider,
       retryMode: first.retryMode,
       backorderQueue: first.backorderQueue,
+      targetedRecovery: true,
+      blockedLineIds: [...new Set(rows.map((row) => row.orderLineId))].sort(),
     },
   };
 }
@@ -322,10 +324,7 @@ async function queueSelectedOrders(
   return selected;
 }
 
-async function queueSweepKeys(
-  client: PoolClient,
-  request: OosDrainRequest
-): Promise<number> {
+async function queueSweepKeys(client: PoolClient, request: OosDrainRequest): Promise<number> {
   const result = await client.query<{
     provider: InventoryProvider;
     warehouse: string;

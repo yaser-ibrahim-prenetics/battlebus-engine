@@ -32,8 +32,31 @@ describe("OOS parking event", () => {
       errorMessage: "Inventory dependency parked for targeted recovery",
       failedSkus: ["SKU-1"],
       failureSystem: "gps",
+      targetedRecovery: true,
     });
     expect(JSON.stringify(first)).not.toContain("address");
+  });
+
+  it("maps D365 item failures to the existing backorder event contract", () => {
+    const event = buildOosParkedEvent({
+      dependencies: [
+        {
+          provider: "d365",
+          warehouse: "U001",
+          sku: "SKU-1",
+          orderLineId: "line-1",
+          quantityNeeded: 1,
+          shopifyOrderId: "42",
+          shopifyOrderName: "IM8-42",
+          shopifyStore: "im8health.myshopify.com",
+          safeFailureCategory: "item_not_found",
+        },
+      ],
+      context: { maxRetries: 7 },
+      retentionDays: 30,
+    });
+
+    expect(event.data.errorType).toBe("d365_item_not_found");
   });
 
   it("rejects mixed orders", () => {

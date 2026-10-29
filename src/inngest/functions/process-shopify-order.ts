@@ -78,6 +78,13 @@ import { orderChannel } from "../channels";
 import { SlackChannelEnum } from "@/lib/types/slack";
 import { NonRetriableError } from "inngest";
 import { logFlowEvent, flushAll as flushFlowLogs } from "@/lib/services/flow-logs";
+import {
+  InventoryUnavailableError,
+  isInventoryUnavailableError,
+  toInventoryDependencies,
+  type InventoryFailureCategory,
+} from "@/lib/services/oos-recovery/inventory-failure";
+import { parkOosOrder } from "@/lib/services/oos-recovery/parking";
 
 function selectPreferredFulfillmentLocationId(fulfillmentOrders: any[]): number | null {
   const activeOrders = fulfillmentOrders.filter(
@@ -183,6 +190,17 @@ function inferInventoryErrorType(message: string): string {
     return "unmaintained_product";
   }
   return "out_of_stock";
+}
+
+function gpsInventoryFailure(message: string): InventoryUnavailableError {
+  const classified = classifyGpsError(message);
+  const category: InventoryFailureCategory =
+    classified === "unmaintained_product"
+      ? "unmaintained_product"
+      : classified === "inventory_insufficient"
+        ? "inventory_insufficient"
+        : "out_of_stock";
+  return new InventoryUnavailableError("gps", category, message);
 }
 
 function isServiceSkuItemNumber(itemNumber?: string | null): boolean {
@@ -1111,7 +1129,7 @@ export const processShopifyOrder = inngest.createFunction(
             );
           }
 
-          const lineResults = await Promise.all(
+          const settledLineResults = await Promise.allSettled(
             lineItems.map((line) =>
               (async () => {
                 try {
@@ -1149,6 +1167,39 @@ export const processShopifyOrder = inngest.createFunction(
               })()
             )
           );
+          const inventoryFailures = settledLineResults
+            .filter(
+              (result): result is PromiseRejectedResult =>
+                result.status === "rejected" && isInventoryUnavailableError(result.reason)
+            )
+            .map((result) => result.reason);
+          if (inventoryFailures.length > 0) {
+            const category = inventoryFailures.some(
+              (failure) => failure.category === "inventory_insufficient"
+            )
+              ? "inventory_insufficient"
+              : inventoryFailures[0].category;
+            throw new InventoryUnavailableError(
+              "d365",
+              category,
+              "D365 rejected one or more order lines for inventory availability",
+              inventoryFailures.flatMap((failure) => failure.blockedItems)
+            );
+          }
+          const otherFailure = settledLineResults.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected"
+          );
+          if (otherFailure) throw otherFailure.reason;
+          const lineResults = settledLineResults
+            .filter(
+              (
+                result
+              ): result is PromiseFulfilledResult<
+                | { skipped: false; itemNumber: string; inventoryLotId: string }
+                | { skipped: true; itemNumber: string; error: string }
+              > => result.status === "fulfilled"
+            )
+            .map((result) => result.value);
 
           const skippedServiceLines = lineResults.filter((r) => r.skipped);
           for (const r of lineResults) {
@@ -1711,6 +1762,26 @@ export const processShopifyOrder = inngest.createFunction(
           );
 
           await step.run("emit-backorder-event-existing-d365-oos", async () => {
+            if (config.oosRecovery.enabled) {
+              await parkOosOrder({
+                dependencies: toInventoryDependencies({
+                  error: gpsInventoryFailure(oosError),
+                  order,
+                  shopifyStore: canonicalShopifyStore,
+                  warehouse: warehouseName,
+                }),
+                context: {
+                  d365OrderNumber: reusedSalesOrderNumber,
+                  sourceEventName: "shopify/order.paid",
+                  failureStage: "order_creation",
+                  retryMode: "gps_outbound",
+                  backorderQueue: "sync",
+                  maxRetries: config.oosRecovery.maxAttempts,
+                },
+                retentionDays: config.oosRecovery.retentionDays,
+              });
+              return;
+            }
             await inngest.send({
               name: "backorder/created",
               data: {
@@ -1940,6 +2011,26 @@ export const processShopifyOrder = inngest.createFunction(
         );
 
         await step.run("emit-backorder-event", async () => {
+          if (config.oosRecovery.enabled) {
+            await parkOosOrder({
+              dependencies: toInventoryDependencies({
+                error: gpsInventoryFailure(oosError),
+                order,
+                shopifyStore: canonicalShopifyStore,
+                warehouse: warehouseName,
+              }),
+              context: {
+                d365OrderNumber: salesOrderNumber,
+                sourceEventName: "shopify/order.paid",
+                failureStage: "order_creation",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+                maxRetries: config.oosRecovery.maxAttempts,
+              },
+              retentionDays: config.oosRecovery.retentionDays,
+            });
+            return;
+          }
           await inngest.send({
             name: "backorder/created",
             data: {
@@ -2182,16 +2273,41 @@ export const processShopifyOrder = inngest.createFunction(
                 : "processing_error";
 
       // Route all inventory-related failures (GPS or D365 reservation issues) to backorder queue.
-      if (isInventoryIssueError(errorMsg)) {
-        const inventoryErrorType = inferInventoryErrorType(errorMsg);
+      if (isInventoryUnavailableError(error) || isInventoryIssueError(errorMsg)) {
+        const inventoryErrorType = isInventoryUnavailableError(error)
+          ? error.category === "item_not_found"
+            ? "d365_item_not_found"
+            : error.category
+          : inferInventoryErrorType(errorMsg);
         const failedSkus =
           order?.line_items?.map((p: { sku?: string }) => p.sku || "unknown").filter(Boolean) || [];
 
         await step.run("emit-backorder-event-on-catch", async () => {
-          const failureSystem: "d365" | "gps" =
-            normalizedError.includes("d365") || normalizedError.includes("dynamics")
+          const failureSystem: "d365" | "gps" = isInventoryUnavailableError(error)
+            ? error.provider
+            : normalizedError.includes("d365") || normalizedError.includes("dynamics")
               ? "d365"
               : "gps";
+          if (config.oosRecovery.enabled && isInventoryUnavailableError(error)) {
+            await parkOosOrder({
+              dependencies: toInventoryDependencies({
+                error,
+                order,
+                shopifyStore: canonicalShopifyStore,
+                warehouse: error.provider === "d365" ? dataAreaId : warehouseName,
+              }),
+              context: {
+                d365OrderNumber: salesOrderNumber,
+                sourceEventName: "shopify/order.paid",
+                failureStage: "order_creation",
+                retryMode: "gps_outbound",
+                backorderQueue: "sync",
+                maxRetries: config.oosRecovery.maxAttempts,
+              },
+              retentionDays: config.oosRecovery.retentionDays,
+            });
+            return;
+          }
           await inngest.send({
             name: "backorder/created",
             data: {
@@ -2235,8 +2351,9 @@ export const processShopifyOrder = inngest.createFunction(
               state: {
                 failureContext: {
                   stage: "order_creation",
-                  system:
-                    normalizedError.includes("d365") || normalizedError.includes("dynamics")
+                  system: isInventoryUnavailableError(error)
+                    ? error.provider
+                    : normalizedError.includes("d365") || normalizedError.includes("dynamics")
                       ? "d365"
                       : "gps",
                   sourceEventName: "shopify/order.paid",

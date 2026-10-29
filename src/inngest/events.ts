@@ -260,6 +260,7 @@ export type BackorderCreatedEvent = {
       | "unmaintained_product"
       | "gps_error"
       | "inventory_insufficient"
+      | "d365_item_not_found"
       | "d365_fulfillment_error"
       | "d365_fulfilment_incomplete"
       | "order_validation";
@@ -281,6 +282,8 @@ export type BackorderCreatedEvent = {
     retryMode?: "gps_outbound" | "fulfillment_replay";
     /** Hub Backorders sub-queue tag used for route segmentation and replay policy. */
     backorderQueue?: "sync" | "fulfilment";
+    /** Targeted OOS recovery owns wake-ups for this parked order. */
+    targetedRecovery?: boolean;
   };
 };
 
@@ -315,6 +318,10 @@ export type BackorderRetryEvent = {
     retryMode?: "gps_outbound" | "fulfillment_replay";
     /** Hub Backorders sub-queue — stored in order state via CS platform update. */
     backorderQueue?: "sync" | "fulfilment";
+    /** This retry was selected by the durable targeted OOS allocator. */
+    targetedRecovery?: boolean;
+    /** Exact original Shopify lines selected for a D365 inventory retry. */
+    blockedLineIds?: string[];
     /**
      * Optional ordered list of pipeline stages to run when an order needs
      * multiple Inngest runs back-to-back (e.g. order_creation → fulfillment_replay).
