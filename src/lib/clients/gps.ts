@@ -15,7 +15,7 @@ import warehouseConfig from "../mappings/warehouse-config.json";
 import { gpsSimulationStore } from "../stores/gps-simulation";
 import { logFlowEvent } from "../services/flow-logs";
 import { InventoryUnavailableError } from "../services/oos-recovery/inventory-failure";
-import { withProviderCapacity } from "../services/provider-capacity";
+import { withProviderCapacity } from "@/lib/services/provider-capacity";
 
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "50", 10);
 const OMS_MIN_INTERVAL_MS = Math.max(

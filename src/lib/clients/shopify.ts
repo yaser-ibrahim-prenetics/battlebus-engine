@@ -8,8 +8,8 @@ import crypto from "crypto";
 import { config } from "../config";
 import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
 import { logFlowEvent } from "../services/flow-logs";
-import { withProviderCapacity } from "../services/provider-capacity";
-import { boundedProviderRequestInit } from "./provider-request";
+import { withProviderCapacity } from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 

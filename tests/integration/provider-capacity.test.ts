@@ -135,7 +135,7 @@ describe.skipIf(!connectionString)("shared provider capacity PostgreSQL contract
       const acquisition = acquireProviderCapacity("stord", "integration:late-checkout", {
         pool: singleConnectionPool,
         limit: 1,
-        acquireTimeoutMs: 50,
+        acquireTimeoutMs: 5_000,
       });
       await expect(acquisition).rejects.toBeInstanceOf(ProviderCapacityDatabaseTimeoutError);
     } finally {

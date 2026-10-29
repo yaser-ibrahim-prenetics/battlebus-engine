@@ -32,8 +32,8 @@ import {
   ProviderCapacityStoreError,
   ProviderCapacityTimeoutError,
   withProviderCapacity,
-} from "../services/provider-capacity";
-import { boundedProviderRequestInit } from "./provider-request";
+} from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -282,15 +282,14 @@ export async function pacedFetch(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = err instanceof Error ? err.message : String(err);
-    const capacityBackpressure =
+    const capacityExhausted =
       err instanceof ProviderCapacityTimeoutError ||
+      (err instanceof Error && err.name === "ProviderCapacityTimeoutError");
+    const capacityStoreUnavailable =
       err instanceof ProviderCapacityStoreError ||
       (err instanceof Error &&
-        [
-          "ProviderCapacityTimeoutError",
-          "ProviderCapacityStoreError",
-          "ProviderCapacityDatabaseTimeoutError",
-        ].includes(err.name));
+        ["ProviderCapacityStoreError", "ProviderCapacityDatabaseTimeoutError"].includes(err.name));
+    const capacityBackpressure = capacityExhausted || capacityStoreUnavailable;
 
     if (!capacityBackpressure) {
       logD365HttpTrace({
@@ -310,13 +309,18 @@ export async function pacedFetch(
       client: "d365",
       status: "failed",
       durationMs,
-      errorType: capacityBackpressure ? "capacity_exhausted" : "network_or_runtime_error",
+      errorType: capacityExhausted
+        ? "capacity_exhausted"
+        : capacityStoreUnavailable
+          ? "capacity_store_unavailable"
+          : "network_or_runtime_error",
       errorMessage,
       payload: {
         method,
         url,
         isProbe,
         requestBody: requestBodyForLog,
+        capacityStoreCause: err instanceof ProviderCapacityStoreError ? err.causeCode : undefined,
       },
     });
     if (capacityBackpressure && isProbe) {

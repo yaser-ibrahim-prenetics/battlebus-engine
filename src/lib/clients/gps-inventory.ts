@@ -15,7 +15,7 @@ import crypto from "crypto";
 import { config } from "../config";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { withProviderCapacity } from "@/lib/services/provider-capacity";
-import { boundedProviderRequestInit } from "./provider-request";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);

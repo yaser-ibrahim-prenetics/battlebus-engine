@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import {
   acquireProviderCapacity,
   ProviderCapacityDatabaseTimeoutError,
+  ProviderCapacityStoreError,
   ProviderCapacityTimeoutError,
   releaseProviderCapacity,
   withProviderCapacity,
@@ -89,29 +90,50 @@ describe("shared provider capacity", () => {
     finishProvider();
     await expect(result).resolves.toBe("confirmed");
     expect(query).toHaveBeenCalledTimes(3);
-    expect(error).toHaveBeenCalledWith("[ProviderCapacity] Lost shopify capacity lease 1");
+    expect(error).toHaveBeenCalledWith(
+      "[ProviderCapacity] Lost shopify capacity lease 1 cause=Error"
+    );
     error.mockRestore();
     vi.useRealTimers();
   });
 
-  it("bounds a stalled capacity claim by the acquisition deadline", async () => {
+  it("bounds each stalled capacity claim before the overall acquisition deadline", async () => {
     vi.useFakeTimers();
     const query = vi.fn(() => new Promise(() => undefined));
+    const startedAt = Date.now();
 
     const result = acquireProviderCapacity("gps", "test:stalled-claim", {
       pool: { query } as unknown as Pool,
-      acquireTimeoutMs: 50,
+      acquireTimeoutMs: 5_000,
     });
     const expectation = expect(result).rejects.toBeInstanceOf(ProviderCapacityDatabaseTimeoutError);
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(2_000);
     await expectation;
     const queryConfig = query.mock.calls[0][0] as {
       text: string;
       values: unknown[];
     };
     expect(queryConfig.text).toContain("clock_timestamp() < $7::timestamptz");
-    expect(Date.parse(String(queryConfig.values[6]))).toBeGreaterThan(0);
+    const attemptDeadline = Date.parse(String(queryConfig.values[6]));
+    expect(attemptDeadline).toBeGreaterThanOrEqual(startedAt);
+    expect(attemptDeadline).toBeLessThanOrEqual(startedAt + 2_000);
     vi.useRealTimers();
+  });
+
+  it("preserves a safe database cause when capacity acquisition fails", async () => {
+    const databaseError = Object.assign(new Error("relation does not exist"), { code: "42P01" });
+    const query = vi.fn().mockRejectedValue(databaseError);
+
+    const result = acquireProviderCapacity("d365", "test:store-failure", {
+      pool: { query } as unknown as Pool,
+    });
+
+    await expect(result).rejects.toMatchObject({
+      name: "ProviderCapacityStoreError",
+      message: "Shared d365 provider capacity store is unavailable",
+      cause: databaseError,
+      causeCode: "42P01",
+    } satisfies Partial<ProviderCapacityStoreError>);
   });
 
   it("returns confirmed provider work after a bounded stalled release", async () => {
@@ -141,7 +163,7 @@ describe("shared provider capacity", () => {
     await vi.advanceTimersByTimeAsync(2_000);
     await expectation;
     expect(error).toHaveBeenCalledWith(
-      "[ProviderCapacity] Failed to release d365 capacity lease 1"
+      "[ProviderCapacity] Failed to release d365 capacity lease 1 cause=ProviderCapacityDatabaseTimeoutError"
     );
     error.mockRestore();
     vi.useRealTimers();

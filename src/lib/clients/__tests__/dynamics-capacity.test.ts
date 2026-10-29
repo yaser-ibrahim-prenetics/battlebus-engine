@@ -35,12 +35,14 @@ vi.mock("@/lib/config", () => ({ config: { providerCapacity: { enabled: true } }
 vi.mock("@/lib/services/provider-capacity", () => capacity);
 vi.mock("@/lib/services/flow-logs", () => ({ logFlowEvent: vi.fn() }));
 
+import { logFlowEvent } from "@/lib/services/flow-logs";
 import { getCircuitState, pacedFetch } from "../dynamics";
 
 describe("D365 shared capacity backpressure", () => {
   beforeEach(() => {
     capacity.withProviderCapacity.mockReset();
     capacity.withProviderCapacity.mockRejectedValue(new capacity.ProviderCapacityTimeoutError());
+    vi.mocked(logFlowEvent).mockClear();
   });
 
   it("does not count local capacity exhaustion as a provider circuit failure", async () => {
@@ -53,6 +55,22 @@ describe("D365 shared capacity backpressure", () => {
     }
 
     expect(getCircuitState()).toMatchObject({ state: "CLOSED", consecutiveFailures: 0 });
+    expect(logFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "capacity_exhausted" })
+    );
+  });
+
+  it("distinguishes capacity-store failures from ordinary exhaustion", async () => {
+    capacity.withProviderCapacity.mockRejectedValueOnce(
+      new capacity.ProviderCapacityStoreError("Shared d365 provider capacity store is unavailable")
+    );
+
+    await expect(pacedFetch("https://d365.example/data/test")).rejects.toBeInstanceOf(
+      capacity.ProviderCapacityStoreError
+    );
+    expect(logFlowEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "capacity_store_unavailable" })
+    );
   });
 
   it("re-arms a half-open probe when local capacity is exhausted", async () => {

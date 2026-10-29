@@ -13,6 +13,13 @@ export type ProviderCapacityLease = {
   leaseUntil: string;
 };
 
+function safeCapacityErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = "code" in error ? error.code : undefined;
+  if (typeof code === "string" && /^[A-Z0-9_]{2,16}$/i.test(code)) return code;
+  return error instanceof Error && error.name ? error.name : undefined;
+}
+
 type ProviderCapacityOverrides = {
   enabled?: boolean;
   limit?: number;
@@ -39,15 +46,18 @@ export class ProviderCapacityTimeoutError extends Error {
 }
 
 export class ProviderCapacityStoreError extends Error {
-  constructor(message = "Shared provider capacity store is unavailable") {
-    super(message);
+  readonly causeCode?: string;
+
+  constructor(message = "Shared provider capacity store is unavailable", cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "ProviderCapacityStoreError";
+    this.causeCode = safeCapacityErrorCode(cause);
   }
 }
 
 export class ProviderCapacityDatabaseTimeoutError extends ProviderCapacityStoreError {
-  constructor() {
-    super("Shared provider capacity database query timed out");
+  constructor(cause?: unknown) {
+    super("Shared provider capacity database query timed out", cause);
     this.name = "ProviderCapacityDatabaseTimeoutError";
   }
 }
@@ -83,7 +93,7 @@ async function capacityQuery<Row extends QueryResultRow = QueryResultRow>(
     } catch (error) {
       if (error instanceof ProviderCapacityDatabaseTimeoutError) throw error;
       if (error instanceof Error && /query.*timeout|timeout.*query/i.test(error.message)) {
-        throw new ProviderCapacityDatabaseTimeoutError();
+        throw new ProviderCapacityDatabaseTimeoutError(error);
       }
       throw error;
     }
@@ -193,6 +203,8 @@ export async function acquireProviderCapacity(
 
   while (true) {
     let lease: ProviderCapacityLease | null;
+    const queryTimeoutMs = Math.min(CAPACITY_QUERY_TIMEOUT_MS, Math.max(1, deadline - Date.now()));
+    const attemptDeadline = Math.min(deadline, Date.now() + queryTimeoutMs);
     try {
       lease = await claimProviderCapacity(
         pool,
@@ -200,12 +212,15 @@ export async function acquireProviderCapacity(
         operation,
         { limit, leaseSeconds },
         leaseOwner,
-        new Date(deadline),
-        Math.min(CAPACITY_QUERY_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
+        new Date(attemptDeadline),
+        queryTimeoutMs
       );
     } catch (error) {
       if (error instanceof ProviderCapacityStoreError) throw error;
-      throw new ProviderCapacityStoreError();
+      throw new ProviderCapacityStoreError(
+        `Shared ${provider} provider capacity store is unavailable`,
+        error
+      );
     }
     if (lease) return lease;
     if (Date.now() >= deadline) throw new ProviderCapacityTimeoutError(provider);
@@ -278,8 +293,11 @@ export async function withProviderCapacity<T>(
             console.error(`[ProviderCapacity] Lost ${provider} capacity lease ${lease.slot}`);
           }
         })
-        .catch(() => {
-          console.error(`[ProviderCapacity] Lost ${provider} capacity lease ${lease.slot}`);
+        .catch((error: unknown) => {
+          const causeCode = safeCapacityErrorCode(error) ?? "unknown";
+          console.error(
+            `[ProviderCapacity] Lost ${provider} capacity lease ${lease.slot} cause=${causeCode}`
+          );
         });
     },
     Math.max(10_000, Math.floor((leaseSeconds * 1000) / 3))
@@ -292,10 +310,11 @@ export async function withProviderCapacity<T>(
     clearInterval(timer);
     try {
       await releaseProviderCapacity(lease, pool);
-    } catch {
+    } catch (error) {
       // Never turn a confirmed provider response into a retryable failure. The bounded lease expires.
+      const causeCode = safeCapacityErrorCode(error) ?? "unknown";
       console.error(
-        `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot}`
+        `[ProviderCapacity] Failed to release ${provider} capacity lease ${lease.slot} cause=${causeCode}`
       );
     }
   }
