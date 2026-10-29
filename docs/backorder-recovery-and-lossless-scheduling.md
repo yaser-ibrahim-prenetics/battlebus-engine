@@ -17,16 +17,18 @@ recovery run, and it removes Inngest rate limits that could discard valid lifecy
 - Lease ownership includes the exact token, stable operation key and worker identity. Every
   provider mutation renews or reacquires that same ownership, so Inngest step replay cannot create
   a second owner or contend with its own released lease.
-- Lease release requires the exact token. A crashed worker becomes recoverable after the bounded
-  expiry instead of leaving the order permanently locked. A competing event sleeps durably until
-  that expiry rather than consuming generic retries or discarding the requested attempt.
+- The first lease release requires the exact token. Replaying the same release is idempotent only
+  while its retained operation key and owner still match; it cannot release a newer active owner.
+  A crashed worker becomes recoverable after the bounded expiry instead of leaving the order
+  permanently locked. A competing event sleeps durably until that expiry rather than consuming
+  generic retries or discarding the requested attempt.
 - Manual and automatic replay events use deterministic event IDs derived from the source event and
   attempt number.
 - Segmented order recovery uses the same lease and continues to validate fresh Shopify
   eligibility while renewing ownership before provider work.
 - `BACKORDER_RETRY_ENABLED=false` stops both automatic and manual mutation paths before credentials,
   database access or provider work. A manual resolution event also cancels a sleeping automatic
-  recovery run for the same order.
+  recovery run for the same order and Shopify store.
 
 The lease duration is configured with `BACKORDER_RECOVERY_LEASE_SECONDS`. The default is 600
 seconds and accepted values are clamped to 60–3,600 seconds. The default exceeds the Cloud Run
@@ -70,7 +72,10 @@ access to it.
 - Migration up/down/up validation succeeds.
 - Concurrent lease acquisition permits exactly one owner.
 - An incorrect token cannot renew or release another worker's lease.
+- Repeating a committed release succeeds for the same operation, while a stale release cannot
+  clear a newer active owner.
 - The same replay-stable owner can renew or reacquire its lease after a durable step replay.
+- A completed segmented recovery does not reacquire its lease when Inngest replays completed steps.
 - An expired lease can be reclaimed.
 - A busy lease causes a durable wait and later acquisition, not a lost retry event.
 - One manual retry event produces one provider/replay attempt.
