@@ -1,0 +1,86 @@
+import { randomUUID } from "node:crypto";
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { Pool } from "pg";
+
+import {
+  acquireBackorderRecoveryLeaseSQL,
+  releaseBackorderRecoveryLeaseSQL,
+} from "@/lib/sql/backorder-recovery/lease";
+
+const connectionString = process.env.BACKORDER_RECOVERY_TEST_DATABASE_URL;
+
+describe.skipIf(!connectionString)("backorder recovery PostgreSQL lease", () => {
+  let pool: Pool;
+  const orderPrefix = "backorder-recovery-contract-";
+
+  beforeAll(() => {
+    pool = new Pool({ connectionString });
+  });
+
+  afterEach(async () => {
+    await pool.query("DELETE FROM public.backorder_recovery_leases WHERE order_id LIKE $1", [
+      `${orderPrefix}%`,
+    ]);
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  function acquire(orderId: string, token: string, operationKey: string) {
+    return pool.query(acquireBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+      600,
+      operationKey,
+      `worker:${operationKey}`,
+    ]);
+  }
+
+  it("allows only one concurrent recovery attempt for an order", async () => {
+    const orderId = `${orderPrefix}concurrent`;
+    const [first, second] = await Promise.all([
+      acquire(orderId, randomUUID(), "retry:first"),
+      acquire(orderId, randomUUID(), "retry:second"),
+    ]);
+
+    expect([first.rowCount, second.rowCount].sort()).toEqual([0, 1]);
+  });
+
+  it("releases only the exact lease token", async () => {
+    const orderId = `${orderPrefix}release`;
+    const token = randomUUID();
+    expect((await acquire(orderId, token, "retry:release")).rowCount).toBe(1);
+
+    const wrongRelease = await pool.query(releaseBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      randomUUID(),
+    ]);
+    expect(wrongRelease.rowCount).toBe(0);
+
+    const release = await pool.query(releaseBackorderRecoveryLeaseSQL, [
+      "lease-test.myshopify.com",
+      orderId,
+      token,
+    ]);
+    expect(release.rowCount).toBe(1);
+  });
+
+  it("recovers a lease after its bounded expiry", async () => {
+    const orderId = `${orderPrefix}expired`;
+    expect((await acquire(orderId, randomUUID(), "retry:expired:first")).rowCount).toBe(1);
+    await pool.query(
+      `UPDATE public.backorder_recovery_leases
+       SET acquired_at = now() - interval '20 minutes',
+           lease_expires_at = now() - interval '10 minutes'
+       WHERE shopify_store = $1 AND order_id = $2`,
+      ["lease-test.myshopify.com", orderId]
+    );
+
+    const reclaimed = await acquire(orderId, randomUUID(), "retry:expired:second");
+    expect(reclaimed.rowCount).toBe(1);
+  });
+});
