@@ -16,8 +16,7 @@ WITH expired_candidates AS (
       lease_token = NULL,
       lease_expires_at = NULL,
       last_error = 'Pending action lease expired before acknowledgement',
-      updated_at = now(),
-      version = queue.version + 1
+      updated_at = now()
   FROM expired_candidates
   WHERE queue.action_id = expired_candidates.action_id
   RETURNING queue.action_id
@@ -48,11 +47,54 @@ WITH expired_candidates AS (
       superseded_at = now(),
       lease_token = NULL,
       lease_expires_at = NULL,
+      last_error = 'Superseded by a pending cancellation for the same order',
       updated_at = now(),
-      version = fulfillment.version + 1
+      published_at = NULL
   FROM supersede_candidates
   WHERE fulfillment.action_id = supersede_candidates.action_id
-  RETURNING fulfillment.action_id
+  RETURNING
+    fulfillment.action_id,
+    fulfillment.order_id,
+    fulfillment.action_type,
+    fulfillment.source_event_id
+), superseded_by_order AS (
+  SELECT
+    superseded.order_id,
+    jsonb_agg(
+      jsonb_build_object(
+        'actionType', superseded.action_type,
+        'sourceEventId', superseded.source_event_id
+      )
+    ) AS action_keys
+  FROM superseded
+  GROUP BY superseded.order_id
+), legacy_superseded AS (
+  UPDATE public.orders AS orders
+  SET pending_actions = (
+        SELECT COALESCE(
+          jsonb_agg(item.action ORDER BY item.ordinality),
+          '[]'::jsonb
+        )
+        FROM jsonb_array_elements(orders.pending_actions)
+          WITH ORDINALITY AS item(action, ordinality)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(superseded_by_order.action_keys) AS key(value)
+          WHERE item.action->>'action' = key.value->>'actionType'
+            AND (
+              item.action->>'sourceEventId' = key.value->>'sourceEventId'
+              OR (
+                NULLIF(btrim(item.action->>'sourceEventId'), '') IS NULL
+                AND 'legacy:' || md5(item.action::text) = key.value->>'sourceEventId'
+              )
+            )
+        )
+      ),
+      updated_at = now()
+  FROM superseded_by_order
+  WHERE orders.shopify_order_id = superseded_by_order.order_id
+     OR orders.platform_order_id = superseded_by_order.order_id
+  RETURNING orders.id
 ), ready AS (
   SELECT queue.action_id
   FROM public.pending_lifecycle_actions AS queue
@@ -84,8 +126,7 @@ SET status = 'publishing',
     attempts = queue.attempts + 1,
     lease_token = gen_random_uuid(),
     lease_expires_at = now() + ($2 * interval '1 second'),
-    updated_at = now(),
-    version = queue.version + 1
+    updated_at = now()
 FROM ready
 WHERE queue.action_id = ready.action_id
 RETURNING
@@ -94,5 +135,6 @@ RETURNING
   queue.action_type,
   queue.event_name,
   queue.event_data,
+  queue.source_event_id,
   queue.lease_token,
   queue.attempts`;

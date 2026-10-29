@@ -24,7 +24,6 @@ CREATE TABLE public.pending_lifecycle_actions (
   updated_at timestamptz NOT NULL DEFAULT now(),
   published_at timestamptz,
   superseded_at timestamptz,
-  version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   CONSTRAINT pending_lifecycle_actions_source_unique
     UNIQUE (order_id, action_type, source_event_id),
   CONSTRAINT pending_lifecycle_actions_lease_state

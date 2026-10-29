@@ -30,6 +30,7 @@ export interface ClaimedPendingAction {
   action: PendingActionType;
   eventName: string;
   eventData: Record<string, unknown>;
+  sourceEventId: string;
   leaseToken: string;
   attempts: number;
 }
@@ -40,6 +41,7 @@ type PendingActionRow = {
   action_type: PendingActionType;
   event_name: string;
   event_data: Record<string, unknown>;
+  source_event_id: string;
   lease_token: string;
   attempts: number;
 };
@@ -85,8 +87,10 @@ export async function storePendingAction(
   if (!config.pendingActions.durableQueueEnabled) {
     const legacyResult = await queryDatabase<{ id: string }>(enqueueLegacyPendingActionSQL, [
       normalizedOrderId,
-      sourceEventId,
       action.action,
+      sourceEventId,
+      eventName,
+      JSON.stringify(action.eventData),
       legacyPayload,
     ]);
     if (legacyResult.rowCount !== 1) {
@@ -143,6 +147,7 @@ export async function claimPendingActions(): Promise<ClaimedPendingAction[]> {
     action: row.action_type,
     eventName: row.event_name,
     eventData: row.event_data,
+    sourceEventId: row.source_event_id,
     leaseToken: row.lease_token,
     attempts: row.attempts,
   }));
