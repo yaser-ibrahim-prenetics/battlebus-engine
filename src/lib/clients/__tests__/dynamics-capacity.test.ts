@@ -11,7 +11,13 @@ const capacity = vi.hoisted(() => {
       this.name = "ProviderCapacityTimeoutError";
     }
   }
-  class ProviderCapacityDatabaseTimeoutError extends Error {
+  class ProviderCapacityStoreError extends Error {
+    constructor(message = "Shared provider capacity store is unavailable") {
+      super(message);
+      this.name = "ProviderCapacityStoreError";
+    }
+  }
+  class ProviderCapacityDatabaseTimeoutError extends ProviderCapacityStoreError {
     constructor() {
       super("Shared provider capacity database query timed out");
       this.name = "ProviderCapacityDatabaseTimeoutError";
@@ -19,6 +25,7 @@ const capacity = vi.hoisted(() => {
   }
   return {
     ProviderCapacityDatabaseTimeoutError,
+    ProviderCapacityStoreError,
     ProviderCapacityTimeoutError,
     withProviderCapacity: vi.fn(),
   };

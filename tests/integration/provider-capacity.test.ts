@@ -4,6 +4,7 @@ import { Pool } from "pg";
 
 import {
   acquireProviderCapacity,
+  ProviderCapacityDatabaseTimeoutError,
   releaseProviderCapacity,
   withProviderCapacity,
 } from "@/lib/services/provider-capacity";
@@ -125,5 +126,28 @@ describe.skipIf(!connectionString)("shared provider capacity PostgreSQL contract
     expect(current.leaseToken).not.toBe(stale.leaseToken);
     await expect(releaseProviderCapacity(stale, pool)).resolves.toBe(false);
     await expect(releaseProviderCapacity(current, pool)).resolves.toBe(true);
+  });
+
+  it("does not claim a slot after timing out in the pool checkout queue", async () => {
+    const singleConnectionPool = new Pool({ connectionString, max: 1 });
+    const heldClient = await singleConnectionPool.connect();
+    try {
+      const acquisition = acquireProviderCapacity("stord", "integration:late-checkout", {
+        pool: singleConnectionPool,
+        limit: 1,
+        acquireTimeoutMs: 50,
+      });
+      await expect(acquisition).rejects.toBeInstanceOf(ProviderCapacityDatabaseTimeoutError);
+    } finally {
+      heldClient.release();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const state = await pool.query<{ active: number }>(
+      `SELECT count(*) FILTER (WHERE lease_token IS NOT NULL)::int AS active
+       FROM public.provider_capacity_leases WHERE provider = 'stord'`
+    );
+    expect(state.rows[0].active).toBe(0);
+    await singleConnectionPool.end();
   });
 });

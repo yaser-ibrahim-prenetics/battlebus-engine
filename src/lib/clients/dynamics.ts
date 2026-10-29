@@ -29,7 +29,7 @@ import {
   InventoryUnavailableError,
 } from "../services/oos-recovery/inventory-failure";
 import {
-  ProviderCapacityDatabaseTimeoutError,
+  ProviderCapacityStoreError,
   ProviderCapacityTimeoutError,
   withProviderCapacity,
 } from "../services/provider-capacity";
@@ -284,11 +284,13 @@ export async function pacedFetch(
     const errorMessage = err instanceof Error ? err.message : String(err);
     const capacityBackpressure =
       err instanceof ProviderCapacityTimeoutError ||
-      err instanceof ProviderCapacityDatabaseTimeoutError ||
+      err instanceof ProviderCapacityStoreError ||
       (err instanceof Error &&
-        ["ProviderCapacityTimeoutError", "ProviderCapacityDatabaseTimeoutError"].includes(
-          err.name
-        ));
+        [
+          "ProviderCapacityTimeoutError",
+          "ProviderCapacityStoreError",
+          "ProviderCapacityDatabaseTimeoutError",
+        ].includes(err.name));
 
     if (!capacityBackpressure) {
       logD365HttpTrace({

@@ -38,7 +38,14 @@ export class ProviderCapacityTimeoutError extends Error {
   }
 }
 
-export class ProviderCapacityDatabaseTimeoutError extends Error {
+export class ProviderCapacityStoreError extends Error {
+  constructor(message = "Shared provider capacity store is unavailable") {
+    super(message);
+    this.name = "ProviderCapacityStoreError";
+  }
+}
+
+export class ProviderCapacityDatabaseTimeoutError extends ProviderCapacityStoreError {
   constructor() {
     super("Shared provider capacity database query timed out");
     this.name = "ProviderCapacityDatabaseTimeoutError";
@@ -62,16 +69,24 @@ async function capacityQuery<Row extends QueryResultRow = QueryResultRow>(
   const query: Promise<QueryResult<Row>> = pool.query<Row>(queryConfig);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      query,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new ProviderCapacityDatabaseTimeoutError()),
-          boundedTimeoutMs
-        );
-        timer.unref?.();
-      }),
-    ]);
+    try {
+      return await Promise.race([
+        query,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new ProviderCapacityDatabaseTimeoutError()),
+            boundedTimeoutMs
+          );
+          timer.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      if (error instanceof ProviderCapacityDatabaseTimeoutError) throw error;
+      if (error instanceof Error && /query.*timeout|timeout.*query/i.test(error.message)) {
+        throw new ProviderCapacityDatabaseTimeoutError();
+      }
+      throw error;
+    }
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -95,6 +110,7 @@ async function claimProviderCapacity(
   operation: string,
   options: Required<Pick<ProviderCapacityOverrides, "limit" | "leaseSeconds">>,
   leaseOwner: string,
+  deadline: Date,
   queryTimeoutMs: number
 ): Promise<ProviderCapacityLease | null> {
   const leaseToken = randomUUID();
@@ -111,6 +127,7 @@ async function claimProviderCapacity(
        FROM public.provider_capacity_leases
        WHERE provider = $1 AND slot <= $2
          AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+         AND clock_timestamp() < $7::timestamptz
        ORDER BY slot
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -121,6 +138,7 @@ async function claimProviderCapacity(
        lease_until = clock_timestamp() + make_interval(secs => $6)
      FROM candidate
      WHERE capacity.provider = candidate.provider AND capacity.slot = candidate.slot
+       AND clock_timestamp() < $7::timestamptz
      RETURNING capacity.provider, capacity.slot, capacity.lease_token,
        capacity.lease_owner, capacity.lease_until`,
     [
@@ -130,6 +148,7 @@ async function claimProviderCapacity(
       leaseOwner,
       operationDigest(operation),
       options.leaseSeconds,
+      deadline.toISOString(),
     ],
     queryTimeoutMs
   );
@@ -173,14 +192,21 @@ export async function acquireProviderCapacity(
   const deadline = Date.now() + acquireTimeoutMs;
 
   while (true) {
-    const lease = await claimProviderCapacity(
-      pool,
-      provider,
-      operation,
-      { limit, leaseSeconds },
-      leaseOwner,
-      Math.min(CAPACITY_QUERY_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
-    );
+    let lease: ProviderCapacityLease | null;
+    try {
+      lease = await claimProviderCapacity(
+        pool,
+        provider,
+        operation,
+        { limit, leaseSeconds },
+        leaseOwner,
+        new Date(deadline),
+        Math.min(CAPACITY_QUERY_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
+      );
+    } catch (error) {
+      if (error instanceof ProviderCapacityStoreError) throw error;
+      throw new ProviderCapacityStoreError();
+    }
     if (lease) return lease;
     if (Date.now() >= deadline) throw new ProviderCapacityTimeoutError(provider);
     await new Promise((resolve) =>

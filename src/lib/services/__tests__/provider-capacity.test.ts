@@ -105,6 +105,12 @@ describe("shared provider capacity", () => {
     const expectation = expect(result).rejects.toBeInstanceOf(ProviderCapacityDatabaseTimeoutError);
     await vi.advanceTimersByTimeAsync(50);
     await expectation;
+    const queryConfig = query.mock.calls[0][0] as {
+      text: string;
+      values: unknown[];
+    };
+    expect(queryConfig.text).toContain("clock_timestamp() < $7::timestamptz");
+    expect(Date.parse(String(queryConfig.values[6]))).toBeGreaterThan(0);
     vi.useRealTimers();
   });
 
