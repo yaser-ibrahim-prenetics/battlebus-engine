@@ -6,6 +6,7 @@ CREATE TABLE public.oos_recovery_mutation_leases (
   order_id text NOT NULL,
   replay_token uuid NOT NULL,
   operation_key text NOT NULL,
+  request_fingerprint text NOT NULL,
   lease_owner text NOT NULL,
   state text NOT NULL DEFAULT 'pending',
   lease_until timestamptz,
@@ -13,8 +14,9 @@ CREATE TABLE public.oos_recovery_mutation_leases (
   result_payload jsonb,
   failure_payload jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT oos_mutation_operation_key_shape CHECK (
-    length(trim(operation_key)) BETWEEN 1 AND 200
+  CONSTRAINT oos_mutation_operation_key_shape CHECK (operation_key ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT oos_mutation_request_fingerprint_shape CHECK (
+    request_fingerprint ~ '^[0-9a-f]{64}$'
   ),
   CONSTRAINT oos_mutation_lease_owner_nonempty CHECK (length(trim(lease_owner)) > 0),
   CONSTRAINT oos_mutation_state_valid CHECK (
@@ -29,6 +31,12 @@ CREATE TABLE public.oos_recovery_mutation_leases (
       AND result_payload IS NULL AND failure_payload IS NOT NULL)
     OR (state = 'uncertain' AND lease_until IS NULL AND finished_at IS NOT NULL
       AND result_payload IS NULL AND failure_payload IS NULL)
+  ),
+  CONSTRAINT oos_mutation_result_size CHECK (
+    result_payload IS NULL OR octet_length(result_payload::text) <= 4096
+  ),
+  CONSTRAINT oos_mutation_failure_size CHECK (
+    failure_payload IS NULL OR octet_length(failure_payload::text) <= 65536
   )
 );
 

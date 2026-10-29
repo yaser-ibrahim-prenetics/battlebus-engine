@@ -22,6 +22,22 @@ BEGIN
     RAISE EXCEPTION 'OOS preview execution lease columns are missing';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'oos_recovery_mutation_leases'
+      AND column_name = 'request_fingerprint' AND data_type = 'text'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'oos_recovery_mutation_leases'
+      AND column_name = 'result_payload' AND data_type = 'jsonb'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'oos_recovery_mutation_leases'
+      AND column_name = 'failure_payload' AND data_type = 'jsonb'
+  ) THEN
+    RAISE EXCEPTION 'OOS mutation evidence columns are missing';
+  END IF;
+
   IF to_regclass('public.idx_oos_dependency_active_identity') IS NULL
     OR to_regclass('public.idx_oos_dependency_inventory_fifo') IS NULL
     OR to_regclass('public.idx_oos_dependency_ready') IS NULL

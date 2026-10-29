@@ -816,7 +816,8 @@ export async function createSalesOrderLine(
   if (!response.ok) {
     const error = await response.text();
     const inventoryFailure = classifyD365InventoryFailure(error);
-    if (inventoryFailure) {
+    const isTrustedInventoryRejection = [400, 404, 409, 422].includes(response.status);
+    if (inventoryFailure && isTrustedInventoryRejection) {
       throw new InventoryUnavailableError(
         "d365",
         inventoryFailure,

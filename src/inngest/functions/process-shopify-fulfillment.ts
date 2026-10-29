@@ -790,17 +790,39 @@ export const processShopifyFulfillment = inngest.createFunction(
               }
 
               // Create D365 packing slip (retry only transient API failures, not inventory/OData business errors)
+              const fulfillmentRequest = {
+                fulfillmentId: `shopify:${fulfillment.id}`,
+                dataAreaId,
+                salesOrderNumber: d365Order.SalesOrderNumber!,
+                type: "shipment" as const,
+                confirmedShippedDate: fulfillmentPostingDate(fulfillment.created_at),
+                lines: fulfilmentLinesWithService,
+              };
               const fulfilmentPost = await retryWithBackoff(
                 () =>
-                  runWithOosMutationLease(`d365:fulfillment:${fulfillment.id}`, () =>
-                    dynamics.createFulfilment({
-                      fulfillmentId: `shopify:${fulfillment.id}`,
-                      dataAreaId,
-                      salesOrderNumber: d365Order.SalesOrderNumber!,
-                      type: "shipment",
-                      confirmedShippedDate: fulfillmentPostingDate(fulfillment.created_at),
-                      lines: fulfilmentLinesWithService,
-                    })
+                  runWithOosMutationLease(
+                    `d365:fulfillment:${fulfillment.id}`,
+                    fulfillmentRequest,
+                    () => dynamics.createFulfilment(fulfillmentRequest),
+                    {
+                      encode: (value) => ({ response: value.response }),
+                      decode: (evidence) => {
+                        const response = (evidence as { response?: unknown })?.response as
+                          | { status?: unknown; Message?: unknown; Result?: unknown; $id?: unknown }
+                          | undefined;
+                        if (
+                          response?.status !== 1 ||
+                          typeof response.Message !== "string" ||
+                          typeof response.Result !== "string" ||
+                          typeof response.$id !== "string"
+                        ) {
+                          throw new Error("Invalid D365 fulfillment evidence");
+                        }
+                        return { response, request: {} } as Awaited<
+                          ReturnType<typeof dynamics.createFulfilment>
+                        >;
+                      },
+                    }
                   ),
                 {
                   label: `d365-create-fulfilment-${shopifyOrderName}-${fulfillment.id}`,
@@ -820,13 +842,35 @@ export const processShopifyFulfillment = inngest.createFunction(
               const depositShipInvoiceCheck = isDepositOrder
                 ? await runWithOosMutationLease(
                     `d365:deposit-invoice:${fulfillment.id}`,
+                    {
+                      salesOrderNumber: d365Order.SalesOrderNumber!,
+                      dataAreaId,
+                      response: fulfilmentPost.response,
+                    },
                     () =>
                     dynamics.assertDepositShipmentInvoicingComplete(
                       d365Order.SalesOrderNumber!,
                       dataAreaId,
                       fulfilmentPost.response,
                       { depositFulfillment: true }
-                    )
+                    ),
+                    {
+                      encode: (value) => value,
+                      decode: (evidence) => {
+                        const value = evidence as {
+                          verified?: unknown;
+                          processingStatus?: unknown;
+                        };
+                        if (
+                          value?.verified !== true ||
+                          (value.processingStatus !== null &&
+                            typeof value.processingStatus !== "string")
+                        ) {
+                          throw new Error("Invalid deposit invoice evidence");
+                        }
+                        return value as { verified: boolean; processingStatus: string | null };
+                      },
+                    }
                   )
                 : { verified: false, processingStatus: depositPrecheck.processingStatus };
 
@@ -1269,7 +1313,29 @@ export const processShopifyFulfillment = inngest.createFunction(
               .digest("hex");
             const response = await runWithOosMutationLease(
               `paypal:tracking:${trackingOperation}`,
-              () => paypal.syncTrackingBatch(trackers)
+              trackers,
+              () => paypal.syncTrackingBatch(trackers),
+              {
+                encode: (value) => ({
+                  processed: value.tracker_identifiers?.length || 0,
+                  errors: value.errors?.length || 0,
+                }),
+                decode: (evidence) => {
+                  const value = evidence as { processed?: unknown; errors?: unknown };
+                  if (
+                    !Number.isInteger(value?.processed) ||
+                    !Number.isInteger(value?.errors) ||
+                    Number(value.processed) < 0 ||
+                    Number(value.errors) < 0
+                  ) {
+                    throw new Error("Invalid PayPal tracking evidence");
+                  }
+                  return {
+                    tracker_identifiers: Array(Number(value.processed)).fill({}),
+                    errors: Array(Number(value.errors)).fill({}),
+                  } as paypal.PayPalBatchResponse;
+                },
+              }
             );
 
             return {

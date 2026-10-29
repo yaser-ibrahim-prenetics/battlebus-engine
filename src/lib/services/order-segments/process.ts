@@ -36,7 +36,12 @@ type ProcessSegmentsInput = {
   fallbackDataArea: string;
   shortAddress?: string;
   ensureEligible?: () => Promise<unknown>;
-  withExternalMutation?: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
+  withExternalMutation?: <T>(
+    operationKey: string,
+    request: unknown,
+    execute: () => Promise<T>,
+    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+  ) => Promise<T>;
   shouldReportFailure?: (error: unknown) => boolean;
 };
 
@@ -60,8 +65,23 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync || input.testMode)
     return null;
   const { order, step, accounting } = input;
-  const withExternalMutation = <T>(operationKey: string, execute: () => Promise<T>) =>
-    input.withExternalMutation ? input.withExternalMutation(operationKey, execute) : execute();
+  const withExternalMutation = <T>(
+    operationKey: string,
+    request: unknown,
+    execute: () => Promise<T>,
+    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+  ) =>
+    input.withExternalMutation
+      ? input.withExternalMutation(operationKey, request, execute, evidenceCodec)
+      : execute();
+  const stringEvidence = {
+    encode: (value: string) => ({ value }),
+    decode: (evidence: unknown): string => {
+      const value = (evidence as { value?: unknown })?.value;
+      if (typeof value !== "string" || !value.trim()) throw new Error("Invalid string evidence");
+      return value;
+    },
+  };
   if (!accounting) throw new Error("Payment accounting is required before splitting orders");
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await step.run("plan-order-segments", async () => {
@@ -114,15 +134,37 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
   if (!stored) return null;
   const { plan } = stored;
   const bindings = await step.run("bind-shopify-segments", async () => {
-    return withExternalMutation("shopify-segments:bind", () => bindShopifySegments(shop, plan));
+    return withExternalMutation(
+      "shopify-segments:bind",
+      { planHash: plan.inputHash },
+      () => bindShopifySegments(shop, plan),
+      {
+        encode: (binding) => binding,
+        decode: (evidence) => {
+          if (
+            !evidence ||
+            typeof evidence !== "object" ||
+            Object.values(evidence).some((value) => typeof value !== "string")
+          ) {
+            throw new Error("Invalid Shopify segment binding evidence");
+          }
+          return evidence as Record<number, string>;
+        },
+      }
+    );
   });
   const outcomes = await Promise.allSettled(
     plan.segments.map(async (segment): Promise<SegmentProgress> => {
       await input.ensureEligible?.();
       const prefix = `segment-${segment.index}`;
       const projected = segmentOrder(order, plan, segment.index);
-      const action = <T>(phase: string, request: unknown, execute: () => Promise<T>) =>
-        withExternalMutation(`${prefix}:${phase}`, () =>
+      const action = <T>(
+        phase: string,
+        request: unknown,
+        execute: () => Promise<T>,
+        evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+      ) =>
+        withExternalMutation(`${prefix}:${phase}`, request, () =>
           executeFulfillmentAction(
             {
               provider: "dynamics",
@@ -133,7 +175,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
             },
             request,
             execute
-          )
+          ), evidenceCodec
         );
       const salesOrderNumber = await step.run(`${prefix}-header`, async () => {
         const header = toD365SalesOrderHeaderV3(
@@ -149,7 +191,7 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
           if (!result.SalesOrderNumber)
             throw new Error("D365 header response missing sales order number");
           return result.SalesOrderNumber;
-        });
+        }, stringEvidence);
         await saveProgress(shop, plan.orderId, segment.index, { salesOrderNumber: result });
         return result;
       });
@@ -157,12 +199,12 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
       const recordedLines: RecordedSegmentLine[] = [];
       for (const [index, line] of requests.entries()) {
         const lotId = await step.run(`${prefix}-line-${index}`, () =>
-          action(`line:${index}`, line.request, async () => {
+          action(`line:${line.sourceLineId}:${line.request.itemNumber}`, line.request, async () => {
             const result = await dynamics.createSalesOrderLine(line.request);
             if (!result.InventoryLotId)
               throw new Error("D365 line response missing inventory lot ID");
             return result.InventoryLotId;
-          })
+          }, stringEvidence)
         );
         recordedLines.push({
           sourceLineId: line.sourceLineId,
@@ -233,11 +275,23 @@ async function runOrderSegments(input: ProcessSegmentsInput) {
         if (!payload.productList.length) return undefined;
         let result: Awaited<ReturnType<typeof gps.createOutboundOrder>>;
         try {
-          result = await withExternalMutation(`${prefix}:gps`, () =>
+          result = await withExternalMutation(`${prefix}:gps`, payload, () =>
             gps.createOutboundOrder(
               payload,
               segment.warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-            )
+            ),
+            {
+              encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
+              decode: (evidence) => {
+                const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
+                if (typeof orderNo !== "string" || !orderNo.trim()) {
+                  throw new Error("Invalid GPS order evidence");
+                }
+                return { response: { data: [{ orderNo }] } } as Awaited<
+                  ReturnType<typeof gps.createOutboundOrder>
+                >;
+              },
+            }
           );
         } catch (error) {
           if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {

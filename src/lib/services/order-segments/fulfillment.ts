@@ -22,11 +22,23 @@ export async function fulfillOrderSegments(input: {
   orderId: string;
   fulfillments: ShopifyFulfillment[];
   step: StepRunner;
-  withExternalMutation?: <T>(operationKey: string, execute: () => Promise<T>) => Promise<T>;
+  withExternalMutation?: <T>(
+    operationKey: string,
+    request: unknown,
+    execute: () => Promise<T>,
+    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+  ) => Promise<T>;
 }) {
   if (config.features.dryRunMode || !config.features.enableDynamicsSync) return null;
-  const withExternalMutation = <T>(operationKey: string, execute: () => Promise<T>) =>
-    input.withExternalMutation ? input.withExternalMutation(operationKey, execute) : execute();
+  const withExternalMutation = <T>(
+    operationKey: string,
+    request: unknown,
+    execute: () => Promise<T>,
+    evidenceCodec?: { encode: (result: T) => unknown; decode: (evidence: unknown) => T }
+  ) =>
+    input.withExternalMutation
+      ? input.withExternalMutation(operationKey, request, execute, evidenceCodec)
+      : execute();
   const shop = resolveShopifyAdminCredentials(input.shopDomain).shopDomain;
   const stored = await readPlan(shop, input.orderId);
   if (!stored) return null;
@@ -103,17 +115,37 @@ export async function fulfillOrderSegments(input: {
           });
           let result: Awaited<ReturnType<typeof dynamics.createFulfilment>>;
           try {
+            const fulfillmentRequest = {
+              fulfillmentId: `shopify:${allocation.fulfillment_id}`,
+              dataAreaId: segment.dataAreaId,
+              salesOrderNumber,
+              type: "shipment" as const,
+              confirmedShippedDate: allocation.posting_date,
+              lines,
+            };
             result = await withExternalMutation(
               `segment:${segment.index}:fulfillment:${allocation.fulfillment_id}`,
-              () =>
-              dynamics.createFulfilment({
-                fulfillmentId: `shopify:${allocation.fulfillment_id}`,
-                dataAreaId: segment.dataAreaId,
-                salesOrderNumber,
-                type: "shipment",
-                confirmedShippedDate: allocation.posting_date,
-                lines,
-              })
+              fulfillmentRequest,
+              () => dynamics.createFulfilment(fulfillmentRequest),
+              {
+                encode: (value) => ({ response: value.response }),
+                decode: (evidence) => {
+                  const response = (evidence as { response?: unknown })?.response as
+                    | { status?: unknown; Message?: unknown; Result?: unknown; $id?: unknown }
+                    | undefined;
+                  if (
+                    response?.status !== 1 ||
+                    typeof response.Message !== "string" ||
+                    typeof response.Result !== "string" ||
+                    typeof response.$id !== "string"
+                  ) {
+                    throw new Error("Invalid D365 fulfillment evidence");
+                  }
+                  return { response, request: {} } as Awaited<
+                    ReturnType<typeof dynamics.createFulfilment>
+                  >;
+                },
+              }
             );
           } catch (error) {
             if (isInventoryUnavailableError(error) && error.blockedItems.length === 0) {
@@ -155,13 +187,31 @@ export async function fulfillOrderSegments(input: {
           ) {
             await withExternalMutation(
               `segment:${segment.index}:deposit-invoice:${allocation.fulfillment_id}`,
+              { salesOrderNumber, dataAreaId: segment.dataAreaId, response: result.response },
               () =>
               dynamics.assertDepositShipmentInvoicingComplete(
                 salesOrderNumber,
                 segment.dataAreaId,
                 result.response,
                 { depositFulfillment: true }
-              )
+              ),
+              {
+                encode: (value) => value,
+                decode: (evidence) => {
+                  const value = evidence as {
+                    verified?: unknown;
+                    processingStatus?: unknown;
+                  };
+                  if (
+                    value?.verified !== true ||
+                    (value.processingStatus !== null &&
+                      typeof value.processingStatus !== "string")
+                  ) {
+                    throw new Error("Invalid deposit invoice evidence");
+                  }
+                  return value as { verified: boolean; processingStatus: string | null };
+                },
+              }
             );
           }
           await queryDatabase(completeAllocationSQL, [

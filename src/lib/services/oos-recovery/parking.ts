@@ -112,7 +112,8 @@ export async function parkOosOrderWithClient(
   await lockOosRecoveryOrder(client, first.shopifyStore, first.shopifyOrderId);
   const activeMutation = await client.query(
     `SELECT 1 FROM public.oos_recovery_mutation_leases
-     WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+     WHERE lower(shopify_store) = lower($1) AND order_id = $2
+       AND lease_until > clock_timestamp()
      LIMIT 1`,
     [first.shopifyStore, first.shopifyOrderId]
   );

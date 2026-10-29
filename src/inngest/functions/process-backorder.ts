@@ -300,9 +300,9 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           fallbackDataArea: segmented.plan.segments[0].dataAreaId,
           shortAddress,
           ensureEligible,
-          withExternalMutation: async (operationKey, execute) => {
+          withExternalMutation: async (operationKey, request, execute, evidenceCodec) => {
             await ensureLease();
-            return runWithOosMutationLease(operationKey, execute);
+            return runWithOosMutationLease(operationKey, request, execute, evidenceCodec);
           },
           shouldReportFailure: (error) => !isRejectedOosRecoveryAttempt(error),
         });
@@ -618,16 +618,17 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               isInventoryError: false,
             };
           }
-          for (const [lineIndex, line] of blockedLines.entries()) {
+          for (const line of blockedLines) {
             await runWithOosMutationLease(
-              `d365:line:${d365NumManual}:${line.sourceLineId}:${line.itemNumber}:${lineIndex}`,
+              `d365:line:${d365NumManual}:${line.sourceLineId}:${line.itemNumber}`,
+              line,
               () =>
               executeFulfillmentAction(
                 {
                   provider: "dynamics",
                   scope: `${config.dynamics.baseUrl}:${d365Company}:${shop}`,
                   sourceOrderId: String(shopifyOrderId),
-                  sourceLineIds: [`${line.sourceLineId}:${line.itemNumber}:${lineIndex}`],
+                  sourceLineIds: [`${line.sourceLineId}:${line.itemNumber}`],
                   action: `oos-recovery-line:${d365NumManual}`,
                 },
                 line,
@@ -635,7 +636,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               )
             );
           }
-          await runWithOosMutationLease(`d365:confirm:${d365NumManual}`, () =>
+          await runWithOosMutationLease(
+            `d365:confirm:${d365NumManual}`,
+            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+            () =>
             executeFulfillmentAction(
               {
                 provider: "dynamics",
@@ -648,7 +652,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               () => dynamics.confirmSalesOrder(d365NumManual, d365Company)
             )
           );
-          await runWithOosMutationLease(`d365:prepayment:${d365NumManual}`, () =>
+          await runWithOosMutationLease(
+            `d365:prepayment:${d365NumManual}`,
+            { salesOrderNumber: d365NumManual, dataAreaId: d365Company },
+            () =>
             executeFulfillmentAction(
               {
                 provider: "dynamics",
@@ -745,17 +752,31 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         });
         const result = await runWithOosMutationLease(
           backorderGpsOperationKey("outbound", shopifyOrderId, warehouse),
+          gpsPayload,
           () =>
             gps.createOutboundOrder(
               gpsPayload,
               warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-            )
+            ),
+          {
+            encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
+            decode: (evidence) => {
+              const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
+              if (typeof orderNo !== "string" || !orderNo.trim()) {
+                throw new Error("Invalid GPS order evidence");
+              }
+              return { response: { data: [{ orderNo }] } } as Awaited<
+                ReturnType<typeof gps.createOutboundOrder>
+              >;
+            },
+          }
         );
 
         const gpsOrderNo = result?.response?.data?.[0]?.orderNo;
         if (gpsOrderNo) {
           await runWithOosMutationLease(
             backorderGpsOperationKey("shopify-metafield", shopifyOrderId, warehouse),
+            { shopifyOrderId, gpsOrderNo, warehouse, d365OrderNumber },
             () => setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,
@@ -1071,11 +1092,24 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         });
         const result = await runWithOosMutationLease(
           backorderGpsOperationKey("outbound", shopifyOrderId, warehouse),
+          gpsPayload,
           () =>
             gps.createOutboundOrder(
               gpsPayload,
               warehouse as "GPS Warehouse" | "GPS UK Warehouse"
-            )
+            ),
+          {
+            encode: (value) => ({ orderNo: value.response.data?.[0]?.orderNo }),
+            decode: (evidence) => {
+              const orderNo = (evidence as { orderNo?: unknown })?.orderNo;
+              if (typeof orderNo !== "string" || !orderNo.trim()) {
+                throw new Error("Invalid GPS order evidence");
+              }
+              return { response: { data: [{ orderNo }] } } as Awaited<
+                ReturnType<typeof gps.createOutboundOrder>
+              >;
+            },
+          }
         );
 
         // Store GPS metafield on success
@@ -1083,6 +1117,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
         if (gpsOrderNo) {
           await runWithOosMutationLease(
             backorderGpsOperationKey("shopify-metafield", shopifyOrderId, warehouse),
+            { shopifyOrderId, gpsOrderNo, warehouse, d365OrderNumber },
             () => setGpsOrderMetafield(shopifyOrderId, {
               gpsOrderId: gpsOrderNo,
               warehouse,

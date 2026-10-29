@@ -27,6 +27,7 @@ import {
 import type { InventoryDependency } from "@/lib/services/oos-recovery/inventory-failure";
 import { queueHealthSQL } from "@/lib/sql/operations/health";
 import { claimOosOutboxEntries } from "@/lib/services/oos-recovery/outbox";
+import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
 
 const connectionString = process.env.OOS_RECOVERY_TEST_DATABASE_URL;
 
@@ -34,6 +35,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
   let pool: Pool;
   let previousDatabaseUrl: string | undefined;
   const prefix = "oos-contract-";
+  const mutationRequestFingerprint = fingerprint(["integration-test-request"]);
+  const mutationOperationKey = (label: string) => fingerprint(["integration-test", label]);
 
   beforeAll(() => {
     previousDatabaseUrl = process.env.DATABASE_URL;
@@ -942,7 +945,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
-      operationKey: "d365:test-primary",
+      operationKey: mutationOperationKey("d365:test-primary"),
+      requestFingerprint: mutationRequestFingerprint,
       leaseOwner: "integration-test",
       leaseSeconds: 300,
     });
@@ -953,7 +957,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
-      operationKey: "d365:test-concurrent",
+      operationKey: mutationOperationKey("d365:test-concurrent"),
+      requestFingerprint: mutationRequestFingerprint,
       leaseOwner: "integration-test-concurrent",
       leaseSeconds: 300,
     });
@@ -967,7 +972,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         orderId,
         attemptToken,
         expectedContext,
-        operationKey: "d365:test-primary",
+        operationKey: mutationOperationKey("d365:test-primary"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-retry",
         leaseSeconds: 300,
       })
@@ -977,7 +983,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
-      operationKey: "d365:test-rejected",
+      operationKey: mutationOperationKey("d365:test-rejected"),
+      requestFingerprint: mutationRequestFingerprint,
       leaseOwner: "integration-test-rejected",
       leaseSeconds: 300,
     });
@@ -991,7 +998,6 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         failure: {
           provider: "d365",
           category: "inventory_insufficient",
-          message: "provider-confirmed inventory rejection",
           blockedItems: [],
         },
       })
@@ -1002,7 +1008,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         orderId,
         attemptToken,
         expectedContext,
-        operationKey: "d365:test-rejected",
+        operationKey: mutationOperationKey("d365:test-rejected"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-rejected-resume",
         leaseSeconds: 300,
       })
@@ -1011,7 +1018,6 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       failure: {
         provider: "d365",
         category: "inventory_insufficient",
-        message: "provider-confirmed inventory rejection",
         blockedItems: [],
       },
     });
@@ -1032,7 +1038,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken,
       expectedContext,
-      operationKey: "d365:test-uncertain",
+      operationKey: mutationOperationKey("d365:test-uncertain"),
+      requestFingerprint: mutationRequestFingerprint,
       leaseOwner: "integration-test-uncertain",
       leaseSeconds: 300,
     });
@@ -1053,7 +1060,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         orderId,
         attemptToken,
         expectedContext,
-        operationKey: "d365:test-uncertain",
+        operationKey: mutationOperationKey("d365:test-uncertain"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-uncertain-retry",
         leaseSeconds: 300,
       })
@@ -1111,11 +1119,24 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         orderId,
         attemptToken,
         expectedContext,
-        operationKey: "d365:test-primary",
+        operationKey: mutationOperationKey("d365:test-primary"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-completed-retry",
         leaseSeconds: 300,
       })
-    ).resolves.toEqual({ status: "accepted", result: { hasValue: false } });
+    ).resolves.toEqual({ status: "accepted", evidence: {} });
+    await expect(
+      claimOosRecoveryMutation({
+        shopifyStore: "im8health.myshopify.com",
+        orderId,
+        attemptToken,
+        expectedContext,
+        operationKey: mutationOperationKey("d365:test-primary"),
+        requestFingerprint: fingerprint(["integration-test-different-request"]),
+        leaseOwner: "integration-test-request-mismatch",
+        leaseSeconds: 300,
+      })
+    ).resolves.toEqual({ status: "blocked" });
     await expect(
       resolveOosDependencies({
         shopifyStore: "im8health.myshopify.com",
@@ -1150,18 +1171,20 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
         orderId,
         attemptToken: nextAttemptToken,
         expectedContext: nextExpectedContext,
-        operationKey: "d365:test-primary",
+        operationKey: mutationOperationKey("d365:test-primary"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-later-d365:test-primary",
         leaseSeconds: 300,
       })
-    ).resolves.toEqual({ status: "accepted", result: { hasValue: false } });
+    ).resolves.toEqual({ status: "accepted", evidence: {} });
     await expect(
       claimOosRecoveryMutation({
         shopifyStore: "im8health.myshopify.com",
         orderId,
         attemptToken: nextAttemptToken,
         expectedContext: nextExpectedContext,
-        operationKey: "d365:test-uncertain",
+        operationKey: mutationOperationKey("d365:test-uncertain"),
+        requestFingerprint: mutationRequestFingerprint,
         leaseOwner: "integration-test-later-d365:test-uncertain",
         leaseSeconds: 300,
       })
@@ -1171,7 +1194,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
       orderId,
       attemptToken: nextAttemptToken,
       expectedContext: nextExpectedContext,
-      operationKey: "d365:test-rejected",
+      operationKey: mutationOperationKey("d365:test-rejected"),
+      requestFingerprint: mutationRequestFingerprint,
       leaseOwner: "integration-test-rejected-later",
       leaseSeconds: 300,
     });

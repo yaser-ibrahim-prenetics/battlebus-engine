@@ -32,13 +32,13 @@ export type OosRecoveryMutationLease = {
   attemptToken: string;
   expectedContext: OosRecoveryAttemptScope;
   operationKey: string;
+  requestFingerprint: string;
   leaseToken: string;
 };
 
 export type OosRecoveryMutationFailure = {
   provider: InventoryProvider;
   category: InventoryFailureCategory;
-  message: string;
   blockedItems: ProviderBlockedItem[];
   providerOrderNumber?: string;
   providerWarehouse?: string;
@@ -46,12 +46,12 @@ export type OosRecoveryMutationFailure = {
 
 export type OosRecoveryMutationClaim =
   | { status: "claimed"; lease: OosRecoveryMutationLease }
-  | { status: "accepted"; result: { hasValue: boolean; value?: unknown } }
+  | { status: "accepted"; evidence: unknown }
   | { status: "rejected"; failure: OosRecoveryMutationFailure }
   | { status: "blocked" };
 
 export type OosRecoveryMutationCompletion =
-  | { state: "accepted"; result: { hasValue: boolean; value?: unknown } }
+  | { state: "accepted"; evidence: unknown }
   | { state: "rejected"; failure: OosRecoveryMutationFailure }
   | { state: "uncertain" };
 
@@ -89,7 +89,8 @@ export async function lockMatchingOosRecoveryAttempt(
   const activeMutation = await client.query<{ replay_token: string }>(
     `SELECT replay_token
      FROM public.oos_recovery_mutation_leases
-     WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+     WHERE lower(shopify_store) = lower($1) AND order_id = $2
+       AND lease_until > clock_timestamp()
      FOR UPDATE`,
     [params.shopifyStore, params.orderId]
   );
@@ -173,6 +174,7 @@ export async function claimOosRecoveryMutation(params: {
   attemptToken: string;
   expectedContext: OosRecoveryAttemptScope;
   operationKey: string;
+  requestFingerprint: string;
   leaseOwner: string;
   leaseSeconds: number;
 }): Promise<OosRecoveryMutationClaim> {
@@ -193,7 +195,7 @@ export async function claimOosRecoveryMutation(params: {
     await client.query(
       `WITH obsolete AS (
          SELECT mutation.id FROM public.oos_recovery_mutation_leases mutation
-         WHERE mutation.created_at <= now() - interval '30 days'
+         WHERE mutation.created_at <= clock_timestamp() - interval '30 days'
            AND NOT EXISTS (
              SELECT 1 FROM public.oos_recovery_dependencies dependency
              WHERE lower(dependency.shopify_store) = lower(mutation.shopify_store)
@@ -212,10 +214,12 @@ export async function claimOosRecoveryMutation(params: {
       replay_token: string;
       state: "pending" | "accepted" | "rejected" | "uncertain";
       lease_until: Date | null;
-      result_payload: { hasValue: boolean; value?: unknown } | null;
+      request_fingerprint: string;
+      result_payload: unknown;
       failure_payload: OosRecoveryMutationFailure | null;
     }>(
-      `SELECT id, replay_token, state, lease_until, result_payload, failure_payload
+      `SELECT id, replay_token, state, lease_until, request_fingerprint,
+         result_payload, failure_payload
        FROM public.oos_recovery_mutation_leases
        WHERE lower(shopify_store) = lower($1) AND order_id = $2
          AND operation_key = $3
@@ -233,15 +237,24 @@ export async function claimOosRecoveryMutation(params: {
     if (expiredPendingIds.length) {
       await client.query(
         `UPDATE public.oos_recovery_mutation_leases
-         SET state = 'uncertain', lease_until = NULL, finished_at = now()
-         WHERE id = ANY($1::uuid[]) AND state = 'pending' AND lease_until <= now()`,
+         SET state = 'uncertain', lease_until = NULL, finished_at = clock_timestamp()
+         WHERE id = ANY($1::uuid[]) AND state = 'pending'
+           AND lease_until <= clock_timestamp()`,
         [expiredPendingIds]
       );
     }
-    const accepted = existingOperation.rows.find((row) => row.state === "accepted");
-    if (accepted?.result_payload) {
+    if (
+      existingOperation.rows.some(
+        (row) => row.request_fingerprint !== params.requestFingerprint
+      )
+    ) {
       await client.query("COMMIT");
-      return { status: "accepted", result: accepted.result_payload };
+      return { status: "blocked" };
+    }
+    const accepted = existingOperation.rows.find((row) => row.state === "accepted");
+    if (accepted?.result_payload !== null && accepted?.result_payload !== undefined) {
+      await client.query("COMMIT");
+      return { status: "accepted", evidence: accepted.result_payload };
     }
     if (
       existingOperation.rows.some((row) => row.state === "pending" || row.state === "uncertain")
@@ -259,14 +272,19 @@ export async function claimOosRecoveryMutation(params: {
     const leaseToken = randomUUID();
     await client.query(
       `INSERT INTO public.oos_recovery_mutation_leases (
-         id, shopify_store, order_id, replay_token, operation_key, lease_owner, lease_until
-       ) VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, now() + make_interval(secs => $7))`,
+         id, shopify_store, order_id, replay_token, operation_key, request_fingerprint,
+         lease_owner, lease_until
+       ) VALUES (
+         $1::uuid, $2, $3, $4::uuid, $5, $6, $7,
+         clock_timestamp() + make_interval(secs => $8)
+       )`,
       [
         leaseToken,
         params.shopifyStore,
         params.orderId,
         params.attemptToken,
         params.operationKey,
+        params.requestFingerprint,
         params.leaseOwner,
         Math.max(30, params.leaseSeconds),
       ]
@@ -280,6 +298,7 @@ export async function claimOosRecoveryMutation(params: {
         attemptToken: params.attemptToken,
         expectedContext: params.expectedContext,
         operationKey: params.operationKey,
+        requestFingerprint: params.requestFingerprint,
         leaseToken,
       },
     };
@@ -314,14 +333,17 @@ export async function renewOosRecoveryMutation(
     }
     const result = await client.query(
       `UPDATE public.oos_recovery_mutation_leases
-       SET lease_until = now() + make_interval(secs => $5)
+       SET lease_until = clock_timestamp() + make_interval(secs => $6)
        WHERE id = $1::uuid AND lower(shopify_store) = lower($2) AND order_id = $3
-         AND replay_token = $4::uuid AND state = 'pending' AND lease_until > now()`,
+         AND replay_token = $4::uuid AND request_fingerprint = $5
+         AND state = 'pending'
+         AND lease_until > clock_timestamp()`,
       [
         lease.leaseToken,
         lease.shopifyStore,
         lease.orderId,
         lease.attemptToken,
+        lease.requestFingerprint,
         Math.max(30, leaseSeconds),
       ]
     );
@@ -339,7 +361,7 @@ export async function releaseOosRecoveryMutation(
   lease: OosRecoveryMutationLease,
   completion: OosRecoveryMutationCompletion = {
     state: "accepted",
-    result: { hasValue: false },
+    evidence: {},
   }
 ): Promise<boolean> {
   const pool = await getDatabasePool();
@@ -361,19 +383,21 @@ export async function releaseOosRecoveryMutation(
     }
     const result = await client.query(
       `UPDATE public.oos_recovery_mutation_leases
-       SET state = $6, lease_until = NULL, finished_at = now(),
-         result_payload = $7::jsonb, failure_payload = $8::jsonb
+       SET state = $7, lease_until = NULL, finished_at = clock_timestamp(),
+         result_payload = $8::jsonb, failure_payload = $9::jsonb
        WHERE id = $1::uuid AND lower(shopify_store) = lower($2) AND order_id = $3
          AND replay_token = $4::uuid AND operation_key = $5
-         AND state = 'pending' AND lease_until > now()`,
+         AND request_fingerprint = $6 AND state = 'pending'
+         AND lease_until > clock_timestamp()`,
       [
         lease.leaseToken,
         lease.shopifyStore,
         lease.orderId,
         lease.attemptToken,
         lease.operationKey,
+        lease.requestFingerprint,
         completion.state,
-        completion.state === "accepted" ? JSON.stringify(completion.result) : null,
+        completion.state === "accepted" ? JSON.stringify(completion.evidence) : null,
         completion.state === "rejected" ? JSON.stringify(completion.failure) : null,
       ]
     );
@@ -448,7 +472,8 @@ export async function rearmManualReviewOosDependencies(params: {
     await lockOosRecoveryOrder(client, params.shopifyStore, params.orderId);
     const activeMutation = await client.query(
       `SELECT 1 FROM public.oos_recovery_mutation_leases
-       WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+       WHERE lower(shopify_store) = lower($1) AND order_id = $2
+         AND lease_until > clock_timestamp()
        LIMIT 1`,
       [params.shopifyStore, params.orderId]
     );

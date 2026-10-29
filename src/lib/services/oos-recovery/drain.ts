@@ -144,7 +144,8 @@ async function expireDependencies(
            AND NOT EXISTS (
              SELECT 1 FROM public.oos_recovery_mutation_leases mutation
              WHERE lower(mutation.shopify_store) = lower(candidate.shopify_store)
-               AND mutation.order_id = candidate.order_id AND mutation.lease_until > now()
+               AND mutation.order_id = candidate.order_id
+               AND mutation.lease_until > clock_timestamp()
            )
          ORDER BY first_expiry, candidate.shopify_store, candidate.order_id
          LIMIT $1
@@ -184,7 +185,8 @@ async function expireDependencies(
       );
       const activeMutation = await client.query(
         `SELECT 1 FROM public.oos_recovery_mutation_leases
-         WHERE lower(shopify_store) = lower($1) AND order_id = $2 AND lease_until > now()
+         WHERE lower(shopify_store) = lower($1) AND order_id = $2
+           AND lease_until > clock_timestamp()
          LIMIT 1`,
         [candidate.shopify_store, candidate.order_id]
       );
