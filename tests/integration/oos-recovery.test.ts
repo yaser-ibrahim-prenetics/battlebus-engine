@@ -12,14 +12,12 @@ const connectionString = process.env.OOS_RECOVERY_TEST_DATABASE_URL;
 
 describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", () => {
   let pool: Pool;
+  let previousDatabaseUrl: string | undefined;
   const prefix = "oos-contract-";
 
   beforeAll(() => {
-    if (process.env.DATABASE_URL !== connectionString) {
-      throw new Error(
-        "OOS integration tests require DATABASE_URL to match the disposable database"
-      );
-    }
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = connectionString;
     pool = new Pool({ connectionString });
   });
 
@@ -39,6 +37,8 @@ describe.skipIf(!connectionString)("targeted OOS recovery PostgreSQL contract", 
   afterAll(async () => {
     await closeDatabase();
     await pool?.end();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
   });
 
   function dependency(
