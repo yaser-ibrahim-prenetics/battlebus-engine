@@ -33,6 +33,7 @@ export const queueHealthSQL = `SELECT
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='retry_wait') AS openai_ads_retry_wait_count,
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivering') AS openai_ads_delivering_count,
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivering' AND lease_until<=now()) AS openai_ads_expired_lease_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivered') AS openai_ads_delivered_count,
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivered' AND delivered_at>=now()-interval '24 hours') AS openai_ads_delivered_24h_count,
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='permanent_failure') AS openai_ads_permanent_failure_count,
   (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='skipped') AS openai_ads_skipped_count,
