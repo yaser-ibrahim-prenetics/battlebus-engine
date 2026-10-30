@@ -510,6 +510,18 @@ export type OpenAiAdsConversionRetryScheduledEvent = {
   data: { eventId: string; attempt: number; retryAt: string };
 };
 
+export type MetaChannelLiftRunRequestedEvent = {
+  name: "meta.channel-lift/run.requested";
+  data: {
+    requestId: string;
+    reportingDate: string;
+    mode: "dry_run" | "live";
+    source: "schedule" | "manual";
+    requestedBy?: string;
+    requestReason?: string;
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -539,7 +551,8 @@ export type BattleBusEvents =
   | BackorderRetryEvent
   | OrderLifecycleReadyEvent
   | OpenAiAdsConversionQueuedEvent
-  | OpenAiAdsConversionRetryScheduledEvent;
+  | OpenAiAdsConversionRetryScheduledEvent
+  | MetaChannelLiftRunRequestedEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)

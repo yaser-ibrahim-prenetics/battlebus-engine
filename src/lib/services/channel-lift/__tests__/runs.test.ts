@@ -47,6 +47,7 @@ describe("channel-lift run state", () => {
         mode: "live",
         source: "manual",
         requestedBy: "operator@example.com",
+        requestReason: "Run the approved Meta delivery canary",
       })
     ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
   });
@@ -63,6 +64,7 @@ describe("channel-lift run state", () => {
         reportingDate: "2026-10-28",
         mode: "live",
         source: "manual",
+        requestReason: "Retry the failed Meta delivery date",
       })
     ).resolves.toMatchObject({ disposition: "already_completed" });
   });

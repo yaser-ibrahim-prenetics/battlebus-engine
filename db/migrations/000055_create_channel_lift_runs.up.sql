@@ -20,6 +20,7 @@ CREATE TABLE public.channel_lift_runs (
   snapshot_hash text,
   last_error_code text,
   requested_by text,
+  request_reason text,
   started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -53,6 +54,10 @@ CREATE TABLE public.channel_lift_runs (
   ),
   CONSTRAINT channel_lift_requested_by_length CHECK (
     requested_by IS NULL OR length(requested_by) BETWEEN 1 AND 320
+  ),
+  CONSTRAINT channel_lift_request_reason_valid CHECK (
+    (source = 'schedule' AND request_reason IS NULL)
+    OR (source = 'manual' AND length(request_reason) BETWEEN 10 AND 1000)
   ),
   CONSTRAINT channel_lift_exclusions_object CHECK (
     jsonb_typeof(exclusion_counts) = 'object'
@@ -110,6 +115,7 @@ SELECT
   config_hash,
   snapshot_hash,
   last_error_code,
+  request_reason,
   started_at,
   completed_at,
   created_at,

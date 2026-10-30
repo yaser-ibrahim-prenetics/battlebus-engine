@@ -1,12 +1,15 @@
 export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
-  (run_id, reporting_date, mode, source, requested_by)
-  VALUES ($1, $2::date, $3, $4, $5)
+  (run_id, reporting_date, mode, source, requested_by, request_reason)
+  VALUES ($1, $2::date, $3, $4, $5, $6)
   ON CONFLICT (reporting_date, mode) DO NOTHING`;
 
 export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
   SET status='running', attempts=attempts+1, started_at=clock_timestamp(),
     completed_at=NULL, last_error_code=NULL
-  WHERE run_id=$1 AND status IN ('queued','failed') AND attempts < 100
+  WHERE run_id=$1
+    AND (status IN ('queued','failed')
+      OR (status='running' AND updated_at < clock_timestamp()-interval '2 hours'))
+    AND attempts < 100
   RETURNING run_id, reporting_date, mode, source, status, attempts,
     expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
@@ -31,6 +34,8 @@ export const recordChannelLiftPreparedSQL = `UPDATE public.channel_lift_runs
     mapped_pairs=$5, eligible_events=$6, exclusion_counts=$7::jsonb,
     config_hash=$8, snapshot_hash=$9
   WHERE run_id=$1 AND status='running'
+    AND (config_hash IS NULL OR config_hash=$8)
+    AND (snapshot_hash IS NULL OR snapshot_hash=$9)
   RETURNING run_id`;
 
 export const recordChannelLiftProgressSQL = `UPDATE public.channel_lift_runs

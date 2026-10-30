@@ -8,6 +8,7 @@ import {
   inboxSummariesSQL,
   actionSummariesSQL,
   openAiAdsSummariesSQL,
+  channelLiftSummariesSQL,
 } from "@/lib/sql/operations/health";
 import { recentCommandsSQL } from "@/lib/sql/operations/commands";
 import { reserveRecoveryRequest } from "@/lib/services/operations/commands";
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
       inbox: inboxSummariesSQL,
       actions: actionSummariesSQL,
       openai_ads: openAiAdsSummariesSQL,
+      channel_lift: channelLiftSummariesSQL,
       commands: recentCommandsSQL,
     };
     if (!(view in queries))

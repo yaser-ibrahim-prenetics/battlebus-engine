@@ -45,6 +45,8 @@ export { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-f
 export { captureOpenAiAdsConversion } from "@/inngest/functions/capture-openai-ads-conversion";
 export { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-ads-conversions";
 export { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
+export { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
+export { scheduleMetaChannelLift } from "@/inngest/functions/schedule-meta-channel-lift";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -86,6 +88,8 @@ import { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-f
 import { captureOpenAiAdsConversion } from "@/inngest/functions/capture-openai-ads-conversion";
 import { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-ads-conversions";
 import { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
+import { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
+import { scheduleMetaChannelLift } from "@/inngest/functions/schedule-meta-channel-lift";
 
 const inventoryFunctions = config.features.enableInventoryRuns
   ? [
@@ -108,6 +112,10 @@ const openAiAdsDeliveryFunctions = config.openAiAds.enabled
   ? [deliverOpenAiAdsConversions, scheduleOpenAiAdsRetry]
   : [];
 
+const channelLiftFunctions = config.channelLift.enabled
+  ? [scheduleMetaChannelLift, processMetaChannelLift]
+  : [];
+
 export const functions = [
   processAdministrativeRecovery,
   cronD365Reconciliation,
@@ -115,6 +123,7 @@ export const functions = [
   // Capture is always registered so disabled or incomplete delivery is visible and auditable.
   captureOpenAiAdsConversion,
   ...openAiAdsDeliveryFunctions,
+  ...channelLiftFunctions,
   processShopifyOrder,
   processRefund,
   processShopifyFulfillment,

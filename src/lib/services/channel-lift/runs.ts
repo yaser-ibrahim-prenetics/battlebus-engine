@@ -111,14 +111,22 @@ export async function startChannelLiftRun({
   mode,
   source,
   requestedBy,
+  requestReason,
 }: {
   reportingDate: string;
   mode: ChannelLiftMode;
   source: ChannelLiftSource;
   requestedBy?: string;
+  requestReason?: string;
 }): Promise<{ disposition: "started" | "active" | "already_completed"; run: ChannelLiftRun }> {
   requireDatabase();
   const reportingDate = validateReportingDate(rawReportingDate);
+  if (
+    source === "manual" &&
+    (!requestReason || requestReason.trim().length < 10 || requestReason.length > 1_000)
+  ) {
+    throw new ChannelLiftError("manual_request_reason_invalid");
+  }
   const runId = channelLiftRunId(reportingDate, mode);
   try {
     await queryDatabase(insertChannelLiftRunSQL, [
@@ -127,6 +135,7 @@ export async function startChannelLiftRun({
       mode,
       source,
       requestedBy?.slice(0, 320) || null,
+      source === "manual" ? requestReason?.slice(0, 1_000) || null : null,
     ]);
   } catch (error) {
     if (!error || typeof error !== "object" || !("code" in error) || error.code !== "23505") {
@@ -184,7 +193,7 @@ export async function recordChannelLiftPrepared({
     configHash,
     snapshotHash,
   ]);
-  if (result.rowCount !== 1) throw new Error("Channel-lift run is no longer active");
+  if (result.rowCount !== 1) throw new ChannelLiftError("prepared_snapshot_changed");
 }
 
 export async function recordChannelLiftProgress({
