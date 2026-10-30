@@ -1,7 +1,6 @@
 import {
   ChannelLiftError,
   channelLiftDigest,
-  reconcileAttributionCounts,
   validateReportingDate,
   validateShopifyOrderId,
   type AttributionCounts,
@@ -11,7 +10,6 @@ import { withBoundedChannelLiftRetry } from "@/lib/clients/channel-lift-retry";
 
 const ENDPOINT = "https://api.triplewhale.com/api/v2/orcabase/api/sql";
 const HARD_MAX_ATTRIBUTION_ROWS = 100_000;
-const MAX_ATTRIBUTION_PAGES = 1_000;
 const MAX_ATTRIBUTION_CHANNELS = 1_000;
 
 type TripleWhaleDependencies = {
@@ -35,6 +33,11 @@ export type TripleWhaleAttributionChannel = {
   channel: string | null;
   rows: number;
   pairs: number;
+};
+
+export type TripleWhaleMappedPairSnapshot = {
+  pairs: number;
+  snapshotHash: string;
 };
 
 type TripleWhaleCredentials = {
@@ -85,11 +88,39 @@ function parseCount(value: unknown): number {
 
 function parseCounts(rows: Record<string, unknown>[]): AttributionCounts {
   if (rows.length !== 1) throw new ChannelLiftError("triple_whale_aggregate_shape");
-  return {
+  const counts = {
     rows: parseCount(rows[0].rows),
     orders: parseCount(rows[0].orders),
     pairs: parseCount(rows[0].pairs),
   };
+  if (counts.orders > counts.pairs || counts.pairs > counts.rows) {
+    throw new ChannelLiftError("triple_whale_aggregate_invalid");
+  }
+  return counts;
+}
+
+function sourceChannelList(sourceChannels: readonly string[]): string {
+  if (
+    sourceChannels.length < 1 ||
+    sourceChannels.some((channel) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(channel))
+  ) {
+    throw new ChannelLiftError("triple_whale_pair_page_invalid");
+  }
+  return sourceChannels.map((channel) => `'${channel}'`).join(",");
+}
+
+function mappedPairsSql(channelList: string): string {
+  return `SELECT toString(order_id) AS order_id, channel, MIN(event_date) AS event_date FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} AND channel IN (${channelList}) GROUP BY order_id, channel`;
+}
+
+const MAPPED_SNAPSHOT_SELECT =
+  "COUNT(*) AS pairs, lower(hex(SHA256(arrayStringConcat(arraySort(groupArray(concat(order_id, ':', channel))), '|')))) AS snapshot_hash";
+
+function parseMappedPairSnapshot(row: Record<string, unknown> | undefined) {
+  if (!row || typeof row.snapshot_hash !== "string" || !/^[a-f0-9]{64}$/.test(row.snapshot_hash)) {
+    throw new ChannelLiftError("triple_whale_snapshot_shape");
+  }
+  return { pairs: parseCount(row.pairs), snapshotHash: row.snapshot_hash };
 }
 
 async function queryTripleWhale(
@@ -139,8 +170,12 @@ export function tripleWhaleAttributionConfigHash(input: TripleWhaleAttributionCo
     shopId: input.shopId,
     reportingDate,
     pageSize: input.pageSize,
+    maxRows: input.maxRows ?? 100_000,
     baseSql,
     countSql,
+    summaryVersion: 1,
+    mappedSnapshotVersion: 1,
+    maxAttributionChannels: MAX_ATTRIBUTION_CHANNELS,
   });
 }
 
@@ -181,11 +216,15 @@ export async function readTripleWhaleAttributionSummary(
     if (row.channel !== null && typeof row.channel !== "string") {
       throw new ChannelLiftError("triple_whale_channel_invalid");
     }
-    return {
+    const channel = {
       channel: row.channel as string | null,
       rows: parseCount(row.rows),
       pairs: parseCount(row.pairs),
     };
+    if (channel.pairs > channel.rows) {
+      throw new ChannelLiftError("triple_whale_aggregate_invalid");
+    }
+    return channel;
   });
   if (
     channels.reduce((total, channel) => total + channel.rows, 0) !== counts.rows ||
@@ -205,7 +244,7 @@ export async function readTripleWhaleAttributionSummary(
     counts,
     channels,
     configHash: tripleWhaleAttributionConfigHash(input),
-    snapshotHash: channelLiftDigest(channels),
+    snapshotHash: channelLiftDigest([counts, channels]),
   };
 }
 
@@ -216,11 +255,9 @@ export async function readTripleWhaleMappedPairPage(
     limit: number;
   },
   dependencies: TripleWhaleDependencies = defaultDependencies
-): Promise<AttributionRow[]> {
+): Promise<{ rows: AttributionRow[]; pairs: number; snapshotHash: string }> {
   const reportingDate = validateCredentials(input);
   if (
-    input.sourceChannels.length < 1 ||
-    input.sourceChannels.some((channel) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(channel)) ||
     !Number.isInteger(input.offset) ||
     input.offset < 0 ||
     !Number.isInteger(input.limit) ||
@@ -229,11 +266,21 @@ export async function readTripleWhaleMappedPairPage(
   ) {
     throw new ChannelLiftError("triple_whale_pair_page_invalid");
   }
-  const channelList = input.sourceChannels.map((channel) => `'${channel}'`).join(",");
-  const sql = `SELECT order_id, channel, MIN(event_date) AS event_date FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} AND channel IN (${channelList}) GROUP BY order_id, channel ORDER BY order_id, channel LIMIT ${input.limit} OFFSET ${input.offset}`;
+  const channelList = sourceChannelList(input.sourceChannels);
+  const mappedSql = mappedPairsSql(channelList);
+  const sql = `WITH mapped AS (${mappedSql}), snapshot AS (SELECT ${MAPPED_SNAPSHOT_SELECT} FROM mapped) SELECT mapped.order_id, mapped.channel, mapped.event_date, snapshot.pairs, snapshot.snapshot_hash FROM mapped CROSS JOIN snapshot ORDER BY mapped.order_id, mapped.channel LIMIT ${input.limit} OFFSET ${input.offset}`;
   const page = await queryTripleWhale(input, sql, dependencies);
   if (page.length > input.limit) throw new ChannelLiftError("triple_whale_page_oversized");
-  return page.map((row) => {
+  if (page.length === 0) throw new ChannelLiftError("triple_whale_page_termination_mismatch");
+  const snapshot = parseMappedPairSnapshot(page[0]);
+  const rows = page.map((row) => {
+    const rowSnapshot = parseMappedPairSnapshot(row);
+    if (
+      rowSnapshot.pairs !== snapshot.pairs ||
+      rowSnapshot.snapshotHash !== snapshot.snapshotHash
+    ) {
+      throw new ChannelLiftError("triple_whale_snapshot_changed");
+    }
     if (typeof row.channel !== "string" || !input.sourceChannels.includes(row.channel)) {
       throw new ChannelLiftError("triple_whale_channel_invalid");
     }
@@ -246,91 +293,17 @@ export async function readTripleWhaleMappedPairPage(
       eventDate: row.event_date,
     };
   });
+  return { rows, ...snapshot };
 }
 
-export async function readTripleWhaleMappedPairCount(
+export async function readTripleWhaleMappedPairSnapshot(
   input: TripleWhaleCredentials & { sourceChannels: readonly string[] },
   dependencies: TripleWhaleDependencies = defaultDependencies
-): Promise<number> {
+): Promise<TripleWhaleMappedPairSnapshot> {
   validateCredentials(input);
-  if (
-    input.sourceChannels.length < 1 ||
-    input.sourceChannels.some((channel) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(channel))
-  ) {
-    throw new ChannelLiftError("triple_whale_pair_page_invalid");
-  }
-  const channelList = input.sourceChannels.map((channel) => `'${channel}'`).join(",");
-  const sql = `SELECT COUNT(DISTINCT tuple(order_id, channel)) AS pairs FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} AND channel IN (${channelList})`;
+  const channelList = sourceChannelList(input.sourceChannels);
+  const sql = `WITH mapped AS (${mappedPairsSql(channelList)}) SELECT ${MAPPED_SNAPSHOT_SELECT} FROM mapped`;
   const rows = await queryTripleWhale(input, sql, dependencies);
   if (rows.length !== 1) throw new ChannelLiftError("triple_whale_aggregate_shape");
-  return parseCount(rows[0].pairs);
-}
-
-export async function readTripleWhaleAttribution(
-  input: TripleWhaleAttributionConfig & { apiKey: string },
-  dependencies: TripleWhaleDependencies = defaultDependencies
-): Promise<{
-  rows: AttributionRow[];
-  counts: AttributionCounts;
-  configHash: string;
-  snapshotHash: string;
-}> {
-  const reportingDate = validateCredentials(input);
-  if (!Number.isInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 50_000) {
-    throw new ChannelLiftError("triple_whale_page_size_invalid");
-  }
-  const maxRows = input.maxRows ?? 100_000;
-  if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > HARD_MAX_ATTRIBUTION_ROWS) {
-    throw new ChannelLiftError("triple_whale_max_rows_invalid");
-  }
-
-  const { baseSql, countSql } = attributionSql(input.pageSize);
-  const query = (sql: string) => queryTripleWhale(input, sql, dependencies);
-
-  const counts = parseCounts(await query(countSql));
-  if (counts.rows > maxRows) throw new ChannelLiftError("triple_whale_row_limit_exceeded");
-  const maximumPages = Math.floor(counts.rows / input.pageSize) + 1;
-  if (maximumPages > MAX_ATTRIBUTION_PAGES) {
-    throw new ChannelLiftError("triple_whale_page_limit_exceeded");
-  }
-  const rows: AttributionRow[] = [];
-  for (let offset = 0; offset <= counts.rows; offset += input.pageSize) {
-    const page = await query(`${baseSql} OFFSET ${offset}`);
-    if (page.length > input.pageSize) throw new ChannelLiftError("triple_whale_page_oversized");
-    if (offset === counts.rows && page.length !== 0) {
-      throw new ChannelLiftError("triple_whale_page_termination_mismatch");
-    }
-    for (const row of page) {
-      if (row.channel !== null && typeof row.channel !== "string") {
-        throw new ChannelLiftError("triple_whale_channel_invalid");
-      }
-      if (typeof row.event_date !== "string" || row.event_date.slice(0, 10) !== reportingDate) {
-        throw new ChannelLiftError("triple_whale_period_mismatch");
-      }
-      rows.push({
-        orderId: validateShopifyOrderId(row.order_id),
-        channel: row.channel as string | null,
-        eventDate: row.event_date,
-      });
-    }
-    if (rows.length > counts.rows) throw new ChannelLiftError("extraction_count_mismatch");
-    if (page.length < input.pageSize) break;
-  }
-
-  const finalCounts = parseCounts(await query(countSql));
-  if (
-    finalCounts.rows !== counts.rows ||
-    finalCounts.orders !== counts.orders ||
-    finalCounts.pairs !== counts.pairs
-  ) {
-    throw new ChannelLiftError("triple_whale_snapshot_changed");
-  }
-  reconcileAttributionCounts(rows, counts);
-  const snapshot = rows.map((row) => JSON.stringify(row)).sort();
-  return {
-    rows,
-    counts,
-    configHash: tripleWhaleAttributionConfigHash(input),
-    snapshotHash: channelLiftDigest(snapshot),
-  };
+  return parseMappedPairSnapshot(rows[0]);
 }

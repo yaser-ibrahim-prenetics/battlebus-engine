@@ -111,6 +111,7 @@ export const processMetaChannelLift = inngest.createFunction(
               eligibilityCutoffSeconds,
               expectedCounts: plan.counts,
               expectedMappedPairs: plan.mappedPairs,
+              expectedMappedSnapshotHash: plan.mappedSnapshotHash,
               candidateBatch,
             });
             return {
@@ -174,6 +175,7 @@ export const processMetaChannelLift = inngest.createFunction(
               eligibilityCutoffSeconds,
               expectedCounts: evidence.counts,
               expectedMappedPairs: evidence.mappedPairs,
+              expectedMappedSnapshotHash: evidence.mappedSnapshotHash,
               batch: batchEvidence,
             });
             await recordChannelLiftPrepared({ runId, ...evidence });
@@ -211,6 +213,7 @@ export const processMetaChannelLift = inngest.createFunction(
             eligibilityCutoffSeconds,
             expectedCounts: evidence.counts,
             expectedMappedPairs: evidence.mappedPairs,
+            expectedMappedSnapshotHash: evidence.mappedSnapshotHash,
             batch: batchEvidence,
           });
           await recordChannelLiftPrepared({ runId, ...evidence });

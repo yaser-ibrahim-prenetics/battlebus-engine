@@ -13,6 +13,7 @@ const original = { ...config.channelLift };
 const originalShop = config.shopify.im8.shopDomain;
 const reportingDate = "2026-10-28";
 const eligibilityCutoffSeconds = 1_793_275_200;
+const mappedSnapshotHash = "f".repeat(64);
 
 const order = {
   id: "123",
@@ -44,8 +45,11 @@ function candidateDependencies({
 } = {}) {
   return {
     readCounts: vi.fn().mockResolvedValue(counts),
-    readPairCount: vi.fn().mockResolvedValue(mappedPairs),
-    readPairPage: vi.fn().mockResolvedValue(rows),
+    readPairPage: vi.fn().mockResolvedValue({
+      rows,
+      pairs: mappedPairs,
+      snapshotHash: mappedSnapshotHash,
+    }),
     readOrders: vi.fn().mockResolvedValue(orders),
   };
 }
@@ -74,6 +78,10 @@ describe("channel-lift report preparation", () => {
         configHash: extractionConfigHash(),
         snapshotHash: "b".repeat(64),
       }),
+      readPairSnapshot: vi.fn().mockResolvedValue({
+        pairs: 1,
+        snapshotHash: mappedSnapshotHash,
+      }),
     });
     const prepared = await prepareChannelLiftCandidateBatch(
       {
@@ -81,6 +89,7 @@ describe("channel-lift report preparation", () => {
         eligibilityCutoffSeconds,
         expectedCounts: plan.counts,
         expectedMappedPairs: plan.mappedPairs,
+        expectedMappedSnapshotHash: plan.mappedSnapshotHash,
         candidateBatch: plan.candidateBatches[0],
       },
       candidateDependencies({ counts: plan.counts, mappedPairs: plan.mappedPairs })
@@ -109,9 +118,12 @@ describe("channel-lift report preparation", () => {
 
   it("fails closed when Triple Whale and Shopify shop identities differ", async () => {
     Object.assign(config.shopify.im8, { shopDomain: "different.myshopify.com" });
-    await expect(prepareChannelLiftPlan(reportingDate, { readSummary: vi.fn() })).rejects.toThrow(
-      "shop_identity_mismatch"
-    );
+    await expect(
+      prepareChannelLiftPlan(reportingDate, {
+        readSummary: vi.fn(),
+        readPairSnapshot: vi.fn(),
+      })
+    ).rejects.toThrow("shop_identity_mismatch");
   });
 
   it("holds missing and ineligible Shopify orders by safe reason", async () => {
@@ -121,6 +133,10 @@ describe("channel-lift report preparation", () => {
         channels: [{ channel: "klaviyo", rows: 2, pairs: 2 }],
         configHash: extractionConfigHash(),
         snapshotHash: "b".repeat(64),
+      }),
+      readPairSnapshot: vi.fn().mockResolvedValue({
+        pairs: 2,
+        snapshotHash: mappedSnapshotHash,
       }),
     });
     const rows = [
@@ -133,6 +149,7 @@ describe("channel-lift report preparation", () => {
         eligibilityCutoffSeconds,
         expectedCounts: plan.counts,
         expectedMappedPairs: plan.mappedPairs,
+        expectedMappedSnapshotHash: plan.mappedSnapshotHash,
         candidateBatch: plan.candidateBatches[0],
       },
       candidateDependencies({
@@ -167,6 +184,7 @@ describe("channel-lift report preparation", () => {
       eligibilityCutoffSeconds,
       expectedCounts: { rows: 1, orders: 1, pairs: 1 },
       expectedMappedPairs: 1,
+      expectedMappedSnapshotHash: mappedSnapshotHash,
       candidateBatch: { candidateOffset: 0, candidateCount: 1 },
     };
     const first = await prepareChannelLiftCandidateBatch(input, candidateDependencies());
@@ -190,6 +208,7 @@ describe("channel-lift report preparation", () => {
         eligibilityCutoffSeconds,
         expectedCounts,
         expectedMappedPairs: 1,
+        expectedMappedSnapshotHash: mappedSnapshotHash,
         candidateBatch: { candidateOffset: 0, candidateCount: 1 },
       },
       candidateDependencies()
@@ -201,6 +220,7 @@ describe("channel-lift report preparation", () => {
         eligibilityCutoffSeconds,
         expectedCounts,
         expectedMappedPairs: 1,
+        expectedMappedSnapshotHash: mappedSnapshotHash,
         batch: prepared.batch,
       },
       dependencies

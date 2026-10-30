@@ -15,35 +15,36 @@ import { META_GRAPH_API_VERSION } from "@/lib/clients/meta-conversions";
 import {
   readTripleWhaleAttributionSummary,
   readTripleWhaleAttributionCounts,
-  readTripleWhaleMappedPairCount,
   readTripleWhaleMappedPairPage,
+  readTripleWhaleMappedPairSnapshot,
   tripleWhaleAttributionConfigHash,
 } from "@/lib/clients/triple-whale";
 import { config } from "@/lib/config";
 
 type PlanDependencies = {
   readSummary: typeof readTripleWhaleAttributionSummary;
+  readPairSnapshot: typeof readTripleWhaleMappedPairSnapshot;
 };
 
 type DeliveryBatchDependencies = {
   readCounts: typeof readTripleWhaleAttributionCounts;
-  readPairCount: typeof readTripleWhaleMappedPairCount;
   readPairPage: typeof readTripleWhaleMappedPairPage;
   readOrders: typeof readChannelLiftOrders;
 };
 
 const defaultPlanDependencies: PlanDependencies = {
   readSummary: readTripleWhaleAttributionSummary,
+  readPairSnapshot: readTripleWhaleMappedPairSnapshot,
 };
 
 const defaultDeliveryBatchDependencies: DeliveryBatchDependencies = {
   readCounts: readTripleWhaleAttributionCounts,
-  readPairCount: readTripleWhaleMappedPairCount,
   readPairPage: readTripleWhaleMappedPairPage,
   readOrders: readChannelLiftOrders,
 };
 
 const META_BATCH_SIZE = 500;
+const MAX_PREPARATION_BATCHES = 200;
 const SOURCE_CHANNELS = Object.freeze(
   Object.entries(CHANNEL_LIFT_MAPPING)
     .filter(([, mapped]) => mapped !== null && CHANNEL_LIFT_ALLOWLIST.includes(mapped as "Klaviyo"))
@@ -62,9 +63,26 @@ export type ChannelLiftCandidateBatch = Pick<
   "candidateOffset" | "candidateCount"
 >;
 
+type ChannelLiftBatchContext = {
+  reportingDate: string;
+  eligibilityCutoffSeconds: number;
+  expectedCounts: AttributionCounts;
+  expectedMappedPairs: number;
+  expectedMappedSnapshotHash: string;
+};
+
+type ChannelLiftCandidatePreparation = ChannelLiftBatchContext & {
+  candidateBatch: ChannelLiftCandidateBatch;
+};
+
+type ChannelLiftDeliveryPreparation = ChannelLiftBatchContext & {
+  batch: ChannelLiftDeliveryBatch;
+};
+
 export type ChannelLiftPreparationPlan = {
   counts: AttributionCounts;
   mappedPairs: number;
+  mappedSnapshotHash: string;
   mappingExclusions: Record<string, number>;
   extractionConfigHash: string;
   extractionSnapshotHash: string;
@@ -74,6 +92,7 @@ export type ChannelLiftPreparationPlan = {
 export type ChannelLiftEvidence = {
   counts: AttributionCounts;
   mappedPairs: number;
+  mappedSnapshotHash: string;
   eligibleEvents: number;
   exclusionCounts: Record<string, number>;
   configHash: string;
@@ -191,6 +210,22 @@ export async function prepareChannelLiftPlan(
     }
     mappedPairs += summary.pairs;
   }
+  if (
+    mappedPairs > extraction.counts.pairs ||
+    mappedPairs > config.channelLift.maxRows ||
+    Math.ceil(mappedPairs / META_BATCH_SIZE) > MAX_PREPARATION_BATCHES
+  ) {
+    throw new ChannelLiftError("triple_whale_row_limit_exceeded");
+  }
+  const pairSnapshot = await dependencies.readPairSnapshot({
+    reportingDate,
+    shopId: tripleWhaleShop,
+    apiKey: config.channelLift.tripleWhaleApiKey,
+    sourceChannels: SOURCE_CHANNELS,
+  });
+  if (pairSnapshot.pairs !== mappedPairs) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
   const candidateBatches: ChannelLiftCandidateBatch[] = [];
   for (let offset = 0; offset < mappedPairs; offset += META_BATCH_SIZE) {
     candidateBatches.push({
@@ -201,9 +236,10 @@ export async function prepareChannelLiftPlan(
   return {
     counts: extraction.counts,
     mappedPairs,
+    mappedSnapshotHash: pairSnapshot.snapshotHash,
     mappingExclusions,
     extractionConfigHash: extraction.configHash,
-    extractionSnapshotHash: extraction.snapshotHash,
+    extractionSnapshotHash: channelLiftDigest([extraction.snapshotHash, pairSnapshot.snapshotHash]),
     candidateBatches,
   };
 }
@@ -214,14 +250,9 @@ export async function prepareChannelLiftCandidateBatch(
     eligibilityCutoffSeconds,
     expectedCounts,
     expectedMappedPairs,
+    expectedMappedSnapshotHash,
     candidateBatch,
-  }: {
-    reportingDate: string;
-    eligibilityCutoffSeconds: number;
-    expectedCounts: AttributionCounts;
-    expectedMappedPairs: number;
-    candidateBatch: ChannelLiftCandidateBatch;
-  },
+  }: ChannelLiftCandidatePreparation,
   dependencies: DeliveryBatchDependencies = defaultDeliveryBatchDependencies
 ): Promise<{
   events: MetaChannelLiftEvent[];
@@ -246,20 +277,16 @@ export async function prepareChannelLiftCandidateBatch(
   ) {
     throw new ChannelLiftError("triple_whale_snapshot_changed");
   }
-  const mappedPairCount = await dependencies.readPairCount({
-    ...credentials,
-    sourceChannels: SOURCE_CHANNELS,
-  });
-  if (mappedPairCount !== expectedMappedPairs) {
-    throw new ChannelLiftError("triple_whale_snapshot_changed");
-  }
-  const rows = await dependencies.readPairPage({
+  const page = await dependencies.readPairPage({
     ...credentials,
     sourceChannels: SOURCE_CHANNELS,
     offset: candidateBatch.candidateOffset,
     limit: candidateBatch.candidateCount,
   });
-  const mapped = mapAndDeduplicateChannels(rows, CHANNEL_LIFT_MAPPING, CHANNEL_LIFT_ALLOWLIST);
+  if (page.pairs !== expectedMappedPairs || page.snapshotHash !== expectedMappedSnapshotHash) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
+  const mapped = mapAndDeduplicateChannels(page.rows, CHANNEL_LIFT_MAPPING, CHANNEL_LIFT_ALLOWLIST);
   if (
     mapped.pairs.length !== candidateBatch.candidateCount ||
     Object.keys(mapped.exclusions).length > 0
@@ -324,6 +351,7 @@ export function finalizeChannelLiftEvidence({
   return {
     counts: plan.counts,
     mappedPairs: plan.mappedPairs,
+    mappedSnapshotHash: plan.mappedSnapshotHash,
     eligibleEvents,
     exclusionCounts,
     configHash,
@@ -343,22 +371,20 @@ export async function prepareChannelLiftDeliveryBatch(
     eligibilityCutoffSeconds,
     expectedCounts,
     expectedMappedPairs,
+    expectedMappedSnapshotHash,
     batch,
-  }: {
-    reportingDate: string;
-    eligibilityCutoffSeconds: number;
-    expectedCounts: AttributionCounts;
-    expectedMappedPairs: number;
-    batch: ChannelLiftDeliveryBatch;
-  },
+  }: ChannelLiftDeliveryPreparation,
   dependencies: DeliveryBatchDependencies = defaultDeliveryBatchDependencies
 ): Promise<{ events: MetaChannelLiftEvent[]; digest: string; configHash: string }> {
+  // Keep the replay API payload-minimal so callers cannot checkpoint
+  // exclusion details or other initial-preparation state by accident.
   const prepared = await prepareChannelLiftCandidateBatch(
     {
       reportingDate,
       eligibilityCutoffSeconds,
       expectedCounts,
       expectedMappedPairs,
+      expectedMappedSnapshotHash,
       candidateBatch: batch,
     },
     dependencies
