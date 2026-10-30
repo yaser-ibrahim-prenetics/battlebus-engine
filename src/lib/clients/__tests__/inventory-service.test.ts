@@ -22,6 +22,14 @@ function request(key = "caller-key") {
   });
 }
 describe("inventory compatibility routing", () => {
+  it.each(["d365", "unified"])("routes the %s read API through inventory-service", async (path) => {
+    fetchMock.mockResolvedValue(new Response('{"items":[]}'));
+    const response = await forwardInventoryRequest(new Request(`https://bus.example.com/api/inventory/${path}?sku=SKU-1`, {
+      headers: {"x-api-key": "caller-key"},
+    }));
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://inventory.example.com/api/inventory/${path}?sku=SKU-1`);
+  });
   it("preserves signed Inngest callback bytes and query parameters for worker verification", async () => {
     const body = '{ "event": {"id":"probe"} }';
     fetchMock.mockResolvedValue(new Response("{}", {headers: {"x-inngest-sdk": "test"}}));
