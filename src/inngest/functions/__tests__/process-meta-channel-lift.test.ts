@@ -164,9 +164,6 @@ describe("Meta channel-lift workflow", () => {
         events: [{ ...event, custom_data: { value: 99, currency: "USD" } }],
         evidence: { ...evidence, snapshotHash: "d".repeat(64) },
       });
-    mocks.prepared
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new ChannelLiftError("prepared_snapshot_changed"));
     await expect(
       (
         processMetaChannelLift as unknown as (

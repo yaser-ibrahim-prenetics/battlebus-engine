@@ -85,6 +85,34 @@ describe("channel-lift report preparation", () => {
     });
   });
 
+  it("binds the privacy-safe snapshot digest to the complete outbound payload", async () => {
+    const extraction = {
+      rows: [{ orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" }],
+      counts: { rows: 1, orders: 1, pairs: 1 },
+      configHash: "a".repeat(64),
+      snapshotHash: "b".repeat(64),
+    };
+    const first = await prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
+      readAttribution: vi.fn().mockResolvedValue(extraction),
+      readOrders: vi.fn().mockResolvedValue(new Map([["123", order]])),
+    });
+    const changed = await prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
+      readAttribution: vi.fn().mockResolvedValue(extraction),
+      readOrders: vi.fn().mockResolvedValue(
+        new Map([
+          [
+            "123",
+            { ...order, email: "changed@example.com", totalPrice: "99.00" },
+          ],
+        ])
+      ),
+    });
+    expect(changed.events[0].event_id).toBe(first.events[0].event_id);
+    expect(changed.evidence.configHash).toBe(first.evidence.configHash);
+    expect(changed.evidence.snapshotHash).not.toBe(first.evidence.snapshotHash);
+    expect(JSON.stringify(changed.evidence)).not.toContain("changed@example.com");
+  });
+
   afterAll(() => {
     Object.assign(config.channelLift, original);
     Object.assign(config.shopify.im8, { shopDomain: originalShop });
