@@ -50,7 +50,7 @@ describe.skipIf(!connectionString)("OpenAI Ads PostgreSQL outbox", () => {
         })
       )
     );
-    expect(new Set(captures.map((capture) => capture.eventId))).toHaveLength(1);
+    expect(new Set(captures.map((capture) => capture.eventId)).size).toBe(1);
     const count = await pool.query<{ count: string }>(
       "SELECT count(*) FROM public.openai_ads_conversions WHERE shopify_store=$1 AND shopify_order_id=$2",
       [store, "1001"]
