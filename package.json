@@ -39,7 +39,8 @@
     "test:d365-fulfillment-order": "npx tsx scripts/test-d365-fulfillment-order.ts",
     "test:slack-errors": "npx tsx scripts/test-slack-error-notifications.ts",
     "test:product-hub": "npx tsx scripts/test-product-to-hub.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "cutover:replay": "tsx scripts/cutover/replay.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
@@ -73,6 +74,7 @@
     "husky": "^9.1.7",
     "prettier": "^3.2.5",
     "tailwindcss": "^4",
+    "tsx": "4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.12"
   }

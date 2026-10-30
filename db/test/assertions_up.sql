@@ -184,3 +184,7 @@ ROLLBACK;
 \ir assertions_up/017_channel_lift_runs.sql
 
 \ir assertions_up/018_workflow_timeline.sql
+\ir assertions_up/019_cutover_evidence.sql
+\ir assertions_up/020_workflow_run_health.sql
+\ir assertions_up/021_replay_writer_isolation.sql
+\ir assertions_up/022_workflow_sample_exclusion.sql
