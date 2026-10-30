@@ -5,7 +5,6 @@ import { cronD365Reconciliation } from "./cron-d365-reconciliation";
 // ============================================================================
 // Export all Inngest functions for registration
 
-import { config } from "@/lib/config";
 import { drainSlackNotificationOutbox } from "./drain-slack-notifications";
 
 export { processShopifyOrder } from "./process-shopify-order";
@@ -20,21 +19,10 @@ export {
   processActionRefund,
   processActionFulfill,
 } from "./process-hub-actions";
-export { processProductSync } from "./process-product-sync";
-export { processInventoryMesh } from "./process-inventory-mesh";
-export { processInventoryFullSync } from "./process-inventory-full-sync";
-export { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
-export { processLocationSync } from "./process-location-sync";
 export { processBackorder } from "./process-backorder";
 export { drainPendingActions } from "./drain-pending-actions";
 export { drainWebhookInbox } from "./drain-webhook-inbox";
 export { processSubscriptionOrder } from "./process-subscription-order";
-export {
-  cronInventoryReconciliation,
-  triggerInventoryReconciliation,
-  syncSkuInventory,
-} from "./cron-inventory-reconciliation";
-export { refreshLocationConfigCache } from "./refresh-location-config-cache";
 export { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 export { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 export { processShopifyOrderRecover } from "./process-shopify-order-recover";
@@ -56,43 +44,16 @@ import {
   processActionRefund,
   processActionFulfill,
 } from "./process-hub-actions";
-import { processProductSync } from "./process-product-sync";
-import { processInventoryMesh } from "./process-inventory-mesh";
-import { processInventoryFullSync } from "./process-inventory-full-sync";
-import { processShopifyInventoryUpdate } from "./process-shopify-inventory-update";
-import { processLocationSync } from "./process-location-sync";
 import { processBackorder } from "./process-backorder";
 import { drainPendingActions } from "./drain-pending-actions";
 import { drainWebhookInbox } from "./drain-webhook-inbox";
 import { processSubscriptionOrder } from "./process-subscription-order";
-import {
-  cronInventoryReconciliation,
-  triggerInventoryReconciliation,
-  syncSkuInventory,
-} from "./cron-inventory-reconciliation";
-import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 import { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 import { processShopifyOrderRecover } from "./process-shopify-order-recover";
 import { recoverGpsFulfilment } from "./recover-gps-fulfillment";
 import { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-fulfilment";
 
-const inventoryFunctions = config.features.enableInventoryRuns
-  ? [
-      // Product & Inventory Sync
-      processProductSync,
-      processInventoryMesh,
-      processInventoryFullSync,
-      processShopifyInventoryUpdate,
-      // Location sync and cache refresh are inventory-adjacent flows.
-      processLocationSync,
-      refreshLocationConfigCache,
-      // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)
-      cronInventoryReconciliation,
-      triggerInventoryReconciliation,
-      syncSkuInventory,
-    ]
-  : [];
 
 export const functions = [
   processAdministrativeRecovery,
@@ -111,8 +72,7 @@ export const functions = [
   processActionCancel,
   processActionRefund,
   processActionFulfill,
-  // Product/Inventory flows are intentionally gated for staged rollout.
-  ...inventoryFunctions,
+  // Inventory workflows are owned by the inventory-service Inngest app.
   // Backorder Retry Queue
   processBackorder,
   // Stacked lifecycle action drain

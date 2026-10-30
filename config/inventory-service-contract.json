@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "service": "inventory-service",
+  "appId": "im8-inventory-service",
+  "repository": "https://github.com/yaser-ibrahim-prenetics/inventory-service",
+  "events": [
+    "shopify/product.created",
+    "shopify/product.updated",
+    "shopify/product.deleted",
+    "shopify/location.created",
+    "shopify/location.updated",
+    "shopify/location.deleted",
+    "shopify/inventory.updated",
+    "inventory/sync",
+    "inventory/sync.requested",
+    "inventory/reconciliation.requested",
+    "inventory/sku.sync.requested",
+    "inventory/integration.probe"
+  ]
+}

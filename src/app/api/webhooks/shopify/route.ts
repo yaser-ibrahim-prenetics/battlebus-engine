@@ -508,7 +508,7 @@ export async function POST(request: NextRequest) {
 
       // Inventory level updated - sync stock levels to D365 & GPS via mesh
       case "inventory_levels/update":
-        if (!config.features.enableInventorySync) {
+        if (!config.features.enableInventorySync && process.env.INVENTORY_SERVICE_EVENTS_ENABLED !== "true") {
           console.log(
             `[Webhook] [${requestId}] ⏭️  inventory_levels/update ignored (ENABLE_INVENTORY_SYNC=false)`
           );

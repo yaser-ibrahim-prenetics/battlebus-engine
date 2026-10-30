@@ -1,3 +1,4 @@
+import inventoryContract from "../../config/inventory-service-contract.json";
 /**
  * Build-time contract test: every Inngest event that gets EMITTED somewhere
  * in the codebase (`inngest.send(...)`, `step.sendEvent(...)`, or the
@@ -279,9 +280,14 @@ describe("Event consumer contract (build-time, static)", () => {
     expect(emittedEvents.length).toBeGreaterThan(0);
   });
 
+  it("inventory events have exactly one owner outside Battle Bus", () => {
+    expect(inventoryContract.appId).toBe("im8-inventory-service");
+    for (const event of inventoryContract.events) expect(registeredEvents.has(event)).toBe(false);
+  });
+
   it("every emitted event name has at least one registered consumer", () => {
     const unregistered = emittedEvents.filter(
-      (e) => !registeredEvents.has(e.event) && !ALLOWLISTED_UNREGISTERED_EVENTS.has(e.event)
+      (e) => !registeredEvents.has(e.event) && !inventoryContract.events.includes(e.event) && !ALLOWLISTED_UNREGISTERED_EVENTS.has(e.event)
     );
 
     if (unregistered.length > 0) {
