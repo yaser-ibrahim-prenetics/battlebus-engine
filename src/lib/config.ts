@@ -148,6 +148,16 @@ export const config = {
     enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
   },
 
+  openAiAds: {
+    enabled: process.env.OPENAI_ADS_ENABLED === "true",
+    conversionsApiKey: process.env.OPENAI_ADS_CONVERSIONS_API_KEY || "",
+    pixelId: process.env.OPENAI_ADS_PIXEL_ID?.trim() || "",
+    allowedStore: process.env.OPENAI_ADS_ALLOWED_STORE?.trim().toLowerCase() || "",
+    endpoint: process.env.OPENAI_ADS_ENDPOINT?.trim() || "https://bzr.openai.com",
+    apiVersion: process.env.OPENAI_ADS_API_VERSION?.trim() || "v1",
+    sourceUrl: process.env.OPENAI_ADS_SOURCE_URL?.trim() || "",
+  },
+
   // Slack Notification Channels
   slack: {
     appEnv: process.env.APP_ENV || "local",
@@ -427,6 +437,36 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
         "[Config] WARNING: GPS_API_KEY and GPS_UK_API_KEY are identical. " +
           "Each GPS warehouse usually has its own appKey — verify this is intentional."
       );
+    }
+  }
+
+  if (config.openAiAds.enabled) {
+    try {
+      const endpoint = new URL(config.openAiAds.endpoint);
+      if (
+        endpoint.protocol !== "https:" ||
+        endpoint.hostname !== "bzr.openai.com" ||
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.port ||
+        (endpoint.pathname !== "/" && endpoint.pathname !== "")
+      ) {
+        errors.push("OPENAI_ADS_ENDPOINT must be the HTTPS bzr.openai.com origin");
+      }
+    } catch {
+      errors.push("OPENAI_ADS_ENDPOINT must be a valid HTTPS URL");
+    }
+    if (!/^v[1-9][0-9]*$/.test(config.openAiAds.apiVersion)) {
+      errors.push("OPENAI_ADS_API_VERSION must look like v1");
+    }
+    if (config.openAiAds.sourceUrl) {
+      try {
+        if (new URL(config.openAiAds.sourceUrl).protocol !== "https:") {
+          errors.push("OPENAI_ADS_SOURCE_URL must use HTTPS");
+        }
+      } catch {
+        errors.push("OPENAI_ADS_SOURCE_URL must be a valid HTTPS URL");
+      }
     }
   }
 
