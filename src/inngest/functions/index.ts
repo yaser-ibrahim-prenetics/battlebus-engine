@@ -1,3 +1,4 @@
+import { requestOosDrainFromInventory } from "./request-oos-drain-from-inventory";
 import { processAdministrativeRecovery } from "./process-administrative-recovery";
 import { cronD365Reconciliation } from "./cron-d365-reconciliation";
 // ============================================================================
@@ -31,12 +32,6 @@ export { drainWebhookInbox } from "./drain-webhook-inbox";
 export { drainOosOutbox } from "./drain-oos-outbox";
 export { processOosDrain, scheduleOosDrainSweep } from "./process-oos-drain";
 export { processSubscriptionOrder } from "./process-subscription-order";
-export {
-  cronInventoryReconciliation,
-  triggerInventoryReconciliation,
-  syncSkuInventory,
-} from "./cron-inventory-reconciliation";
-export { refreshLocationConfigCache } from "./refresh-location-config-cache";
 export { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 export { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 export { processShopifyOrderRecover } from "./process-shopify-order-recover";
@@ -74,12 +69,6 @@ import { drainWebhookInbox } from "./drain-webhook-inbox";
 import { drainOosOutbox } from "./drain-oos-outbox";
 import { processOosDrain, scheduleOosDrainSweep } from "./process-oos-drain";
 import { processSubscriptionOrder } from "./process-subscription-order";
-import {
-  cronInventoryReconciliation,
-  triggerInventoryReconciliation,
-  syncSkuInventory,
-} from "./cron-inventory-reconciliation";
-import { refreshLocationConfigCache } from "./refresh-location-config-cache";
 import { processDynamicsInitiatedFulfillment } from "./process-dynamics-initiated-fulfillment";
 import { cronSalesorderReconciliation } from "./cron-salesorder-reconciliation";
 import { processShopifyOrderRecover } from "./process-shopify-order-recover";
@@ -91,22 +80,6 @@ import { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-
 import { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
 import { scheduleMetaChannelLift } from "@/inngest/functions/schedule-meta-channel-lift";
 
-const inventoryFunctions = config.features.enableInventoryRuns
-  ? [
-      // Product & Inventory Sync
-      processProductSync,
-      processInventoryMesh,
-      processInventoryFullSync,
-      processShopifyInventoryUpdate,
-      // Location sync and cache refresh are inventory-adjacent flows.
-      processLocationSync,
-      refreshLocationConfigCache,
-      // Inventory Reconciliation (3-way sync: GPS <-> D365 <-> Shopify)
-      cronInventoryReconciliation,
-      triggerInventoryReconciliation,
-      syncSkuInventory,
-    ]
-  : [];
 
 const openAiAdsDeliveryFunctions = config.openAiAds.enabled
   ? [deliverOpenAiAdsConversions, scheduleOpenAiAdsRetry]
@@ -118,6 +91,7 @@ const channelLiftFunctions = config.channelLift.enabled
   : [];
 
 export const functions = [
+  requestOosDrainFromInventory,
   processAdministrativeRecovery,
   cronD365Reconciliation,
   drainSlackNotificationOutbox,
@@ -138,8 +112,7 @@ export const functions = [
   processActionCancel,
   processActionRefund,
   processActionFulfill,
-  // Product/Inventory flows are intentionally gated for staged rollout.
-  ...inventoryFunctions,
+  // Inventory workflows are owned by the inventory-service Inngest app.
   // Backorder Retry Queue
   processBackorder,
   processBackorderRetry,
