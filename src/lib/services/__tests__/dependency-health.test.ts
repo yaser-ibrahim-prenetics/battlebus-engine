@@ -25,6 +25,26 @@ it("does not call configured credentials healthy without an authenticated probe"
   expect(result.ok).toBe(false);
   expect(result.dependencies[0].status).toBe("unverified");
 });
+it("preserves a completed live schema and privilege check", async () => {
+  mocks.readiness.mockResolvedValue({
+    ok: true,
+    dependencies: [
+      {
+        name: "fulfillmentActionLedger",
+        required: true,
+        status: "ready",
+        check: "schema-and-privileges",
+      },
+    ],
+  });
+  const { getDependencyHealth } = await import("../dependency-health");
+  const result = await getDependencyHealth();
+  expect(result.ok).toBe(true);
+  expect(result.dependencies[0]).toMatchObject({
+    status: "ready",
+    check: "schema-and-privileges",
+  });
+});
 it("sanitizes denied provider access and shares probes between pollers", async () => {
   mocks.readiness.mockResolvedValue({
     ok: true,

@@ -20,7 +20,7 @@ import { GET as detailed } from "../../readiness/route";
 
 beforeEach(() => {
   database.configured.mockReturnValue(true);
-  database.query.mockResolvedValue({ rows: [{ ready: 1 }] });
+  database.query.mockResolvedValue({ rows: [{ ready: true }] });
   appConfig.channelLift.enabled = false;
   vi.stubEnv("INNGEST_EVENT_KEY", "local-only");
   vi.stubEnv("INNGEST_SIGNING_KEY", "local-only");
@@ -62,10 +62,11 @@ it("requires queue and Hub identity configuration", async () => {
 it("fails closed when enabled channel-lift schema is unavailable", async () => {
   appConfig.channelLift.enabled = true;
   database.query
-    .mockResolvedValueOnce({ rows: [{ ready: 1 }] })
-    .mockResolvedValueOnce({ rows: [{ ready: false }] });
+    .mockResolvedValueOnce({ rows: [{ ready: true }] })
+    .mockResolvedValueOnce({ rows: [{ ready: false }] })
+    .mockResolvedValueOnce({ rows: [{ ready: true }] });
   expect((await GET()).status).toBe(503);
-  expect(database.query).toHaveBeenCalledTimes(2);
+  expect(database.query).toHaveBeenCalledTimes(3);
   const schemaQuery = database.query.mock.calls[1][0] as string;
   expect(schemaQuery).toContain("pg_trigger");
   expect(schemaQuery).toContain("relrowsecurity");
@@ -87,4 +88,11 @@ it("keeps configured Inngest and Hub dependencies unverified for cutover probes"
       check: "configuration",
     });
   }
+  expect(result.dependencies.find((item) => item.name === "fulfillmentActionLedger")).toMatchObject(
+    {
+      required: true,
+      status: "ready",
+      check: "schema-and-privileges",
+    }
+  );
 });

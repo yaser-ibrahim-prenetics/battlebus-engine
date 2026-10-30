@@ -6,6 +6,8 @@ export async function checkReadiness() {
   let database = false;
   const channelLiftEnabled = config.channelLift?.enabled === true;
   let channelLiftSchema = !channelLiftEnabled;
+  const fulfillmentHousekeepingEnabled = config.fulfillmentActionHousekeeping?.enabled === true;
+  let fulfillmentActionLedgerSchema = false;
   try {
     if (isDatabaseConfigured()) {
       await queryDatabase("SELECT 1 AS ready");
@@ -148,6 +150,283 @@ export async function checkReadiness() {
           AS ready`);
         channelLiftSchema = result.rows[0]?.ready === true;
       }
+      {
+        const result = await queryDatabase<{ ready: boolean }>(`SELECT
+          to_regclass('public.fulfillment_action_tombstones') IS NOT NULL
+          AND to_regclass('public.fulfillment_action_tombstones_source') IS NOT NULL
+          AND to_regclass('public.fulfillment_housekeeping_successor') IS NOT NULL
+          AND to_regclass('public.fulfillment_action_housekeeping_quarantine') IS NOT NULL
+          AND to_regclass('public.fulfillment_housekeeping_run_receipts') IS NOT NULL
+          AND to_regprocedure(
+            'public.minimize_fulfillment_action_replay_result(text,text,jsonb)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.delete_retained_fulfillment_actions(integer,integer)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.authorize_fulfillment_housekeeping_successor(uuid)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.consume_fulfillment_housekeeping_successor(uuid)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)'
+          ) IS NOT NULL
+          AND to_regprocedure(
+            'public.battle_platform_track_fulfillment_unresolved_age()'
+          ) IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgrelid = 'public.fulfillment_actions'::regclass
+              AND tgname = 'fulfillment_actions_track_unresolved_age'
+              AND tgfoid =
+                'public.battle_platform_track_fulfillment_unresolved_age()'::regprocedure
+              AND tgenabled IN ('O', 'A')
+              AND NOT tgisinternal
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'public.fulfillment_actions'::regclass
+              AND conname = 'fulfillment_actions_unresolved_age'
+              AND convalidated
+          )
+          AND (
+            SELECT proconfig = ARRAY['search_path=pg_catalog, public']::text[]
+              AND NOT prosecdef
+            FROM pg_proc
+            WHERE oid =
+              'public.minimize_fulfillment_action_replay_result(text,text,jsonb)'::regprocedure
+          )
+          AND (
+            SELECT count(*) = 5 AND bool_and(
+              prosecdef
+              AND proconfig = ARRAY['search_path=pg_catalog, public']::text[]
+            )
+            FROM pg_proc
+            WHERE oid = ANY(ARRAY[
+              'public.delete_retained_fulfillment_actions(integer,integer)'::regprocedure,
+              'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)'::regprocedure,
+              'public.authorize_fulfillment_housekeeping_successor(uuid)'::regprocedure,
+              'public.consume_fulfillment_housekeeping_successor(uuid)'::regprocedure,
+              'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)'::regprocedure
+            ])
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_proc
+            WHERE oid =
+              'public.delete_retained_fulfillment_actions(integer,integer)'::regprocedure
+              AND prosecdef
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.fulfillment_action_tombstones'::regclass AND relrowsecurity
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.fulfillment_housekeeping_successor'::regclass AND relrowsecurity
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.fulfillment_action_housekeeping_quarantine'::regclass
+              AND relrowsecurity
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.fulfillment_housekeeping_run_receipts'::regclass
+              AND relrowsecurity
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'public'
+              AND tablename = 'fulfillment_action_tombstones'
+              AND policyname = 'fulfillment_action_tombstones_runtime'
+              AND 'battle_bus_runtime' = ANY(roles)
+              AND cmd = 'SELECT'
+              AND permissive = 'PERMISSIVE'
+              AND qual = 'true'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'public'
+              AND tablename = 'fulfillment_housekeeping_run_receipts'
+              AND policyname = 'fulfillment_housekeeping_run_receipts_runtime'
+              AND 'battle_bus_runtime' = ANY(roles)
+              AND cmd = 'SELECT'
+              AND permissive = 'PERMISSIVE'
+              AND qual = 'true'
+          )
+          AND (
+            SELECT count(*) = 2 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'fulfillment_actions'
+              AND column_name IN ('unresolved_since', 'last_unresolved_alert_at')
+          )
+          AND has_function_privilege(
+            'battle_bus_runtime',
+            'public.delete_retained_fulfillment_actions(integer,integer)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            'battle_bus_runtime',
+            'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            'battle_bus_runtime',
+            'public.authorize_fulfillment_housekeeping_successor(uuid)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            'battle_bus_runtime',
+            'public.consume_fulfillment_housekeeping_successor(uuid)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            'battle_bus_runtime',
+            'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)',
+            'EXECUTE'
+          )
+          AND pg_has_role(current_user, 'battle_bus_runtime', 'MEMBER')
+          AND has_function_privilege(
+            current_user,
+            'public.delete_retained_fulfillment_actions(integer,integer)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            current_user,
+            'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            current_user,
+            'public.authorize_fulfillment_housekeeping_successor(uuid)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            current_user,
+            'public.consume_fulfillment_housekeeping_successor(uuid)',
+            'EXECUTE'
+          )
+          AND has_function_privilege(
+            current_user,
+            'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)',
+            'EXECUTE'
+          )
+          AND has_table_privilege(
+            'battle_bus_runtime', 'public.fulfillment_action_tombstones', 'SELECT'
+          )
+          AND has_table_privilege(
+            current_user, 'public.fulfillment_action_tombstones', 'SELECT'
+          )
+          AND has_table_privilege(
+            current_user, 'public.fulfillment_housekeeping_run_receipts', 'SELECT'
+          )
+          AND NOT has_table_privilege(
+            current_user, 'public.fulfillment_actions', 'DELETE'
+          )
+          AND NOT has_table_privilege(
+            current_user, 'public.fulfillment_action_aliases', 'DELETE'
+          )
+          AND NOT has_table_privilege(
+            current_user, 'public.fulfillment_evidence_claims', 'DELETE'
+          )
+          AND NOT has_table_privilege(
+            current_user,
+            'public.fulfillment_action_tombstones',
+            'INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            current_user,
+            'public.fulfillment_housekeeping_successor',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            current_user,
+            'public.fulfillment_action_housekeeping_quarantine',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            current_user,
+            'public.fulfillment_housekeeping_run_receipts',
+            'INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'anon',
+            'public.fulfillment_action_tombstones',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'authenticated',
+            'public.fulfillment_action_tombstones',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'anon',
+            'public.fulfillment_housekeeping_successor',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'authenticated',
+            'public.fulfillment_housekeeping_successor',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'anon',
+            'public.fulfillment_action_housekeeping_quarantine',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'authenticated',
+            'public.fulfillment_action_housekeeping_quarantine',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'anon',
+            'public.fulfillment_housekeeping_run_receipts',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_table_privilege(
+            'authenticated',
+            'public.fulfillment_housekeeping_run_receipts',
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+          )
+          AND NOT has_function_privilege(
+            'anon',
+            'public.delete_retained_fulfillment_actions(integer,integer)',
+            'EXECUTE'
+          )
+          AND NOT has_function_privilege(
+            'authenticated',
+            'public.delete_retained_fulfillment_actions(integer,integer)',
+            'EXECUTE'
+          )
+          AND NOT has_function_privilege(
+            'anon',
+            'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+            'EXECUTE'
+          )
+          AND NOT has_function_privilege(
+            'authenticated',
+            'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+            'EXECUTE'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest(ARRAY[
+              'public.delete_retained_fulfillment_actions(integer,integer)',
+              'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+              'public.authorize_fulfillment_housekeeping_successor(uuid)',
+              'public.consume_fulfillment_housekeeping_successor(uuid)',
+              'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)'
+            ]) AS secured(signature)
+            WHERE has_function_privilege('anon', secured.signature, 'EXECUTE')
+              OR has_function_privilege('authenticated', secured.signature, 'EXECUTE')
+          )
+          AS ready`);
+        fulfillmentActionLedgerSchema = result.rows[0]?.ready === true;
+      }
     }
   } catch {
     /* Never expose database credentials or connection errors. */
@@ -175,6 +454,16 @@ export async function checkReadiness() {
   if (channelLiftEnabled) {
     dependencies.channelLift = { ready: channelLiftSchema, check: "schema-and-privileges" };
   }
+  dependencies.fulfillmentActionLedger = {
+    ready: fulfillmentActionLedgerSchema,
+    check: "schema-and-privileges",
+  };
+  if (fulfillmentHousekeepingEnabled) {
+    dependencies.fulfillmentActionHousekeeping = {
+      ready: fulfillmentActionLedgerSchema,
+      check: "schema-and-privileges",
+    };
+  }
   return {
     ok: Object.values(dependencies).every((dependency) => dependency.ready),
     service: "battle-bus",
@@ -187,7 +476,7 @@ export type ReadinessDependency = {
   name: string;
   required: boolean;
   status: "ready" | "unavailable" | "disabled";
-  check: "configuration" | "connectivity";
+  check: "configuration" | "connectivity" | "schema-and-privileges";
 };
 /**
  * Compatibility report for the stricter cutover gate. Provider credentials are
@@ -214,6 +503,12 @@ export async function getReadinessReport(): Promise<{
 
   const dependencies: ReadinessDependency[] = [
     dependency("cloudSql", true, configured("cloudSql"), "connectivity"),
+    dependency(
+      "fulfillmentActionLedger",
+      true,
+      configured("fulfillmentActionLedger"),
+      "schema-and-privileges"
+    ),
     dependency(
       "channelLift",
       config.channelLift.enabled,

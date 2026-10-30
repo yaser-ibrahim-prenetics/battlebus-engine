@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { getDatabasePool } from "@/lib/db/database";
 import {
   lockOrderSQL,
+  readActionTombstonesSQL,
   readActionsSQL,
   reserveActionSQL,
 } from "@/lib/sql/fulfillment-actions/reserve";
@@ -73,13 +74,23 @@ async function reserve<T>(
     if (actions.size > 1) throw new UncertainActionError(keys);
     identity = { ...identity, action: known.rows[0]?.action_name || identity.action };
     keys = actionKeys(identity);
-    const { rows } = await client.query<Row<T>>(readActionsSQL, [
+    const parameters = [
       identity.provider,
       identity.scope,
       identity.sourceOrderId,
       identity.sourceLineIds,
       identity.action,
-    ]);
+    ];
+    const active = await client.query<Row<T>>(readActionsSQL, parameters);
+    const archived = await client.query<Row<T>>(readActionTombstonesSQL, parameters);
+    if (
+      archived.rows.some((tombstone) =>
+        active.rows.some((action) => action.action_key === tombstone.action_key)
+      )
+    ) {
+      throw new UncertainActionError(keys);
+    }
+    const rows = [...active.rows, ...archived.rows];
     // A stable operation cannot silently become a different line batch on replay.
     if (rows.some((row) => row.action_name === identity.action && !keys.includes(row.action_key)))
       throw new UncertainActionError(keys);
