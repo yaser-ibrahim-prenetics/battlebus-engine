@@ -84,6 +84,22 @@ Secret Manager-backed environment names:
 - `BATTLE_BUS_OPERATIONS_API_KEY` (a distinct value stored in `battle-bus-operations-api-key`)
 - `SHOPIFY_TEST_WEBHOOK_SECRET` while the deployment remains in test/dry-run mode
 
+Meta channel lift additionally requires these Secret Manager bindings before
+`CHANNEL_LIFT_ENABLED` is enabled:
+
+- `TRIPLE_WHALE_API_KEY`
+- `META_CONVERSIONS_ACCESS_TOKEN` (it may be bound during dry-run, but is not
+  read until `CHANNEL_LIFT_SEND_ENABLED=true`)
+
+The default deployment keeps both channel-lift flags `false`. Apply migration
+`000055`, bind pinned secret versions, set the approved shop/dataset/source URL
+configuration, enable `CHANNEL_LIFT_ENABLED` for seven dry-run days, then enable
+`CHANNEL_LIFT_SEND_ENABLED` only for the reviewed live canary. The full rollout
+and rollback contract is in
+[`durable-meta-channel-lift.md`](durable-meta-channel-lift.md).
+Set the five non-secret channel-lift values as GitHub environment variables;
+the deployment workflow defaults both gates to `false` when they are absent.
+
 Release 1 database activation additionally requires:
 
 - A Cloud SQL for PostgreSQL 16 instance in `asia-east1`.
