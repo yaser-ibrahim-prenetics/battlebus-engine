@@ -147,6 +147,7 @@ function buildRegisteredEvents(): {
 
   // Map identifier -> relative file path, from either
   //   export { a, b } from "./some-file";
+  //   export { a, b } from "@/inngest/functions/some-file";
   // or a plain
   //   import { a, b } from "./some-file";
   // — the `functions` array below is built from the *imported* bindings, and
@@ -154,7 +155,8 @@ function buildRegisteredEvents(): {
   // function can be import-only and still be included in `functions`), so
   // both statement forms must be scanned.
   const identifierToFile = new Map<string, string>();
-  const importOrExportFromRe = /(?:export|import)\s*\{([^}]*)\}\s*from\s*["'](\.\/[^"']+)["']/g;
+  const importOrExportFromRe =
+    /(?:export|import)\s*\{([^}]*)\}\s*from\s*["']((?:\.\/|@\/inngest\/functions\/)[^"']+)["']/g;
   let efm: RegExpExecArray | null;
   while ((efm = importOrExportFromRe.exec(indexContent))) {
     const names = efm[1]
@@ -163,7 +165,7 @@ function buildRegisteredEvents(): {
       .filter(Boolean)
       .map((s) => s.split(/\s+as\s+/)[0].trim());
     for (const name of names) {
-      identifierToFile.set(name, efm[2]);
+      identifierToFile.set(name, efm[2].replace(/^@\/inngest\/functions\//, "./"));
     }
   }
 
@@ -290,7 +292,10 @@ describe("Event consumer contract (build-time, static)", () => {
 
   it("every emitted event name has at least one registered consumer", () => {
     const unregistered = emittedEvents.filter(
-      (e) => !registeredEvents.has(e.event) && !inventoryContract.events.includes(e.event) && !ALLOWLISTED_UNREGISTERED_EVENTS.has(e.event)
+      (e) =>
+        !registeredEvents.has(e.event) &&
+        !inventoryContract.events.includes(e.event) &&
+        !ALLOWLISTED_UNREGISTERED_EVENTS.has(e.event)
     );
 
     if (unregistered.length > 0) {

@@ -37,7 +37,7 @@ export { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-
 export { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
 export { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
 export { scheduleMetaChannelLift } from "@/inngest/functions/schedule-meta-channel-lift";
-export { housekeepFulfillmentActions } from "./housekeep-fulfillment-actions";
+export { housekeepFulfillmentActions } from "@/inngest/functions/housekeep-fulfillment-actions";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -70,7 +70,7 @@ import { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-
 import { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
 import { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
 import { scheduleMetaChannelLift } from "@/inngest/functions/schedule-meta-channel-lift";
-import { housekeepFulfillmentActions } from "./housekeep-fulfillment-actions";
+import { housekeepFulfillmentActions } from "@/inngest/functions/housekeep-fulfillment-actions";
 
 const openAiAdsDeliveryFunctions = config.openAiAds.enabled
   ? [deliverOpenAiAdsConversions, scheduleOpenAiAdsRetry]

@@ -528,6 +528,7 @@ export type FulfillmentActionHousekeepingRequestedEvent = {
   data: {
     rootRunId: string;
     batch: number;
+    claimId: string;
   };
 };
 

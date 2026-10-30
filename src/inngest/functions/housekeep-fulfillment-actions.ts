@@ -1,6 +1,9 @@
 import { config } from "@/lib/config";
 import type { FulfillmentActionHousekeepingRequestedEvent } from "@/inngest/events";
-import { runFulfillmentActionHousekeeping } from "@/lib/services/fulfillment-actions/housekeeping";
+import {
+  authorizeFulfillmentHousekeepingSuccessor,
+  runFulfillmentActionHousekeeping,
+} from "@/lib/services/fulfillment-actions/housekeeping";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
 import { inngest } from "@/inngest/client";
 
@@ -40,27 +43,49 @@ export const housekeepFulfillmentActions = inngest.createFunction(
     const requestedBatch = event.data?.batch;
     const batch =
       Number.isInteger(requestedBatch) && Number(requestedBatch) >= 0 ? Number(requestedBatch) : 0;
+    const requestedClaim = event.data?.claimId;
+    const incomingClaimId =
+      typeof requestedClaim === "string" && requestedClaim.length <= 64
+        ? requestedClaim
+        : undefined;
     const result = await step.run(`housekeep-batch-${batch}`, () =>
-      runFulfillmentActionHousekeeping({
-        retentionDays: config.fulfillmentActionHousekeeping.retentionDays,
-        batchSize: config.fulfillmentActionHousekeeping.batchSize,
-        unresolvedAlertHours: config.fulfillmentActionHousekeeping.unresolvedAlertHours,
-        alertRepeatHours: config.fulfillmentActionHousekeeping.alertRepeatHours,
-        alertBatchSize: config.fulfillmentActionHousekeeping.alertBatchSize,
-      })
+      runFulfillmentActionHousekeeping(
+        {
+          retentionDays: config.fulfillmentActionHousekeeping.retentionDays,
+          batchSize: config.fulfillmentActionHousekeeping.batchSize,
+          unresolvedAlertHours: config.fulfillmentActionHousekeeping.unresolvedAlertHours,
+          alertRepeatHours: config.fulfillmentActionHousekeeping.alertRepeatHours,
+          alertBatchSize: config.fulfillmentActionHousekeeping.alertBatchSize,
+        },
+        {
+          rootRunId,
+          batch,
+          successorDelayMinutes: config.fulfillmentActionHousekeeping.successorDelayMinutes,
+          incomingClaimId,
+        }
+      )
     );
 
-    if (result.hasMore) {
-      const nextBatch = batch + 1;
+    const successor = result.successor;
+    if (successor) {
       await step.sleep(
         "wait-before-housekeeping-successor",
         `${config.fulfillmentActionHousekeeping.successorDelayMinutes}m`
       );
-      await step.sendEvent("queue-housekeeping-successor", {
-        id: `fulfillment-action-housekeeping:${rootRunId}:${nextBatch}`,
-        name: "fulfillment-actions/housekeeping.requested",
-        data: { rootRunId, batch: nextBatch },
-      });
+      const authorized = await step.run("authorize-housekeeping-successor", () =>
+        authorizeFulfillmentHousekeepingSuccessor(successor.claimId)
+      );
+      if (authorized) {
+        await step.sendEvent("queue-housekeeping-successor", {
+          id: `fulfillment-action-housekeeping:${successor.claimId}`,
+          name: "fulfillment-actions/housekeeping.requested",
+          data: {
+            rootRunId: successor.rootRunId,
+            batch: successor.batch,
+            claimId: successor.claimId,
+          },
+        });
+      }
     }
 
     return {

@@ -418,7 +418,7 @@ export const config = {
     enabled: process.env.FULFILLMENT_ACTION_HOUSEKEEPING_ENABLED === "true",
     retentionDays: clampInt(
       safeParseInt(process.env.FULFILLMENT_ACTION_RETENTION_DAYS, 90),
-      30,
+      90,
       3650
     ),
     batchSize: clampInt(
@@ -426,11 +426,7 @@ export const config = {
       1,
       100
     ),
-    unresolvedAlertHours: clampInt(
-      safeParseInt(process.env.FULFILLMENT_ACTION_UNRESOLVED_ALERT_HOURS, 24),
-      24,
-      8760
-    ),
+    unresolvedAlertHours: 24,
     alertRepeatHours: clampInt(
       safeParseInt(process.env.FULFILLMENT_ACTION_ALERT_REPEAT_HOURS, 24),
       24,
