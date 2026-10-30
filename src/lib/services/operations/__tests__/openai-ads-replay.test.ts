@@ -10,7 +10,7 @@ vi.mock("@/lib/db/database", () => ({
   getDatabasePool: vi.fn(async () => ({ connect: mocks.connect })),
 }));
 
-import { reserveOpenAiAdsReplayRequest } from "../openai-ads-replay";
+import { reserveOpenAiAdsReplayRequest } from "@/lib/services/operations/openai-ads-replay";
 
 const request = {
   requestId: "00000000-0000-4000-8000-000000000001",

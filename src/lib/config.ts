@@ -8,7 +8,7 @@ import {
   resolveLoopReturnsEnabled,
   resolveLoopWebhookVerifyDisabled,
 } from "./helpers/loop-integration";
-import { openAiAdsConfigurationProblems } from "./helpers/openai-ads-config";
+import { openAiAdsConfigurationProblems } from "@/lib/helpers/openai-ads-config";
 
 function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;

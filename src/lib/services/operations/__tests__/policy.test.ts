@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { recoveryCommandSchema } from "../commands";
-import { openAiAdsReplayRequestSchema } from "../openai-ads-replay";
-import { waitingDeadline } from "../workflow-waits";
+import { recoveryCommandSchema } from "@/lib/services/operations/commands";
+import { openAiAdsReplayRequestSchema } from "@/lib/services/operations/openai-ads-replay";
+import { waitingDeadline } from "@/lib/services/operations/workflow-waits";
 const request = {
   requestId: "00000000-0000-4000-8000-000000000001",
   actorId: "admin",
