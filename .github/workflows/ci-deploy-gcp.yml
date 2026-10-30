@@ -221,7 +221,7 @@ jobs:
             --format=json)"
 
           env_names="$(jq -r '.spec.template.spec.containers[0].env[]?.name' <<<"${service_json}")"
-          for required_name in INNGEST_SIGNING_KEY INNGEST_EVENT_KEY BATTLE_BUS_API_KEY SHOPIFY_TEST_WEBHOOK_SECRET; do
+          for required_name in INNGEST_SIGNING_KEY INNGEST_EVENT_KEY BATTLE_BUS_API_KEY SHOPIFY_TEST_WEBHOOK_SECRET INVENTORY_SERVICE_API_KEY; do
             if ! jq --exit-status --arg name "${required_name}" '
               any(.spec.template.spec.containers[0].env[]?;
                 .name == $name and .valueFrom.secretKeyRef? != null)

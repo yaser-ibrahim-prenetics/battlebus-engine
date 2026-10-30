@@ -23,3 +23,7 @@ Disable inventory consumers and sync its app before restoring the captured Battl
 ## Remaining boundaries
 
 The first extraction retains the shared Cloud SQL read models and existing Hub callbacks. Inventory has its own runtime identity and table-scoped permissions. Narrowing copied provider adapters and moving projections to a separate schema are follow-up work, not prerequisites for independent deployment. Existing stock-write and schedule flags remain disabled in the staging deployment.
+
+## Private worker ingress
+
+Inventory Cloud Run is private. Battle Bus authenticates using its Google runtime identity, plus the inventory API key for business APIs. The dedicated `/api/inventory/inngest` gateway passes raw signed requests to the worker for SDK verification. Inventory registers with the Battle Bus origin and this gateway path; sync the inventory app through that gateway. No public invoker grant is made on inventory-service.

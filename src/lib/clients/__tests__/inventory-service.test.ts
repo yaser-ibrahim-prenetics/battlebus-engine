@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { forwardInventoryRequest } from "../inventory-service";
+import { forwardInventoryRequest, forwardInventoryInngestRequest } from "../inventory-service";
 
+vi.mock("google-auth-library", () => ({
+  GoogleAuth: class { async getIdTokenClient() {
+    return { idTokenProvider: { fetchIdToken: async () => "cloud-run-identity" } };
+  } },
+}));
 const fetchMock = vi.fn();
 beforeEach(() => {
   vi.stubEnv("BATTLE_BUS_API_KEY", "caller-key");
@@ -17,6 +22,19 @@ function request(key = "caller-key") {
   });
 }
 describe("inventory compatibility routing", () => {
+  it("preserves signed Inngest callback bytes and query parameters for worker verification", async () => {
+    const body = '{ "event": {"id":"probe"} }';
+    fetchMock.mockResolvedValue(new Response("{}", {headers: {"x-inngest-sdk": "test"}}));
+    const response = await forwardInventoryInngestRequest(new Request(
+      "https://bus.example.com/api/inventory/inngest?fnId=inventory-probe&stepId=step", {
+        method: "POST", body, headers: {"x-inngest-signature": "signed-payload"},
+      }));
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://inventory.example.com/api/inngest?fnId=inventory-probe&stepId=step");
+    expect(options.body).toBe(body);
+    expect(options.headers.get("x-inngest-signature")).toBe("signed-payload");
+    expect(response.headers.get("x-inngest-sdk")).toBe("test");
+  });
   it("rejects unauthorized requests before calling inventory", async () => {
     expect((await forwardInventoryRequest(request("wrong"))).status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -29,6 +47,7 @@ describe("inventory compatibility routing", () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe("https://inventory.example.com/api/inventory/sync?from=gps&to=shopify");
     expect(options.headers.get("x-api-key")).toBe("inventory-key");
+    expect(options.headers.get("authorization")).toBe("Bearer cloud-run-identity");
     expect(options.headers.get("idempotency-key")).toBe("adjustment-123");
     expect(JSON.parse(options.body)).toEqual({sku: "SKU-1", quantity: 2});
     expect(options.redirect).toBe("error");
