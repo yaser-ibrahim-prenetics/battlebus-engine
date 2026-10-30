@@ -9,3 +9,5 @@ This is the remaining timeline slice of old PR 27. Current main already implemen
 Deploy migration 58 before using the view. Rollback drops the new timeline and trigger, so archive history first if retention is required. The application continues using its unchanged flow-log contract.
 
 Validation: migration assertions exercise capture, retention independence, runtime mutation denial and Hub read-only access.
+
+The canonical `battle_bus_runtime` role is required for order-correlated flow-log writers. Legacy connections with only `service_role` must adopt the runtime role before rollout.
