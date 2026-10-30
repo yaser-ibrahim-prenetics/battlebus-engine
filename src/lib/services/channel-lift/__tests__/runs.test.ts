@@ -13,9 +13,10 @@ import {
   recordChannelLiftPrepared,
   startChannelLiftRun,
 } from "@/lib/services/channel-lift/runs";
+import { channelLiftRunId } from "@/lib/channel-lift/model";
 
 const row = {
-  run_id: `channel_lift_${"a".repeat(64)}`,
+  run_id: channelLiftRunId("2026-10-28", "live"),
   reporting_date: "2026-10-28",
   mode: "live",
   source: "manual",
@@ -106,9 +107,11 @@ describe("channel-lift run state", () => {
     expect(mocks.query).toHaveBeenCalledTimes(3);
   });
 
-  it("rejects a different request identity for a failed partial run", async () => {
+  it("audits a different request identity before resuming a failed partial run", async () => {
     mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ ...row, status: "failed" }] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ request_id: "new" }] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
     await expect(
       startChannelLiftRun({
         reportingDate: "2026-10-28",
@@ -118,8 +121,67 @@ describe("channel-lift run state", () => {
         reasonCode: "operator_replay",
         referenceId: "BB-127",
       })
-    ).resolves.toMatchObject({ disposition: "request_mismatch" });
-    expect(mocks.query).toHaveBeenCalledTimes(2);
+    ).resolves.toMatchObject({ disposition: "started" });
+    expect(mocks.query).toHaveBeenCalledTimes(4);
+    expect(mocks.query.mock.calls[2][1]).toEqual([
+      "da90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+      row.run_id,
+      "manual",
+      null,
+      "operator_replay",
+      "BB-127",
+    ]);
+  });
+
+  it("does not treat a cross-mode unique collision as the requested reservation", async () => {
+    mocks.query.mockRejectedValueOnce({ code: "23505" });
+    mocks.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          ...row,
+          run_id: `channel_lift_${"b".repeat(64)}`,
+          mode: "dry_run",
+        },
+      ],
+    });
+    await expect(
+      startChannelLiftRun({
+        reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+        reasonCode: "live_canary",
+      })
+    ).resolves.toMatchObject({ disposition: "active", run: { mode: "dry_run" } });
+  });
+
+  it("fails closed when a replay request identity conflicts with its audit row", async () => {
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ ...row, status: "failed" }] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mocks.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          run_id: row.run_id,
+          source: "manual",
+          requested_by: null,
+          reason_code: "incident_recovery",
+          reference_id: "BB-999",
+        },
+      ],
+    });
+    await expect(
+      startChannelLiftRun({
+        reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "da90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+        reasonCode: "operator_replay",
+        referenceId: "BB-127",
+      })
+    ).rejects.toThrow("request_audit_conflict");
   });
 
   it("persists only bounded aggregate preparation evidence", async () => {

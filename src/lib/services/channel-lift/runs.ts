@@ -15,7 +15,9 @@ import {
   completeChannelLiftRunSQL,
   failChannelLiftRunSQL,
   insertChannelLiftRunSQL,
+  insertChannelLiftRunAttemptSQL,
   readActiveChannelLiftRunSQL,
+  readChannelLiftRunAttemptSQL,
   readChannelLiftRunSQL,
   recordChannelLiftPreparedSQL,
   recordChannelLiftProgressSQL,
@@ -131,15 +133,20 @@ export async function startChannelLiftRun({
   reasonCode?: ChannelLiftReasonCode;
   referenceId?: string;
 }): Promise<{
-  disposition: "started" | "active" | "already_completed" | "request_mismatch";
+  disposition: "started" | "active" | "already_completed";
   run: ChannelLiftRun;
+  acceptedRequestId: string;
+  acceptedSource: ChannelLiftSource;
 }> {
   requireDatabase();
   const reportingDate = validateReportingDate(rawReportingDate);
   if (!/^[A-Za-z0-9:_-]{1,200}$/.test(requestId)) {
     throw new ChannelLiftError("request_id_invalid");
   }
-  if (source === "manual" && !CHANNEL_LIFT_REASON_CODES.includes(reasonCode as ChannelLiftReasonCode)) {
+  if (
+    source === "manual" &&
+    !CHANNEL_LIFT_REASON_CODES.includes(reasonCode as ChannelLiftReasonCode)
+  ) {
     throw new ChannelLiftError("manual_reason_code_invalid");
   }
   if (referenceId && !/^[A-Z][A-Z0-9]{1,15}-[1-9]\d{0,9}$/.test(referenceId)) {
@@ -165,16 +172,56 @@ export async function startChannelLiftRun({
           return {
             disposition: run.requestId === requestId ? "started" : "active",
             run,
+            acceptedRequestId: run.requestId,
+            acceptedSource: run.source,
           };
         }
         if (run.status === "queued" && run.requestId !== requestId) {
-          return { disposition: "active", run };
+          return {
+            disposition: "active",
+            run,
+            acceptedRequestId: run.requestId,
+            acceptedSource: run.source,
+          };
         }
         if (run.status === "completed" || run.status === "dry_run_completed") {
-          return { disposition: "already_completed", run };
+          return {
+            disposition: "already_completed",
+            run,
+            acceptedRequestId: run.requestId,
+            acceptedSource: run.source,
+          };
         }
         if (run.status === "failed" && run.requestId !== requestId) {
-          return { disposition: "request_mismatch", run };
+          const auditValues = [
+            requestId,
+            runId,
+            source,
+            requestedBy?.slice(0, 320) || null,
+            source === "manual" ? reasonCode || null : null,
+            source === "manual" ? referenceId || null : null,
+          ];
+          const insertedAttempt = await queryDatabase(insertChannelLiftRunAttemptSQL, auditValues);
+          if (insertedAttempt.rowCount === 0) {
+            const existingAttempt = await queryDatabase<{
+              run_id: string;
+              source: ChannelLiftSource;
+              requested_by: string | null;
+              reason_code: string | null;
+              reference_id: string | null;
+            }>(readChannelLiftRunAttemptSQL, [requestId]);
+            const attempt = existingAttempt.rows[0];
+            if (
+              !attempt ||
+              attempt.run_id !== runId ||
+              attempt.source !== source ||
+              attempt.requested_by !== (requestedBy?.slice(0, 320) || null) ||
+              attempt.reason_code !== (source === "manual" ? reasonCode || null : null) ||
+              attempt.reference_id !== (source === "manual" ? referenceId || null : null)
+            ) {
+              throw new ChannelLiftError("request_audit_conflict");
+            }
+          }
         }
       }
     }
@@ -185,16 +232,31 @@ export async function startChannelLiftRun({
     const active = await queryDatabase<RunRow>(readActiveChannelLiftRunSQL, [reportingDate]);
     if (active.rows[0]) {
       const run = asRun(active.rows[0]);
+      const isSameReservation =
+        run.runId === runId &&
+        run.reportingDate === reportingDate &&
+        run.mode === mode &&
+        run.source === source &&
+        run.requestId === requestId;
       return {
-        disposition: run.requestId === requestId ? "started" : "active",
+        disposition: isSameReservation ? "started" : "active",
         run,
+        acceptedRequestId: run.requestId,
+        acceptedSource: run.source,
       };
     }
     throw error;
   }
 
   const started = await queryDatabase<RunRow>(startChannelLiftRunSQL, [runId]);
-  if (started.rows[0]) return { disposition: "started", run: asRun(started.rows[0]) };
+  if (started.rows[0]) {
+    return {
+      disposition: "started",
+      run: asRun(started.rows[0]),
+      acceptedRequestId: requestId,
+      acceptedSource: source,
+    };
+  }
 
   const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
   const row = existing.rows[0];
@@ -206,6 +268,8 @@ export async function startChannelLiftRun({
         ? "already_completed"
         : "active",
     run,
+    acceptedRequestId: run.requestId,
+    acceptedSource: run.source,
   };
 }
 
@@ -265,10 +329,7 @@ export async function recordChannelLiftProgress({
 
 export async function completeChannelLiftRun(runId: string, mode: ChannelLiftMode): Promise<void> {
   const targetStatus = mode === "live" ? "completed" : "dry_run_completed";
-  const result = await queryDatabase(completeChannelLiftRunSQL, [
-    runId,
-    targetStatus,
-  ]);
+  const result = await queryDatabase(completeChannelLiftRunSQL, [runId, targetStatus]);
   if (result.rowCount === 1) return;
   const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
   if (existing.rows[0]?.status === targetStatus) return;

@@ -4,6 +4,16 @@ export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
   ON CONFLICT (reporting_date, mode) DO NOTHING
   RETURNING run_id`;
 
+export const insertChannelLiftRunAttemptSQL = `INSERT INTO public.channel_lift_run_attempts
+  (request_id, run_id, source, requested_by, reason_code, reference_id)
+  VALUES ($1, $2, $3, $4, $5, $6)
+  ON CONFLICT (request_id) DO NOTHING
+  RETURNING request_id`;
+
+export const readChannelLiftRunAttemptSQL = `SELECT run_id, source, requested_by,
+    reason_code, reference_id
+  FROM public.channel_lift_run_attempts WHERE request_id=$1`;
+
 export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
   SET status='running', attempts=attempts+1, started_at=clock_timestamp(),
     completed_at=NULL, last_error_code=NULL

@@ -27,7 +27,10 @@ beforeEach(() => {
   vi.stubEnv("BATTLE_HUB_CALLER_SERVICE_ACCOUNT", "test@example.invalid");
   vi.stubEnv("BATTLE_BUS_API_KEY", "local-only");
 });
-afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
+});
 
 it("reports ready only after the read-only database round trip", async () => {
   const result = await GET();
@@ -61,6 +64,11 @@ it("fails closed when enabled channel-lift schema is unavailable", async () => {
     .mockResolvedValueOnce({ rows: [{ ready: false }] });
   expect((await GET()).status).toBe(503);
   expect(database.query).toHaveBeenCalledTimes(2);
+  const schemaQuery = database.query.mock.calls[1][0] as string;
+  expect(schemaQuery).toContain("pg_trigger");
+  expect(schemaQuery).toContain("relrowsecurity");
+  expect(schemaQuery).toContain("pg_policies");
+  expect(schemaQuery).toContain("has_any_column_privilege");
 });
 it("keeps detailed readiness authenticated before querying", async () => {
   expect((await detailed(new NextRequest("https://bus.invalid/api/readiness"))).status).toBe(401);
