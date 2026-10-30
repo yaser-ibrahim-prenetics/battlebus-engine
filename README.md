@@ -350,6 +350,15 @@ GPS_FULFILLMENT_POLL_DAYS_BACK=30
 STORD_BASE_URL=https://api.stord.com
 STORD_API_KEY=your_api_key
 
+# OpenAI Ads (disabled unless explicitly enabled)
+OPENAI_ADS_ENABLED=false
+OPENAI_ADS_ALLOWED_STORE=your-store.myshopify.com
+OPENAI_ADS_PIXEL_ID=your-pixel-id
+OPENAI_ADS_ENDPOINT=https://bzr.openai.com
+OPENAI_ADS_API_VERSION=v1
+OPENAI_ADS_SOURCE_URL=https://your-store.example
+# OPENAI_ADS_CONVERSIONS_API_KEY must be mounted from GCP Secret Manager.
+
 # Feature Flags
 DRY_RUN_MODE=false
 ENABLE_DYNAMICS_SYNC=true
@@ -407,6 +416,7 @@ src/
 | [Database migrations](db/README.md)                                 | Shared schema and rollout workflow       |
 | [Release 1 database brief](docs/RELEASE_1_DATABASE_FOUNDATION.md)   | Delivered work and verification          |
 | [Secret management](docs/SECRET_MANAGEMENT.md)                      | GCP storage, rotation, and CI safeguards |
+| [Durable OpenAI Ads delivery](docs/durable-openai-ads-delivery.md)  | Conversion outbox, replay and rollout    |
 
 ---
 

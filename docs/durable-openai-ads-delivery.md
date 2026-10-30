@@ -23,15 +23,15 @@ order payloads or customer identifiers.
 The integration is disabled unless `OPENAI_ADS_ENABLED=true`. The API key is supplied through GCP
 Secret Manager; the remaining values are ordinary Cloud Run environment settings.
 
-| Variable | Purpose |
-| --- | --- |
-| `OPENAI_ADS_ENABLED` | Explicit delivery enable flag |
-| `OPENAI_ADS_CONVERSIONS_API_KEY` | Secret Manager-backed bearer credential |
-| `OPENAI_ADS_PIXEL_ID` | Pixel or dataset identifier |
-| `OPENAI_ADS_ALLOWED_STORE` | Canonical Shopify shop domain allowed to send |
-| `OPENAI_ADS_ENDPOINT` | HTTPS API origin; restricted to `bzr.openai.com` |
-| `OPENAI_ADS_API_VERSION` | Provider API version, default `v1` |
-| `OPENAI_ADS_SOURCE_URL` | HTTPS source URL sent with the conversion |
+| Variable                         | Purpose                                          |
+| -------------------------------- | ------------------------------------------------ |
+| `OPENAI_ADS_ENABLED`             | Explicit delivery enable flag                    |
+| `OPENAI_ADS_CONVERSIONS_API_KEY` | Secret Manager-backed bearer credential          |
+| `OPENAI_ADS_PIXEL_ID`            | Pixel or dataset identifier                      |
+| `OPENAI_ADS_ALLOWED_STORE`       | Canonical Shopify shop domain allowed to send    |
+| `OPENAI_ADS_ENDPOINT`            | HTTPS API origin; restricted to `bzr.openai.com` |
+| `OPENAI_ADS_API_VERSION`         | Provider API version, default `v1`               |
+| `OPENAI_ADS_SOURCE_URL`          | HTTPS source URL sent with the conversion        |
 
 Disabled or incomplete configuration records a skipped conversion with a bounded reason code and
 performs no provider call. Configuration validation never logs credential values.
@@ -68,6 +68,24 @@ An operator can submit an audited `replay_openai_ads` recovery command with a st
 reason. Replay is accepted only for skipped or permanent-failure rows, clears bounded diagnostics,
 preserves the stable event ID, and wakes the normal delivery worker. Active or delivered rows cannot
 be replayed.
+
+Submit the command to the authenticated `POST /api/operations` endpoint:
+
+```json
+{
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "actorId": "operator-id",
+  "actorEmail": "operator@example.com",
+  "reason": "Provider configuration was corrected",
+  "parameters": {
+    "operation": "replay_openai_ads",
+    "eventId": "bb_order_created_0000000000000000000000000000000000000000"
+  }
+}
+```
+
+Use `GET /api/operations?view=openai_ads` for payload-free recent delivery rows and
+`GET /api/operations?view=health` for aggregate queue health.
 
 ## Rollout
 
