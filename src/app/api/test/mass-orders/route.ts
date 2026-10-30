@@ -14,6 +14,7 @@ import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
 import { shopifyProviderFetch } from "@/lib/clients/shopify";
 import { timingSafeEqual } from "@/lib/auth/timing-safe-equal";
+import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
 
 // ─── Supported markets ────────────────────────────────────────────────────────
 // Only generate data for countries where IM8 actively sells.
@@ -650,6 +651,10 @@ export async function POST(req: NextRequest) {
           shopifyOrderId: String(orderId),
           shopifyOrderName: orderName,
           shopifyStore: "im8",
+          openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+            shopifyStore: "im8",
+            shopifyOrderId: orderId,
+          }),
           orderJson,
           testMode: true,
           testRunId,

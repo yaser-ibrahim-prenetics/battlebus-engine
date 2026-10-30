@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { getOrder, searchOrdersByName, type ShopifyOrder } from "@/lib/clients/shopify";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
+import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
 
 type RecoverInput = {
   shopifyOrderIds?: string[];
@@ -226,6 +227,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
         }
 
         const replayEventName = resolveReplayEventName(order);
+        const shopifyStore = shopDomainHint || config.shopify.im8.shopDomain;
         const result = await inngest.send({
           id: `order-recovery:${event.id || runId}:${shopifyOrderId}`,
           name: replayEventName,
@@ -233,7 +235,15 @@ export const processShopifyOrderRecover = inngest.createFunction(
             shopifyOrderId: data.recoveryRequestId ? `${shopifyOrderId}-rerun-${data.recoveryRequestId}` : shopifyOrderId,
             ...(data.recoveryRequestId ? { originalShopifyOrderId: shopifyOrderId } : {}),
             shopifyOrderName,
-            shopifyStore: shopDomainHint || config.shopify.im8.shopDomain,
+            shopifyStore,
+            ...(replayEventName === "shopify/order.paid"
+              ? {
+                  openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+                    shopifyStore,
+                    shopifyOrderId,
+                  }),
+                }
+              : {}),
             orderJson: order as unknown,
             receivedAt: new Date().toISOString(),
           },

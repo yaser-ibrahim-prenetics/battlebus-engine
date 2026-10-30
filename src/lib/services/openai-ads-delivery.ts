@@ -9,6 +9,7 @@ import {
 import {
   markOpenAiAdsConversionDelivered,
   markOpenAiAdsConversionFailed,
+  markOpenAiAdsConversionSkipped,
   OPENAI_ADS_MAX_ATTEMPTS,
   openAiAdsRetryDelaySeconds,
   renewOpenAiAdsConversionClaim,
@@ -20,6 +21,7 @@ type DeliveryDependencies = {
   renew: typeof renewOpenAiAdsConversionClaim;
   send: typeof sendOpenAiAdsOrderCreatedConversion;
   markDelivered: typeof markOpenAiAdsConversionDelivered;
+  markSkipped: typeof markOpenAiAdsConversionSkipped;
   markFailed: typeof markOpenAiAdsConversionFailed;
 };
 
@@ -28,12 +30,13 @@ const defaultDependencies: DeliveryDependencies = {
   renew: renewOpenAiAdsConversionClaim,
   send: sendOpenAiAdsOrderCreatedConversion,
   markDelivered: markOpenAiAdsConversionDelivered,
+  markSkipped: markOpenAiAdsConversionSkipped,
   markFailed: markOpenAiAdsConversionFailed,
 };
 
 export type OpenAiAdsDeliveryOutcome = {
   eventId: string;
-  status: "delivered" | "retry_wait" | "permanent_failure" | "stale";
+  status: "delivered" | "retry_wait" | "permanent_failure" | "skipped" | "stale";
   attempts: number;
   errorCategory?: string;
   retryAt?: string;
@@ -50,17 +53,15 @@ export async function deliverOpenAiAdsConversion(
 
   const configurationIssue = dependencies.configurationIssue(claim.shopifyStore);
   if (configurationIssue) {
-    await dependencies.markFailed({
+    await dependencies.markSkipped({
       eventId: claim.eventId,
       leaseToken: claim.leaseToken,
-      terminal: true,
-      retryDelaySeconds: 0,
       category: configurationIssue,
-      error: "OpenAI Ads delivery configuration is incomplete",
+      reason: "OpenAI Ads delivery configuration is incomplete",
     });
     return {
       eventId: claim.eventId,
-      status: "permanent_failure",
+      status: "skipped",
       attempts: claim.attempts,
       errorCategory: configurationIssue,
     };

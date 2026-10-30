@@ -17,9 +17,11 @@ vi.mock("@/lib/clients/openai-ads", () => ({
 import {
   enqueueOpenAiAdsConversion,
   normalizeOpenAiAdsShopifyStore,
+  OpenAiAdsConversionValidationError,
   openAiAdsRetryDelaySeconds,
   toOpenAiAdsEventId,
-} from "../openai-ads-conversions";
+} from "@/lib/services/openai-ads-conversions";
+import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
 
 describe("durable OpenAI Ads conversions", () => {
   beforeEach(() => {
@@ -42,6 +44,33 @@ describe("durable OpenAI Ads conversions", () => {
     expect(normalizeOpenAiAdsShopifyStore("Other.MyShopify.com", "active.myshopify.com")).toBe(
       "other.myshopify.com"
     );
+  });
+
+  it("keeps the same canonical identity across legacy aliases and reruns", () => {
+    const activeStore = normalizeOpenAiAdsShopifyStore("im8-battle-bus");
+    const original = toCanonicalOpenAiAdsEventId({
+      shopifyStore: activeStore,
+      shopifyOrderId: "123",
+    });
+    expect(
+      toCanonicalOpenAiAdsEventId({
+        shopifyStore: "im8-battle-bus",
+        shopifyOrderId: "123-rerun-456",
+        originalShopifyOrderId: "123",
+      })
+    ).toBe(original);
+  });
+
+  it("classifies invalid conversion data before attempting database work", async () => {
+    mocks.configured.mockReturnValue(false);
+    await expect(
+      enqueueOpenAiAdsConversion({
+        shopifyStore: "active.myshopify.com",
+        shopifyOrderId: "123-rerun-456",
+        occurredAt: "not-a-timestamp",
+      })
+    ).rejects.toBeInstanceOf(OpenAiAdsConversionValidationError);
+    expect(mocks.query).not.toHaveBeenCalled();
   });
 
   it("persists one queued minimal conversion", async () => {

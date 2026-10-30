@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OpenAiAdsDeliveryError } from "@/lib/clients/openai-ads";
-import { deliverOpenAiAdsConversion } from "../openai-ads-delivery";
-import type { OpenAiAdsConversionClaim } from "../openai-ads-conversions";
+import { deliverOpenAiAdsConversion } from "@/lib/services/openai-ads-delivery";
+import type { OpenAiAdsConversionClaim } from "@/lib/services/openai-ads-conversions";
 
 const claim: OpenAiAdsConversionClaim = {
   eventId: "bb_order_created_0000000000000000000000000000000000000000",
@@ -20,6 +20,7 @@ function dependencies() {
     renew: vi.fn(async () => true),
     send: vi.fn(async () => 202),
     markDelivered: vi.fn(async () => undefined),
+    markSkipped: vi.fn(async () => undefined),
     markFailed: vi.fn(async () => ({
       status: "retry_wait" as const,
       nextAttemptAt: "2026-10-30T00:01:00.000Z",
@@ -99,14 +100,20 @@ describe("OpenAI Ads conversion delivery", () => {
     );
   });
 
-  it("fails configuration issues before the provider call", async () => {
+  it("skips configuration issues before the provider call", async () => {
     const deps = dependencies();
     deps.configurationIssue.mockReturnValue("store_not_allowed");
-    deps.markFailed.mockResolvedValue({ status: "permanent_failure", nextAttemptAt: null });
     await expect(deliverOpenAiAdsConversion(claim, deps)).resolves.toMatchObject({
-      status: "permanent_failure",
+      status: "skipped",
       errorCategory: "store_not_allowed",
     });
     expect(deps.send).not.toHaveBeenCalled();
+    expect(deps.markSkipped).toHaveBeenCalledWith({
+      eventId: claim.eventId,
+      leaseToken: claim.leaseToken,
+      category: "store_not_allowed",
+      reason: "OpenAI Ads delivery configuration is incomplete",
+    });
+    expect(deps.markFailed).not.toHaveBeenCalled();
   });
 });

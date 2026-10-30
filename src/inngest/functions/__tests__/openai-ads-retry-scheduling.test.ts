@@ -18,8 +18,8 @@ vi.mock("@/lib/services/openai-ads-delivery", () => ({
   deliverOpenAiAdsConversion: mocks.deliver,
 }));
 
-import { deliverOpenAiAdsConversions } from "../deliver-openai-ads-conversions";
-import { scheduleOpenAiAdsRetry } from "../schedule-openai-ads-retry";
+import { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-ads-conversions";
+import { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
 
 type Handler = (input: {
   event: { id: string; data?: Record<string, unknown> };
@@ -94,5 +94,28 @@ describe("OpenAI Ads durable retry scheduling", () => {
       name: "openai.ads/conversion.queued",
       data: { eventId: "bb_order_created_0000000000000000000000000000000000000000" },
     });
+  });
+
+  it("does not retry an invalid persisted retry timestamp", async () => {
+    const step = {
+      run: async <T>(_id: string, handler: () => Promise<T>) => handler(),
+      sendEvent: vi.fn(),
+      sleepUntil: vi.fn(),
+    };
+
+    await expect(
+      (scheduleOpenAiAdsRetry as unknown as Handler)({
+        event: {
+          id: "invalid-schedule",
+          data: {
+            eventId: "bb_order_created_0000000000000000000000000000000000000000",
+            attempt: 1,
+            retryAt: "not-a-timestamp",
+          },
+        },
+        step,
+      })
+    ).rejects.toMatchObject({ name: "NonRetriableError" });
+    expect(step.sleepUntil).not.toHaveBeenCalled();
   });
 });

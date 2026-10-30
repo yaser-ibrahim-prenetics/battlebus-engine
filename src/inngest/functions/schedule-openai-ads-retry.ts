@@ -1,6 +1,7 @@
 import { inngest } from "@/inngest/client";
 import type { OpenAiAdsConversionRetryScheduledEvent } from "@/inngest/events";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
+import { NonRetriableError } from "inngest";
 
 type RetryScheduleStep = {
   sleepUntil(id: string, until: string): Promise<void>;
@@ -27,7 +28,9 @@ export const scheduleOpenAiAdsRetry = inngest.createFunction(
     step: RetryScheduleStep;
   }) => {
     const retryAt = new Date(event.data.retryAt);
-    if (Number.isNaN(retryAt.getTime())) throw new Error("Invalid OpenAI Ads retry timestamp");
+    if (Number.isNaN(retryAt.getTime())) {
+      throw new NonRetriableError("Invalid OpenAI Ads retry timestamp");
+    }
     await step.sleepUntil("wait-for-openai-ads-retry", retryAt.toISOString());
     await step.sendEvent("wake-openai-ads-retry", {
       id: `openai-ads-retry:${event.data.eventId}:${event.data.attempt}`,

@@ -1,10 +1,18 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
 
 import { openAiAdsConfigurationIssue } from "@/lib/clients/openai-ads";
-import { config } from "@/lib/config";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { openAiAdsConversionQueries } from "@/lib/db/queries/openai-ads-conversions";
+import {
+  normalizeOpenAiAdsShopifyStore,
+  toOpenAiAdsEventId,
+} from "@/lib/helpers/openai-ads-identity";
+
+export {
+  normalizeOpenAiAdsShopifyStore,
+  toOpenAiAdsEventId,
+} from "@/lib/helpers/openai-ads-identity";
 
 export const OPENAI_ADS_MAX_ATTEMPTS = 6;
 export const OPENAI_ADS_RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 14_400] as const;
@@ -56,6 +64,13 @@ interface FailureRow extends QueryResultRow {
   next_attempt_at: Date | string;
 }
 
+export class OpenAiAdsConversionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenAiAdsConversionValidationError";
+  }
+}
+
 export type OpenAiAdsFailureTransition = {
   status: FailureRow["status"];
   nextAttemptAt: string | null;
@@ -80,24 +95,6 @@ function summary(row: SummaryRow): OpenAiAdsConversionSummary {
   };
 }
 
-export function toOpenAiAdsEventId(shopifyStore: string, shopifyOrderId: string | number): string {
-  const identity = JSON.stringify([
-    shopifyStore.trim().toLowerCase(),
-    String(shopifyOrderId),
-    "order_created",
-  ]);
-  return `bb_order_created_${createHash("sha256").update(identity).digest("hex").slice(0, 40)}`;
-}
-
-export function normalizeOpenAiAdsShopifyStore(
-  shopifyStore: string,
-  activeStore = config.shopify.im8.shopDomain
-): string {
-  const normalized = shopifyStore.trim().toLowerCase();
-  if (normalized === "im8-battle-bus") return activeStore.trim().toLowerCase();
-  return normalized;
-}
-
 export function openAiAdsRetryDelaySeconds(attempt: number): number {
   return OPENAI_ADS_RETRY_DELAYS_SECONDS[Math.max(0, attempt - 1)] ?? 0;
 }
@@ -111,19 +108,23 @@ export async function enqueueOpenAiAdsConversion({
   shopifyOrderId: string | number;
   occurredAt: string;
 }): Promise<OpenAiAdsConversionSummary> {
-  requireDatabase();
   const store = normalizeOpenAiAdsShopifyStore(shopifyStore);
   const orderId = String(shopifyOrderId);
   if (!/^[a-z0-9][a-z0-9.-]{1,251}[a-z0-9]$/.test(store)) {
-    throw new Error("OpenAI Ads conversion store identity is invalid");
+    throw new OpenAiAdsConversionValidationError(
+      "OpenAI Ads conversion store identity is invalid"
+    );
   }
   if (!/^\d{1,20}$/.test(orderId)) {
-    throw new Error("OpenAI Ads conversion order identity is invalid");
+    throw new OpenAiAdsConversionValidationError(
+      "OpenAI Ads conversion order identity is invalid"
+    );
   }
   const parsedAt = Date.parse(occurredAt);
   if (!occurredAt || Number.isNaN(parsedAt)) {
-    throw new Error("OpenAI Ads conversion timestamp is invalid");
+    throw new OpenAiAdsConversionValidationError("OpenAI Ads conversion timestamp is invalid");
   }
+  requireDatabase();
 
   const eventId = toOpenAiAdsEventId(store, orderId);
   const issue = openAiAdsConfigurationIssue(store);
@@ -200,6 +201,26 @@ export async function markOpenAiAdsConversionDelivered({
     eventId,
     leaseToken,
     httpStatus,
+  ]);
+  if (result.rowCount !== 1) throw new Error("OpenAI Ads conversion claim was lost");
+}
+
+export async function markOpenAiAdsConversionSkipped({
+  eventId,
+  leaseToken,
+  category,
+  reason,
+}: {
+  eventId: string;
+  leaseToken: string;
+  category: string;
+  reason: string;
+}): Promise<void> {
+  const result = await queryDatabase(openAiAdsConversionQueries.markSkipped, [
+    eventId,
+    leaseToken,
+    category,
+    reason.slice(0, 1000),
   ]);
   if (result.rowCount !== 1) throw new Error("OpenAI Ads conversion claim was lost");
 }

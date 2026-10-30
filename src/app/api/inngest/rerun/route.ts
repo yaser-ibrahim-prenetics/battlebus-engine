@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { searchOrdersByName } from "@/lib/clients/shopify";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
+import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
 
 const INNGEST_API_URL = process.env.INNGEST_API_URL || "https://api.inngest.com";
 
@@ -139,6 +140,19 @@ function applyReplayDataMutations(
   return out;
 }
 
+function openAiAdsConversionIdentity(
+  eventName: string,
+  shopifyStore: string,
+  shopifyOrderId: string | number
+): { openAiAdsConversionId: string } | Record<string, never> {
+  if (eventName !== "shopify/order.paid" && eventName !== "shopify/subscription.renewed") {
+    return {};
+  }
+  return {
+    openAiAdsConversionId: toCanonicalOpenAiAdsEventId({ shopifyStore, shopifyOrderId }),
+  };
+}
+
 export async function POST(request: NextRequest) {
   const auth = requireServiceAuth(request);
   if (!auth.ok) {
@@ -219,6 +233,11 @@ export async function POST(request: NextRequest) {
           originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
+          ...openAiAdsConversionIdentity(
+            resolvedEventName,
+            "im8-battle-bus",
+            shopifyOrder.id
+          ),
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
@@ -302,6 +321,11 @@ export async function POST(request: NextRequest) {
           originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
+          ...openAiAdsConversionIdentity(
+            resolvedEventName,
+            "im8-battle-bus",
+            shopifyOrder.id
+          ),
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",

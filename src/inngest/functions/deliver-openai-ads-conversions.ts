@@ -69,6 +69,7 @@ export const deliverOpenAiAdsConversions = inngest.createFunction(
       status: claims.length ? "processed" : "idle",
       count: claims.length,
       delivered: outcomes.filter((outcome) => outcome.status === "delivered").length,
+      skipped: outcomes.filter((outcome) => outcome.status === "skipped").length,
       retrying: outcomes.filter((outcome) => outcome.status === "retry_wait").length,
       permanentFailures: outcomes.filter((outcome) => outcome.status === "permanent_failure")
         .length,

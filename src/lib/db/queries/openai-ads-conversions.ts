@@ -73,6 +73,19 @@ export const openAiAdsConversionQueries = {
        AND status = 'delivering'
      RETURNING event_id`,
 
+  markSkipped: `UPDATE public.openai_ads_conversions
+     SET status = 'skipped',
+         lease_token = NULL,
+         lease_until = NULL,
+         last_http_status = NULL,
+         last_error_category = $3,
+         last_error = $4,
+         permanent_at = clock_timestamp()
+     WHERE event_id = $1
+       AND lease_token = $2::uuid
+       AND status = 'delivering'
+     RETURNING event_id`,
+
   markFailed: `UPDATE public.openai_ads_conversions
      SET status = CASE WHEN $4::boolean THEN 'permanent_failure' ELSE 'retry_wait' END,
          lease_token = NULL,
