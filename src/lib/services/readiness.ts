@@ -14,13 +14,14 @@ export async function checkReadiness() {
         const result = await queryDatabase<{ ready: boolean }>(`SELECT
           to_regclass('public.channel_lift_runs') IS NOT NULL
           AND to_regclass('public.channel_lift_run_attempts') IS NOT NULL
+          AND to_regclass('public.channel_lift_request_identities') IS NOT NULL
           AND to_regprocedure('public.battle_platform_enforce_channel_lift_transition()') IS NOT NULL
           AND EXISTS (
             SELECT 1 FROM pg_trigger
             WHERE tgrelid = 'public.channel_lift_runs'::regclass
               AND tgname = 'battle_platform_enforce_channel_lift_transition'
               AND tgfoid = 'public.battle_platform_enforce_channel_lift_transition()'::regprocedure
-              AND tgenabled <> 'D'
+              AND tgenabled IN ('O', 'A')
               AND NOT tgisinternal
           )
           AND EXISTS (
@@ -32,16 +33,32 @@ export async function checkReadiness() {
             WHERE oid = 'public.channel_lift_run_attempts'::regclass AND relrowsecurity
           )
           AND EXISTS (
+            SELECT 1 FROM pg_class
+            WHERE oid = 'public.channel_lift_request_identities'::regclass AND relrowsecurity
+          )
+          AND EXISTS (
             SELECT 1 FROM pg_policies
             WHERE schemaname = 'public' AND tablename = 'channel_lift_runs'
               AND policyname = 'channel_lift_runtime'
               AND 'battle_bus_runtime' = ANY(roles)
+              AND cmd = 'ALL' AND permissive = 'PERMISSIVE'
+              AND qual = 'true' AND with_check = 'true'
           )
           AND EXISTS (
             SELECT 1 FROM pg_policies
             WHERE schemaname = 'public' AND tablename = 'channel_lift_run_attempts'
               AND policyname = 'channel_lift_attempt_runtime'
               AND 'battle_bus_runtime' = ANY(roles)
+              AND cmd = 'ALL' AND permissive = 'PERMISSIVE'
+              AND qual = 'true' AND with_check = 'true'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'public' AND tablename = 'channel_lift_request_identities'
+              AND policyname = 'channel_lift_request_identity_runtime'
+              AND 'battle_bus_runtime' = ANY(roles)
+              AND cmd = 'ALL' AND permissive = 'PERMISSIVE'
+              AND qual = 'true' AND with_check = 'true'
           )
           AND (
             SELECT COUNT(*) = 6 FROM information_schema.columns
@@ -51,9 +68,33 @@ export async function checkReadiness() {
                 'eligibility_cutoff_seconds', 'config_hash', 'snapshot_hash'
               )
           )
+          AND (
+            SELECT COUNT(*) = 6 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'channel_lift_run_attempts'
+              AND column_name IN (
+                'request_id', 'run_id', 'source',
+                'reason_code', 'reference_id', 'requested_at'
+              )
+          )
+          AND (
+            SELECT COUNT(*) = 4 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'channel_lift_request_identities'
+              AND column_name IN ('request_id', 'mode', 'source', 'first_seen_at')
+          )
           AND has_table_privilege(current_user, 'public.channel_lift_runs', 'SELECT,INSERT')
           AND has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'SELECT,INSERT')
-          AND has_column_privilege(current_user, 'public.channel_lift_runs', 'status', 'UPDATE')
+          AND has_table_privilege(current_user, 'public.channel_lift_request_identities', 'SELECT,INSERT')
+          AND (
+            SELECT bool_and(has_column_privilege(
+              current_user, 'public.channel_lift_runs', allowed.column_name, 'UPDATE'
+            ))
+            FROM unnest(ARRAY[
+              'status', 'attempts', 'expected_rows', 'expected_orders', 'expected_pairs',
+              'mapped_pairs', 'eligible_events', 'exclusion_counts', 'batch_count',
+              'attempted_events', 'delivered_events', 'config_hash', 'snapshot_hash',
+              'last_error_code', 'started_at', 'completed_at'
+            ]) AS allowed(column_name)
+          )
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'UPDATE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'DELETE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'TRUNCATE')
@@ -62,6 +103,9 @@ export async function checkReadiness() {
           AND NOT has_any_column_privilege(current_user, 'public.channel_lift_run_attempts', 'UPDATE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'DELETE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'TRUNCATE')
+          AND NOT has_any_column_privilege(current_user, 'public.channel_lift_request_identities', 'UPDATE')
+          AND NOT has_table_privilege(current_user, 'public.channel_lift_request_identities', 'DELETE')
+          AND NOT has_table_privilege(current_user, 'public.channel_lift_request_identities', 'TRUNCATE')
           AS ready`);
         channelLiftSchema = result.rows[0]?.ready === true;
       }

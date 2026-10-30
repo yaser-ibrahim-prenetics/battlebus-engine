@@ -14,9 +14,11 @@ import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import {
   completeChannelLiftRunSQL,
   failChannelLiftRunSQL,
+  insertChannelLiftRequestIdentitySQL,
   insertChannelLiftRunSQL,
   insertChannelLiftRunAttemptSQL,
   readActiveChannelLiftRunSQL,
+  readChannelLiftRequestIdentitySQL,
   readChannelLiftRunAttemptSQL,
   readChannelLiftRunSQL,
   recordChannelLiftPreparedSQL,
@@ -153,6 +155,21 @@ export async function startChannelLiftRun({
     throw new ChannelLiftError("manual_reference_id_invalid");
   }
   const runId = channelLiftRunId(reportingDate, mode);
+  const insertedIdentity = await queryDatabase(insertChannelLiftRequestIdentitySQL, [
+    requestId,
+    mode,
+    source,
+  ]);
+  if (insertedIdentity.rowCount === 0) {
+    const existingIdentity = await queryDatabase<{
+      mode: ChannelLiftMode;
+      source: ChannelLiftSource;
+    }>(readChannelLiftRequestIdentitySQL, [requestId]);
+    const identity = existingIdentity.rows[0];
+    if (!identity || identity.mode !== mode || identity.source !== source) {
+      throw new ChannelLiftError("request_identity_conflict");
+    }
+  }
   try {
     const inserted = await queryDatabase(insertChannelLiftRunSQL, [
       runId,
@@ -168,15 +185,16 @@ export async function startChannelLiftRun({
       const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
       if (existing.rows[0]) {
         const run = asRun(existing.rows[0]);
+        const isOriginalRequest = run.requestId === requestId && run.source === source;
         if (run.status === "running") {
           return {
-            disposition: run.requestId === requestId ? "started" : "active",
+            disposition: isOriginalRequest ? "started" : "active",
             run,
             acceptedRequestId: run.requestId,
             acceptedSource: run.source,
           };
         }
-        if (run.status === "queued" && run.requestId !== requestId) {
+        if (run.status === "queued" && !isOriginalRequest) {
           return {
             disposition: "active",
             run,
@@ -187,6 +205,14 @@ export async function startChannelLiftRun({
         if (run.status === "completed" || run.status === "dry_run_completed") {
           return {
             disposition: "already_completed",
+            run,
+            acceptedRequestId: run.requestId,
+            acceptedSource: run.source,
+          };
+        }
+        if (run.status === "failed" && run.requestId === requestId && run.source !== source) {
+          return {
+            disposition: "active",
             run,
             acceptedRequestId: run.requestId,
             acceptedSource: run.source,
@@ -209,7 +235,7 @@ export async function startChannelLiftRun({
               requested_by: string | null;
               reason_code: string | null;
               reference_id: string | null;
-            }>(readChannelLiftRunAttemptSQL, [requestId]);
+            }>(readChannelLiftRunAttemptSQL, [requestId, runId]);
             const attempt = existingAttempt.rows[0];
             if (
               !attempt ||
