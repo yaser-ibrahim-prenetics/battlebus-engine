@@ -56,3 +56,8 @@ export const openAiAdsSummariesSQL = `SELECT event_id,shopify_store,shopify_orde
   conversion_type,occurred_at,status,attempts,next_attempt_at,last_http_status,
   last_error_category,delivered_at,permanent_at,replay_count,replayed_at,created_at,updated_at
   FROM public.openai_ads_conversions ORDER BY created_at DESC LIMIT 50`;
+export const channelLiftSummariesSQL = `SELECT run_id,reporting_date,mode,source,status,
+  attempts,expected_rows,expected_orders,expected_pairs,mapped_pairs,eligible_events,
+  exclusion_counts,batch_count,attempted_events,delivered_events,config_hash,snapshot_hash,
+  last_error_code,reason_code,reference_id,started_at,completed_at,created_at,updated_at
+  FROM public.channel_lift_runs ORDER BY reporting_date DESC,created_at DESC LIMIT 50`;

@@ -181,3 +181,4 @@ ROLLBACK;
 \ir assertions_up/014_provider_capacity.sql
 \ir assertions_up/015_openai_ads_outbox.sql
 \ir assertions_up/016_openai_ads_replay_audit.sql
+\ir assertions_up/017_channel_lift_runs.sql

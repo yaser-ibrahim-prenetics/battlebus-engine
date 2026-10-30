@@ -49,6 +49,17 @@ export async function shopifyProviderFetch(
 /**
  * Execute a Shopify Admin GraphQL request using shared store config.
  */
+export class ShopifyAdminGraphqlError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number | undefined,
+    public readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = "ShopifyAdminGraphqlError";
+  }
+}
+
 export async function shopifyAdminGraphql<T = any>(
   query: string,
   variables: Record<string, unknown> = {},
@@ -66,13 +77,24 @@ export async function shopifyAdminGraphql<T = any>(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Shopify GraphQL request failed: ${response.status} - ${error}`);
+    throw new ShopifyAdminGraphqlError(
+      `Shopify GraphQL request failed: ${response.status} - ${error}`,
+      response.status,
+      response.status === 429 || response.status >= 500
+    );
   }
 
   const payload = await response.json();
   if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
     const msg = payload.errors.map((e: any) => e?.message || "Unknown GraphQL error").join("; ");
-    throw new Error(`Shopify GraphQL request failed: ${msg}`);
+    const retryable = payload.errors.some((error: { extensions?: { code?: unknown } }) =>
+      ["THROTTLED", "INTERNAL_SERVER_ERROR"].includes(String(error?.extensions?.code || ""))
+    );
+    throw new ShopifyAdminGraphqlError(
+      `Shopify GraphQL request failed: ${msg}`,
+      undefined,
+      retryable
+    );
   }
 
   return payload as T;

@@ -9,6 +9,7 @@ import {
   resolveLoopWebhookVerifyDisabled,
 } from "./helpers/loop-integration";
 import { openAiAdsConfigurationProblems } from "@/lib/helpers/openai-ads-config";
+import { validateChannelLiftSourceUrl } from "@/lib/channel-lift/model";
 
 function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
@@ -157,6 +158,24 @@ export const config = {
     endpoint: process.env.OPENAI_ADS_ENDPOINT?.trim() || "https://bzr.openai.com",
     apiVersion: process.env.OPENAI_ADS_API_VERSION?.trim() || "v1",
     sourceUrl: process.env.OPENAI_ADS_SOURCE_URL?.trim() || "",
+  },
+
+  channelLift: {
+    enabled: process.env.CHANNEL_LIFT_ENABLED === "true",
+    sendEnabled: process.env.CHANNEL_LIFT_SEND_ENABLED === "true",
+    tripleWhaleApiKey: process.env.TRIPLE_WHALE_API_KEY || "",
+    tripleWhaleShopId: process.env.CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID?.trim() || "",
+    metaAccessToken: process.env.META_CONVERSIONS_ACCESS_TOKEN || "",
+    metaDatasetId: process.env.CHANNEL_LIFT_META_DATASET_ID?.trim() || "",
+    sourceUrl: process.env.CHANNEL_LIFT_SOURCE_URL?.trim() || "",
+    pageSize: clampInt(safeParseInt(process.env.CHANNEL_LIFT_PAGE_SIZE, 20_000), 1, 50_000),
+    maxRows: clampInt(safeParseInt(process.env.CHANNEL_LIFT_MAX_ROWS, 100_000), 1, 250_000),
+    maxEventAgeSeconds: clampInt(
+      safeParseInt(process.env.CHANNEL_LIFT_MAX_EVENT_AGE_SECONDS, 7 * 86_400),
+      60,
+      7 * 86_400
+    ),
+    maxBackfillDays: 31,
   },
 
   // Slack Notification Channels
@@ -411,6 +430,48 @@ export const GPS_STATUS = {
 } as const;
 
 // Validate required configuration
+export function channelLiftConfigurationProblems(): string[] {
+  const errors: string[] = [];
+  if (config.channelLift.sendEnabled && !config.channelLift.enabled) {
+    errors.push("CHANNEL_LIFT_SEND_ENABLED requires CHANNEL_LIFT_ENABLED=true");
+  }
+  if (!config.channelLift.enabled) return errors;
+
+  if (!config.channelLift.tripleWhaleApiKey)
+    errors.push("TRIPLE_WHALE_API_KEY is required when channel lift is enabled");
+  if (!config.channelLift.metaAccessToken)
+    errors.push("META_CONVERSIONS_ACCESS_TOKEN is required when channel lift is enabled");
+  if (!config.channelLift.tripleWhaleShopId)
+    errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID is required when channel lift is enabled");
+  if (
+    config.channelLift.tripleWhaleShopId &&
+    config.shopify.im8.shopDomain &&
+    config.channelLift.tripleWhaleShopId.toLowerCase() !==
+      config.shopify.im8.shopDomain.toLowerCase()
+  ) {
+    errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID must match the active Shopify store");
+  }
+  if (!config.channelLift.sourceUrl) {
+    errors.push("CHANNEL_LIFT_SOURCE_URL is required when channel lift is enabled");
+  } else {
+    try {
+      validateChannelLiftSourceUrl(config.channelLift.sourceUrl);
+    } catch {
+      errors.push("CHANNEL_LIFT_SOURCE_URL is not an approved channel-lift URL");
+    }
+  }
+  if (!/^\d+$/.test(config.channelLift.metaDatasetId))
+    errors.push("CHANNEL_LIFT_META_DATASET_ID must be numeric when channel lift is enabled");
+  return errors;
+}
+
+export function assertChannelLiftConfiguration(): void {
+  const errors = channelLiftConfigurationProblems();
+  if (errors.length > 0) {
+    throw new Error(`[Config] Channel lift cannot start: ${errors.join(", ")}`);
+  }
+}
+
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
@@ -446,6 +507,8 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
       ...openAiAdsConfigurationProblems(config.openAiAds).map((problem) => problem.message)
     );
   }
+
+  errors.push(...channelLiftConfigurationProblems());
 
   if (!config.shopify.im8.accessToken) {
     const modeVar =

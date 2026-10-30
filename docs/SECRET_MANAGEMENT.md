@@ -39,6 +39,21 @@ gcloud secrets versions add SECRET_ID --data-file=- --project=battle-bus-509406
 Paste the value only at the terminal input prompt. Deploy a new Cloud Run
 revision after rotation because `latest` is resolved when an instance starts.
 
+### Meta channel-lift credentials
+
+Channel lift uses two independent Secret Manager-backed runtime variables:
+
+- `TRIPLE_WHALE_API_KEY`
+- `META_CONVERSIONS_ACCESS_TOKEN`
+
+Create and populate them through standard input, grant accessor only to the
+Battle Bus runtime service account, and bind a reviewed numeric version to the
+Cloud Run service. Keep `CHANNEL_LIFT_ENABLED=false` and
+`CHANNEL_LIFT_SEND_ENABLED=false` until migration `000055` is applied and both
+bindings are visible as `valueFrom.secretKeyRef`. Dry-run rollout enables only
+the first flag; live Meta writes require a separate deployment enabling the
+second flag.
+
 ## Repository safeguards
 
 - `.env*`, Google authentication files, PEM files, and local data are ignored.

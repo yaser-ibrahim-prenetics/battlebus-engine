@@ -359,11 +359,28 @@ OPENAI_ADS_API_VERSION=v1
 OPENAI_ADS_SOURCE_URL=https://your-store.example
 # OPENAI_ADS_CONVERSIONS_API_KEY must be mounted from GCP Secret Manager.
 
+# Meta channel lift (both gates default false)
+CHANNEL_LIFT_ENABLED=false
+CHANNEL_LIFT_SEND_ENABLED=false
+CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID=your-store.myshopify.com
+CHANNEL_LIFT_META_DATASET_ID=your-meta-dataset-id
+CHANNEL_LIFT_SOURCE_URL=https://im8health.com/
+CHANNEL_LIFT_PAGE_SIZE=20000
+CHANNEL_LIFT_MAX_ROWS=100000
+CHANNEL_LIFT_MAX_EVENT_AGE_SECONDS=604800
+# TRIPLE_WHALE_API_KEY and META_CONVERSIONS_ACCESS_TOKEN must be mounted from
+# GCP Secret Manager; never put either value in an env file or repository setting.
+
 # Feature Flags
 DRY_RUN_MODE=false
 ENABLE_DYNAMICS_SYNC=true
 ENABLE_GPS_SYNC=true
 ```
+
+Channel-lift dry-runs and bounded backfills are submitted through authenticated
+`POST /api/operations/channel-lift`. See
+[`docs/durable-meta-channel-lift.md`](docs/durable-meta-channel-lift.md) for the
+request contract, evidence model, and rollout gates.
 
 ---
 
