@@ -31,6 +31,10 @@ requests, minimal event outbox, and the payload-free Battle Hub operational view
 See [OOS parking and targeted drain](../docs/oos-parking-targeted-drain.md) for the
 disabled-by-default rollout sequence.
 
+Migration `000068` adds stable unresolved-action age, bounded terminal-action retention and
+least-privilege cleanup. See [fulfillment-action housekeeping](../docs/fulfillment-action-housekeeping.md)
+for activation, operator alerting and rollback guidance.
+
 Each database schema has exactly one owning repository. Future services keep
 their own migrations beside their application code. Shared pipeline tooling may
 execute those migrations, but it must not own or copy service-specific SQL. If
