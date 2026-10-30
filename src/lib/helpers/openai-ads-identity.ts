@@ -1,22 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { config } from "@/lib/config";
+import {
+  canonicalShopifyOrderId,
+  normalizeCanonicalShopifyStore,
+} from "@/lib/helpers/shopify-order-identity";
 
-export function normalizeOpenAiAdsShopifyStore(
-  shopifyStore: string,
-  activeStore = config.shopify.im8.shopDomain
-): string {
-  const normalized = shopifyStore.trim().toLowerCase();
-  if (normalized === "im8-battle-bus") return activeStore.trim().toLowerCase();
-  return normalized;
-}
-
-export function canonicalOpenAiAdsShopifyOrderId(
-  shopifyOrderId: string | number,
-  originalShopifyOrderId?: string | number
-): string {
-  return String(originalShopifyOrderId ?? shopifyOrderId).split("-rerun-")[0];
-}
+export const normalizeOpenAiAdsShopifyStore = normalizeCanonicalShopifyStore;
 
 export function toOpenAiAdsEventId(shopifyStore: string, shopifyOrderId: string | number): string {
   const identity = JSON.stringify([
@@ -37,7 +26,7 @@ export function toCanonicalOpenAiAdsEventId({
   originalShopifyOrderId?: string | number;
 }): string {
   return toOpenAiAdsEventId(
-    normalizeOpenAiAdsShopifyStore(shopifyStore),
-    canonicalOpenAiAdsShopifyOrderId(shopifyOrderId, originalShopifyOrderId)
+    normalizeCanonicalShopifyStore(shopifyStore),
+    canonicalShopifyOrderId(shopifyOrderId, originalShopifyOrderId)
   );
 }

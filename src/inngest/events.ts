@@ -16,8 +16,8 @@ export type OosRecoveryReplayMarker = {
 export type ShopifyOrderReplayMarker = {
   originalShopifyOrderId?: string;
   testMode?: boolean;
-  /** Stable conversion identity shared by original deliveries and every replay. */
-  openAiAdsConversionId: string;
+  /** Provider-neutral identity shared by original deliveries and every replay. */
+  canonicalShopifyOrderKey: string;
 };
 
 export type ShopifyOrderCreatedEvent = {

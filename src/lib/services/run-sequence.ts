@@ -10,7 +10,7 @@
 import { inngest } from "@/inngest/client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
-import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 import type {
   OosRecoveryReplayMarker,
   RunSequenceStage,
@@ -138,7 +138,7 @@ export async function advanceRunSequence(
         shopifyOrderId,
         shopifyOrderName,
         shopifyStore: canonicalShopifyStore,
-        openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+        canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
           shopifyStore: canonicalShopifyStore,
           shopifyOrderId,
         }),

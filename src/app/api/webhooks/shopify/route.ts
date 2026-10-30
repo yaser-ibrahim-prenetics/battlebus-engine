@@ -10,7 +10,7 @@ import {
   shopifyWebhookSecretSource,
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
-import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
@@ -284,7 +284,7 @@ export async function POST(request: NextRequest) {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
               shopifyStore: effectiveShopDomain,
-              openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                 shopifyStore: effectiveShopDomain,
                 shopifyOrderId: payload.id,
               }),
@@ -303,7 +303,7 @@ export async function POST(request: NextRequest) {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
               shopifyStore: effectiveShopDomain,
-              openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                 shopifyStore: effectiveShopDomain,
                 shopifyOrderId: payload.id,
               }),

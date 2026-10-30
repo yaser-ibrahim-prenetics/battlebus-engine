@@ -2,7 +2,7 @@ import { inngest } from "../client";
 import { config } from "@/lib/config";
 import { getOrder, searchOrdersByName, type ShopifyOrder } from "@/lib/clients/shopify";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
-import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 
 type RecoverInput = {
   shopifyOrderIds?: string[];
@@ -238,7 +238,7 @@ export const processShopifyOrderRecover = inngest.createFunction(
             shopifyStore,
             ...(replayEventName === "shopify/order.paid"
               ? {
-                  openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+                  canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                     shopifyStore,
                     shopifyOrderId,
                   }),

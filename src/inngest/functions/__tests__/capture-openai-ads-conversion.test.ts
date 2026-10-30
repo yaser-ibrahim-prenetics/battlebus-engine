@@ -20,6 +20,7 @@ vi.mock("@/lib/services/openai-ads-conversions", async (importOriginal) => {
 
 import { captureOpenAiAdsConversion } from "@/inngest/functions/capture-openai-ads-conversion";
 import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 
 type CaptureHandler = (input: {
   event: {
@@ -28,7 +29,7 @@ type CaptureHandler = (input: {
       shopifyOrderId: string;
       shopifyOrderName: string;
       shopifyStore: string;
-      openAiAdsConversionId: string;
+      canonicalShopifyOrderKey: string;
       orderJson: { financial_status: string; processed_at: string };
       receivedAt: string;
     };
@@ -41,8 +42,9 @@ type CaptureHandler = (input: {
 
 const store = "active.myshopify.com";
 const eventId = toCanonicalOpenAiAdsEventId({ shopifyStore: store, shopifyOrderId: "123" });
+const orderKey = toCanonicalShopifyOrderKey({ shopifyStore: store, shopifyOrderId: "123" });
 
-function input(openAiAdsConversionId = eventId) {
+function input(canonicalShopifyOrderKey = orderKey) {
   return {
     event: {
       name: "shopify/order.paid" as const,
@@ -51,7 +53,7 @@ function input(openAiAdsConversionId = eventId) {
         originalShopifyOrderId: "123",
         shopifyOrderName: "#123",
         shopifyStore: store,
-        openAiAdsConversionId,
+        canonicalShopifyOrderKey,
         orderJson: {
           financial_status: "paid",
           processed_at: "2026-10-30T00:00:00.000Z",
@@ -78,7 +80,7 @@ describe("OpenAI Ads conversion capture", () => {
   });
 
   it("uses the canonical conversion identity for Inngest idempotency", () => {
-    expect(mocks.options?.idempotency).toBe("event.data.openAiAdsConversionId");
+    expect(mocks.options?.idempotency).toBe("event.data.canonicalShopifyOrderKey");
   });
 
   it("captures a rerun under the original canonical order identity", async () => {

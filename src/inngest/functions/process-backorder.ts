@@ -60,7 +60,7 @@ import {
 import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
 import { executeFulfillmentAction } from "@/lib/services/fulfillment-actions/ledger";
 import { gpsOutboundOrderEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
-import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 
 type LeaseAcquisitionResult =
   | { status: "acquired"; lease: BackorderRecoveryLease }
@@ -677,7 +677,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
               shopifyStore: shop,
-              openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                 shopifyStore: shop,
                 shopifyOrderId,
               }),
@@ -698,7 +698,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
               shopifyStore: openAiAdsShopifyStore,
-              openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                 shopifyStore: openAiAdsShopifyStore,
                 shopifyOrderId,
               }),
@@ -1025,7 +1025,7 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
               shopifyStore,
-              openAiAdsConversionId: toCanonicalOpenAiAdsEventId({
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
                 shopifyStore,
                 shopifyOrderId,
               }),

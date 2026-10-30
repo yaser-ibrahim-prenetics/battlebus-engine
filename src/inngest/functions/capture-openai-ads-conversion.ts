@@ -2,7 +2,10 @@ import { inngest } from "@/inngest/client";
 import type { ShopifyOrderPaidEvent, SubscriptionRenewalEvent } from "@/inngest/events";
 import { NonRetriableError } from "inngest";
 
-import { toCanonicalOpenAiAdsEventId } from "@/lib/helpers/openai-ads-identity";
+import {
+  canonicalShopifyOrderId,
+  toCanonicalShopifyOrderKey,
+} from "@/lib/helpers/shopify-order-identity";
 import {
   enqueueOpenAiAdsConversion,
   normalizeOpenAiAdsShopifyStore,
@@ -24,7 +27,7 @@ export const captureOpenAiAdsConversion = inngest.createFunction(
   {
     id: "capture-openai-ads-conversion",
     name: "Capture OpenAI Ads Conversion",
-    idempotency: "event.data.openAiAdsConversionId",
+    idempotency: "event.data.canonicalShopifyOrderKey",
     retries: RETRY_CONFIGS.DEFAULT,
     concurrency: { limit: 20 },
     triggers: [{ event: "shopify/order.paid" }, { event: "shopify/subscription.renewed" }],
@@ -37,16 +40,16 @@ export const captureOpenAiAdsConversion = inngest.createFunction(
     }
 
     const shopifyStore = normalizeOpenAiAdsShopifyStore(event.data.shopifyStore);
-    const shopifyOrderId = String(
-      event.data.originalShopifyOrderId ||
-        String(event.data.shopifyOrderId || "").split("-rerun-")[0]
+    const shopifyOrderId = canonicalShopifyOrderId(
+      event.data.shopifyOrderId,
+      event.data.originalShopifyOrderId
     );
-    const expectedEventId = toCanonicalOpenAiAdsEventId({
+    const expectedOrderKey = toCanonicalShopifyOrderKey({
       shopifyStore,
       shopifyOrderId,
     });
-    if (event.data.openAiAdsConversionId !== expectedEventId) {
-      throw new NonRetriableError("OpenAI Ads conversion identity does not match event data");
+    if (event.data.canonicalShopifyOrderKey !== expectedOrderKey) {
+      throw new NonRetriableError("Canonical Shopify order identity does not match event data");
     }
     const occurredAt = String(
       order?.processed_at || order?.created_at || event.data.receivedAt || ""
