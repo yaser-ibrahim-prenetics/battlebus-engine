@@ -2,13 +2,16 @@ DO $$
 DECLARE
   rls_enabled boolean;
   attempts_rls_enabled boolean;
+  identities_rls_enabled boolean;
 BEGIN
   IF to_regclass('public.channel_lift_runs') IS NULL
     OR to_regclass('public.channel_lift_run_attempts') IS NULL
+    OR to_regclass('public.channel_lift_request_identities') IS NULL
     OR to_regclass('public.idx_channel_lift_one_active_date') IS NULL
     OR to_regclass('public.idx_channel_lift_runs_recent') IS NULL
     OR to_regclass('public.battle_hub_channel_lift_runs') IS NULL
     OR to_regclass('public.battle_hub_channel_lift_run_attempts') IS NULL
+    OR to_regclass('public.battle_hub_channel_lift_request_identities') IS NULL
   THEN
     RAISE EXCEPTION 'Channel-lift evidence schema is incomplete';
   END IF;
@@ -21,8 +24,13 @@ BEGIN
   FROM pg_class
   WHERE oid = 'public.channel_lift_run_attempts'::regclass;
 
+  SELECT relrowsecurity INTO identities_rls_enabled
+  FROM pg_class
+  WHERE oid = 'public.channel_lift_request_identities'::regclass;
+
   IF rls_enabled IS DISTINCT FROM true
     OR attempts_rls_enabled IS DISTINCT FROM true
+    OR identities_rls_enabled IS DISTINCT FROM true
     OR NOT has_table_privilege(
       'battle_bus_runtime', 'public.channel_lift_runs', 'SELECT,INSERT'
     )
@@ -53,6 +61,18 @@ BEGIN
     OR NOT has_table_privilege(
       'battle_hub_runtime', 'public.battle_hub_channel_lift_run_attempts', 'SELECT'
     )
+    OR NOT has_table_privilege(
+      'battle_bus_runtime', 'public.channel_lift_request_identities', 'SELECT,INSERT'
+    )
+    OR has_any_column_privilege(
+      'battle_bus_runtime', 'public.channel_lift_request_identities', 'UPDATE'
+    )
+    OR has_table_privilege(
+      'battle_bus_runtime', 'public.channel_lift_request_identities', 'DELETE,TRUNCATE'
+    )
+    OR NOT has_table_privilege(
+      'battle_hub_runtime', 'public.battle_hub_channel_lift_request_identities', 'SELECT'
+    )
   THEN
     RAISE EXCEPTION 'Channel-lift evidence privilege contract failed';
   END IF;
@@ -64,11 +84,33 @@ BEGIN
       WHERE tgrelid = 'public.channel_lift_runs'::regclass
         AND tgname = 'battle_platform_enforce_channel_lift_transition'
         AND tgfoid = 'public.battle_platform_enforce_channel_lift_transition()'::regprocedure
-        AND tgenabled <> 'D'
+        AND tgenabled IN ('O', 'A')
         AND NOT tgisinternal
     )
   THEN
     RAISE EXCEPTION 'Channel-lift transition guard is missing';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'channel_lift_runs'
+        AND policyname = 'channel_lift_runtime' AND cmd = 'ALL'
+        AND qual = 'true' AND with_check = 'true'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'channel_lift_run_attempts'
+        AND policyname = 'channel_lift_attempt_runtime' AND cmd = 'ALL'
+        AND qual = 'true' AND with_check = 'true'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'channel_lift_request_identities'
+        AND policyname = 'channel_lift_request_identity_runtime' AND cmd = 'ALL'
+        AND qual = 'true' AND with_check = 'true'
+    )
+  THEN
+    RAISE EXCEPTION 'Channel-lift RLS policy contract failed';
   END IF;
 END
 $$;

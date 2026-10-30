@@ -1,3 +1,11 @@
+export const insertChannelLiftRequestIdentitySQL = `INSERT INTO public.channel_lift_request_identities
+  (request_id, mode, source) VALUES ($1, $2, $3)
+  ON CONFLICT (request_id) DO NOTHING
+  RETURNING request_id`;
+
+export const readChannelLiftRequestIdentitySQL = `SELECT mode, source
+  FROM public.channel_lift_request_identities WHERE request_id=$1`;
+
 export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
   (run_id, reporting_date, mode, source, request_id, requested_by, reason_code, reference_id)
   VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8)
@@ -7,12 +15,12 @@ export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
 export const insertChannelLiftRunAttemptSQL = `INSERT INTO public.channel_lift_run_attempts
   (request_id, run_id, source, requested_by, reason_code, reference_id)
   VALUES ($1, $2, $3, $4, $5, $6)
-  ON CONFLICT (request_id) DO NOTHING
+  ON CONFLICT (request_id, run_id) DO NOTHING
   RETURNING request_id`;
 
 export const readChannelLiftRunAttemptSQL = `SELECT run_id, source, requested_by,
     reason_code, reference_id
-  FROM public.channel_lift_run_attempts WHERE request_id=$1`;
+  FROM public.channel_lift_run_attempts WHERE request_id=$1 AND run_id=$2`;
 
 export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
   SET status='running', attempts=attempts+1, started_at=clock_timestamp(),
