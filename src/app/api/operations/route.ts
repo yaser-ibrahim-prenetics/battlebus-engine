@@ -4,9 +4,14 @@ import { requireServiceAuth } from "@/lib/auth/service-auth";
 import { queryDatabase } from "@/lib/db/database";
 import { deepReadiness } from "@/lib/services/operations/health";
 import { recentAttemptsSQL } from "@/lib/sql/reconciliation-history/attempts";
-import { inboxSummariesSQL, actionSummariesSQL } from "@/lib/sql/operations/health";
+import {
+  inboxSummariesSQL,
+  actionSummariesSQL,
+  openAiAdsSummariesSQL,
+} from "@/lib/sql/operations/health";
 import { recentCommandsSQL } from "@/lib/sql/operations/commands";
 import { reserveRecoveryRequest } from "@/lib/services/operations/commands";
+import { reserveOpenAiAdsReplayRequest } from "@/lib/services/operations/openai-ads-replay";
 import { inngest } from "@/inngest/client";
 import { ZodError } from "zod";
 export const dynamic = "force-dynamic";
@@ -22,6 +27,7 @@ export async function GET(request: NextRequest) {
       history: recentAttemptsSQL,
       inbox: inboxSummariesSQL,
       actions: actionSummariesSQL,
+      openai_ads: openAiAdsSummariesSQL,
       commands: recentCommandsSQL,
     };
     if (!(view in queries))
@@ -40,7 +46,37 @@ export async function POST(request: NextRequest) {
   const auth = requireServiceAuth(request);
   if (!auth.ok) return NextResponse.json(auth.body, { status: auth.status });
   try {
-    const saved = await reserveRecoveryRequest(await request.json());
+    const input = await request.json();
+    const isOpenAiAdsReplay =
+      typeof input === "object" &&
+      input !== null &&
+      "parameters" in input &&
+      typeof input.parameters === "object" &&
+      input.parameters !== null &&
+      "operation" in input.parameters &&
+      input.parameters.operation === "replay_openai_ads";
+    if (isOpenAiAdsReplay) {
+      const saved = await reserveOpenAiAdsReplayRequest(input);
+      let deliveryDeferred = false;
+      if (saved.replayed) {
+        try {
+          await inngest.send({
+            id: `admin-openai-ads-replay:${saved.requestId}`,
+            name: "openai.ads/conversion.queued",
+            data: { eventId: saved.eventId },
+          });
+        } catch {
+          // The row is already durable and due; the scheduled delivery worker is the safety net.
+          deliveryDeferred = true;
+        }
+      }
+      return NextResponse.json(
+        { ...saved, deliveryDeferred },
+        { status: saved.status === "rejected" ? 409 : 202 }
+      );
+    }
+
+    const saved = await reserveRecoveryRequest(input);
     // The durable queued command is also picked up by the cron if publishing fails.
     if (saved.status === "queued") {
       try {

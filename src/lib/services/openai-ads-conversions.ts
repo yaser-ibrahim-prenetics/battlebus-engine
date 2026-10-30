@@ -216,9 +216,3 @@ export async function markOpenAiAdsConversionFailed({
   if (result.rowCount !== 1) throw new Error("OpenAI Ads conversion claim was lost");
   return result.rows[0].status;
 }
-
-export async function replayOpenAiAdsConversion(eventId: string): Promise<boolean> {
-  requireDatabase();
-  const result = await queryDatabase(openAiAdsConversionQueries.replay, [eventId]);
-  return result.rowCount === 1;
-}

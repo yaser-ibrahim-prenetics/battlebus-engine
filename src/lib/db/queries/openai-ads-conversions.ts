@@ -89,21 +89,4 @@ export const openAiAdsConversionQueries = {
        AND lease_token = $2::uuid
        AND status = 'delivering'
      RETURNING event_id, status, next_attempt_at`,
-
-  replay: `UPDATE public.openai_ads_conversions
-     SET status = 'queued',
-         attempts = 0,
-         next_attempt_at = clock_timestamp(),
-         lease_token = NULL,
-         lease_until = NULL,
-         last_http_status = NULL,
-         last_error_category = NULL,
-         last_error = NULL,
-         permanent_at = NULL,
-         replay_count = replay_count + 1,
-         replayed_at = clock_timestamp()
-     WHERE event_id = $1
-       AND status IN ('permanent_failure', 'skipped')
-       AND replay_count < 100
-     RETURNING event_id, status, replay_count`,
 } as const;
