@@ -67,11 +67,13 @@ AS $$
 DECLARE
   candidate_keys text[];
 BEGIN
-  IF retention_days < 30 OR retention_days > 3650 THEN
-    RAISE EXCEPTION 'retention_days must be between 30 and 3650';
+  IF retention_days IS NULL OR retention_days < 30 OR retention_days > 3650 THEN
+    RAISE EXCEPTION 'retention_days must be between 30 and 3650'
+      USING ERRCODE = '22023';
   END IF;
-  IF batch_size < 1 OR batch_size > 100 THEN
-    RAISE EXCEPTION 'batch_size must be between 1 and 100';
+  IF batch_size IS NULL OR batch_size < 1 OR batch_size > 100 THEN
+    RAISE EXCEPTION 'batch_size must be between 1 and 100'
+      USING ERRCODE = '22023';
   END IF;
 
   SELECT array_agg(candidate.action_key ORDER BY candidate.updated_at, candidate.action_key)

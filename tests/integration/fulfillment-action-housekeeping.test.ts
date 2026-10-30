@@ -233,4 +233,13 @@ describe.skipIf(!connectionString)("fulfillment-action housekeeping PostgreSQL c
       validateFulfillmentHousekeepingPolicy({ ...policy, unresolvedAlertHours: 23 })
     ).toThrow("unresolvedAlertHours");
   });
+
+  it("rejects null bounds at the privileged database boundary", async () => {
+    await expect(
+      pool.query("SELECT * FROM public.delete_retained_fulfillment_actions(90, NULL)")
+    ).rejects.toThrow("batch_size must be between 1 and 100");
+    await expect(
+      pool.query("SELECT * FROM public.delete_retained_fulfillment_actions(NULL, 100)")
+    ).rejects.toThrow("retention_days must be between 30 and 3650");
+  });
 });

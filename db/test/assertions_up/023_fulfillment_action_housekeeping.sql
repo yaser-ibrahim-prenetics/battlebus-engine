@@ -64,6 +64,14 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Bounded fulfillment cleanup did not delete the expired terminal action';
   END IF;
+
+  BEGIN
+    PERFORM public.delete_retained_fulfillment_actions(90, NULL);
+    RAISE EXCEPTION 'Fulfillment cleanup accepted an unbounded null batch size';
+  EXCEPTION
+    WHEN invalid_parameter_value THEN
+      NULL;
+  END;
 END
 $$;
 
