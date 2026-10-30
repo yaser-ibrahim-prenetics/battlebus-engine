@@ -78,6 +78,77 @@ Battle Bus:  1,000 orders = 2 minutes (concurrent)
 
 ---
 
+## Microservice architecture
+
+Battle Bus currently owns webhook ingress and order orchestration. Inventory processing has moved to a separate private [inventory-service repository](https://github.com/yaser-ibrahim-prenetics/inventory-service), alongside the existing email and Slack notification services. The remaining services below are a proposed extraction roadmap, not separate deployments yet.
+
+### Current integration
+
+```mermaid
+flowchart LR
+  Shopify[Shopify and warehouse webhooks] --> Bus[Battle Bus: ingress and order orchestration]
+  Hub[Battle Hub: operations UI] --> Bus
+  Bus -->|Publish events| Inngest[Inngest: durable workflows]
+  Inngest -->|Order workflows| Bus
+  Inngest -->|Signed callbacks via Battle Bus gateway| Inventory[inventory-service: private Cloud Run]
+  Bus -->|IAM and API key: inventory reads and commands| Inventory
+  Inventory -->|Scoped callback relay through Battle Bus| Hub
+  Bus --> Providers[Shopify / D365 / GPS / Stord]
+  Inventory --> Providers
+  Bus --> Notifications[Notification delivery]
+  Inventory --> Notifications
+  Notifications --> Email[email-notification-service]
+  Notifications --> Slack[slack-notification-service]
+  Bus --> DB[(Cloud SQL: shared database)]
+  Inventory -->|Separate identity and scoped grants| DB
+```
+
+Inngest is the workflow runtime; Google Pub/Sub delivers Slack notifications. These transports have distinct responsibilities. Existing Hub inventory URLs remain on Battle Bus and forward to inventory-service. Inventory's Inngest app is separate, but uses the same event environment. Order and backorder decisions remain in Battle Bus.
+
+The initial inventory deployment is in `battle-bus-509406` / `asia-east1`, with dry-run mode enabled, stock writes disabled, and scheduled inventory sync disabled. Its database identity cannot update orders. This is a service and permission boundary; the first extraction still shares the existing database and read models. See [the extraction and rollback guide](docs/INVENTORY_SERVICE_EXTRACTION.md).
+
+### Recommended service boundaries
+
+| Service | Owns | Boundary / status |
+| --- | --- | --- |
+| `email-notification-service` | Email rendering, delivery, retries, delivery status | Existing separate service; callers own the business decision to notify |
+| `slack-notification-service` | Slack formatting and delivery | Existing separate service; consumes notification delivery requests |
+| `inventory-service` | Stock availability, inventory sync, product/location synchronization, inventory reconciliation | Extracted; private Cloud Run service, separate repository and runtime identity |
+| `reconciliation-service` | Scheduled comparisons, discrepancy detection, repair requests | Proposed; domain services execute repairs, and inventory retains inventory-specific reconciliation until explicitly migrated |
+| `fulfillment-service` | Warehouse shipment events, tracking, fulfillment updates | Proposed; separate shipping lifecycle from order creation |
+| `returns-service` | Return lifecycle, refund coordination, credit/return invoice workflows | Proposed; explicit financial idempotency and ownership needed |
+| `order-orchestration-service` | Order lifecycle, provider sequencing, backorder recovery and compensation | Recommended eventual name for Battle Bus's remaining business core |
+| `integration-gateway` | Webhook verification, durable ingress, routing and compatibility APIs | Proposed final ingress boundary; does not own domain workflows |
+
+Use `order-orchestration-service` when naming the business core. Use `integration-gateway` only for a service whose responsibility is ingress and routing. The repository remains `battlebus-engine` during this extraction; no infrastructure rename is implied by this roadmap.
+
+### Extraction priority and practical order
+
+| Order | Priority | Service / action | Why this order makes sense | Prerequisite |
+| --- | --- | --- | --- | --- |
+| Existing | Complete | Email and Slack notification services | Delivery already has independent retry and channel concerns | Preserve existing delivery contracts |
+| 1 | Highest | `inventory-service` | Clear stock domain; independent provider workload and scaling | Completed initial staging extraction; validate stock-write activation separately |
+| 2 | High | `reconciliation-service` | Scheduled checks can scale separately and request repairs through domain APIs | Define discrepancy ownership and idempotent repair commands first |
+| 3 | High | `fulfillment-service` | Shipping has its own event lifecycle and retry behavior | Stable order-to-fulfillment events and ownership of shipment state |
+| 4 | Medium | `returns-service` | Isolates returns and financial recovery from the order happy path | Explicit refund/credit idempotency, audit evidence and compensation rules |
+| 5 | Later | Consolidate `order-orchestration-service` | Leaves a coherent core after stock, shipping and returns move out | Remove cross-domain table writes before renaming the core |
+| 6 | Conditional | `integration-gateway` | Centralizes ingress once multiple domain consumers need it | Extract only when routing/authentication changes need independent deployment |
+
+Priority reflects operational value; the order also accounts for dependencies and migration risk. Keep Shopify, D365, GPS and Stord adapters with the domain service that uses them initially. Split a provider adapter into its own service only when shared rate limits, credentials, ownership or scaling justify another network boundary.
+
+### Integration rules
+
+| Concern | Rule |
+| --- | --- |
+| Commands and reads | Authenticated APIs for immediate responses; bounded timeouts and explicit failure handling |
+| Durable work | Versioned event contracts, idempotency keys, retries and one active owner per workflow |
+| Data ownership | Each service owns its writes; use APIs/events across domains and progressively replace shared-table coupling |
+| Authentication | Private service access with runtime IAM; scoped service credentials where required; secrets in Secret Manager |
+| Observability | Carry correlation IDs; record service, revision and workflow run; never log credentials |
+| Rollout | Deploy and verify a candidate, move one owner at a time, probe the full path, retain a tested rollback |
+
+---
+
 ## Why Battle Bus + Hub?
 
 ### For Ops Team
