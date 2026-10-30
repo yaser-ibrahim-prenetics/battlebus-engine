@@ -146,9 +146,15 @@ export const processMetaChannelLift = inngest.createFunction(
       };
     } catch (error) {
       if (error instanceof ChannelLiftError && error.retryable && attempt < MAX_INNGEST_RETRIES) {
+        console.warn(
+          `[ChannelLift] retrying runId=${runId} reportingDate=${event.data.reportingDate} attempt=${attempt} errorCode=${errorCode(error)}`
+        );
         throw error;
       }
       const code = errorCode(error);
+      console.error(
+        `[ChannelLift] run failed runId=${runId} reportingDate=${event.data.reportingDate} attempt=${attempt} errorCode=${code}`
+      );
       await step.run(`fail-channel-lift-${attempt}-${code}`, () => failChannelLiftRun(runId, code));
       return { status: "failed", runId, errorCode: code };
     }

@@ -7,9 +7,9 @@ import {
   type AttributionCounts,
   type AttributionRow,
 } from "@/lib/channel-lift/model";
+import { withBoundedChannelLiftRetry } from "@/lib/clients/channel-lift-retry";
 
 const ENDPOINT = "https://api.triplewhale.com/api/v2/orcabase/api/sql";
-const RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const HARD_MAX_ATTRIBUTION_ROWS = 250_000;
 const MAX_ATTRIBUTION_PAGES = 1_000;
 
@@ -88,8 +88,8 @@ export async function readTripleWhaleAttribution(
   const countSql = `SELECT COUNT(*) AS rows, COUNT(DISTINCT order_id) AS orders, COUNT(DISTINCT tuple(order_id, channel)) AS pairs ${from}`;
 
   const query = async (sql: string): Promise<Record<string, unknown>[]> => {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
+    return withBoundedChannelLiftRetry({
+      operation: async () => {
         const response = await dependencies.fetch(ENDPOINT, {
           method: "POST",
           redirect: "error",
@@ -103,28 +103,23 @@ export async function readTripleWhaleAttribution(
         });
         if (!response.ok) {
           const retryable = response.status === 429 || response.status >= 500;
-          if (!retryable || attempt >= RETRY_DELAYS_MS.length) {
-            throw new ChannelLiftError(
-              response.status === 429
-                ? "triple_whale_rate_limited"
-                : response.status >= 500
-                  ? "triple_whale_unavailable"
-                  : "triple_whale_rejected",
-              retryable
-            );
-          }
-          await dependencies.sleep(RETRY_DELAYS_MS[attempt]);
-          continue;
+          throw new ChannelLiftError(
+            response.status === 429
+              ? "triple_whale_rate_limited"
+              : response.status >= 500
+                ? "triple_whale_unavailable"
+                : "triple_whale_rejected",
+            retryable
+          );
         }
         return responseRows(await response.json());
-      } catch (error) {
-        if (error instanceof ChannelLiftError) throw error;
-        if (attempt >= RETRY_DELAYS_MS.length) {
-          throw new ChannelLiftError("triple_whale_network_error", true);
-        }
-        await dependencies.sleep(RETRY_DELAYS_MS[attempt]);
-      }
-    }
+      },
+      normalizeError: (error) =>
+        error instanceof ChannelLiftError
+          ? error
+          : new ChannelLiftError("triple_whale_network_error", true),
+      sleep: dependencies.sleep,
+    });
   };
 
   const counts = parseCounts(await query(countSql));

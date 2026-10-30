@@ -4,7 +4,11 @@ import {
   normalizeMetaPhone,
   validateShopifyOrderId,
 } from "@/lib/channel-lift/model";
-import { shopifyAdminGraphql } from "@/lib/clients/shopify";
+import { withBoundedChannelLiftRetry } from "@/lib/clients/channel-lift-retry";
+import {
+  ShopifyAdminGraphqlError,
+  shopifyAdminGraphql,
+} from "@/lib/clients/shopify";
 
 const QUERY = `
   query ChannelLiftOrders($ids: [ID!]!) {
@@ -96,18 +100,27 @@ export async function readChannelLiftOrders(
   const orders = new Map<string, ShopifyChannelLiftOrder>();
 
   for (const batch of chunks(uniqueIds, 100)) {
-    let payload: { data?: { nodes?: (GraphqlOrder | null)[] } } | undefined;
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      try {
-        payload = await dependencies.request(QUERY, {
+    const payload = await withBoundedChannelLiftRetry({
+      operation: () =>
+        dependencies.request(QUERY, {
           ids: batch.map((id) => `gid://shopify/Order/${id}`),
-        });
-        break;
-      } catch {
-        if (attempt === 3) throw new ChannelLiftError("shopify_request_failed", true);
-        await dependencies.sleep(1_000 * 2 ** attempt);
-      }
-    }
+        }) as Promise<{ data?: { nodes?: (GraphqlOrder | null)[] } }>,
+      normalizeError: (error) => {
+        if (error instanceof ChannelLiftError) return error;
+        if (error instanceof ShopifyAdminGraphqlError) {
+          return new ChannelLiftError(
+            error.status === 429
+              ? "shopify_rate_limited"
+              : error.retryable
+                ? "shopify_unavailable"
+                : "shopify_rejected",
+            error.retryable
+          );
+        }
+        return new ChannelLiftError("shopify_network_error", true);
+      },
+      sleep: dependencies.sleep,
+    });
 
     const nodes = payload?.data?.nodes;
     if (!Array.isArray(nodes) || nodes.length !== batch.length) {

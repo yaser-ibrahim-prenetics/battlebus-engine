@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { readChannelLiftOrders } from "@/lib/clients/channel-lift-shopify";
+import { ShopifyAdminGraphqlError } from "@/lib/clients/shopify";
 
 const node = {
   __typename: "Order",
@@ -51,5 +52,31 @@ describe("Shopify channel-lift reader", () => {
     await expect(readChannelLiftOrders(["123"], { request, sleep: vi.fn() })).rejects.toThrow(
       "shopify_join_mismatch"
     );
+  });
+
+  it("does not retry permanent Shopify authentication failures", async () => {
+    const sleep = vi.fn();
+    const request = vi
+      .fn()
+      .mockRejectedValue(new ShopifyAdminGraphqlError("unauthorized", 401, false));
+    await expect(readChannelLiftOrders(["123"], { request, sleep })).rejects.toThrow(
+      "shopify_rejected"
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retries bounded transient Shopify failures", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new ShopifyAdminGraphqlError("throttled", 429, true))
+      .mockResolvedValueOnce({ data: { nodes: [node] } });
+    await expect(readChannelLiftOrders(["123"], { request, sleep })).resolves.toHaveProperty(
+      "size",
+      1
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1_000);
   });
 });

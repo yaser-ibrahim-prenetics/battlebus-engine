@@ -1,7 +1,7 @@
 import { ChannelLiftError, type MetaChannelLiftEvent } from "@/lib/channel-lift/model";
+import { withBoundedChannelLiftRetry } from "@/lib/clients/channel-lift-retry";
 
 export const META_GRAPH_API_VERSION = "v26.0";
-const RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 
 type MetaDependencies = {
   fetch: typeof fetch;
@@ -28,8 +28,8 @@ export async function sendMetaChannelLiftBatch(
     throw new ChannelLiftError("meta_batch_size_invalid");
   }
 
-  for (let attempt = 0; ; attempt += 1) {
-    try {
+  return withBoundedChannelLiftRetry({
+    operation: async () => {
       const response = await dependencies.fetch(
         `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${datasetId}/events`,
         {
@@ -45,30 +45,25 @@ export async function sendMetaChannelLiftBatch(
       );
       if (!response.ok) {
         const retryable = response.status === 429 || response.status >= 500;
-        if (!retryable || attempt >= RETRY_DELAYS_MS.length) {
-          throw new ChannelLiftError(
-            response.status === 429
-              ? "meta_rate_limited"
-              : response.status >= 500
-                ? "meta_unavailable"
-                : "meta_rejected",
-            retryable
-          );
-        }
-        await dependencies.sleep(RETRY_DELAYS_MS[attempt]);
-        continue;
+        throw new ChannelLiftError(
+          response.status === 429
+            ? "meta_rate_limited"
+            : response.status >= 500
+              ? "meta_unavailable"
+              : "meta_rejected",
+          retryable
+        );
       }
       const body = (await response.json()) as { events_received?: unknown };
       if (body.events_received !== events.length) {
         throw new ChannelLiftError("meta_receipt_mismatch");
       }
       return { eventsReceived: events.length };
-    } catch (error) {
-      if (error instanceof ChannelLiftError) throw error;
-      if (attempt >= RETRY_DELAYS_MS.length) {
-        throw new ChannelLiftError("meta_network_error", true);
-      }
-      await dependencies.sleep(RETRY_DELAYS_MS[attempt]);
-    }
-  }
+    },
+    normalizeError: (error) =>
+      error instanceof ChannelLiftError
+        ? error
+        : new ChannelLiftError("meta_network_error", true),
+    sleep: dependencies.sleep,
+  });
 }
