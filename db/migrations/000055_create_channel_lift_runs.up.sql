@@ -91,13 +91,200 @@ CREATE INDEX idx_channel_lift_runs_failures
   ON public.channel_lift_runs (completed_at DESC, reporting_date DESC)
   WHERE status = 'failed';
 
+CREATE FUNCTION public.battle_platform_enforce_channel_lift_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  runtime_actor boolean := NOT COALESCE(
+      (SELECT roles.rolsuper FROM pg_roles AS roles WHERE roles.rolname = current_user),
+      false
+    )
+    AND (
+      current_user = 'battle_bus_runtime'
+      OR pg_has_role(current_user, 'battle_bus_runtime', 'member')
+    );
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF runtime_actor AND (
+      NEW.status <> 'queued'
+      OR NEW.attempts <> 0
+      OR NEW.expected_rows IS NOT NULL
+      OR NEW.expected_orders IS NOT NULL
+      OR NEW.expected_pairs IS NOT NULL
+      OR NEW.mapped_pairs IS NOT NULL
+      OR NEW.eligible_events IS NOT NULL
+      OR NEW.exclusion_counts <> '{}'::jsonb
+      OR NEW.batch_count <> 0
+      OR NEW.attempted_events <> 0
+      OR NEW.delivered_events <> 0
+      OR NEW.config_hash IS NOT NULL
+      OR NEW.snapshot_hash IS NOT NULL
+      OR NEW.last_error_code IS NOT NULL
+      OR NEW.started_at IS NOT NULL
+      OR NEW.completed_at IS NOT NULL
+      OR abs(NEW.eligibility_cutoff_seconds - EXTRACT(EPOCH FROM clock_timestamp())::bigint) > 300
+    ) THEN
+      RAISE EXCEPTION 'Runtime role can insert only fresh queued channel-lift runs';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.run_id IS DISTINCT FROM OLD.run_id
+    OR NEW.reporting_date IS DISTINCT FROM OLD.reporting_date
+    OR NEW.mode IS DISTINCT FROM OLD.mode
+    OR NEW.source IS DISTINCT FROM OLD.source
+    OR NEW.requested_by IS DISTINCT FROM OLD.requested_by
+    OR NEW.request_reason IS DISTINCT FROM OLD.request_reason
+    OR NEW.eligibility_cutoff_seconds IS DISTINCT FROM OLD.eligibility_cutoff_seconds
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'Channel-lift identity and audit fields are immutable';
+  END IF;
+
+  IF OLD.status IN ('dry_run_completed', 'completed') THEN
+    RAISE EXCEPTION 'Terminal channel-lift runs are immutable';
+  END IF;
+
+  IF OLD.snapshot_hash IS NOT NULL AND (
+    NEW.expected_rows IS DISTINCT FROM OLD.expected_rows
+    OR NEW.expected_orders IS DISTINCT FROM OLD.expected_orders
+    OR NEW.expected_pairs IS DISTINCT FROM OLD.expected_pairs
+    OR NEW.mapped_pairs IS DISTINCT FROM OLD.mapped_pairs
+    OR NEW.eligible_events IS DISTINCT FROM OLD.eligible_events
+    OR NEW.exclusion_counts IS DISTINCT FROM OLD.exclusion_counts
+    OR NEW.config_hash IS DISTINCT FROM OLD.config_hash
+    OR NEW.snapshot_hash IS DISTINCT FROM OLD.snapshot_hash
+  ) THEN
+    RAISE EXCEPTION 'Prepared channel-lift evidence is immutable';
+  END IF;
+
+  IF NEW.batch_count < OLD.batch_count
+    OR NEW.attempted_events < OLD.attempted_events
+    OR NEW.delivered_events < OLD.delivered_events
+  THEN
+    RAISE EXCEPTION 'Channel-lift delivery progress must be monotonic';
+  END IF;
+
+  IF OLD.status = 'queued' AND NEW.status = 'running' THEN
+    IF NEW.attempts <> OLD.attempts + 1
+      OR NEW.started_at IS NULL
+      OR NEW.completed_at IS NOT NULL
+      OR NEW.last_error_code IS NOT NULL
+    THEN
+      RAISE EXCEPTION 'Invalid initial channel-lift claim';
+    END IF;
+  ELSIF OLD.status = 'failed' AND NEW.status = 'running' THEN
+    IF NEW.attempts <> OLD.attempts + 1
+      OR NEW.started_at IS NOT DISTINCT FROM OLD.started_at
+      OR NEW.completed_at IS NOT NULL
+      OR NEW.last_error_code IS NOT NULL
+      OR NEW.expected_rows IS DISTINCT FROM OLD.expected_rows
+      OR NEW.expected_orders IS DISTINCT FROM OLD.expected_orders
+      OR NEW.expected_pairs IS DISTINCT FROM OLD.expected_pairs
+      OR NEW.mapped_pairs IS DISTINCT FROM OLD.mapped_pairs
+      OR NEW.eligible_events IS DISTINCT FROM OLD.eligible_events
+      OR NEW.exclusion_counts IS DISTINCT FROM OLD.exclusion_counts
+      OR NEW.config_hash IS DISTINCT FROM OLD.config_hash
+      OR NEW.snapshot_hash IS DISTINCT FROM OLD.snapshot_hash
+      OR NEW.batch_count IS DISTINCT FROM OLD.batch_count
+      OR NEW.attempted_events IS DISTINCT FROM OLD.attempted_events
+      OR NEW.delivered_events IS DISTINCT FROM OLD.delivered_events
+    THEN
+      RAISE EXCEPTION 'Invalid failed channel-lift retry';
+    END IF;
+  ELSIF OLD.status = 'running' AND NEW.status = 'running' THEN
+    IF NEW.attempts = OLD.attempts + 1 THEN
+      IF OLD.updated_at >= clock_timestamp() - interval '2 hours'
+        OR NEW.started_at IS NOT DISTINCT FROM OLD.started_at
+        OR NEW.completed_at IS NOT NULL
+        OR NEW.last_error_code IS NOT NULL
+        OR NEW.expected_rows IS DISTINCT FROM OLD.expected_rows
+        OR NEW.expected_orders IS DISTINCT FROM OLD.expected_orders
+        OR NEW.expected_pairs IS DISTINCT FROM OLD.expected_pairs
+        OR NEW.mapped_pairs IS DISTINCT FROM OLD.mapped_pairs
+        OR NEW.eligible_events IS DISTINCT FROM OLD.eligible_events
+        OR NEW.exclusion_counts IS DISTINCT FROM OLD.exclusion_counts
+        OR NEW.config_hash IS DISTINCT FROM OLD.config_hash
+        OR NEW.snapshot_hash IS DISTINCT FROM OLD.snapshot_hash
+        OR NEW.batch_count IS DISTINCT FROM OLD.batch_count
+        OR NEW.attempted_events IS DISTINCT FROM OLD.attempted_events
+        OR NEW.delivered_events IS DISTINCT FROM OLD.delivered_events
+      THEN
+        RAISE EXCEPTION 'Invalid stale channel-lift reclaim';
+      END IF;
+    ELSIF NEW.attempts <> OLD.attempts
+      OR NEW.started_at IS DISTINCT FROM OLD.started_at
+      OR NEW.completed_at IS NOT NULL
+      OR NEW.last_error_code IS NOT NULL
+    THEN
+      RAISE EXCEPTION 'Invalid in-place channel-lift update';
+    END IF;
+  ELSIF OLD.status = 'running'
+    AND NEW.status IN ('dry_run_completed', 'completed', 'failed')
+  THEN
+    IF NEW.attempts <> OLD.attempts OR NEW.completed_at IS NULL THEN
+      RAISE EXCEPTION 'Invalid terminal channel-lift transition';
+    END IF;
+    IF NEW.status = 'dry_run_completed' AND (
+      NEW.mode <> 'dry_run' OR NEW.attempted_events <> 0 OR NEW.delivered_events <> 0
+    ) THEN
+      RAISE EXCEPTION 'Invalid dry-run completion evidence';
+    END IF;
+    IF NEW.status = 'completed' AND (
+      NEW.mode <> 'live'
+      OR NEW.eligible_events IS NULL
+      OR NEW.attempted_events <> NEW.eligible_events
+      OR NEW.delivered_events <> NEW.attempted_events
+    ) THEN
+      RAISE EXCEPTION 'Invalid live completion evidence';
+    END IF;
+    IF NEW.status = 'failed' AND NEW.last_error_code IS NULL THEN
+      RAISE EXCEPTION 'Failed channel-lift runs require a safe error code';
+    END IF;
+    IF NEW.status <> 'failed' AND NEW.last_error_code IS NOT NULL THEN
+      RAISE EXCEPTION 'Successful channel-lift runs cannot retain an error code';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Invalid channel-lift transition: % -> %', OLD.status, NEW.status;
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER battle_platform_enforce_channel_lift_transition
+  BEFORE INSERT OR UPDATE ON public.channel_lift_runs
+  FOR EACH ROW EXECUTE FUNCTION public.battle_platform_enforce_channel_lift_transition();
+
+REVOKE ALL ON FUNCTION public.battle_platform_enforce_channel_lift_transition() FROM PUBLIC;
+
 CREATE TRIGGER battle_platform_channel_lift_updated_at
   BEFORE UPDATE ON public.channel_lift_runs
   FOR EACH ROW EXECUTE FUNCTION public.battle_platform_set_updated_at();
 
 ALTER TABLE public.channel_lift_runs ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.channel_lift_runs FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT, UPDATE ON public.channel_lift_runs TO battle_bus_runtime;
+GRANT SELECT, INSERT ON public.channel_lift_runs TO battle_bus_runtime;
+GRANT UPDATE (
+  status,
+  attempts,
+  expected_rows,
+  expected_orders,
+  expected_pairs,
+  mapped_pairs,
+  eligible_events,
+  exclusion_counts,
+  batch_count,
+  attempted_events,
+  delivered_events,
+  config_hash,
+  snapshot_hash,
+  last_error_code,
+  started_at,
+  completed_at
+) ON public.channel_lift_runs TO battle_bus_runtime;
 CREATE POLICY channel_lift_runtime ON public.channel_lift_runs
   FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);
 
@@ -136,6 +323,8 @@ COMMENT ON TABLE public.channel_lift_runs IS
   'Privacy-safe evidence for deterministic Triple Whale to Meta channel-lift runs.';
 COMMENT ON COLUMN public.channel_lift_runs.exclusion_counts IS
   'Bounded counts by safe validation reason; never contains source rows or customer identity.';
+COMMENT ON FUNCTION public.battle_platform_enforce_channel_lift_transition() IS
+  'Protects channel-lift audit identity, snapshot evidence, monotonic progress, and terminal rows from runtime rewrites.';
 COMMENT ON VIEW public.battle_hub_channel_lift_runs IS
   'Payload-free channel-lift delivery evidence for Battle Hub operators.';
 

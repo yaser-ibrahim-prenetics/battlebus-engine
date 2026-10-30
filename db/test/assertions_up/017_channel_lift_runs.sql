@@ -16,7 +16,13 @@ BEGIN
 
   IF rls_enabled IS DISTINCT FROM true
     OR NOT has_table_privilege(
-      'battle_bus_runtime', 'public.channel_lift_runs', 'SELECT,INSERT,UPDATE'
+      'battle_bus_runtime', 'public.channel_lift_runs', 'SELECT,INSERT'
+    )
+    OR NOT has_column_privilege(
+      'battle_bus_runtime', 'public.channel_lift_runs', 'status', 'UPDATE'
+    )
+    OR has_column_privilege(
+      'battle_bus_runtime', 'public.channel_lift_runs', 'request_reason', 'UPDATE'
     )
     OR has_table_privilege(
       'battle_bus_runtime', 'public.channel_lift_runs', 'DELETE,TRUNCATE'
@@ -29,6 +35,18 @@ BEGIN
     OR has_table_privilege('battle_hub_runtime', 'public.channel_lift_runs', 'SELECT')
   THEN
     RAISE EXCEPTION 'Channel-lift evidence privilege contract failed';
+  END IF;
+
+  IF to_regprocedure('public.battle_platform_enforce_channel_lift_transition()') IS NULL
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger
+      WHERE tgrelid = 'public.channel_lift_runs'::regclass
+        AND tgname = 'battle_platform_enforce_channel_lift_transition'
+        AND NOT tgisinternal
+    )
+  THEN
+    RAISE EXCEPTION 'Channel-lift transition guard is missing';
   END IF;
 END
 $$;

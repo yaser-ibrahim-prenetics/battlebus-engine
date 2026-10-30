@@ -44,6 +44,10 @@ BEGIN
     RAISE EXCEPTION 'Rollback left pending-action scrub function behind';
   END IF;
 
+  IF to_regprocedure('public.battle_platform_enforce_channel_lift_transition()') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left channel-lift transition guard behind';
+  END IF;
+
   IF to_regprocedure('public.requeue_pending_lifecycle_action(uuid,text)') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left pending-action replay function behind';
   END IF;
