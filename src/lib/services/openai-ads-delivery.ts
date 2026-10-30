@@ -13,7 +13,7 @@ import {
   openAiAdsRetryDelaySeconds,
   renewOpenAiAdsConversionClaim,
   type OpenAiAdsConversionClaim,
-} from "./openai-ads-conversions";
+} from "@/lib/services/openai-ads-conversions";
 
 type DeliveryDependencies = {
   configurationIssue: typeof openAiAdsConfigurationIssue;

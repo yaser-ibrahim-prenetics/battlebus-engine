@@ -8,7 +8,7 @@ import {
   readOpenAiAdsReplayRequestSQL,
   replayOpenAiAdsConversionSQL,
 } from "@/lib/sql/operations/openai-ads";
-import { fingerprint } from "../fulfillment-actions/identity";
+import { fingerprint } from "@/lib/services/fulfillment-actions/identity";
 
 export const openAiAdsReplayRequestSchema = z
   .object({

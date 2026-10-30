@@ -8,6 +8,7 @@ import {
   resolveLoopReturnsEnabled,
   resolveLoopWebhookVerifyDisabled,
 } from "./helpers/loop-integration";
+import { openAiAdsConfigurationProblems } from "./helpers/openai-ads-config";
 
 function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
@@ -441,33 +442,9 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
   }
 
   if (config.openAiAds.enabled) {
-    try {
-      const endpoint = new URL(config.openAiAds.endpoint);
-      if (
-        endpoint.protocol !== "https:" ||
-        endpoint.hostname !== "bzr.openai.com" ||
-        endpoint.username ||
-        endpoint.password ||
-        endpoint.port ||
-        (endpoint.pathname !== "/" && endpoint.pathname !== "")
-      ) {
-        errors.push("OPENAI_ADS_ENDPOINT must be the HTTPS bzr.openai.com origin");
-      }
-    } catch {
-      errors.push("OPENAI_ADS_ENDPOINT must be a valid HTTPS URL");
-    }
-    if (!/^v[1-9][0-9]*$/.test(config.openAiAds.apiVersion)) {
-      errors.push("OPENAI_ADS_API_VERSION must look like v1");
-    }
-    if (config.openAiAds.sourceUrl) {
-      try {
-        if (new URL(config.openAiAds.sourceUrl).protocol !== "https:") {
-          errors.push("OPENAI_ADS_SOURCE_URL must use HTTPS");
-        }
-      } catch {
-        errors.push("OPENAI_ADS_SOURCE_URL must be a valid HTTPS URL");
-      }
-    }
+    errors.push(
+      ...openAiAdsConfigurationProblems(config.openAiAds).map((problem) => problem.message)
+    );
   }
 
   if (!config.shopify.im8.accessToken) {

@@ -1,4 +1,8 @@
 import { config } from "@/lib/config";
+import {
+  buildOpenAiAdsEventsUrl,
+  openAiAdsConfigurationProblems,
+} from "@/lib/helpers/openai-ads-config";
 
 const MAX_EVENT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_EVENT_FUTURE_MS = 10 * 60 * 1000;
@@ -17,41 +21,6 @@ export class OpenAiAdsDeliveryError extends Error {
   }
 }
 
-function safeEndpoint(settings: OpenAiAdsConfiguration): URL {
-  let endpoint: URL;
-  try {
-    endpoint = new URL(settings.endpoint);
-  } catch {
-    throw new OpenAiAdsDeliveryError(
-      "OpenAI Ads endpoint configuration is invalid",
-      "endpoint_invalid",
-      false
-    );
-  }
-  if (
-    endpoint.protocol !== "https:" ||
-    endpoint.hostname !== "bzr.openai.com" ||
-    endpoint.username ||
-    endpoint.password ||
-    endpoint.port ||
-    (endpoint.pathname !== "/" && endpoint.pathname !== "")
-  ) {
-    throw new OpenAiAdsDeliveryError(
-      "OpenAI Ads endpoint configuration is not allowed",
-      "endpoint_invalid",
-      false
-    );
-  }
-  if (!/^v[1-9][0-9]*$/.test(settings.apiVersion)) {
-    throw new OpenAiAdsDeliveryError(
-      "OpenAI Ads API version configuration is invalid",
-      "api_version_invalid",
-      false
-    );
-  }
-  return endpoint;
-}
-
 export function openAiAdsConfigurationIssue(
   store: string,
   settings: OpenAiAdsConfiguration = config.openAiAds
@@ -62,14 +31,8 @@ export function openAiAdsConfigurationIssue(
   if (!settings.pixelId) return "pixel_id_missing";
   if (!settings.conversionsApiKey) return "api_key_missing";
   if (!settings.sourceUrl) return "source_url_missing";
-  try {
-    safeEndpoint(settings);
-    const sourceUrl = new URL(settings.sourceUrl);
-    if (sourceUrl.protocol !== "https:") return "source_url_invalid";
-  } catch (error) {
-    if (error instanceof OpenAiAdsDeliveryError) return error.category;
-    return "source_url_invalid";
-  }
+  const configurationProblem = openAiAdsConfigurationProblems(settings)[0];
+  if (configurationProblem) return configurationProblem.code;
   return null;
 }
 
@@ -144,9 +107,7 @@ export async function sendOpenAiAdsOrderCreatedConversion(
     );
   }
 
-  const endpoint = safeEndpoint(settings);
-  endpoint.pathname = `/${settings.apiVersion}/events`;
-  endpoint.searchParams.set("pid", settings.pixelId);
+  const endpoint = buildOpenAiAdsEventsUrl(settings, settings.pixelId);
 
   let response: Response;
   try {

@@ -2,7 +2,7 @@ import { config } from "@/lib/config";
 import { deliverOpenAiAdsConversion } from "@/lib/services/openai-ads-delivery";
 import { claimOpenAiAdsConversions } from "@/lib/services/openai-ads-conversions";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
-import { inngest } from "../client";
+import { inngest } from "@/inngest/client";
 
 type DeliveryStep = {
   run<T>(id: string, handler: () => Promise<T>): Promise<T>;
