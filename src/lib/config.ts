@@ -412,6 +412,42 @@ export const config = {
     ),
   },
 
+  // Fulfillment-action retention and unresolved-operator alerts
+  fulfillmentActionHousekeeping: {
+    // Expand/deploy gate. Enable only after migration 000068 is applied.
+    enabled: process.env.FULFILLMENT_ACTION_HOUSEKEEPING_ENABLED === "true",
+    retentionDays: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_RETENTION_DAYS, 90),
+      30,
+      3650
+    ),
+    batchSize: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_HOUSEKEEPING_BATCH_SIZE, 100),
+      1,
+      100
+    ),
+    unresolvedAlertHours: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_UNRESOLVED_ALERT_HOURS, 24),
+      24,
+      8760
+    ),
+    alertRepeatHours: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_ALERT_REPEAT_HOURS, 24),
+      24,
+      8760
+    ),
+    alertBatchSize: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_ALERT_BATCH_SIZE, 100),
+      1,
+      100
+    ),
+    successorDelayMinutes: clampInt(
+      safeParseInt(process.env.FULFILLMENT_ACTION_HOUSEKEEPING_SUCCESSOR_DELAY_MINUTES, 1),
+      1,
+      60
+    ),
+  },
+
   // Order validation
   orders: {
     liveDateTime: process.env.ORDERS_LIVE_DATE || "2024-11-17T13:22:00-05:00",

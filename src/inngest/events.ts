@@ -523,6 +523,14 @@ export type MetaChannelLiftRunRequestedEvent = {
   };
 };
 
+export type FulfillmentActionHousekeepingRequestedEvent = {
+  name: "fulfillment-actions/housekeeping.requested";
+  data: {
+    rootRunId: string;
+    batch: number;
+  };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -553,7 +561,8 @@ export type BattleBusEvents =
   | OrderLifecycleReadyEvent
   | OpenAiAdsConversionQueuedEvent
   | OpenAiAdsConversionRetryScheduledEvent
-  | MetaChannelLiftRunRequestedEvent;
+  | MetaChannelLiftRunRequestedEvent
+  | FulfillmentActionHousekeepingRequestedEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
