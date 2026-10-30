@@ -40,6 +40,17 @@ bootstrap_test_admin
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
   --file "${repo_root}/db/test/assertions_up.sql"
+psql "${MIGRATION_TEST_DATABASE_URL}" \
+  --set ON_ERROR_STOP=1 \
+  --file "${repo_root}/db/test/seed_fulfillment_housekeeping_rollback.sql"
+migrate "${migration_args[@]}" down 1
+psql "${MIGRATION_TEST_DATABASE_URL}" \
+  --set ON_ERROR_STOP=1 \
+  --file "${repo_root}/db/test/assert_fulfillment_housekeeping_rollback.sql"
+psql "${MIGRATION_TEST_DATABASE_URL}" \
+  --set ON_ERROR_STOP=1 \
+  --command "DELETE FROM public.fulfillment_actions WHERE action_key = 'housekeeping-rollback-fixture'"
+migrate "${migration_args[@]}" up 1
 migrate "${migration_args[@]}" down -all
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \

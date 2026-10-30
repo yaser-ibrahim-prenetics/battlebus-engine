@@ -6,7 +6,7 @@ BEGIN
   INTO remaining_tables
   FROM unnest(ARRAY[
     'refund_hold_decisions', 'audit_entities', 'audit_log', 'backorder_recovery_leases', 'channel_lift_request_identities', 'channel_lift_run_attempts', 'channel_lift_runs', 'flow_logs', 'inventory', 'locations',
-    'fulfillment_evidence_claims', 'mission_runs', 'order_lines', 'order_segment_refunds',
+    'fulfillment_action_tombstones', 'fulfillment_action_housekeeping_quarantine', 'fulfillment_housekeeping_run_receipts', 'fulfillment_housekeeping_successor', 'fulfillment_evidence_claims', 'mission_runs', 'order_lines', 'order_segment_refunds',
     'oos_drain_command_receipts', 'oos_drain_requests', 'oos_recovery_dependencies', 'oos_recovery_mutation_leases', 'oos_recovery_outbox',
     'openai_ads_conversions', 'openai_ads_replay_requests', 'orders', 'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'provider_capacity_leases',
     'permissions', 'products', 'reconciliation_attempts', 'recovery_commands',
@@ -30,6 +30,20 @@ BEGIN
 
   IF to_regprocedure('public.delete_retained_fulfillment_actions(integer,integer)') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left fulfillment housekeeping function behind';
+  END IF;
+
+  IF to_regprocedure(
+    'public.minimize_fulfillment_action_replay_result(text,text,jsonb)'
+  ) IS NOT NULL OR to_regprocedure(
+    'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)'
+  ) IS NOT NULL OR to_regprocedure(
+    'public.authorize_fulfillment_housekeeping_successor(uuid)'
+  ) IS NOT NULL OR to_regprocedure(
+    'public.consume_fulfillment_housekeeping_successor(uuid)'
+  ) IS NOT NULL OR to_regprocedure(
+    'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)'
+  ) IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left fulfillment replay or successor functions behind';
   END IF;
 
   IF to_regclass('public.battle_hub_pending_lifecycle_actions') IS NOT NULL THEN

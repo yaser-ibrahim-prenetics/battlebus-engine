@@ -14,8 +14,24 @@ BEGIN
 
   IF to_regclass('public.fulfillment_actions_terminal_retention') IS NULL
     OR to_regclass('public.fulfillment_actions_unresolved_age') IS NULL
+    OR to_regclass('public.fulfillment_action_tombstones') IS NULL
+    OR to_regclass('public.fulfillment_action_tombstones_source') IS NULL
+    OR to_regclass('public.fulfillment_housekeeping_successor') IS NULL
+    OR to_regclass('public.fulfillment_action_housekeeping_quarantine') IS NULL
+    OR to_regclass('public.fulfillment_housekeeping_run_receipts') IS NULL
     OR to_regprocedure('public.battle_platform_track_fulfillment_unresolved_age()') IS NULL
+    OR to_regprocedure(
+      'public.minimize_fulfillment_action_replay_result(text,text,jsonb)'
+    ) IS NULL
     OR to_regprocedure('public.delete_retained_fulfillment_actions(integer,integer)') IS NULL
+    OR to_regprocedure(
+      'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)'
+    ) IS NULL
+    OR to_regprocedure('public.authorize_fulfillment_housekeeping_successor(uuid)') IS NULL
+    OR to_regprocedure('public.consume_fulfillment_housekeeping_successor(uuid)') IS NULL
+    OR to_regprocedure(
+      'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)'
+    ) IS NULL
   THEN
     RAISE EXCEPTION 'Fulfillment housekeeping indexes or trigger function are missing';
   END IF;
@@ -28,6 +44,54 @@ BEGIN
     OR has_table_privilege('battle_bus_runtime', 'public.fulfillment_actions', 'DELETE')
     OR has_table_privilege('battle_bus_runtime', 'public.fulfillment_action_aliases', 'DELETE')
     OR has_table_privilege('battle_bus_runtime', 'public.fulfillment_evidence_claims', 'DELETE')
+    OR NOT has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_action_tombstones', 'SELECT'
+    )
+    OR has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_action_tombstones', 'INSERT,UPDATE,DELETE,TRUNCATE'
+    )
+    OR has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_housekeeping_successor',
+      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+    )
+    OR has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_action_housekeeping_quarantine',
+      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE'
+    )
+    OR NOT has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_housekeeping_run_receipts', 'SELECT'
+    )
+    OR has_table_privilege(
+      'battle_bus_runtime', 'public.fulfillment_housekeeping_run_receipts',
+      'INSERT,UPDATE,DELETE,TRUNCATE'
+    )
+    OR NOT has_function_privilege(
+      'battle_bus_runtime',
+      'public.claim_fulfillment_housekeeping_successor(text,integer,integer,integer)',
+      'EXECUTE'
+    )
+    OR NOT has_function_privilege(
+      'battle_bus_runtime',
+      'public.authorize_fulfillment_housekeeping_successor(uuid)',
+      'EXECUTE'
+    )
+    OR NOT has_function_privilege(
+      'battle_bus_runtime',
+      'public.consume_fulfillment_housekeeping_successor(uuid)',
+      'EXECUTE'
+    )
+    OR NOT has_function_privilege(
+      'battle_bus_runtime',
+      'public.record_fulfillment_housekeeping_run_receipt(text,integer,integer,integer,integer,integer,integer,boolean,uuid,text,integer)',
+      'EXECUTE'
+    )
+    OR has_function_privilege(
+      'battle_bus_runtime',
+      'public.minimize_fulfillment_action_replay_result(text,text,jsonb)',
+      'EXECUTE'
+    )
+    OR has_table_privilege('anon', 'public.fulfillment_action_tombstones', 'SELECT')
+    OR has_table_privilege('authenticated', 'public.fulfillment_action_tombstones', 'SELECT')
   THEN
     RAISE EXCEPTION 'Fulfillment housekeeping least-privilege contract failed';
   END IF;
@@ -47,10 +111,11 @@ INSERT INTO public.fulfillment_actions (
 
 INSERT INTO public.fulfillment_actions (
   action_key, provider, scope, source_order_id, source_line_id,
-  action_name, request_hash, attempt_id, status, created_at, updated_at
+  action_name, request_hash, attempt_id, status, result, created_at, updated_at
 ) VALUES (
   'housekeeping-expired-fixture', 'gps', 'fixture', 'ORDER-2', 'LINE-2',
-  'shipment:expired-fixture', repeat('b', 64), gen_random_uuid(), 'failed',
+  'create_outbound_order', repeat('b', 64), gen_random_uuid(), 'succeeded',
+  '{"orderNo":"GPS-123","logisticsChannel":"standard","customerAddress":"discard"}'::jsonb,
   now() - interval '91 days', now() - interval '91 days'
 );
 
@@ -63,6 +128,14 @@ BEGIN
     SELECT 1 FROM public.fulfillment_actions WHERE action_key = 'housekeeping-expired-fixture'
   ) THEN
     RAISE EXCEPTION 'Bounded fulfillment cleanup did not delete the expired terminal action';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.fulfillment_action_tombstones
+    WHERE action_key = 'housekeeping-expired-fixture'
+      AND request_hash = repeat('b', 64)
+      AND result = '{"orderNo":"GPS-123","logisticsChannel":"standard"}'::jsonb
+  ) THEN
+    RAISE EXCEPTION 'Successful fulfillment cleanup lost its replay tombstone';
   END IF;
 
   BEGIN
