@@ -33,9 +33,13 @@ ALTER TABLE public.channel_lift_runs
   REFERENCES public.channel_lift_request_identities(request_id, mode, source)
   ON DELETE RESTRICT;
 
+ALTER TABLE public.channel_lift_runs
+  ADD CONSTRAINT channel_lift_runs_attempt_identity_unique
+  UNIQUE (run_id, mode);
+
 CREATE TABLE public.channel_lift_run_attempts (
   request_id text NOT NULL CHECK (request_id ~ '^[A-Za-z0-9:_-]{1,200}$'),
-  run_id text NOT NULL REFERENCES public.channel_lift_runs(run_id) ON DELETE RESTRICT,
+  run_id text NOT NULL,
   mode text NOT NULL CHECK (mode IN ('dry_run', 'live')),
   source text NOT NULL CHECK (source IN ('schedule', 'manual')),
   requested_by text CHECK (requested_by IS NULL OR length(requested_by) BETWEEN 1 AND 320),
@@ -43,6 +47,10 @@ CREATE TABLE public.channel_lift_run_attempts (
   reference_id text,
   requested_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT channel_lift_run_attempts_pkey PRIMARY KEY (request_id, run_id),
+  CONSTRAINT channel_lift_attempt_run_identity_fkey
+    FOREIGN KEY (run_id, mode)
+    REFERENCES public.channel_lift_runs(run_id, mode)
+    ON DELETE RESTRICT,
   CONSTRAINT channel_lift_attempt_request_identity_fkey
     FOREIGN KEY (request_id, mode, source)
     REFERENCES public.channel_lift_request_identities(request_id, mode, source)
