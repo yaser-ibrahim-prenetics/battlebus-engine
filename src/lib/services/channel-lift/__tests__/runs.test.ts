@@ -72,7 +72,7 @@ describe("channel-lift run state", () => {
     ).resolves.toMatchObject({ disposition: "already_completed" });
   });
 
-  it("resumes the same active request after an uncertain reservation receipt", async () => {
+  it("resumes the same running request after an uncertain reservation receipt", async () => {
     mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
     await expect(
@@ -84,6 +84,22 @@ describe("channel-lift run state", () => {
         requestReason: "Resume the approved Meta delivery canary",
       })
     ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
+  });
+
+  it("claims a same-request queued row left by a crash after insert", async () => {
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ ...row, status: "queued" }] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    await expect(
+      startChannelLiftRun({
+        reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+        requestReason: "Resume the approved Meta delivery canary",
+      })
+    ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
+    expect(mocks.query).toHaveBeenCalledTimes(3);
   });
 
   it("persists only bounded aggregate preparation evidence", async () => {

@@ -98,6 +98,18 @@ export const processMetaChannelLift = inngest.createFunction(
       const batchCount = Math.ceil(evidence.eligibleEvents / 500);
       for (let index = 0; index < batchCount; index += 1) {
         const fence = channelLiftDigest([evidence.configHash, evidence.snapshotHash]).slice(0, 16);
+        const expectedBatchSize = Math.min(500, evidence.eligibleEvents - index * 500);
+        attemptedEvents += expectedBatchSize;
+        // Persist the logical attempt before the provider call so a timeout or
+        // ambiguous receipt remains visible to operators.
+        await step.run(`record-meta-attempt-${index}-${fence}`, () =>
+          recordChannelLiftProgress({
+            runId,
+            batchCount: index + 1,
+            attemptedEvents,
+            deliveredEvents,
+          })
+        );
         const receipt = await step.run(`send-meta-batch-${index}-${fence}`, async () => {
           // Rebuild within each delivery checkpoint and re-run the database CAS
           // before every write. Any source/configuration drift fails closed.
@@ -113,7 +125,6 @@ export const processMetaChannelLift = inngest.createFunction(
             throw new ChannelLiftError("prepared_snapshot_changed");
           }
           const batch = replay.events.slice(index * 500, (index + 1) * 500);
-          const expectedBatchSize = Math.min(500, evidence.eligibleEvents - index * 500);
           if (batch.length !== expectedBatchSize) {
             throw new ChannelLiftError("prepared_snapshot_changed");
           }
@@ -123,8 +134,6 @@ export const processMetaChannelLift = inngest.createFunction(
             events: batch,
           });
         });
-        const expectedBatchSize = Math.min(500, evidence.eligibleEvents - index * 500);
-        attemptedEvents += expectedBatchSize;
         deliveredEvents += receipt.eventsReceived;
         await step.run(`record-meta-batch-${index}-${fence}`, () =>
           recordChannelLiftProgress({

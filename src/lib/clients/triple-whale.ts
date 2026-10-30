@@ -129,15 +129,9 @@ export async function readTripleWhaleAttribution(
     throw new ChannelLiftError("triple_whale_page_limit_exceeded");
   }
   const rows: AttributionRow[] = [];
-  const pageDigests = new Set<string>();
   for (let offset = 0; offset <= counts.rows; offset += input.pageSize) {
     const page = await query(`${baseSql} OFFSET ${offset}`);
     if (page.length > input.pageSize) throw new ChannelLiftError("triple_whale_page_oversized");
-    const pageDigest = channelLiftDigest(page);
-    if (page.length > 0 && pageDigests.has(pageDigest)) {
-      throw new ChannelLiftError("triple_whale_duplicate_page");
-    }
-    pageDigests.add(pageDigest);
     if (offset === counts.rows && page.length !== 0) {
       throw new ChannelLiftError("triple_whale_page_termination_mismatch");
     }

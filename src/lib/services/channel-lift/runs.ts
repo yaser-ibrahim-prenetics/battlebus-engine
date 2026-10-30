@@ -153,11 +153,14 @@ export async function startChannelLiftRun({
       const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
       if (existing.rows[0]) {
         const run = asRun(existing.rows[0]);
-        if (run.status === "queued" || run.status === "running") {
+        if (run.status === "running") {
           return {
             disposition: run.requestId === requestId ? "started" : "active",
             run,
           };
+        }
+        if (run.status === "queued" && run.requestId !== requestId) {
+          return { disposition: "active", run };
         }
         if (run.status === "completed" || run.status === "dry_run_completed") {
           return { disposition: "already_completed", run };

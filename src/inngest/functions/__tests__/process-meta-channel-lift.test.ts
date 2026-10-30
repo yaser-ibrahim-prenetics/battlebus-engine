@@ -183,6 +183,12 @@ describe("Meta channel-lift workflow", () => {
         ) => Promise<Record<string, unknown>>
       )(invocation("live"))
     ).resolves.toEqual({ status: "failed", runId, errorCode: "meta_receipt_mismatch" });
+    expect(mocks.progress).toHaveBeenCalledWith({
+      runId,
+      batchCount: 1,
+      attemptedEvents: 1,
+      deliveredEvents: 0,
+    });
     expect(mocks.fail).toHaveBeenCalledWith(runId, "meta_receipt_mismatch");
   });
 
