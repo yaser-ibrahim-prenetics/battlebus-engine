@@ -91,6 +91,13 @@ Meta channel lift additionally requires these Secret Manager bindings before
 - `META_CONVERSIONS_ACCESS_TOKEN` (it may be bound during dry-run, but is not
   read until `CHANNEL_LIFT_SEND_ENABLED=true`)
 
+The reviewed bindings are pinned in `config/gcp-secret-bindings.txt` as
+`battle-bus-triple-whale-api-key:1` and
+`battle-bus-meta-conversions-access-token:1`. Create those secrets, add version
+1, and grant only the runtime service account `roles/secretmanager.secretAccessor`
+before enabling the feature. The deployment stops before creating a revision if
+either version or IAM grant is missing.
+
 The default deployment keeps both channel-lift flags `false`. Apply migration
 `000055`, bind pinned secret versions, set the approved shop/dataset/source URL
 configuration, enable `CHANNEL_LIFT_ENABLED` for seven dry-run days, then enable

@@ -429,6 +429,41 @@ export const GPS_STATUS = {
 } as const;
 
 // Validate required configuration
+export function channelLiftConfigurationProblems(): string[] {
+  const errors: string[] = [];
+  if (config.channelLift.sendEnabled && !config.channelLift.enabled) {
+    errors.push("CHANNEL_LIFT_SEND_ENABLED requires CHANNEL_LIFT_ENABLED=true");
+  }
+  if (!config.channelLift.enabled) return errors;
+
+  if (!config.channelLift.tripleWhaleApiKey)
+    errors.push("TRIPLE_WHALE_API_KEY is required when channel lift is enabled");
+  if (!config.channelLift.metaAccessToken)
+    errors.push("META_CONVERSIONS_ACCESS_TOKEN is required when channel lift is enabled");
+  if (!config.channelLift.tripleWhaleShopId)
+    errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID is required when channel lift is enabled");
+  if (
+    config.channelLift.tripleWhaleShopId &&
+    config.shopify.im8.shopDomain &&
+    config.channelLift.tripleWhaleShopId.toLowerCase() !==
+      config.shopify.im8.shopDomain.toLowerCase()
+  ) {
+    errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID must match the active Shopify store");
+  }
+  if (!config.channelLift.sourceUrl)
+    errors.push("CHANNEL_LIFT_SOURCE_URL is required when channel lift is enabled");
+  if (!/^\d+$/.test(config.channelLift.metaDatasetId))
+    errors.push("CHANNEL_LIFT_META_DATASET_ID must be numeric when channel lift is enabled");
+  return errors;
+}
+
+export function assertChannelLiftConfiguration(): void {
+  const errors = channelLiftConfigurationProblems();
+  if (errors.length > 0) {
+    throw new Error(`[Config] Channel lift cannot start: ${errors.join(", ")}`);
+  }
+}
+
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
@@ -465,25 +500,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     );
   }
 
-  if (config.channelLift.sendEnabled && !config.channelLift.enabled) {
-    errors.push("CHANNEL_LIFT_SEND_ENABLED requires CHANNEL_LIFT_ENABLED=true");
-  }
-  if (config.channelLift.enabled) {
-    if (!config.channelLift.tripleWhaleApiKey)
-      errors.push("TRIPLE_WHALE_API_KEY is required when channel lift is enabled");
-    if (!config.channelLift.tripleWhaleShopId)
-      errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID is required when channel lift is enabled");
-    if (!config.channelLift.sourceUrl)
-      errors.push("CHANNEL_LIFT_SOURCE_URL is required when channel lift is enabled");
-    if (config.channelLift.sendEnabled && !config.channelLift.metaAccessToken)
-      errors.push(
-        "META_CONVERSIONS_ACCESS_TOKEN is required when channel lift live sending is enabled"
-      );
-    if (config.channelLift.sendEnabled && !/^\d+$/.test(config.channelLift.metaDatasetId))
-      errors.push(
-        "CHANNEL_LIFT_META_DATASET_ID must be numeric when channel lift live sending is enabled"
-      );
-  }
+  errors.push(...channelLiftConfigurationProblems());
 
   if (!config.shopify.im8.accessToken) {
     const modeVar =

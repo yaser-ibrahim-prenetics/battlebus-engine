@@ -366,6 +366,7 @@ CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID=your-store.myshopify.com
 CHANNEL_LIFT_META_DATASET_ID=your-meta-dataset-id
 CHANNEL_LIFT_SOURCE_URL=https://im8health.com/
 CHANNEL_LIFT_PAGE_SIZE=20000
+CHANNEL_LIFT_MAX_ROWS=100000
 CHANNEL_LIFT_MAX_EVENT_AGE_SECONDS=604800
 # TRIPLE_WHALE_API_KEY and META_CONVERSIONS_ACCESS_TOKEN must be mounted from
 # GCP Secret Manager; never put either value in an env file or repository setting.

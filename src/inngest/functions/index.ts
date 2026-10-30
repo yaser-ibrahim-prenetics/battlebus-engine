@@ -5,7 +5,7 @@ import { cronD365Reconciliation } from "./cron-d365-reconciliation";
 // ============================================================================
 // Export all Inngest functions for registration
 
-import { config } from "@/lib/config";
+import { assertChannelLiftConfiguration, config } from "@/lib/config";
 import { drainSlackNotificationOutbox } from "./drain-slack-notifications";
 
 export { processShopifyOrder } from "./process-shopify-order";
@@ -112,6 +112,7 @@ const openAiAdsDeliveryFunctions = config.openAiAds.enabled
   ? [deliverOpenAiAdsConversions, scheduleOpenAiAdsRetry]
   : [];
 
+if (config.channelLift.enabled) assertChannelLiftConfiguration();
 const channelLiftFunctions = config.channelLift.enabled
   ? [scheduleMetaChannelLift, processMetaChannelLift]
   : [];
