@@ -71,6 +71,7 @@ const event: MetaChannelLiftEvent = {
 const evidence = {
   counts: { rows: 1, orders: 1, pairs: 1 },
   mappedPairs: 1,
+  mappedSnapshotHash: "9".repeat(64),
   eligibleEvents: 1,
   exclusionCounts: {},
   configHash: "b".repeat(64),
@@ -82,6 +83,7 @@ const evidence = {
 const plan = {
   counts: evidence.counts,
   mappedPairs: evidence.mappedPairs,
+  mappedSnapshotHash: evidence.mappedSnapshotHash,
   mappingExclusions: {},
   extractionConfigHash: "a".repeat(64),
   extractionSnapshotHash: "f".repeat(64),

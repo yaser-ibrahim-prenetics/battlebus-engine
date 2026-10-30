@@ -30,6 +30,9 @@ Europa is out of scope.
 - A failed partial run records every new request ID in an append-only safe-code
   audit before resuming. Replays retain the original run identity and skip
   batches with exact receipts instead of silently replacing audit fields.
+- Bind each request ID immutably to one mode and source while allowing the same
+  request to cover multiple dates. A dry-run request ID can never authorize a
+  live run.
 - Reject future dates, invalid ranges, and ranges longer than 31 days.
 
 ### Triple Whale extraction
@@ -42,8 +45,9 @@ Europa is out of scope.
   Shopify orders inside a bounded Inngest step. Persist only batch counts and
   digests after the step closes.
 - Revalidate aggregate counts and mapped-pair cardinality for every candidate
-  page and again before delivery. Fail closed on missing pages, count drift, or
-  any payload-digest mismatch.
+  page and again before delivery. Every page query returns the same global
+  cryptographic root over the ordered mapped-pair inventory; fail closed on a
+  root, count, page, or payload-digest mismatch.
 - Use a version-controlled channel mapping. The initial delivery allowlist is
   `Klaviyo`; unknown mappings are excluded and counted, never guessed.
 
