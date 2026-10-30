@@ -32,5 +32,18 @@ DO $$ BEGIN
     RAISE EXCEPTION 'Hub could read base table';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END $$;
+  RESET ROLE;
+SET LOCAL ROLE battle_hub_runtime;
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.battle_hub_workflow_timeline (source,event_type,stage,status)
+    VALUES ('unauthorized','workflow','test','failed');
+    RAISE EXCEPTION 'Hub could append history';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  BEGIN
+    UPDATE public.battle_hub_workflow_timeline SET status='changed';
+    RAISE EXCEPTION 'Hub could rewrite history';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+END $$;
 RESET ROLE;
 ROLLBACK;
