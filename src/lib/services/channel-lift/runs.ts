@@ -46,6 +46,7 @@ export type ChannelLiftRun = {
   configHash: string | null;
   snapshotHash: string | null;
   lastErrorCode: string | null;
+  eligibilityCutoffSeconds: number;
 };
 
 type RunRow = QueryResultRow & {
@@ -67,6 +68,7 @@ type RunRow = QueryResultRow & {
   config_hash: string | null;
   snapshot_hash: string | null;
   last_error_code: string | null;
+  eligibility_cutoff_seconds: string | number;
 };
 
 function requireDatabase(): void {
@@ -99,6 +101,7 @@ function asRun(row: RunRow): ChannelLiftRun {
     configHash: row.config_hash,
     snapshotHash: row.snapshot_hash,
     lastErrorCode: row.last_error_code,
+    eligibilityCutoffSeconds: Number(row.eligibility_cutoff_seconds),
   };
 }
 

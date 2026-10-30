@@ -10,6 +10,8 @@ import {
 
 const ENDPOINT = "https://api.triplewhale.com/api/v2/orcabase/api/sql";
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
+const HARD_MAX_ATTRIBUTION_ROWS = 250_000;
+const MAX_ATTRIBUTION_PAGES = 1_000;
 
 type TripleWhaleDependencies = {
   fetch: typeof fetch;
@@ -25,6 +27,7 @@ export type TripleWhaleAttributionConfig = {
   shopId: string;
   reportingDate: string;
   pageSize: number;
+  maxRows?: number;
 };
 
 function responseRows(value: unknown): Record<string, unknown>[] {
@@ -72,6 +75,10 @@ export async function readTripleWhaleAttribution(
   }
   if (!Number.isInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 50_000) {
     throw new ChannelLiftError("triple_whale_page_size_invalid");
+  }
+  const maxRows = input.maxRows ?? 100_000;
+  if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > HARD_MAX_ATTRIBUTION_ROWS) {
+    throw new ChannelLiftError("triple_whale_max_rows_invalid");
   }
 
   const where =
@@ -121,10 +128,24 @@ export async function readTripleWhaleAttribution(
   };
 
   const counts = parseCounts(await query(countSql));
+  if (counts.rows > maxRows) throw new ChannelLiftError("triple_whale_row_limit_exceeded");
+  const maximumPages = Math.floor(counts.rows / input.pageSize) + 1;
+  if (maximumPages > MAX_ATTRIBUTION_PAGES) {
+    throw new ChannelLiftError("triple_whale_page_limit_exceeded");
+  }
   const rows: AttributionRow[] = [];
-  for (let offset = 0; offset < counts.rows; offset += input.pageSize) {
+  const pageDigests = new Set<string>();
+  for (let offset = 0; offset <= counts.rows; offset += input.pageSize) {
     const page = await query(`${baseSql} OFFSET ${offset}`);
     if (page.length > input.pageSize) throw new ChannelLiftError("triple_whale_page_oversized");
+    const pageDigest = channelLiftDigest(page);
+    if (page.length > 0 && pageDigests.has(pageDigest)) {
+      throw new ChannelLiftError("triple_whale_duplicate_page");
+    }
+    pageDigests.add(pageDigest);
+    if (offset === counts.rows && page.length !== 0) {
+      throw new ChannelLiftError("triple_whale_page_termination_mismatch");
+    }
     for (const row of page) {
       if (row.channel !== null && typeof row.channel !== "string") {
         throw new ChannelLiftError("triple_whale_channel_invalid");
@@ -142,6 +163,14 @@ export async function readTripleWhaleAttribution(
     if (page.length < input.pageSize) break;
   }
 
+  const finalCounts = parseCounts(await query(countSql));
+  if (
+    finalCounts.rows !== counts.rows ||
+    finalCounts.orders !== counts.orders ||
+    finalCounts.pairs !== counts.pairs
+  ) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
   reconcileAttributionCounts(rows, counts);
   const snapshot = rows.map((row) => JSON.stringify(row)).sort();
   return {

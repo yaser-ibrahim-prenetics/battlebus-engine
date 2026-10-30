@@ -33,6 +33,7 @@ const row = {
   config_hash: null,
   snapshot_hash: null,
   last_error_code: null,
+  eligibility_cutoff_seconds: 1_798_000_000,
 };
 
 describe("channel-lift run state", () => {

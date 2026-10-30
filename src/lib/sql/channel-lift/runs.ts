@@ -13,18 +13,21 @@ export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
   RETURNING run_id, reporting_date, mode, source, status, attempts,
     expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
-    delivered_events, config_hash, snapshot_hash, last_error_code`;
+    delivered_events, config_hash, snapshot_hash, last_error_code,
+    eligibility_cutoff_seconds`;
 
 export const readChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, status,
     attempts, expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
-    delivered_events, config_hash, snapshot_hash, last_error_code
+    delivered_events, config_hash, snapshot_hash, last_error_code,
+    eligibility_cutoff_seconds
   FROM public.channel_lift_runs WHERE run_id=$1`;
 
 export const readActiveChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, status,
     attempts, expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
-    delivered_events, config_hash, snapshot_hash, last_error_code
+    delivered_events, config_hash, snapshot_hash, last_error_code,
+    eligibility_cutoff_seconds
   FROM public.channel_lift_runs
   WHERE reporting_date=$1::date AND status IN ('queued','running')
   ORDER BY created_at LIMIT 1`;

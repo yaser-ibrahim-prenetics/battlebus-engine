@@ -1,5 +1,6 @@
 import { ChannelLiftError, type MetaChannelLiftEvent } from "@/lib/channel-lift/model";
 
+export const META_GRAPH_API_VERSION = "v26.0";
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 
 type MetaDependencies = {
@@ -30,7 +31,7 @@ export async function sendMetaChannelLiftBatch(
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await dependencies.fetch(
-        `https://graph.facebook.com/v26.0/${datasetId}/events`,
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${datasetId}/events`,
         {
           method: "POST",
           redirect: "error",

@@ -32,7 +32,7 @@ describe("channel-lift report preparation", () => {
   });
 
   it("creates privacy-safe evidence and eligible Meta events", async () => {
-    const report = await prepareChannelLiftReport("2026-10-28", {
+    const report = await prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
       readAttribution: vi.fn().mockResolvedValue({
         rows: [
           { orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" },
@@ -43,7 +43,6 @@ describe("channel-lift report preparation", () => {
         snapshotHash: "b".repeat(64),
       }),
       readOrders: vi.fn().mockResolvedValue(new Map([["123", order]])),
-      nowSeconds: () => Math.floor(Date.parse("2026-10-29T12:00:00Z") / 1000),
     });
     expect(report.events).toHaveLength(1);
     expect(report.evidence).toMatchObject({
@@ -57,16 +56,15 @@ describe("channel-lift report preparation", () => {
   it("fails closed when Triple Whale and Shopify shop identities differ", async () => {
     Object.assign(config.shopify.im8, { shopDomain: "different.myshopify.com" });
     await expect(
-      prepareChannelLiftReport("2026-10-28", {
+      prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
         readAttribution: vi.fn(),
         readOrders: vi.fn(),
-        nowSeconds: () => 0,
       })
     ).rejects.toThrow("shop_identity_mismatch");
   });
 
   it("holds missing and ineligible Shopify orders by safe reason", async () => {
-    const report = await prepareChannelLiftReport("2026-10-28", {
+    const report = await prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
       readAttribution: vi.fn().mockResolvedValue({
         rows: [
           { orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" },
@@ -79,7 +77,6 @@ describe("channel-lift report preparation", () => {
       readOrders: vi
         .fn()
         .mockResolvedValue(new Map([["123", { ...order, financialStatus: "pending" }]])),
-      nowSeconds: () => Math.floor(Date.parse("2026-10-29T12:00:00Z") / 1000),
     });
     expect(report.events).toHaveLength(0);
     expect(report.evidence.exclusionCounts).toEqual({

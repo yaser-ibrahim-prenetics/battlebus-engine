@@ -94,7 +94,11 @@ describe("Meta channel-lift workflow", () => {
     vi.clearAllMocks();
     mocks.start.mockResolvedValue({
       disposition: "started",
-      run: { runId, reportingDate: "2026-10-28" },
+      run: {
+        runId,
+        reportingDate: "2026-10-28",
+        eligibilityCutoffSeconds: 1_798_000_000,
+      },
     });
     mocks.prepare.mockResolvedValue({ events: [event], evidence });
     mocks.send.mockResolvedValue({ eventsReceived: 1 });
@@ -105,6 +109,9 @@ describe("Meta channel-lift workflow", () => {
   });
 
   it("serializes runs by reporting date", () => {
+    expect(mocks.options?.idempotency).toBe(
+      "event.data.requestId + ':' + event.data.reportingDate + ':' + event.data.mode"
+    );
     expect(mocks.options?.concurrency).toEqual([
       { limit: 1, key: "event.data.reportingDate" },
       { limit: 2 },
@@ -141,12 +148,33 @@ describe("Meta channel-lift workflow", () => {
       batchCount: 2,
     });
     expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.prepare).toHaveBeenCalledTimes(3);
     expect(mocks.progress).toHaveBeenLastCalledWith({
       runId,
       batchCount: 2,
       attemptedEvents: 501,
       deliveredEvents: 501,
     });
+  });
+
+  it("fails closed when provider data drifts before a delivery checkpoint", async () => {
+    mocks.prepare
+      .mockResolvedValueOnce({ events: [event], evidence })
+      .mockResolvedValueOnce({
+        events: [{ ...event, custom_data: { value: 99, currency: "USD" } }],
+        evidence: { ...evidence, snapshotHash: "d".repeat(64) },
+      });
+    mocks.prepared
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new ChannelLiftError("prepared_snapshot_changed"));
+    await expect(
+      (
+        processMetaChannelLift as unknown as (
+          input: ReturnType<typeof invocation>
+        ) => Promise<Record<string, unknown>>
+      )(invocation("live"))
+    ).resolves.toEqual({ status: "failed", runId, errorCode: "prepared_snapshot_changed" });
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("fails closed on an ambiguous Meta receipt", async () => {

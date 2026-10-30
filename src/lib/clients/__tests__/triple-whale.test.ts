@@ -22,7 +22,8 @@ describe("Triple Whale channel-lift client", () => {
       )
       .mockResolvedValueOnce(
         jsonResponse([{ order_id: "2", channel: "klaviyo", event_date: "2026-10-28" }])
-      );
+      )
+      .mockResolvedValueOnce(jsonResponse([{ rows: "3", orders: "2", pairs: "2" }]));
 
     const result = await readTripleWhaleAttribution(
       {
@@ -37,7 +38,7 @@ describe("Triple Whale channel-lift client", () => {
     expect(result.counts).toEqual({ rows: 3, orders: 2, pairs: 2 });
     expect(result.rows).toHaveLength(3);
     expect(result.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     const finalRequest = JSON.parse(String(fetch.mock.calls[2][1]?.body));
     expect(finalRequest.query).toContain("OFFSET 2");
   });
@@ -48,7 +49,8 @@ describe("Triple Whale channel-lift client", () => {
       .mockResolvedValueOnce(jsonResponse([{ rows: 2, orders: 2, pairs: 2 }]))
       .mockResolvedValueOnce(
         jsonResponse([{ order_id: "1", channel: "klaviyo", event_date: "2026-10-28" }])
-      );
+      )
+      .mockResolvedValueOnce(jsonResponse([{ rows: 2, orders: 2, pairs: 2 }]));
     await expect(
       readTripleWhaleAttribution(
         {
@@ -67,6 +69,8 @@ describe("Triple Whale channel-lift client", () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(jsonResponse({}, 429))
+      .mockResolvedValueOnce(jsonResponse([{ rows: 0, orders: 0, pairs: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ rows: 0, orders: 0, pairs: 0 }]));
     await expect(
       readTripleWhaleAttribution(
@@ -80,5 +84,90 @@ describe("Triple Whale channel-lift client", () => {
       )
     ).resolves.toMatchObject({ rows: [], counts: { rows: 0, orders: 0, pairs: 0 } });
     expect(sleep).toHaveBeenCalledWith(1_000);
+  });
+
+  it("requires an empty terminal page for an exact page multiple", async () => {
+    const rows = [
+      { order_id: "1", channel: "klaviyo", event_date: "2026-10-28" },
+      { order_id: "2", channel: "klaviyo", event_date: "2026-10-28" },
+    ];
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ rows: 2, orders: 2, pairs: 2 }]))
+      .mockResolvedValueOnce(jsonResponse(rows))
+      .mockResolvedValueOnce(jsonResponse([rows[1]]));
+    await expect(
+      readTripleWhaleAttribution(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          pageSize: 2,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).rejects.toThrow("triple_whale_page_termination_mismatch");
+  });
+
+  it("fetches and validates a terminal page for a zero-row snapshot", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ rows: 0, orders: 0, pairs: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ rows: 0, orders: 0, pairs: 0 }]));
+    await expect(
+      readTripleWhaleAttribution(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          pageSize: 2,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).resolves.toMatchObject({ rows: [], counts: { rows: 0 } });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects provider inventories beyond the configured row ceiling", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ rows: 101, orders: 101, pairs: 101 }]));
+    await expect(
+      readTripleWhaleAttribution(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          pageSize: 10,
+          maxRows: 100,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).rejects.toThrow("triple_whale_row_limit_exceeded");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects a repeated non-empty page before reconciliation", async () => {
+    const page = [
+      { order_id: "1", channel: "klaviyo", event_date: "2026-10-28" },
+      { order_id: "1", channel: "klaviyo", event_date: "2026-10-28" },
+    ];
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ rows: 4, orders: 1, pairs: 1 }]))
+      .mockResolvedValueOnce(jsonResponse(page))
+      .mockResolvedValueOnce(jsonResponse(page));
+    await expect(
+      readTripleWhaleAttribution(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          pageSize: 2,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).rejects.toThrow("triple_whale_duplicate_page");
   });
 });

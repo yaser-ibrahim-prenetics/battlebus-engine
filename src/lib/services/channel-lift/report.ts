@@ -8,19 +8,18 @@ import {
   type MetaChannelLiftEvent,
 } from "@/lib/channel-lift/model";
 import { readChannelLiftOrders } from "@/lib/clients/channel-lift-shopify";
+import { META_GRAPH_API_VERSION } from "@/lib/clients/meta-conversions";
 import { readTripleWhaleAttribution } from "@/lib/clients/triple-whale";
 import { config } from "@/lib/config";
 
 type ReportDependencies = {
   readAttribution: typeof readTripleWhaleAttribution;
   readOrders: typeof readChannelLiftOrders;
-  nowSeconds: () => number;
 };
 
 const defaultDependencies: ReportDependencies = {
   readAttribution: readTripleWhaleAttribution,
   readOrders: readChannelLiftOrders,
-  nowSeconds: () => Math.floor(Date.now() / 1000),
 };
 
 export type PreparedChannelLiftReport = {
@@ -41,6 +40,7 @@ function increment(counts: Record<string, number>, reason: string): void {
 
 export async function prepareChannelLiftReport(
   reportingDate: string,
+  eligibilityCutoffSeconds: number,
   dependencies: ReportDependencies = defaultDependencies
 ): Promise<PreparedChannelLiftReport> {
   const shop = config.shopify.im8.shopDomain.trim().toLowerCase();
@@ -51,6 +51,7 @@ export async function prepareChannelLiftReport(
     reportingDate,
     shopId: tripleWhaleShop,
     pageSize: config.channelLift.pageSize,
+    maxRows: config.channelLift.maxRows,
     apiKey: config.channelLift.tripleWhaleApiKey,
   });
   const mapped = mapAndDeduplicateChannels(
@@ -77,7 +78,7 @@ export async function prepareChannelLiftReport(
           channel: pair.channel,
           sourceUrl: config.channelLift.sourceUrl,
           maxEventAgeSeconds: config.channelLift.maxEventAgeSeconds,
-          nowSeconds: dependencies.nowSeconds(),
+          nowSeconds: eligibilityCutoffSeconds,
         })
       );
     } catch (error) {
@@ -89,16 +90,20 @@ export async function prepareChannelLiftReport(
     }
   }
 
+  events.sort((left, right) => left.event_id.localeCompare(right.event_id));
   const configHash = channelLiftDigest([
     extraction.configHash,
     CHANNEL_LIFT_MAPPING,
     CHANNEL_LIFT_ALLOWLIST,
     config.channelLift.sourceUrl,
     config.channelLift.maxEventAgeSeconds,
+    config.channelLift.metaDatasetId,
+    META_GRAPH_API_VERSION,
   ]);
   const snapshotHash = channelLiftDigest([
     extraction.snapshotHash,
-    events.map((event) => event.event_id).sort(),
+    eligibilityCutoffSeconds,
+    events,
     Object.entries(exclusionCounts).sort(([left], [right]) => left.localeCompare(right)),
   ]);
 

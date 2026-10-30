@@ -21,6 +21,9 @@ CREATE TABLE public.channel_lift_runs (
   last_error_code text,
   requested_by text,
   request_reason text,
+  eligibility_cutoff_seconds bigint NOT NULL DEFAULT (
+    EXTRACT(EPOCH FROM clock_timestamp())::bigint
+  ),
   started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -58,6 +61,9 @@ CREATE TABLE public.channel_lift_runs (
   CONSTRAINT channel_lift_request_reason_valid CHECK (
     (source = 'schedule' AND request_reason IS NULL)
     OR (source = 'manual' AND length(request_reason) BETWEEN 10 AND 1000)
+  ),
+  CONSTRAINT channel_lift_eligibility_cutoff_valid CHECK (
+    eligibility_cutoff_seconds BETWEEN 1 AND 253402300799
   ),
   CONSTRAINT channel_lift_exclusions_object CHECK (
     jsonb_typeof(exclusion_counts) = 'object'
@@ -116,6 +122,7 @@ SELECT
   snapshot_hash,
   last_error_code,
   request_reason,
+  eligibility_cutoff_seconds,
   started_at,
   completed_at,
   created_at,

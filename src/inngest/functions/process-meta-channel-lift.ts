@@ -18,14 +18,6 @@ type ChannelLiftStep = {
   run<T>(id: string, handler: () => Promise<T>): Promise<T>;
 };
 
-function chunks<T>(items: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size));
-  }
-  return result;
-}
-
 function errorCode(error: unknown): string {
   return error instanceof ChannelLiftError && /^[a-z0-9_]{1,64}$/.test(error.code)
     ? error.code
@@ -36,6 +28,8 @@ export const processMetaChannelLift = inngest.createFunction(
   {
     id: "process-meta-channel-lift",
     name: "Process Meta Channel Lift",
+    idempotency:
+      "event.data.requestId + ':' + event.data.reportingDate + ':' + event.data.mode",
     retries: MAX_INNGEST_RETRIES,
     concurrency: [{ limit: 1, key: "event.data.reportingDate" }, { limit: 2 }],
     triggers: [{ event: "meta.channel-lift/run.requested" }],
@@ -74,13 +68,17 @@ export const processMetaChannelLift = inngest.createFunction(
         throw new ChannelLiftError("live_send_disabled");
       }
 
-      // Deliberately recomputed in memory on an Inngest replay. Customer identity
-      // never becomes a persisted step result; the immutable snapshot hash guards
-      // against provider data changing between invocations.
-      const prepared = await prepareChannelLiftReport(event.data.reportingDate);
-      await step.run("record-channel-lift-preparation", () =>
-        recordChannelLiftPrepared({ runId, ...prepared.evidence })
-      );
+      const eligibilityCutoffSeconds = reservation.run.eligibilityCutoffSeconds;
+      // Provider reads stay inside a durable step, while only aggregate evidence
+      // leaves the closure. Inngest never persists the customer payload.
+      const evidence = await step.run("prepare-channel-lift-evidence", async () => {
+        const prepared = await prepareChannelLiftReport(
+          event.data.reportingDate,
+          eligibilityCutoffSeconds
+        );
+        await recordChannelLiftPrepared({ runId, ...prepared.evidence });
+        return prepared.evidence;
+      });
 
       if (event.data.mode === "dry_run") {
         await step.run("complete-channel-lift-dry-run", () =>
@@ -90,25 +88,44 @@ export const processMetaChannelLift = inngest.createFunction(
           status: "dry_run_completed",
           runId,
           reportingDate: event.data.reportingDate,
-          eligibleEvents: prepared.events.length,
+          eligibleEvents: evidence.eligibleEvents,
         };
       }
 
       let attemptedEvents = 0;
       let deliveredEvents = 0;
-      const batches = chunks(prepared.events, 500);
-      for (const [index, batch] of batches.entries()) {
-        const batchDigest = channelLiftDigest(batch.map((item) => item.event_id)).slice(0, 16);
-        const receipt = await step.run(`send-meta-batch-${index}-${batchDigest}`, () =>
-          sendMetaChannelLiftBatch({
+      const batchCount = Math.ceil(evidence.eligibleEvents / 500);
+      for (let index = 0; index < batchCount; index += 1) {
+        const fence = channelLiftDigest([evidence.configHash, evidence.snapshotHash]).slice(0, 16);
+        const receipt = await step.run(`send-meta-batch-${index}-${fence}`, async () => {
+          // Rebuild within each delivery checkpoint and re-run the database CAS
+          // before every write. Any source/configuration drift fails closed.
+          const replay = await prepareChannelLiftReport(
+            event.data.reportingDate,
+            eligibilityCutoffSeconds
+          );
+          await recordChannelLiftPrepared({ runId, ...replay.evidence });
+          if (
+            replay.evidence.configHash !== evidence.configHash ||
+            replay.evidence.snapshotHash !== evidence.snapshotHash
+          ) {
+            throw new ChannelLiftError("prepared_snapshot_changed");
+          }
+          const batch = replay.events.slice(index * 500, (index + 1) * 500);
+          const expectedBatchSize = Math.min(500, evidence.eligibleEvents - index * 500);
+          if (batch.length !== expectedBatchSize) {
+            throw new ChannelLiftError("prepared_snapshot_changed");
+          }
+          return sendMetaChannelLiftBatch({
             datasetId: config.channelLift.metaDatasetId,
             accessToken: config.channelLift.metaAccessToken,
             events: batch,
-          })
-        );
-        attemptedEvents += batch.length;
+          });
+        });
+        const expectedBatchSize = Math.min(500, evidence.eligibleEvents - index * 500);
+        attemptedEvents += expectedBatchSize;
         deliveredEvents += receipt.eventsReceived;
-        await step.run(`record-meta-batch-${index}-${batchDigest}`, () =>
+        await step.run(`record-meta-batch-${index}-${fence}`, () =>
           recordChannelLiftProgress({
             runId,
             batchCount: index + 1,
@@ -125,7 +142,7 @@ export const processMetaChannelLift = inngest.createFunction(
         reportingDate: event.data.reportingDate,
         attemptedEvents,
         deliveredEvents,
-        batchCount: batches.length,
+        batchCount,
       };
     } catch (error) {
       if (error instanceof ChannelLiftError && error.retryable && attempt < MAX_INNGEST_RETRIES) {
