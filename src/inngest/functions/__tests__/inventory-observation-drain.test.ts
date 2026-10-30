@@ -35,7 +35,7 @@ vi.mock("@/lib/clients/dynamics", () => ({}));
 vi.mock("@/lib/clients/gps", () => ({}));
 vi.mock("@/lib/utils/constants", () => ({ RETRY_CONFIGS: { DEFAULT: 3 } }));
 
-import { processInventoryMesh } from "../process-inventory-mesh";
+import { requestOosDrainFromInventory } from "../request-oos-drain-from-inventory";
 
 function step() {
   return { run: vi.fn(async (_id: string, execute: () => Promise<unknown>) => execute()) };
@@ -58,7 +58,7 @@ function inventoryEvent(destination = "shopify") {
   };
 }
 
-const handler = processInventoryMesh as unknown as (args: {
+const handler = requestOosDrainFromInventory as unknown as (args: {
   event: ReturnType<typeof inventoryEvent>;
   step: ReturnType<typeof step>;
 }) => Promise<Record<string, unknown>>;
@@ -71,7 +71,7 @@ describe("inventory observations trigger targeted OOS drains", () => {
 
   it("queues the observation even when destination inventory synchronization is disabled", async () => {
     await expect(handler({ event: inventoryEvent(), step: step() })).resolves.toMatchObject({
-      status: "skipped",
+      created: true,
     });
     expect(mocks.submitOosDrainRequest).toHaveBeenCalledWith({
       mode: "inventory_event",
@@ -90,7 +90,7 @@ describe("inventory observations trigger targeted OOS drains", () => {
     mocks.features.enableInventorySync = true;
     await expect(
       handler({ event: inventoryEvent("unsupported"), step: step() })
-    ).resolves.toMatchObject({ success: false });
+    ).resolves.toMatchObject({ created: true });
     expect(mocks.submitOosDrainRequest).toHaveBeenCalledTimes(1);
   });
 });
