@@ -94,6 +94,10 @@ export async function deepReadiness() {
         (queues.oos_due_age_seconds < 3600 &&
           !queues.oos_expired_lease_count &&
           !queues.oos_outbox_exhausted_count)) &&
+      (!config.openAiAds.enabled ||
+        (queues.openai_ads_oldest_due_age_seconds < 300 &&
+          !queues.openai_ads_expired_lease_count &&
+          !queues.openai_ads_permanent_failure_count)) &&
       !workflows.length &&
       !truncated,
     dependencies,
@@ -106,6 +110,7 @@ export async function deepReadiness() {
       uncertainActionAgeSeconds: 300,
       workflowIdleSeconds: 1800,
       oosDueAgeSeconds: 3600,
+      openAiAdsDueAgeSeconds: 300,
     },
   };
 }

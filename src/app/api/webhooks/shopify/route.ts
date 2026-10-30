@@ -10,6 +10,7 @@ import {
   shopifyWebhookSecretSource,
 } from "@/lib/clients/shopify";
 import { config } from "@/lib/config";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 import { shopifyOrderWebhookSchema, validateWebhookSchema } from "@/lib/schemas/webhook-schemas";
 import { logFlowEvent } from "@/lib/services/flow-logs";
 import { shouldSuppressShopifyRefundWebhookForLoopReturns } from "@/lib/services/shopify-loop-refund-detection";
@@ -283,6 +284,10 @@ export async function POST(request: NextRequest) {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
               shopifyStore: effectiveShopDomain,
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+                shopifyStore: effectiveShopDomain,
+                shopifyOrderId: payload.id,
+              }),
               subscriptionContractId,
               orderJson: payload,
               receivedAt: new Date().toISOString(),
@@ -298,6 +303,10 @@ export async function POST(request: NextRequest) {
               shopifyOrderId: String(payload.id),
               shopifyOrderName: payload.name,
               shopifyStore: effectiveShopDomain,
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+                shopifyStore: effectiveShopDomain,
+                shopifyOrderId: payload.id,
+              }),
               orderJson: payload,
               receivedAt: new Date().toISOString(),
               inngestIdempotencyKey: idempotencyKey,

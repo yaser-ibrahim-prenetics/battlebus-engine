@@ -10,6 +10,7 @@
 import { inngest } from "@/inngest/client";
 import * as csPlatform from "@/lib/clients/cs-platform";
 import { resolveShopifyAdminCredentials } from "@/lib/clients/shopify";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 import type {
   OosRecoveryReplayMarker,
   RunSequenceStage,
@@ -137,6 +138,10 @@ export async function advanceRunSequence(
         shopifyOrderId,
         shopifyOrderName,
         shopifyStore: canonicalShopifyStore,
+        canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+          shopifyStore: canonicalShopifyStore,
+          shopifyOrderId,
+        }),
         orderJson,
         receivedAt: nowIso(),
         runSequence: rest,

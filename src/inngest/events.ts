@@ -12,6 +12,14 @@ export type OosRecoveryReplayMarker = {
   oosRecoveryAttemptToken?: string;
 };
 
+/** Canonical identity markers shared by paid-order and subscription reruns. */
+export type ShopifyOrderReplayMarker = {
+  originalShopifyOrderId?: string;
+  testMode?: boolean;
+  /** Provider-neutral identity shared by original deliveries and every replay. */
+  canonicalShopifyOrderKey: string;
+};
+
 export type ShopifyOrderCreatedEvent = {
   name: "shopify/order.created";
   data: {
@@ -67,7 +75,8 @@ export type ShopifyOrderPaidEvent = {
     runSequence?: RunSequenceStage[];
     /** Marker so downstream knows this came from a sequenced retry. */
     fromSequencedRetry?: boolean;
-  } & OosRecoveryReplayMarker;
+  } & OosRecoveryReplayMarker &
+    ShopifyOrderReplayMarker;
 };
 
 export type ShopifyOrderUpdatedEvent = {
@@ -246,7 +255,7 @@ export type SubscriptionRenewalEvent = {
     subscriptionContractId: string;
     orderJson: ShopifyOrderPayload;
     receivedAt: string;
-  };
+  } & ShopifyOrderReplayMarker;
 };
 
 // ============================================================================
@@ -491,6 +500,16 @@ export type OrderLifecycleReadyEvent = {
   };
 };
 
+export type OpenAiAdsConversionQueuedEvent = {
+  name: "openai.ads/conversion.queued";
+  data: { eventId: string };
+};
+
+export type OpenAiAdsConversionRetryScheduledEvent = {
+  name: "openai.ads/conversion.retry-scheduled";
+  data: { eventId: string; attempt: number; retryAt: string };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -518,7 +537,9 @@ export type BattleBusEvents =
   | BackorderCreatedEvent
   | BackorderResolvedEvent
   | BackorderRetryEvent
-  | OrderLifecycleReadyEvent;
+  | OrderLifecycleReadyEvent
+  | OpenAiAdsConversionQueuedEvent
+  | OpenAiAdsConversionRetryScheduledEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
@@ -531,6 +552,7 @@ export interface ShopifyOrderPayload {
   name: string;
   email: string;
   created_at: string;
+  processed_at?: string;
   updated_at: string;
   cancelled_at: string | null;
   total_price: string;

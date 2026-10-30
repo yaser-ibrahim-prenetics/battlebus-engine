@@ -133,6 +133,7 @@ jobs:
           WEBHOOK_INBOX_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
           OOS_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
           PROVIDER_CAPACITY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
+          OPENAI_ADS_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/battle_platform_migrations?sslmode=disable
         id: test
         continue-on-error: true
         run: npm test -- --reporter=dot

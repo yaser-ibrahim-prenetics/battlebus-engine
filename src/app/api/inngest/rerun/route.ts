@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { searchOrdersByName } from "@/lib/clients/shopify";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
+import { prepareInngestReplayData } from "@/lib/services/inngest-replay";
 
 const INNGEST_API_URL = process.env.INNGEST_API_URL || "https://api.inngest.com";
 
@@ -108,35 +110,17 @@ function extractInternalEventIdFromRun(run: Record<string, unknown>): string | n
   return s.length > 0 ? s : null;
 }
 
-/**
- * Functions that key idempotency on `event.data.shopifyOrderId` only need a mutated id for replay.
- * @see process-shopify-order, process-order-cancellation, process-subscription-order
- */
-function applyReplayDataMutations(
+function canonicalShopifyOrderIdentity(
   eventName: string,
-  data: Record<string, unknown>,
-  sourceRunId: string
-): Record<string, unknown> {
-  const ts = Date.now();
-  const out: Record<string, unknown> = { ...data };
-  out.isRerun = true;
-  out.battleHubReplayOfRunId = sourceRunId;
-
-  const shopifyIdOnlyRerunNames = new Set([
-    "shopify/order.paid",
-    "shopify/order.created",
-    "shopify/order.cancelled",
-    "shopify/subscription.renewed",
-  ]);
-
-  if (shopifyIdOnlyRerunNames.has(eventName) && out.shopifyOrderId != null) {
-    const raw = String(out.shopifyOrderId);
-    const base = raw.split("-rerun-")[0] || raw;
-    out.shopifyOrderId = `${base}-rerun-${ts}`;
-    if (out.originalShopifyOrderId == null) out.originalShopifyOrderId = base;
+  shopifyStore: string,
+  shopifyOrderId: string | number
+): { canonicalShopifyOrderKey: string } | Record<string, never> {
+  if (eventName !== "shopify/order.paid" && eventName !== "shopify/subscription.renewed") {
+    return {};
   }
-
-  return out;
+  return {
+    canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({ shopifyStore, shopifyOrderId }),
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -219,6 +203,11 @@ export async function POST(request: NextRequest) {
           originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
+          ...canonicalShopifyOrderIdentity(
+            resolvedEventName,
+            "im8-battle-bus",
+            shopifyOrder.id
+          ),
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
@@ -302,6 +291,11 @@ export async function POST(request: NextRequest) {
           originalShopifyOrderId: String(shopifyOrder.id),
           shopifyOrderName: shopifyOrder.name,
           shopifyStore: "im8-battle-bus",
+          ...canonicalShopifyOrderIdentity(
+            resolvedEventName,
+            "im8-battle-bus",
+            shopifyOrder.id
+          ),
           orderJson: shopifyOrder,
           reprocessedAt: new Date().toISOString(),
           source: "battle-hub",
@@ -392,7 +386,7 @@ export async function POST(request: NextRequest) {
       }
 
       const newSendId = `hub-rerun-${String(runId)}-${Date.now()}`;
-      const prepared = applyReplayDataMutations(name, dataObj, String(runId));
+      const prepared = prepareInngestReplayData(name, dataObj, String(runId));
 
       const result = await inngest.send({
         id: newSendId,

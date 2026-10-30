@@ -8,6 +8,7 @@ import {
   resolveLoopReturnsEnabled,
   resolveLoopWebhookVerifyDisabled,
 } from "./helpers/loop-integration";
+import { openAiAdsConfigurationProblems } from "@/lib/helpers/openai-ads-config";
 
 function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
@@ -146,6 +147,16 @@ export const config = {
     clientSecret: process.env.PAYPAL_CLIENT_SECRET || "",
     mode: (process.env.PAYPAL_MODE || "sandbox") as "sandbox" | "live",
     enabled: process.env.PAYPAL_ENABLED === "true", // Default: false - must explicitly enable
+  },
+
+  openAiAds: {
+    enabled: process.env.OPENAI_ADS_ENABLED === "true",
+    conversionsApiKey: process.env.OPENAI_ADS_CONVERSIONS_API_KEY || "",
+    pixelId: process.env.OPENAI_ADS_PIXEL_ID?.trim() || "",
+    allowedStore: process.env.OPENAI_ADS_ALLOWED_STORE?.trim().toLowerCase() || "",
+    endpoint: process.env.OPENAI_ADS_ENDPOINT?.trim() || "https://bzr.openai.com",
+    apiVersion: process.env.OPENAI_ADS_API_VERSION?.trim() || "v1",
+    sourceUrl: process.env.OPENAI_ADS_SOURCE_URL?.trim() || "",
   },
 
   // Slack Notification Channels
@@ -428,6 +439,12 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
           "Each GPS warehouse usually has its own appKey — verify this is intentional."
       );
     }
+  }
+
+  if (config.openAiAds.enabled) {
+    errors.push(
+      ...openAiAdsConfigurationProblems(config.openAiAds).map((problem) => problem.message)
+    );
   }
 
   if (!config.shopify.im8.accessToken) {

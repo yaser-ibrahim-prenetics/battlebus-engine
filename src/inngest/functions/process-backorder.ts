@@ -60,6 +60,7 @@ import {
 import { isInventoryUnavailableError } from "@/lib/services/oos-recovery/inventory-failure";
 import { executeFulfillmentAction } from "@/lib/services/fulfillment-actions/ledger";
 import { gpsOutboundOrderEvidenceCodec } from "@/lib/services/oos-recovery/mutation-evidence";
+import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
 
 type LeaseAcquisitionResult =
   | { status: "acquired"; lease: BackorderRecoveryLease }
@@ -676,6 +677,10 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
               shopifyStore: shop,
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+                shopifyStore: shop,
+                shopifyOrderId,
+              }),
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: true,
@@ -685,13 +690,18 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
           return { success: true, replayDispatched: true, deferResolution: true };
         }
         if (effectiveRetryMode === "gps_outbound" && !d365NumManual) {
+          const openAiAdsShopifyStore = event.data.shopifyStore || "im8-battle-bus";
           await inngest.send({
             id: `backorder-retry:${event.id}:shopify-order-paid`,
             name: "shopify/order.paid",
             data: {
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
-              shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+              shopifyStore: openAiAdsShopifyStore,
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+                shopifyStore: openAiAdsShopifyStore,
+                shopifyOrderId,
+              }),
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: isTargetedRecovery,
@@ -1007,13 +1017,18 @@ async function handleBackorder({ event, step, runId }: { event: any; step: any; 
 
         const d365NumLoop = String(d365OrderNumber || "").trim();
         if (effectiveRetryMode === "gps_outbound" && !d365NumLoop) {
+          const shopifyStore = event.data.shopifyStore || "im8-battle-bus";
           await inngest.send({
             id: `backorder-auto:${event.id}:${retryCount}:shopify-order-paid`,
             name: "shopify/order.paid",
             data: {
               shopifyOrderId: String(shopifyOrderId),
               shopifyOrderName,
-              shopifyStore: event.data.shopifyStore || "im8-battle-bus",
+              shopifyStore,
+              canonicalShopifyOrderKey: toCanonicalShopifyOrderKey({
+                shopifyStore,
+                shopifyOrderId,
+              }),
               orderJson: order,
               receivedAt: new Date().toISOString(),
               oosRecoveryReplay: isTargetedRecovery,

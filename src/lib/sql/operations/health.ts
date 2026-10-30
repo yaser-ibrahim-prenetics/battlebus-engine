@@ -28,7 +28,18 @@ export const queueHealthSQL = `SELECT
       count(*) FILTER (WHERE lease_token IS NOT NULL AND lease_until <= clock_timestamp())::int AS expired
     FROM public.provider_capacity_leases
     GROUP BY provider
-  ) AS capacity) AS provider_capacity`;
+  ) AS capacity) AS provider_capacity,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='queued') AS openai_ads_queued_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='retry_wait') AS openai_ads_retry_wait_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivering') AS openai_ads_delivering_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivering' AND lease_until<=now()) AS openai_ads_expired_lease_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivered') AS openai_ads_delivered_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='delivered' AND delivered_at>=now()-interval '24 hours') AS openai_ads_delivered_24h_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='permanent_failure') AS openai_ads_permanent_failure_count,
+  (SELECT count(*)::int FROM public.openai_ads_conversions WHERE status='skipped') AS openai_ads_skipped_count,
+  (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(next_attempt_at)),0)::float8
+    FROM public.openai_ads_conversions
+    WHERE status IN ('queued','retry_wait') AND next_attempt_at<=now()) AS openai_ads_oldest_due_age_seconds`;
 export const inboxSummariesSQL = `SELECT id,source,topic,
   CASE
     WHEN dead_lettered_at IS NOT NULL THEN 'dead_letter'
@@ -41,3 +52,7 @@ export const actionSummariesSQL = `SELECT attempt_id,provider,scope,source_order
   min(created_at) AS created_at, count(*)::int AS line_count, bool_and(recovery_context IS NOT NULL) AS has_recovery_context
   FROM public.fulfillment_actions WHERE status IN ('pending','uncertain')
   GROUP BY attempt_id,provider,scope,source_order_id,action_name,status ORDER BY min(created_at) DESC LIMIT 50`;
+export const openAiAdsSummariesSQL = `SELECT event_id,shopify_store,shopify_order_id,
+  conversion_type,occurred_at,status,attempts,next_attempt_at,last_http_status,
+  last_error_category,delivered_at,permanent_at,replay_count,replayed_at,created_at,updated_at
+  FROM public.openai_ads_conversions ORDER BY created_at DESC LIMIT 50`;

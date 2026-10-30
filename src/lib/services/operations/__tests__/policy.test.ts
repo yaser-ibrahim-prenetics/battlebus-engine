@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { recoveryCommandSchema } from "../commands";
-import { waitingDeadline } from "../workflow-waits";
+import { recoveryCommandSchema } from "@/lib/services/operations/commands";
+import { openAiAdsReplayRequestSchema } from "@/lib/services/operations/openai-ads-replay";
+import { waitingDeadline } from "@/lib/services/operations/workflow-waits";
 const request = {
   requestId: "00000000-0000-4000-8000-000000000001",
   actorId: "admin",
@@ -29,5 +30,27 @@ describe("restricted recovery commands", () => {
     });
     expect(waitingDeadline("sleep", ["unknown"], 0)).toEqual({ until: null });
     expect(waitingDeadline("run", [], 0)).toBeNull();
+  });
+  it("accepts only bounded OpenAI Ads replay identities", () => {
+    const replay = {
+      ...request,
+      parameters: {
+        operation: "replay_openai_ads",
+        eventId: "bb_order_created_0000000000000000000000000000000000000000",
+      },
+    };
+    expect(openAiAdsReplayRequestSchema.safeParse(replay).success).toBe(true);
+    expect(
+      openAiAdsReplayRequestSchema.safeParse({
+        ...replay,
+        parameters: { ...replay.parameters, eventId: "shopify-order-123" },
+      }).success
+    ).toBe(false);
+    expect(
+      openAiAdsReplayRequestSchema.safeParse({
+        ...replay,
+        parameters: { ...replay.parameters, force: true },
+      }).success
+    ).toBe(false);
   });
 });
