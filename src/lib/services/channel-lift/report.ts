@@ -13,7 +13,7 @@ import {
 import { readChannelLiftOrders } from "@/lib/clients/channel-lift-shopify";
 import { META_GRAPH_API_VERSION } from "@/lib/clients/meta-conversions";
 import {
-  readTripleWhaleAttribution,
+  readTripleWhaleAttributionSummary,
   readTripleWhaleAttributionCounts,
   readTripleWhaleMappedPairCount,
   readTripleWhaleMappedPairPage,
@@ -21,9 +21,8 @@ import {
 } from "@/lib/clients/triple-whale";
 import { config } from "@/lib/config";
 
-type ReportDependencies = {
-  readAttribution: typeof readTripleWhaleAttribution;
-  readOrders: typeof readChannelLiftOrders;
+type PlanDependencies = {
+  readSummary: typeof readTripleWhaleAttributionSummary;
 };
 
 type DeliveryBatchDependencies = {
@@ -33,9 +32,8 @@ type DeliveryBatchDependencies = {
   readOrders: typeof readChannelLiftOrders;
 };
 
-const defaultDependencies: ReportDependencies = {
-  readAttribution: readTripleWhaleAttribution,
-  readOrders: readChannelLiftOrders,
+const defaultPlanDependencies: PlanDependencies = {
+  readSummary: readTripleWhaleAttributionSummary,
 };
 
 const defaultDeliveryBatchDependencies: DeliveryBatchDependencies = {
@@ -59,17 +57,28 @@ export type ChannelLiftDeliveryBatch = {
   digest: string;
 };
 
-export type PreparedChannelLiftReport = {
-  events: MetaChannelLiftEvent[];
-  evidence: {
-    counts: { rows: number; orders: number; pairs: number };
-    mappedPairs: number;
-    eligibleEvents: number;
-    exclusionCounts: Record<string, number>;
-    configHash: string;
-    snapshotHash: string;
-    deliveryBatches: ChannelLiftDeliveryBatch[];
-  };
+export type ChannelLiftCandidateBatch = Pick<
+  ChannelLiftDeliveryBatch,
+  "candidateOffset" | "candidateCount"
+>;
+
+export type ChannelLiftPreparationPlan = {
+  counts: AttributionCounts;
+  mappedPairs: number;
+  mappingExclusions: Record<string, number>;
+  extractionConfigHash: string;
+  extractionSnapshotHash: string;
+  candidateBatches: ChannelLiftCandidateBatch[];
+};
+
+export type ChannelLiftEvidence = {
+  counts: AttributionCounts;
+  mappedPairs: number;
+  eligibleEvents: number;
+  exclusionCounts: Record<string, number>;
+  configHash: string;
+  snapshotHash: string;
+  deliveryBatches: ChannelLiftDeliveryBatch[];
 };
 
 function increment(counts: Record<string, number>, reason: string): void {
@@ -144,84 +153,82 @@ function tripleWhaleInput(reportingDate: string, shopId: string) {
   };
 }
 
-export async function prepareChannelLiftReport(
+export async function prepareChannelLiftPlan(
   reportingDate: string,
-  eligibilityCutoffSeconds: number,
-  dependencies: ReportDependencies = defaultDependencies
-): Promise<PreparedChannelLiftReport> {
+  dependencies: PlanDependencies = defaultPlanDependencies
+): Promise<ChannelLiftPreparationPlan> {
   const shop = config.shopify.im8.shopDomain.trim().toLowerCase();
   const tripleWhaleShop = config.channelLift.tripleWhaleShopId.trim().toLowerCase();
   if (!shop || shop !== tripleWhaleShop) throw new ChannelLiftError("shop_identity_mismatch");
 
   const extractionInput = tripleWhaleInput(reportingDate, tripleWhaleShop);
-  const extraction = await dependencies.readAttribution({
+  const extraction = await dependencies.readSummary({
     ...extractionInput,
     apiKey: config.channelLift.tripleWhaleApiKey,
   });
-  const mapped = mapAndDeduplicateChannels(
-    extraction.rows,
-    CHANNEL_LIFT_MAPPING,
-    CHANNEL_LIFT_ALLOWLIST
-  );
-  const orders = await dependencies.readOrders([
-    ...new Set(mapped.pairs.map((pair) => pair.orderId)),
-  ]);
-  const exclusionCounts = { ...mapped.exclusions };
-  const events: MetaChannelLiftEvent[] = [];
-  const deliveryBatches: ChannelLiftDeliveryBatch[] = [];
-  for (let offset = 0; offset < mapped.pairs.length; offset += META_BATCH_SIZE) {
-    const pairs = mapped.pairs.slice(offset, offset + META_BATCH_SIZE);
-    const batch = buildEvents({ pairs, orders, shop, eligibilityCutoffSeconds });
-    mergeCounts(exclusionCounts, batch.exclusions);
-    events.push(...batch.events);
-    deliveryBatches.push({
+  const mappingExclusions: Record<string, number> = {};
+  let mappedPairs = 0;
+  for (const summary of extraction.channels) {
+    if (
+      !summary.channel ||
+      !Object.prototype.hasOwnProperty.call(CHANNEL_LIFT_MAPPING, summary.channel)
+    ) {
+      mappingExclusions.unknown_channel = (mappingExclusions.unknown_channel ?? 0) + summary.rows;
+      continue;
+    }
+    const mapped = CHANNEL_LIFT_MAPPING[summary.channel];
+    if (mapped === null) {
+      mappingExclusions.excluded_channel = (mappingExclusions.excluded_channel ?? 0) + summary.rows;
+      continue;
+    }
+    if (!mapped || !/^[A-Za-z][A-Za-z0-9]*$/.test(mapped)) {
+      throw new ChannelLiftError("invalid_channel_mapping");
+    }
+    if (!CHANNEL_LIFT_ALLOWLIST.includes(mapped as "Klaviyo")) {
+      mappingExclusions.outside_allowlist =
+        (mappingExclusions.outside_allowlist ?? 0) + summary.rows;
+      continue;
+    }
+    mappedPairs += summary.pairs;
+  }
+  const candidateBatches: ChannelLiftCandidateBatch[] = [];
+  for (let offset = 0; offset < mappedPairs; offset += META_BATCH_SIZE) {
+    candidateBatches.push({
       candidateOffset: offset,
-      candidateCount: pairs.length,
-      eventCount: batch.events.length,
-      digest: channelLiftDigest([pairs, batch.events]),
+      candidateCount: Math.min(META_BATCH_SIZE, mappedPairs - offset),
     });
   }
-
-  events.sort((left, right) => left.event_id.localeCompare(right.event_id));
-  const configHash = reportConfigHash(extraction.configHash);
-  const snapshotHash = channelLiftDigest([
-    extraction.snapshotHash,
-    eligibilityCutoffSeconds,
-    events,
-    deliveryBatches,
-    Object.entries(exclusionCounts).sort(([left], [right]) => left.localeCompare(right)),
-  ]);
-
   return {
-    events,
-    evidence: {
-      counts: extraction.counts,
-      mappedPairs: mapped.pairs.length,
-      eligibleEvents: events.length,
-      exclusionCounts,
-      configHash,
-      snapshotHash,
-      deliveryBatches,
-    },
+    counts: extraction.counts,
+    mappedPairs,
+    mappingExclusions,
+    extractionConfigHash: extraction.configHash,
+    extractionSnapshotHash: extraction.snapshotHash,
+    candidateBatches,
   };
 }
 
-export async function prepareChannelLiftDeliveryBatch(
+export async function prepareChannelLiftCandidateBatch(
   {
     reportingDate,
     eligibilityCutoffSeconds,
     expectedCounts,
     expectedMappedPairs,
-    batch,
+    candidateBatch,
   }: {
     reportingDate: string;
     eligibilityCutoffSeconds: number;
     expectedCounts: AttributionCounts;
     expectedMappedPairs: number;
-    batch: ChannelLiftDeliveryBatch;
+    candidateBatch: ChannelLiftCandidateBatch;
   },
   dependencies: DeliveryBatchDependencies = defaultDeliveryBatchDependencies
-): Promise<{ events: MetaChannelLiftEvent[]; digest: string; configHash: string }> {
+): Promise<{
+  events: MetaChannelLiftEvent[];
+  batch: ChannelLiftDeliveryBatch;
+  exclusionCounts: Record<string, number>;
+  configHash: string;
+}> {
   const shop = config.shopify.im8.shopDomain.trim().toLowerCase();
   const tripleWhaleShop = config.channelLift.tripleWhaleShopId.trim().toLowerCase();
   if (!shop || shop !== tripleWhaleShop) throw new ChannelLiftError("shop_identity_mismatch");
@@ -249,11 +256,14 @@ export async function prepareChannelLiftDeliveryBatch(
   const rows = await dependencies.readPairPage({
     ...credentials,
     sourceChannels: SOURCE_CHANNELS,
-    offset: batch.candidateOffset,
-    limit: batch.candidateCount,
+    offset: candidateBatch.candidateOffset,
+    limit: candidateBatch.candidateCount,
   });
   const mapped = mapAndDeduplicateChannels(rows, CHANNEL_LIFT_MAPPING, CHANNEL_LIFT_ALLOWLIST);
-  if (mapped.pairs.length !== batch.candidateCount || Object.keys(mapped.exclusions).length > 0) {
+  if (
+    mapped.pairs.length !== candidateBatch.candidateCount ||
+    Object.keys(mapped.exclusions).length > 0
+  ) {
     throw new ChannelLiftError("prepared_snapshot_changed");
   }
   const orders = await dependencies.readOrders([
@@ -267,9 +277,95 @@ export async function prepareChannelLiftDeliveryBatch(
   });
   return {
     events: prepared.events,
-    digest: channelLiftDigest([mapped.pairs, prepared.events]),
+    batch: {
+      ...candidateBatch,
+      eventCount: prepared.events.length,
+      digest: channelLiftDigest([mapped.pairs, prepared.events]),
+    },
+    exclusionCounts: prepared.exclusions,
     configHash: reportConfigHash(
       tripleWhaleAttributionConfigHash(tripleWhaleInput(reportingDate, tripleWhaleShop))
     ),
+  };
+}
+
+export function finalizeChannelLiftEvidence({
+  plan,
+  preparedBatches,
+  eligibilityCutoffSeconds,
+}: {
+  plan: ChannelLiftPreparationPlan;
+  preparedBatches: Array<{
+    batch: ChannelLiftDeliveryBatch;
+    exclusionCounts: Record<string, number>;
+    configHash: string;
+  }>;
+  eligibilityCutoffSeconds: number;
+}): ChannelLiftEvidence {
+  if (preparedBatches.length !== plan.candidateBatches.length) {
+    throw new ChannelLiftError("prepared_batch_inventory_mismatch");
+  }
+  const exclusionCounts = { ...plan.mappingExclusions };
+  let eligibleEvents = 0;
+  for (const [index, prepared] of preparedBatches.entries()) {
+    const planned = plan.candidateBatches[index];
+    if (
+      prepared.batch.candidateOffset !== planned.candidateOffset ||
+      prepared.batch.candidateCount !== planned.candidateCount ||
+      prepared.configHash !== reportConfigHash(plan.extractionConfigHash)
+    ) {
+      throw new ChannelLiftError("prepared_batch_inventory_mismatch");
+    }
+    eligibleEvents += prepared.batch.eventCount;
+    mergeCounts(exclusionCounts, prepared.exclusionCounts);
+  }
+  const deliveryBatches = preparedBatches.map((prepared) => prepared.batch);
+  const configHash = reportConfigHash(plan.extractionConfigHash);
+  return {
+    counts: plan.counts,
+    mappedPairs: plan.mappedPairs,
+    eligibleEvents,
+    exclusionCounts,
+    configHash,
+    snapshotHash: channelLiftDigest([
+      plan.extractionSnapshotHash,
+      eligibilityCutoffSeconds,
+      deliveryBatches,
+      Object.entries(exclusionCounts).sort(([left], [right]) => left.localeCompare(right)),
+    ]),
+    deliveryBatches,
+  };
+}
+
+export async function prepareChannelLiftDeliveryBatch(
+  {
+    reportingDate,
+    eligibilityCutoffSeconds,
+    expectedCounts,
+    expectedMappedPairs,
+    batch,
+  }: {
+    reportingDate: string;
+    eligibilityCutoffSeconds: number;
+    expectedCounts: AttributionCounts;
+    expectedMappedPairs: number;
+    batch: ChannelLiftDeliveryBatch;
+  },
+  dependencies: DeliveryBatchDependencies = defaultDeliveryBatchDependencies
+): Promise<{ events: MetaChannelLiftEvent[]; digest: string; configHash: string }> {
+  const prepared = await prepareChannelLiftCandidateBatch(
+    {
+      reportingDate,
+      eligibilityCutoffSeconds,
+      expectedCounts,
+      expectedMappedPairs,
+      candidateBatch: batch,
+    },
+    dependencies
+  );
+  return {
+    events: prepared.events,
+    digest: prepared.batch.digest,
+    configHash: prepared.configHash,
   };
 }

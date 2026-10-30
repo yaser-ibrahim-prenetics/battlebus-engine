@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ChannelLiftError, type MetaChannelLiftEvent } from "@/lib/channel-lift/model";
+import {
+  ChannelLiftError,
+  channelLiftRunId,
+  type MetaChannelLiftEvent,
+} from "@/lib/channel-lift/model";
 
 const mocks = vi.hoisted(() => ({
   options: undefined as Record<string, unknown> | undefined,
-  prepare: vi.fn(),
+  preparePlan: vi.fn(),
+  prepareCandidate: vi.fn(),
+  finalize: vi.fn(),
   prepareBatch: vi.fn(),
   send: vi.fn(),
   start: vi.fn(),
@@ -33,7 +39,9 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 vi.mock("@/lib/services/channel-lift/report", () => ({
-  prepareChannelLiftReport: mocks.prepare,
+  prepareChannelLiftPlan: mocks.preparePlan,
+  prepareChannelLiftCandidateBatch: mocks.prepareCandidate,
+  finalizeChannelLiftEvidence: mocks.finalize,
   prepareChannelLiftDeliveryBatch: mocks.prepareBatch,
 }));
 vi.mock("@/lib/clients/meta-conversions", () => ({
@@ -49,7 +57,8 @@ vi.mock("@/lib/services/channel-lift/runs", () => ({
 
 import { processMetaChannelLift } from "@/inngest/functions/process-meta-channel-lift";
 
-const runId = `channel_lift_${"a".repeat(64)}`;
+const runId = channelLiftRunId("2026-10-28", "live");
+const dryRunId = channelLiftRunId("2026-10-28", "dry_run");
 const event: MetaChannelLiftEvent = {
   event_name: "Purchase_Klaviyo",
   event_id: "event-1",
@@ -69,6 +78,14 @@ const evidence = {
   deliveryBatches: [
     { candidateOffset: 0, candidateCount: 1, eventCount: 1, digest: "d".repeat(64) },
   ],
+};
+const plan = {
+  counts: evidence.counts,
+  mappedPairs: evidence.mappedPairs,
+  mappingExclusions: {},
+  extractionConfigHash: "a".repeat(64),
+  extractionSnapshotHash: "f".repeat(64),
+  candidateBatches: [{ candidateOffset: 0, candidateCount: 1 }],
 };
 
 function step() {
@@ -99,16 +116,28 @@ describe("Meta channel-lift workflow", () => {
     vi.clearAllMocks();
     mocks.start.mockResolvedValue({
       disposition: "started",
+      acceptedRequestId: "request",
+      acceptedSource: "manual",
       run: {
         runId,
         reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "request",
         eligibilityCutoffSeconds: 1_798_000_000,
         attemptedEvents: 0,
         deliveredEvents: 0,
         batchCount: 0,
       },
     });
-    mocks.prepare.mockResolvedValue({ events: [event], evidence });
+    mocks.preparePlan.mockResolvedValue(plan);
+    mocks.prepareCandidate.mockResolvedValue({
+      events: [event],
+      batch: evidence.deliveryBatches[0],
+      exclusionCounts: {},
+      configHash: evidence.configHash,
+    });
+    mocks.finalize.mockReturnValue(evidence);
     mocks.prepareBatch.mockResolvedValue({
       events: [event],
       digest: evidence.deliveryBatches[0].digest,
@@ -132,13 +161,55 @@ describe("Meta channel-lift workflow", () => {
   });
 
   it("completes a dry-run without any Meta write", async () => {
+    mocks.start.mockResolvedValue({
+      disposition: "started",
+      acceptedRequestId: "request",
+      acceptedSource: "manual",
+      run: {
+        runId: dryRunId,
+        reportingDate: "2026-10-28",
+        mode: "dry_run",
+        source: "manual",
+        requestId: "request",
+        eligibilityCutoffSeconds: 1_798_000_000,
+        attemptedEvents: 0,
+        deliveredEvents: 0,
+      },
+    });
     const handler = processMetaChannelLift as unknown as (
       input: ReturnType<typeof invocation>
     ) => Promise<Record<string, unknown>>;
     const result = await handler(invocation("dry_run"));
     expect(result).toMatchObject({ status: "dry_run_completed", eligibleEvents: 1 });
     expect(mocks.send).not.toHaveBeenCalled();
-    expect(mocks.complete).toHaveBeenCalledWith(runId, "dry_run");
+    expect(mocks.complete).toHaveBeenCalledWith(dryRunId, "dry_run");
+  });
+
+  it("rejects a reservation that does not match the requested mode", async () => {
+    mocks.start.mockResolvedValue({
+      disposition: "started",
+      acceptedRequestId: "request",
+      acceptedSource: "manual",
+      run: {
+        runId,
+        reportingDate: "2026-10-28",
+        mode: "dry_run",
+        source: "manual",
+        requestId: "request",
+        eligibilityCutoffSeconds: 1_798_000_000,
+        attemptedEvents: 0,
+        deliveredEvents: 0,
+      },
+    });
+    await expect(
+      (
+        processMetaChannelLift as unknown as (
+          input: ReturnType<typeof invocation>
+        ) => Promise<Record<string, unknown>>
+      )(invocation("live"))
+    ).resolves.toEqual({ status: "reservation_mismatch", runId });
+    expect(mocks.preparePlan).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("checkpoints bounded live batches and progress", async () => {
@@ -150,10 +221,25 @@ describe("Meta channel-lift workflow", () => {
       { candidateOffset: 0, candidateCount: 500, eventCount: 500, digest: "d".repeat(64) },
       { candidateOffset: 500, candidateCount: 1, eventCount: 1, digest: "e".repeat(64) },
     ];
-    mocks.prepare.mockResolvedValue({
-      events,
-      evidence: { ...evidence, eligibleEvents: 501, deliveryBatches },
+    mocks.preparePlan.mockResolvedValue({
+      ...plan,
+      mappedPairs: 501,
+      candidateBatches: deliveryBatches.map(({ candidateOffset, candidateCount }) => ({
+        candidateOffset,
+        candidateCount,
+      })),
     });
+    mocks.prepareCandidate.mockImplementation(
+      async ({ candidateBatch }: { candidateBatch: { candidateOffset: number } }) => ({
+        events: [],
+        batch: deliveryBatches.find(
+          (batch) => batch.candidateOffset === candidateBatch.candidateOffset
+        ),
+        exclusionCounts: {},
+        configHash: evidence.configHash,
+      })
+    );
+    mocks.finalize.mockReturnValue({ ...evidence, eligibleEvents: 501, deliveryBatches });
     mocks.prepareBatch.mockImplementation(
       async ({ batch }: { batch: (typeof deliveryBatches)[number] }) => ({
         events: events.slice(batch.candidateOffset, batch.candidateOffset + batch.eventCount),
@@ -175,7 +261,8 @@ describe("Meta channel-lift workflow", () => {
       batchCount: 2,
     });
     expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+    expect(mocks.preparePlan).toHaveBeenCalledTimes(1);
+    expect(mocks.prepareCandidate).toHaveBeenCalledTimes(2);
     expect(mocks.prepareBatch).toHaveBeenCalledTimes(2);
     expect(mocks.progress).toHaveBeenLastCalledWith({
       runId,
@@ -212,19 +299,39 @@ describe("Meta channel-lift workflow", () => {
     ];
     mocks.start.mockResolvedValue({
       disposition: "started",
+      acceptedRequestId: "request",
+      acceptedSource: "manual",
       run: {
         runId,
         reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "request",
         eligibilityCutoffSeconds: 1_798_000_000,
         attemptedEvents: 501,
         deliveredEvents: 500,
         batchCount: 2,
       },
     });
-    mocks.prepare.mockResolvedValue({
-      events,
-      evidence: { ...evidence, eligibleEvents: 501, deliveryBatches },
+    mocks.preparePlan.mockResolvedValue({
+      ...plan,
+      mappedPairs: 501,
+      candidateBatches: deliveryBatches.map(({ candidateOffset, candidateCount }) => ({
+        candidateOffset,
+        candidateCount,
+      })),
     });
+    mocks.prepareCandidate.mockImplementation(
+      async ({ candidateBatch }: { candidateBatch: { candidateOffset: number } }) => ({
+        events: [],
+        batch: deliveryBatches.find(
+          (batch) => batch.candidateOffset === candidateBatch.candidateOffset
+        ),
+        exclusionCounts: {},
+        configHash: evidence.configHash,
+      })
+    );
+    mocks.finalize.mockReturnValue({ ...evidence, eligibleEvents: 501, deliveryBatches });
     mocks.prepareBatch.mockResolvedValue({
       events: [events[500]],
       digest: deliveryBatches[1].digest,
@@ -248,10 +355,25 @@ describe("Meta channel-lift workflow", () => {
       { candidateOffset: 0, candidateCount: 500, eventCount: 0, digest: "a".repeat(64) },
       { candidateOffset: 500, candidateCount: 1, eventCount: 1, digest: "d".repeat(64) },
     ];
-    mocks.prepare.mockResolvedValue({
-      events: [event],
-      evidence: { ...evidence, deliveryBatches },
+    mocks.preparePlan.mockResolvedValue({
+      ...plan,
+      mappedPairs: 501,
+      candidateBatches: deliveryBatches.map(({ candidateOffset, candidateCount }) => ({
+        candidateOffset,
+        candidateCount,
+      })),
     });
+    mocks.prepareCandidate.mockImplementation(
+      async ({ candidateBatch }: { candidateBatch: { candidateOffset: number } }) => ({
+        events: [],
+        batch: deliveryBatches.find(
+          (batch) => batch.candidateOffset === candidateBatch.candidateOffset
+        ),
+        exclusionCounts: {},
+        configHash: evidence.configHash,
+      })
+    );
+    mocks.finalize.mockReturnValue({ ...evidence, deliveryBatches });
     mocks.prepareBatch.mockImplementation(
       async ({ batch }: { batch: (typeof deliveryBatches)[number] }) => ({
         events: batch.eventCount === 0 ? [] : [event],

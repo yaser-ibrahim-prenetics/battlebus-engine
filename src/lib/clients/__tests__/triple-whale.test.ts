@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   readTripleWhaleAttribution,
+  readTripleWhaleAttributionSummary,
   readTripleWhaleMappedPairPage,
 } from "@/lib/clients/triple-whale";
 
@@ -13,6 +14,41 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("Triple Whale channel-lift client", () => {
+  it("builds a payload-free bounded channel summary", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ rows: "3", orders: "2", pairs: "2" }]))
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { channel: "klaviyo", rows: "2", pairs: "1" },
+          { channel: "other", rows: "1", pairs: "1" },
+        ])
+      )
+      .mockResolvedValueOnce(jsonResponse([{ rows: "3", orders: "2", pairs: "2" }]));
+
+    await expect(
+      readTripleWhaleAttributionSummary(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          pageSize: 500,
+          maxRows: 100,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).resolves.toMatchObject({
+      counts: { rows: 3, orders: 2, pairs: 2 },
+      channels: [
+        { channel: "klaviyo", rows: 2, pairs: 1 },
+        { channel: "other", rows: 1, pairs: 1 },
+      ],
+    });
+    const request = JSON.parse(String(fetch.mock.calls[1][1]?.body));
+    expect(request.query).toContain("GROUP BY channel");
+    expect(request.query).not.toContain("order_id, channel, event_date");
+  });
+
   it("fetches bounded pages and reconciles the aggregate inventory", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
@@ -191,9 +227,7 @@ describe("Triple Whale channel-lift client", () => {
         },
         { fetch, sleep: vi.fn() }
       )
-    ).resolves.toEqual([
-      { orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" },
-    ]);
+    ).resolves.toEqual([{ orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" }]);
     const request = JSON.parse(String(fetch.mock.calls[0][1]?.body));
     expect(request.query).toContain("GROUP BY order_id, channel");
     expect(request.query).toContain("LIMIT 500 OFFSET 500");
