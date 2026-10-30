@@ -1,5 +1,6 @@
 import { Inngest } from "inngest";
 import { validateConfig } from "@/lib/config";
+import { WorkflowHealthMiddleware } from "./middleware/workflow-health";
 import { InngestApiRateLimitTerminalMiddleware } from "./middleware/inngest-api-rate-limit-terminal";
 
 // Create the Inngest client with checkpointing below Cloud Run's request timeout.
@@ -10,7 +11,11 @@ export const inngest = new Inngest({
   checkpointing: {
     maxRuntime: "240s",
   },
-  middleware: [InngestApiRateLimitTerminalMiddleware],
+  middleware: [
+    process.env.CUTOVER_HEALTH_ENABLED === "true"
+      ? WorkflowHealthMiddleware
+      : InngestApiRateLimitTerminalMiddleware,
+  ],
 });
 
 const { valid, errors } = validateConfig();

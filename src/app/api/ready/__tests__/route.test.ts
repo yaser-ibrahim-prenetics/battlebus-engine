@@ -5,7 +5,9 @@ const database = vi.hoisted(() => ({ configured: vi.fn(), query: vi.fn() }));
 const appConfig = vi.hoisted(() => ({
   shopify: { im8: { shopDomain: "test.invalid", accessToken: "local-only" } },
   csPlatform: { enabled: true, baseUrl: "https://hub.invalid", webhookSecret: "local-only" },
-  features: { dryRunMode: true },
+  features: { dryRunMode: true, enableDynamicsSync: false, enableGpsSync: false },
+  reconciliation: { directD365Enabled: false },
+  dynamics: { baseUrl: "", tenantId: "", clientId: "", clientSecret: "" },
   channelLift: { enabled: false },
 }));
 vi.mock("@/lib/db/database", () => ({
@@ -73,4 +75,16 @@ it("fails closed when enabled channel-lift schema is unavailable", async () => {
 it("keeps detailed readiness authenticated before querying", async () => {
   expect((await detailed(new NextRequest("https://bus.invalid/api/readiness"))).status).toBe(401);
   expect(database.query).not.toHaveBeenCalled();
+});
+
+it("keeps configured Inngest and Hub dependencies unverified for cutover probes", async () => {
+  const { getReadinessReport } = await import("@/lib/services/readiness");
+  const result = await getReadinessReport();
+  for (const name of ["inngest", "battleHub"]) {
+    expect(result.dependencies.find((item) => item.name === name)).toMatchObject({
+      required: true,
+      status: "ready",
+      check: "configuration",
+    });
+  }
 });

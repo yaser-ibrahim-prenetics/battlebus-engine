@@ -182,3 +182,73 @@ export async function checkReadiness() {
     dryRun: config.features.dryRunMode,
   };
 }
+
+export type ReadinessDependency = {
+  name: string;
+  required: boolean;
+  status: "ready" | "unavailable" | "disabled";
+  check: "configuration" | "connectivity";
+};
+/**
+ * Compatibility report for the stricter cutover gate. Provider credentials are
+ * only configuration signals here; dependency-health upgrades them to an
+ * authenticated read before it can certify a cutover.
+ */
+export async function getReadinessReport(): Promise<{
+  ok: boolean;
+  dependencies: ReadinessDependency[];
+}> {
+  const basic = await checkReadiness();
+  const configured = (name: keyof typeof basic.dependencies) => basic.dependencies[name].ready;
+  const dependency = (
+    name: string,
+    required: boolean,
+    ready: boolean,
+    check: ReadinessDependency["check"]
+  ): ReadinessDependency => ({
+    name,
+    required,
+    status: !required ? "disabled" : ready ? "ready" : "unavailable",
+    check,
+  });
+
+  const dependencies: ReadinessDependency[] = [
+    dependency("cloudSql", true, configured("cloudSql"), "connectivity"),
+    dependency(
+      "channelLift",
+      config.channelLift.enabled,
+      basic.dependencies.channelLift?.ready === true,
+      "configuration"
+    ),
+    dependency("shopify", true, configured("shopify"), "configuration"),
+    dependency("inngest", true, configured("inngest"), "configuration"),
+    dependency("battleHub", config.csPlatform.enabled, configured("battleHub"), "configuration"),
+    dependency(
+      "dynamics",
+      config.features.enableDynamicsSync || config.reconciliation.directD365Enabled,
+      Boolean(
+        config.dynamics.baseUrl &&
+        config.dynamics.tenantId &&
+        config.dynamics.clientId &&
+        config.dynamics.clientSecret
+      ),
+      "configuration"
+    ),
+    dependency(
+      "gps_us",
+      config.features.enableGpsSync,
+      !config.features.dryRunMode,
+      "configuration"
+    ),
+    dependency(
+      "gps_uk",
+      config.features.enableGpsSync,
+      !config.features.dryRunMode,
+      "configuration"
+    ),
+  ];
+  return {
+    ok: basic.ok && dependencies.every((item) => !item.required || item.status === "ready"),
+    dependencies,
+  };
+}

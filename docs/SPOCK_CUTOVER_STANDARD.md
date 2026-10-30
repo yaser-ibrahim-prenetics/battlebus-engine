@@ -1,0 +1,136 @@
+# Spock replacement cutover standard
+
+Historical foundation reference: Spock Store develop at
+`66540e77d4f415c8280d59816e320c712a83b53d`. This foundation is ported onto current main. Before collecting cutover evidence, the
+registry and adapters must be regenerated against the intended current immutable
+Spock `develop` commit; evidence for this historical reference cannot certify a
+newer Spock revision.
+
+## Required evidence
+
+A build or a unit-test pass does not certify replacement readiness. The registry in
+`config/spock-workflows.json` conservatively includes non-Europa capabilities,
+including CircleDNA, Extensiv, Prive, administrative replay and the newly added
+Dynamics reconciliation. Their production activity is not assumed absent.
+
+For every registered workflow, require version-bound automated contract runs,
+historical production replays, shadow observations, and recovery drill evidence.
+Compare financial, order, fulfillment and inventory effects, including explicit
+empty results for domains with no effects. Missing adapters, missing snapshots,
+errors, duplicate output identities and mismatches block the gate. Preserve every
+discrepancy; a later passing sample does not erase an earlier failure.
+
+## Implementation boundaries
+
+Domain decisions and comparison rules have no database, cloud or queue dependency.
+Adapters normalize provider records at their boundaries. The replay runner passes
+the same immutable input and frozen context to both adapters. Never route a replay
+into live mutation endpoints. An isolated environment must use capture-only
+provider adapters and its own storage, queue IDs and credentials.
+
+Historical payloads and recorded provider reads can contain customer data; keep
+them in approved private storage. Only input hashes, output hashes, discrepancy
+paths and run provenance belong in the cutover evidence tables or Hub.
+Production replay and sustained shadow operation require approved inputs and
+isolated adapters; they cannot be established using synthetic fixtures.
+
+## Release sequence
+
+1. Apply expand-only migrations before deploying application and Hub revisions.
+2. Run paired contract cases against the pinned Spock revision and candidate Bus.
+3. Import approved historical cases with frozen provider-read context and compare effects.
+4. Mirror production inputs to isolated replay workers while Spock remains the writer.
+5. Run fault, retry, duplicate and replay drills; inspect durable evidence and SLOs.
+6. Review every remaining gap. Do not disable a capability to make the gate pass.
+7. Obtain operational sign-off for traffic switching and keep the Spock rollback path.
+
+This PR does not switch production traffic or certify evidence that has not been collected.
+
+## Current implementation status
+
+This change implements an evidence/reporting foundation, not complete Spock replacement.
+The workflow registry deliberately marks full paired workflow adapters as
+`not_implemented`; these entries block readiness even if someone imports positive
+sample counts. Shipping behavior is unchanged by this port. No full workflow adapter is validated.
+
+The paired runner validates and freezes identical payload/context copies, applies
+deadlines, compares strict business-output schemas, and persists hashes/provenance.
+Trusted executable adapters must be supplied in an approved isolated worker.
+`CUTOVER_ISOLATED_WORKER=true` is an operator prerequisite, NOT network isolation.
+This PR does not provide production adapters, a live mirroring transport, frozen
+provider-context capture, or automated fault-injection drills. Never import live
+Spock or Bus handlers into the worker with production credentials.
+
+The existing structured reconciliation history remains intact; cutover execution
+evidence adds an append-only trail rather than replacing it.
+
+## Commands
+
+```sh
+CUTOVER_ISOLATED_WORKER=true npm run cutover:replay -- /private/cases.jsonl /approved/spock-adapter.mjs /approved/bus-adapter.mjs
+```
+
+Each adapter exports a default `ReplayAdapter` (see `contracts.ts`) and must supply
+its actual immutable source revision. The Spock revision must equal the registry.
+Cases are JSONL `ReplayCase` objects, with opaque case/source identifiers, workflow,
+mode, provenance, capture time, payload, and frozen provider-read context. Only
+metadata and hashes are persisted; input files must remain in approved private
+storage and outside version control. Deadline aborts are cooperative: worker
+isolation must prevent side effects even when an adapter ignores its AbortSignal.
+
+Apply migrations 59–67 before deploying these fixes. Provision an independent
+worker database identity with membership in `battle_bus_replay_writer` only (not
+`service_role` or `battle_bus_runtime`). Configure the isolated worker's normal
+`DATABASE_URL` or Cloud SQL IAM settings for that identity; never copy application
+runtime credentials into it. The CLI verifies role separation before loading
+adapters. Provisioning this identity requires operator approval outside migrations.
+The writer can INSERT evidence but cannot read, update, delete or write application
+tables. Runtime can read evidence but cannot insert it. Health metrics remain
+runtime telemetry, not independent attestation. Rollback of migration 67 restores
+the older runtime write permission and must not be used during a cutover assessment.
+
+GET `/api/admin/cutover?revision=<git-sha>` requires `BATTLE_BUS_API_KEY`.
+HTTP 200 returns an assessment, not approval. Evidence/storage/probe failures
+return unavailable; an undeployed candidate cannot pass using current health.
+Battle Hub requires its server-side `BATTLE_BUS_API_KEY` to match.
+No credentials should be exposed through client environment variables.
+
+## Operational objectives and remaining blockers
+
+Provisional targets: p95 event-to-completion <= 30 minutes, terminal failure rate
+<= 1%, oldest running/unpublished item <= 1 hour; minimum 100 completed samples.
+These are not business-approved targets. Intentional 24-hour refund holds and
+workflow sleeps are included; workflow-specific objectives must be agreed before
+cutover. Metrics cover instrumented Inngest executions and the durable webhook inbox,
+not missing events or every external provider's internal queue. Cancelled runs
+without terminal hooks remain visible as backlog.
+
+Configuration checks do not certify dependency access. The authenticated report
+adds bounded read probes for Shopify, Dynamics and both GPS warehouses; enabled
+dependencies without probes remain `unverified`. Public process readiness is
+unchanged. Probes are shared and cached for 30 seconds. GPS/Dynamics clients may
+finish their read after the report deadline; no mutation probe is used.
+
+Remaining release blockers: all full-workflow adapters and component extraction,
+approved historical payloads/context, isolated shadow transport/environment,
+seven complete UTC observation days, named recovery/fault drills, complete
+authenticated dependency probes, operational SLO approval and final cutover sign-off.
+The numeric recovery threshold is only a minimum sample count, not proof of all
+fault scenarios. The gate must not be used as automatic traffic-switch authority.
+
+## Current-main port and activation boundary
+
+Migrations 59–67 are additive; the obsolete event-outbox stack is not restored.
+Workflow queue health reads the current leased webhook inbox. Deployment readiness
+and configurable shipping behavior remain unchanged. Inngest and Hub configuration
+alone is explicitly unverified for cutover; authenticated probes must be implemented
+before their health can qualify.
+
+Terminal-run health instrumentation defaults off (`CUTOVER_HEALTH_ENABLED` must be
+explicitly `true` to register it). When enabled it extends the existing rate-limit
+and workflow-observation middleware, preserving wait and stale-run tracking. The
+assessment endpoint returns `ready: false` while instrumentation is disabled.
+Apply migrations first and provision only an isolated worker with the replay-writer
+role. No activation, provider writes, shadow run or cutover sign-off is performed
+by this foundation PR. Historical registry revision and all missing adapters remain
+visible blockers; merging this code does not approve traffic switching.
