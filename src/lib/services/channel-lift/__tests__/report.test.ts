@@ -140,10 +140,12 @@ describe("channel-lift report preparation", () => {
         reportingDate: "2026-10-28",
         eligibilityCutoffSeconds: 1_793_275_200,
         expectedCounts: report.evidence.counts,
+        expectedMappedPairs: report.evidence.mappedPairs,
         batch: report.evidence.deliveryBatches[0],
       },
       {
         readCounts: vi.fn().mockResolvedValue(report.evidence.counts),
+        readPairCount: vi.fn().mockResolvedValue(report.evidence.mappedPairs),
         readPairPage: vi
           .fn()
           .mockResolvedValue([

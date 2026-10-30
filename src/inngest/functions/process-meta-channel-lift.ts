@@ -140,6 +140,7 @@ export const processMetaChannelLift = inngest.createFunction(
             reportingDate: event.data.reportingDate,
             eligibilityCutoffSeconds,
             expectedCounts: evidence.counts,
+            expectedMappedPairs: evidence.mappedPairs,
             batch: batchEvidence,
           });
           await recordChannelLiftPrepared({ runId, ...evidence });

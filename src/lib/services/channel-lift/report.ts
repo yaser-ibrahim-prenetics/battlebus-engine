@@ -15,6 +15,7 @@ import { META_GRAPH_API_VERSION } from "@/lib/clients/meta-conversions";
 import {
   readTripleWhaleAttribution,
   readTripleWhaleAttributionCounts,
+  readTripleWhaleMappedPairCount,
   readTripleWhaleMappedPairPage,
   tripleWhaleAttributionConfigHash,
 } from "@/lib/clients/triple-whale";
@@ -27,6 +28,7 @@ type ReportDependencies = {
 
 type DeliveryBatchDependencies = {
   readCounts: typeof readTripleWhaleAttributionCounts;
+  readPairCount: typeof readTripleWhaleMappedPairCount;
   readPairPage: typeof readTripleWhaleMappedPairPage;
   readOrders: typeof readChannelLiftOrders;
 };
@@ -38,6 +40,7 @@ const defaultDependencies: ReportDependencies = {
 
 const defaultDeliveryBatchDependencies: DeliveryBatchDependencies = {
   readCounts: readTripleWhaleAttributionCounts,
+  readPairCount: readTripleWhaleMappedPairCount,
   readPairPage: readTripleWhaleMappedPairPage,
   readOrders: readChannelLiftOrders,
 };
@@ -210,11 +213,13 @@ export async function prepareChannelLiftDeliveryBatch(
     reportingDate,
     eligibilityCutoffSeconds,
     expectedCounts,
+    expectedMappedPairs,
     batch,
   }: {
     reportingDate: string;
     eligibilityCutoffSeconds: number;
     expectedCounts: AttributionCounts;
+    expectedMappedPairs: number;
     batch: ChannelLiftDeliveryBatch;
   },
   dependencies: DeliveryBatchDependencies = defaultDeliveryBatchDependencies
@@ -234,6 +239,13 @@ export async function prepareChannelLiftDeliveryBatch(
     counts.orders !== expectedCounts.orders ||
     counts.pairs !== expectedCounts.pairs
   ) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
+  const mappedPairCount = await dependencies.readPairCount({
+    ...credentials,
+    sourceChannels: SOURCE_CHANNELS,
+  });
+  if (mappedPairCount !== expectedMappedPairs) {
     throw new ChannelLiftError("triple_whale_snapshot_changed");
   }
   const rows = await dependencies.readPairPage({

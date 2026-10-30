@@ -184,6 +184,24 @@ export async function readTripleWhaleMappedPairPage(
   });
 }
 
+export async function readTripleWhaleMappedPairCount(
+  input: TripleWhaleCredentials & { sourceChannels: readonly string[] },
+  dependencies: TripleWhaleDependencies = defaultDependencies
+): Promise<number> {
+  validateCredentials(input);
+  if (
+    input.sourceChannels.length < 1 ||
+    input.sourceChannels.some((channel) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(channel))
+  ) {
+    throw new ChannelLiftError("triple_whale_pair_page_invalid");
+  }
+  const channelList = input.sourceChannels.map((channel) => `'${channel}'`).join(",");
+  const sql = `SELECT COUNT(DISTINCT tuple(order_id, channel)) AS pairs FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} AND channel IN (${channelList})`;
+  const rows = await queryTripleWhale(input, sql, dependencies);
+  if (rows.length !== 1) throw new ChannelLiftError("triple_whale_aggregate_shape");
+  return parseCount(rows[0].pairs);
+}
+
 export async function readTripleWhaleAttribution(
   input: TripleWhaleAttributionConfig & { apiKey: string },
   dependencies: TripleWhaleDependencies = defaultDependencies

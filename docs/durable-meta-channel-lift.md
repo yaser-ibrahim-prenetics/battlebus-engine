@@ -27,6 +27,9 @@ Europa is out of scope.
   `incident_recovery`, or `operator_replay`) and an optional issue reference
   such as `BB-123`; free-text narratives are never placed on the event bus or
   in delivery evidence.
+- A failed partial run can resume only with its original request ID. This keeps
+  the immutable audit identity intact and skips batches with exact receipts;
+  a different request ID fails closed instead of silently taking over the run.
 - Reject future dates, invalid ranges, and ranges longer than 31 days.
 
 ### Triple Whale extraction
