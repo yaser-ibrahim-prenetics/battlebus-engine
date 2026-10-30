@@ -24,6 +24,14 @@ $$;
 
 DO $$
 BEGIN
+  IF to_regprocedure('public.battle_platform_track_fulfillment_unresolved_age()') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left fulfillment unresolved-age trigger function behind';
+  END IF;
+
+  IF to_regprocedure('public.delete_retained_fulfillment_actions(integer,integer)') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left fulfillment housekeeping function behind';
+  END IF;
+
   IF to_regclass('public.battle_hub_pending_lifecycle_actions') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left Battle Hub pending-action view behind';
   END IF;

@@ -188,3 +188,4 @@ ROLLBACK;
 \ir assertions_up/020_workflow_run_health.sql
 \ir assertions_up/021_replay_writer_isolation.sql
 \ir assertions_up/022_workflow_sample_exclusion.sql
+\ir assertions_up/023_fulfillment_action_housekeeping.sql
