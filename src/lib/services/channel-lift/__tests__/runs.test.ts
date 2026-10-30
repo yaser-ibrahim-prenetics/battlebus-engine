@@ -19,6 +19,7 @@ const row = {
   reporting_date: "2026-10-28",
   mode: "live",
   source: "manual",
+  request_id: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
   status: "running",
   attempts: 1,
   expected_rows: null,
@@ -47,6 +48,7 @@ describe("channel-lift run state", () => {
         reportingDate: "2026-10-28",
         mode: "live",
         source: "manual",
+        requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
         requestedBy: "operator@example.com",
         requestReason: "Run the approved Meta delivery canary",
       })
@@ -54,7 +56,6 @@ describe("channel-lift run state", () => {
   });
 
   it("returns completed work without restarting it", async () => {
-    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     mocks.query.mockResolvedValueOnce({
       rowCount: 1,
@@ -65,9 +66,24 @@ describe("channel-lift run state", () => {
         reportingDate: "2026-10-28",
         mode: "live",
         source: "manual",
+        requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
         requestReason: "Retry the failed Meta delivery date",
       })
     ).resolves.toMatchObject({ disposition: "already_completed" });
+  });
+
+  it("resumes the same active request after an uncertain reservation receipt", async () => {
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    await expect(
+      startChannelLiftRun({
+        reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+        requestReason: "Resume the approved Meta delivery canary",
+      })
+    ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
   });
 
   it("persists only bounded aggregate preparation evidence", async () => {

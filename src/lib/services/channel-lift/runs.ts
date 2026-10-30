@@ -32,6 +32,7 @@ export type ChannelLiftRun = {
   reportingDate: string;
   mode: ChannelLiftMode;
   source: ChannelLiftSource;
+  requestId: string;
   status: ChannelLiftRunStatus;
   attempts: number;
   expectedRows: number | null;
@@ -54,6 +55,7 @@ type RunRow = QueryResultRow & {
   reporting_date: Date | string;
   mode: ChannelLiftMode;
   source: ChannelLiftSource;
+  request_id: string;
   status: ChannelLiftRunStatus;
   attempts: number;
   expected_rows: number | null;
@@ -87,6 +89,7 @@ function asRun(row: RunRow): ChannelLiftRun {
     reportingDate: dateOnly(row.reporting_date),
     mode: row.mode,
     source: row.source,
+    requestId: row.request_id,
     status: row.status,
     attempts: Number(row.attempts),
     expectedRows: row.expected_rows === null ? null : Number(row.expected_rows),
@@ -113,17 +116,22 @@ export async function startChannelLiftRun({
   reportingDate: rawReportingDate,
   mode,
   source,
+  requestId,
   requestedBy,
   requestReason,
 }: {
   reportingDate: string;
   mode: ChannelLiftMode;
   source: ChannelLiftSource;
+  requestId: string;
   requestedBy?: string;
   requestReason?: string;
 }): Promise<{ disposition: "started" | "active" | "already_completed"; run: ChannelLiftRun }> {
   requireDatabase();
   const reportingDate = validateReportingDate(rawReportingDate);
+  if (!/^[A-Za-z0-9:_-]{1,200}$/.test(requestId)) {
+    throw new ChannelLiftError("request_id_invalid");
+  }
   if (
     source === "manual" &&
     (!requestReason || requestReason.trim().length < 10 || requestReason.length > 1_000)
@@ -132,20 +140,42 @@ export async function startChannelLiftRun({
   }
   const runId = channelLiftRunId(reportingDate, mode);
   try {
-    await queryDatabase(insertChannelLiftRunSQL, [
+    const inserted = await queryDatabase(insertChannelLiftRunSQL, [
       runId,
       reportingDate,
       mode,
       source,
+      requestId,
       requestedBy?.slice(0, 320) || null,
       source === "manual" ? requestReason?.slice(0, 1_000) || null : null,
     ]);
+    if (inserted.rowCount === 0) {
+      const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
+      if (existing.rows[0]) {
+        const run = asRun(existing.rows[0]);
+        if (run.status === "queued" || run.status === "running") {
+          return {
+            disposition: run.requestId === requestId ? "started" : "active",
+            run,
+          };
+        }
+        if (run.status === "completed" || run.status === "dry_run_completed") {
+          return { disposition: "already_completed", run };
+        }
+      }
+    }
   } catch (error) {
     if (!error || typeof error !== "object" || !("code" in error) || error.code !== "23505") {
       throw error;
     }
     const active = await queryDatabase<RunRow>(readActiveChannelLiftRunSQL, [reportingDate]);
-    if (active.rows[0]) return { disposition: "active", run: asRun(active.rows[0]) };
+    if (active.rows[0]) {
+      const run = asRun(active.rows[0]);
+      return {
+        disposition: run.requestId === requestId ? "started" : "active",
+        run,
+      };
+    }
     throw error;
   }
 
@@ -220,14 +250,22 @@ export async function recordChannelLiftProgress({
 }
 
 export async function completeChannelLiftRun(runId: string, mode: ChannelLiftMode): Promise<void> {
+  const targetStatus = mode === "live" ? "completed" : "dry_run_completed";
   const result = await queryDatabase(completeChannelLiftRunSQL, [
     runId,
-    mode === "live" ? "completed" : "dry_run_completed",
+    targetStatus,
   ]);
-  if (result.rowCount !== 1) throw new Error("Channel-lift completion was not persisted");
+  if (result.rowCount === 1) return;
+  const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
+  if (existing.rows[0]?.status === targetStatus) return;
+  throw new Error("Channel-lift completion was not persisted");
 }
 
 export async function failChannelLiftRun(runId: string, errorCode: string): Promise<void> {
-  const result = await queryDatabase(failChannelLiftRunSQL, [runId, safeErrorCode(errorCode)]);
-  if (result.rowCount !== 1) throw new Error("Channel-lift failure was not persisted");
+  const code = safeErrorCode(errorCode);
+  const result = await queryDatabase(failChannelLiftRunSQL, [runId, code]);
+  if (result.rowCount === 1) return;
+  const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
+  if (existing.rows[0]?.status === "failed" && existing.rows[0].last_error_code === code) return;
+  throw new Error("Channel-lift failure was not persisted");
 }

@@ -50,6 +50,7 @@ export const processMetaChannelLift = inngest.createFunction(
         reportingDate: event.data.reportingDate,
         mode: event.data.mode,
         source: event.data.source,
+        requestId: event.data.requestId,
         requestedBy: event.data.requestedBy,
         requestReason: event.data.requestReason,
       })

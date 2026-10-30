@@ -1,7 +1,8 @@
 export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
-  (run_id, reporting_date, mode, source, requested_by, request_reason)
-  VALUES ($1, $2::date, $3, $4, $5, $6)
-  ON CONFLICT (reporting_date, mode) DO NOTHING`;
+  (run_id, reporting_date, mode, source, request_id, requested_by, request_reason)
+  VALUES ($1, $2::date, $3, $4, $5, $6, $7)
+  ON CONFLICT (reporting_date, mode) DO NOTHING
+  RETURNING run_id`;
 
 export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
   SET status='running', attempts=attempts+1, started_at=clock_timestamp(),
@@ -10,20 +11,20 @@ export const startChannelLiftRunSQL = `UPDATE public.channel_lift_runs
     AND (status IN ('queued','failed')
       OR (status='running' AND updated_at < clock_timestamp()-interval '2 hours'))
     AND attempts < 100
-  RETURNING run_id, reporting_date, mode, source, status, attempts,
+  RETURNING run_id, reporting_date, mode, source, request_id, status, attempts,
     expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
     delivered_events, config_hash, snapshot_hash, last_error_code,
     eligibility_cutoff_seconds`;
 
-export const readChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, status,
+export const readChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, request_id, status,
     attempts, expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
     delivered_events, config_hash, snapshot_hash, last_error_code,
     eligibility_cutoff_seconds
   FROM public.channel_lift_runs WHERE run_id=$1`;
 
-export const readActiveChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, status,
+export const readActiveChannelLiftRunSQL = `SELECT run_id, reporting_date, mode, source, request_id, status,
     attempts, expected_rows, expected_orders, expected_pairs, mapped_pairs,
     eligible_events, exclusion_counts, batch_count, attempted_events,
     delivered_events, config_hash, snapshot_hash, last_error_code,

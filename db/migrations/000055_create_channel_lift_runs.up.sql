@@ -5,6 +5,7 @@ CREATE TABLE public.channel_lift_runs (
   reporting_date date NOT NULL,
   mode text NOT NULL,
   source text NOT NULL,
+  request_id text NOT NULL,
   status text NOT NULL DEFAULT 'queued',
   attempts smallint NOT NULL DEFAULT 0,
   expected_rows integer,
@@ -33,6 +34,9 @@ CREATE TABLE public.channel_lift_runs (
   ),
   CONSTRAINT channel_lift_mode_valid CHECK (mode IN ('dry_run', 'live')),
   CONSTRAINT channel_lift_source_valid CHECK (source IN ('schedule', 'manual')),
+  CONSTRAINT channel_lift_request_id_valid CHECK (
+    request_id ~ '^[A-Za-z0-9:_-]{1,200}$'
+  ),
   CONSTRAINT channel_lift_status_valid CHECK (
     status IN ('queued', 'running', 'dry_run_completed', 'completed', 'failed')
   ),
@@ -135,6 +139,7 @@ BEGIN
     OR NEW.reporting_date IS DISTINCT FROM OLD.reporting_date
     OR NEW.mode IS DISTINCT FROM OLD.mode
     OR NEW.source IS DISTINCT FROM OLD.source
+    OR NEW.request_id IS DISTINCT FROM OLD.request_id
     OR NEW.requested_by IS DISTINCT FROM OLD.requested_by
     OR NEW.request_reason IS DISTINCT FROM OLD.request_reason
     OR NEW.eligibility_cutoff_seconds IS DISTINCT FROM OLD.eligibility_cutoff_seconds
@@ -294,6 +299,7 @@ SELECT
   reporting_date,
   mode,
   source,
+  request_id,
   status,
   attempts,
   expected_rows,
