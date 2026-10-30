@@ -51,6 +51,16 @@ interface ClaimRow extends QueryResultRow {
   lease_until: Date | string;
 }
 
+interface FailureRow extends QueryResultRow {
+  status: Extract<OpenAiAdsConversionStatus, "retry_wait" | "permanent_failure">;
+  next_attempt_at: Date | string;
+}
+
+export type OpenAiAdsFailureTransition = {
+  status: FailureRow["status"];
+  nextAttemptAt: string | null;
+};
+
 function requireDatabase(): void {
   if (!isDatabaseConfigured()) {
     throw new Error("PostgreSQL is required for durable OpenAI Ads conversion delivery");
@@ -210,19 +220,20 @@ export async function markOpenAiAdsConversionFailed({
   retryDelaySeconds: number;
   category: string;
   error: string;
-}): Promise<OpenAiAdsConversionStatus> {
-  const result = await queryDatabase<{ status: OpenAiAdsConversionStatus }>(
-    openAiAdsConversionQueries.markFailed,
-    [
-      eventId,
-      leaseToken,
-      httpStatus ?? null,
-      terminal,
-      Math.max(0, Math.floor(retryDelaySeconds)),
-      category,
-      error.slice(0, 1000),
-    ]
-  );
+}): Promise<OpenAiAdsFailureTransition> {
+  const result = await queryDatabase<FailureRow>(openAiAdsConversionQueries.markFailed, [
+    eventId,
+    leaseToken,
+    httpStatus ?? null,
+    terminal,
+    Math.max(0, Math.floor(retryDelaySeconds)),
+    category,
+    error.slice(0, 1000),
+  ]);
   if (result.rowCount !== 1) throw new Error("OpenAI Ads conversion claim was lost");
-  return result.rows[0].status;
+  const row = result.rows[0];
+  return {
+    status: row.status,
+    nextAttemptAt: row.status === "retry_wait" ? asIsoString(row.next_attempt_at) : null,
+  };
 }

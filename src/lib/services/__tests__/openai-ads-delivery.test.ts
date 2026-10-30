@@ -20,7 +20,10 @@ function dependencies() {
     renew: vi.fn(async () => true),
     send: vi.fn(async () => 202),
     markDelivered: vi.fn(async () => undefined),
-    markFailed: vi.fn(async () => "retry_wait" as const),
+    markFailed: vi.fn(async () => ({
+      status: "retry_wait" as const,
+      nextAttemptAt: "2026-10-30T00:01:00.000Z",
+    })),
   };
 }
 
@@ -59,7 +62,7 @@ describe("OpenAI Ads conversion delivery", () => {
     deps.send.mockRejectedValue(
       new OpenAiAdsDeliveryError("HTTP 400", "provider_rejected", false, 400)
     );
-    deps.markFailed.mockResolvedValue("permanent_failure");
+    deps.markFailed.mockResolvedValue({ status: "permanent_failure", nextAttemptAt: null });
 
     await expect(deliverOpenAiAdsConversion(claim, deps)).resolves.toMatchObject({
       status: "permanent_failure",
@@ -74,14 +77,22 @@ describe("OpenAI Ads conversion delivery", () => {
     const rateLimited = new OpenAiAdsDeliveryError("HTTP 429", "rate_limited", true, 429);
     const retryDeps = dependencies();
     retryDeps.send.mockRejectedValue(rateLimited);
-    await deliverOpenAiAdsConversion({ ...claim, attempts: 2 }, retryDeps);
+    await expect(
+      deliverOpenAiAdsConversion({ ...claim, attempts: 2 }, retryDeps)
+    ).resolves.toMatchObject({
+      status: "retry_wait",
+      retryAt: "2026-10-30T00:01:00.000Z",
+    });
     expect(retryDeps.markFailed).toHaveBeenCalledWith(
       expect.objectContaining({ terminal: false, retryDelaySeconds: 300 })
     );
 
     const terminalDeps = dependencies();
     terminalDeps.send.mockRejectedValue(rateLimited);
-    terminalDeps.markFailed.mockResolvedValue("permanent_failure");
+    terminalDeps.markFailed.mockResolvedValue({
+      status: "permanent_failure",
+      nextAttemptAt: null,
+    });
     await deliverOpenAiAdsConversion({ ...claim, attempts: 6 }, terminalDeps);
     expect(terminalDeps.markFailed).toHaveBeenCalledWith(
       expect.objectContaining({ terminal: true, retryDelaySeconds: 0 })
@@ -91,7 +102,7 @@ describe("OpenAI Ads conversion delivery", () => {
   it("fails configuration issues before the provider call", async () => {
     const deps = dependencies();
     deps.configurationIssue.mockReturnValue("store_not_allowed");
-    deps.markFailed.mockResolvedValue("permanent_failure");
+    deps.markFailed.mockResolvedValue({ status: "permanent_failure", nextAttemptAt: null });
     await expect(deliverOpenAiAdsConversion(claim, deps)).resolves.toMatchObject({
       status: "permanent_failure",
       errorCategory: "store_not_allowed",

@@ -113,7 +113,7 @@ describe.skipIf(!connectionString)("OpenAI Ads PostgreSQL outbox", () => {
         category: "rate_limited",
         error: "OpenAI Ads request returned HTTP 429",
       })
-    ).resolves.toBe("retry_wait");
+    ).resolves.toMatchObject({ status: "retry_wait", nextAttemptAt: expect.any(String) });
 
     const permanent = await enqueueOpenAiAdsConversion({
       shopifyStore: store,
@@ -131,6 +131,6 @@ describe.skipIf(!connectionString)("OpenAI Ads PostgreSQL outbox", () => {
         category: "provider_rejected",
         error: "OpenAI Ads request returned HTTP 400",
       })
-    ).resolves.toBe("permanent_failure");
+    ).resolves.toEqual({ status: "permanent_failure", nextAttemptAt: null });
   });
 });

@@ -44,6 +44,7 @@ export { recoverGpsFulfilment } from "./recover-gps-fulfillment";
 export { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-fulfilment";
 export { captureOpenAiAdsConversion } from "@/inngest/functions/capture-openai-ads-conversion";
 export { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-ads-conversions";
+export { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
 
 // Re-export as array for easy registration
 import { processShopifyOrder } from "./process-shopify-order";
@@ -84,6 +85,7 @@ import { recoverGpsFulfilment } from "./recover-gps-fulfillment";
 import { processWarehouseWebhookFulfilment } from "./process-warehouse-webhook-fulfilment";
 import { captureOpenAiAdsConversion } from "@/inngest/functions/capture-openai-ads-conversion";
 import { deliverOpenAiAdsConversions } from "@/inngest/functions/deliver-openai-ads-conversions";
+import { scheduleOpenAiAdsRetry } from "@/inngest/functions/schedule-openai-ads-retry";
 
 const inventoryFunctions = config.features.enableInventoryRuns
   ? [
@@ -102,7 +104,9 @@ const inventoryFunctions = config.features.enableInventoryRuns
     ]
   : [];
 
-const openAiAdsDeliveryFunctions = config.openAiAds.enabled ? [deliverOpenAiAdsConversions] : [];
+const openAiAdsDeliveryFunctions = config.openAiAds.enabled
+  ? [deliverOpenAiAdsConversions, scheduleOpenAiAdsRetry]
+  : [];
 
 export const functions = [
   processAdministrativeRecovery,

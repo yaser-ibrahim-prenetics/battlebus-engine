@@ -1,4 +1,8 @@
 import { config } from "@/lib/config";
+import type {
+  OpenAiAdsConversionQueuedEvent,
+  OpenAiAdsConversionRetryScheduledEvent,
+} from "@/inngest/events";
 import { deliverOpenAiAdsConversion } from "@/lib/services/openai-ads-delivery";
 import { claimOpenAiAdsConversions } from "@/lib/services/openai-ads-conversions";
 import { RETRY_CONFIGS } from "@/lib/utils/constants";
@@ -8,7 +12,10 @@ type DeliveryStep = {
   run<T>(id: string, handler: () => Promise<T>): Promise<T>;
   sendEvent(
     id: string,
-    event: { id: string; name: "openai.ads/conversion.queued"; data: { eventId: string } }
+    event: { id: string } & (
+      | OpenAiAdsConversionQueuedEvent
+      | OpenAiAdsConversionRetryScheduledEvent
+    )
   ): Promise<unknown>;
 };
 
@@ -33,6 +40,20 @@ export const deliverOpenAiAdsConversions = inngest.createFunction(
           deliverOpenAiAdsConversion(claim)
         )
       );
+    }
+
+    for (const outcome of outcomes) {
+      if (outcome.status !== "retry_wait") continue;
+      if (!outcome.retryAt) throw new Error("OpenAI Ads retry transition has no wake time");
+      await step.sendEvent(`schedule-${outcome.eventId}-attempt-${outcome.attempts}`, {
+        id: `openai-ads-retry-scheduled:${outcome.eventId}:${outcome.attempts}`,
+        name: "openai.ads/conversion.retry-scheduled",
+        data: {
+          eventId: outcome.eventId,
+          attempt: outcome.attempts,
+          retryAt: outcome.retryAt,
+        },
+      });
     }
 
     if (claims.length === 25) {

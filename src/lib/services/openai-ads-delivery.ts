@@ -36,6 +36,7 @@ export type OpenAiAdsDeliveryOutcome = {
   status: "delivered" | "retry_wait" | "permanent_failure" | "stale";
   attempts: number;
   errorCategory?: string;
+  retryAt?: string;
 };
 
 export async function deliverOpenAiAdsConversion(
@@ -81,7 +82,7 @@ export async function deliverOpenAiAdsConversion(
     const retryable = isRetryableOpenAiAdsError(error);
     const terminal = !retryable || claim.attempts >= OPENAI_ADS_MAX_ATTEMPTS;
     const category = openAiAdsErrorCategory(error);
-    const status = await dependencies.markFailed({
+    const transition = await dependencies.markFailed({
       eventId: claim.eventId,
       leaseToken: claim.leaseToken,
       httpStatus: openAiAdsErrorStatus(error),
@@ -92,9 +93,10 @@ export async function deliverOpenAiAdsConversion(
     });
     return {
       eventId: claim.eventId,
-      status: status === "permanent_failure" ? "permanent_failure" : "retry_wait",
+      status: transition.status === "permanent_failure" ? "permanent_failure" : "retry_wait",
       attempts: claim.attempts,
       errorCategory: category,
+      ...(transition.nextAttemptAt ? { retryAt: transition.nextAttemptAt } : {}),
     };
   }
 }

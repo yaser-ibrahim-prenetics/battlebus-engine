@@ -503,6 +503,11 @@ export type OpenAiAdsConversionQueuedEvent = {
   data: { eventId: string };
 };
 
+export type OpenAiAdsConversionRetryScheduledEvent = {
+  name: "openai.ads/conversion.retry-scheduled";
+  data: { eventId: string; attempt: number; retryAt: string };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -531,7 +536,8 @@ export type BattleBusEvents =
   | BackorderResolvedEvent
   | BackorderRetryEvent
   | OrderLifecycleReadyEvent
-  | OpenAiAdsConversionQueuedEvent;
+  | OpenAiAdsConversionQueuedEvent
+  | OpenAiAdsConversionRetryScheduledEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
