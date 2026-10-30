@@ -10,8 +10,9 @@ import {
 import { withBoundedChannelLiftRetry } from "@/lib/clients/channel-lift-retry";
 
 const ENDPOINT = "https://api.triplewhale.com/api/v2/orcabase/api/sql";
-const HARD_MAX_ATTRIBUTION_ROWS = 250_000;
+const HARD_MAX_ATTRIBUTION_ROWS = 100_000;
 const MAX_ATTRIBUTION_PAGES = 1_000;
+const MAX_ATTRIBUTION_CHANNELS = 1_000;
 
 type TripleWhaleDependencies = {
   fetch: typeof fetch;
@@ -28,6 +29,12 @@ export type TripleWhaleAttributionConfig = {
   reportingDate: string;
   pageSize: number;
   maxRows?: number;
+};
+
+export type TripleWhaleAttributionChannel = {
+  channel: string | null;
+  rows: number;
+  pairs: number;
 };
 
 type TripleWhaleCredentials = {
@@ -143,6 +150,63 @@ export async function readTripleWhaleAttributionCounts(
 ): Promise<AttributionCounts> {
   const { countSql } = attributionSql(1);
   return parseCounts(await queryTripleWhale(input, countSql, dependencies));
+}
+
+export async function readTripleWhaleAttributionSummary(
+  input: TripleWhaleAttributionConfig & { apiKey: string },
+  dependencies: TripleWhaleDependencies = defaultDependencies
+): Promise<{
+  counts: AttributionCounts;
+  channels: TripleWhaleAttributionChannel[];
+  configHash: string;
+  snapshotHash: string;
+}> {
+  validateCredentials(input);
+  if (!Number.isInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 50_000) {
+    throw new ChannelLiftError("triple_whale_page_size_invalid");
+  }
+  const maxRows = input.maxRows ?? 100_000;
+  if (!Number.isInteger(maxRows) || maxRows < 1 || maxRows > HARD_MAX_ATTRIBUTION_ROWS) {
+    throw new ChannelLiftError("triple_whale_max_rows_invalid");
+  }
+
+  const counts = await readTripleWhaleAttributionCounts(input, dependencies);
+  if (counts.rows > maxRows) throw new ChannelLiftError("triple_whale_row_limit_exceeded");
+  const summarySql = `SELECT channel, COUNT(*) AS rows, COUNT(DISTINCT order_id) AS pairs FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} GROUP BY channel ORDER BY channel LIMIT ${MAX_ATTRIBUTION_CHANNELS + 1}`;
+  const summaryRows = await queryTripleWhale(input, summarySql, dependencies);
+  if (summaryRows.length > MAX_ATTRIBUTION_CHANNELS) {
+    throw new ChannelLiftError("triple_whale_channel_limit_exceeded");
+  }
+  const channels = summaryRows.map((row): TripleWhaleAttributionChannel => {
+    if (row.channel !== null && typeof row.channel !== "string") {
+      throw new ChannelLiftError("triple_whale_channel_invalid");
+    }
+    return {
+      channel: row.channel as string | null,
+      rows: parseCount(row.rows),
+      pairs: parseCount(row.pairs),
+    };
+  });
+  if (
+    channels.reduce((total, channel) => total + channel.rows, 0) !== counts.rows ||
+    channels.reduce((total, channel) => total + channel.pairs, 0) !== counts.pairs
+  ) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
+  const finalCounts = await readTripleWhaleAttributionCounts(input, dependencies);
+  if (
+    finalCounts.rows !== counts.rows ||
+    finalCounts.orders !== counts.orders ||
+    finalCounts.pairs !== counts.pairs
+  ) {
+    throw new ChannelLiftError("triple_whale_snapshot_changed");
+  }
+  return {
+    counts,
+    channels,
+    configHash: tripleWhaleAttributionConfigHash(input),
+    snapshotHash: channelLiftDigest(channels),
+  };
 }
 
 export async function readTripleWhaleMappedPairPage(

@@ -169,7 +169,7 @@ export const config = {
     metaDatasetId: process.env.CHANNEL_LIFT_META_DATASET_ID?.trim() || "",
     sourceUrl: process.env.CHANNEL_LIFT_SOURCE_URL?.trim() || "",
     pageSize: clampInt(safeParseInt(process.env.CHANNEL_LIFT_PAGE_SIZE, 20_000), 1, 50_000),
-    maxRows: clampInt(safeParseInt(process.env.CHANNEL_LIFT_MAX_ROWS, 100_000), 1, 250_000),
+    maxRows: clampInt(safeParseInt(process.env.CHANNEL_LIFT_MAX_ROWS, 100_000), 1, 100_000),
     maxEventAgeSeconds: clampInt(
       safeParseInt(process.env.CHANNEL_LIFT_MAX_EVENT_AGE_SECONDS, 7 * 86_400),
       60,

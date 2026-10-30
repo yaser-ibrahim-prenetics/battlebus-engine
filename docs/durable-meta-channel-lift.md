@@ -27,20 +27,23 @@ Europa is out of scope.
   `incident_recovery`, or `operator_replay`) and an optional issue reference
   such as `BB-123`; free-text narratives are never placed on the event bus or
   in delivery evidence.
-- A failed partial run can resume only with its original request ID. This keeps
-  the immutable audit identity intact and skips batches with exact receipts;
-  a different request ID fails closed instead of silently taking over the run.
+- A failed partial run records every new request ID in an append-only safe-code
+  audit before resuming. Replays retain the original run identity and skip
+  batches with exact receipts instead of silently replacing audit fields.
 - Reject future dates, invalid ranges, and ranges longer than 31 days.
 
 ### Triple Whale extraction
 
 - Use the configured, approved Shopify shop identifier and a fixed attribution
   model/window.
-- Read aggregate row, order, and order/channel-pair counts before fetching data.
-- Fetch deterministic, bounded pages and validate the response shape, reporting
-  date, order IDs, channel values, and page termination.
-- Reconcile fetched row/order/pair counts with the aggregate query. Fail closed
-  on missing pages, duplicate-page drift, or any count mismatch.
+- Build the durable plan from aggregate row, order, pair, and per-channel counts;
+  the planning step never returns source rows or customer identifiers.
+- Fetch deterministic candidate pages of at most 500 pairs, then read only those
+  Shopify orders inside a bounded Inngest step. Persist only batch counts and
+  digests after the step closes.
+- Revalidate aggregate counts and mapped-pair cardinality for every candidate
+  page and again before delivery. Fail closed on missing pages, count drift, or
+  any payload-digest mismatch.
 - Use a version-controlled channel mapping. The initial delivery allowlist is
   `Klaviyo`; unknown mappings are excluded and counted, never guessed.
 
@@ -98,7 +101,7 @@ Non-secret settings:
 - `CHANNEL_LIFT_META_DATASET_ID`
 - `CHANNEL_LIFT_SOURCE_URL`
 - `CHANNEL_LIFT_PAGE_SIZE` (1-50,000; default 20,000)
-- `CHANNEL_LIFT_MAX_ROWS` (1-250,000; default 100,000)
+- `CHANNEL_LIFT_MAX_ROWS` (1-100,000; default 100,000)
 - `CHANNEL_LIFT_MAX_EVENT_AGE_SECONDS` (default 604,800)
 
 ## Rollout
