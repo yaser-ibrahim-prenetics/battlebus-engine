@@ -1,3 +1,5 @@
+import { withProviderCapacity } from "@/lib/services/provider-capacity";
+
 /** Read-only OData pagination. Never forward bearer tokens to a foreign nextLink. */
 export async function* odataRows<T>(first: URL, token: string): AsyncGenerator<T> {
   let next: URL | null = first;
@@ -15,11 +17,14 @@ export async function* odataRows<T>(first: URL, token: string): AsyncGenerator<T
     if (visited.has(next.href) || visited.size >= 10000)
       throw new Error("Dynamics pagination repeated or exceeded page limit");
     visited.add(next.href);
-    const response = await fetch(next, {
-      headers: { Authorization: `Bearer ${token}` },
-      redirect: "error",
-      signal: AbortSignal.timeout(30_000),
-    });
+    const pageUrl = next;
+    const response = await withProviderCapacity("d365", `GET:${pageUrl.pathname}`, () =>
+      fetch(pageUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
+      })
+    );
     if (!response.ok) throw new Error(`Dynamics reconciliation HTTP ${response.status}`);
     const page = await response.json();
     if (!Array.isArray(page.value) || page.error)

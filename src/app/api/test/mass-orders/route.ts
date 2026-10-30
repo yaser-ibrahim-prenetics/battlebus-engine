@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
 import { config } from "@/lib/config";
+import { shopifyProviderFetch } from "@/lib/clients/shopify";
 import { timingSafeEqual } from "@/lib/auth/timing-safe-equal";
 
 // ─── Supported markets ────────────────────────────────────────────────────────
@@ -108,16 +109,16 @@ const CURRENCY_BY_CC: Record<string, string> = {
   SG: "SGD",
 };
 
-const DEFAULT_ALLOWED_ORIGINS = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
+const DEFAULT_ALLOWED_ORIGINS = ["http://localhost:3000", "http://localhost:5173"];
 
 const MASS_TEST_PROXY_SECRET =
   process.env.MASS_TEST_PROXY_SECRET || process.env.CONFIG_ENV_PROXY_SECRET || "";
 
 function getAllowedOrigins(): string[] {
-  const extraOrigins = [process.env.BATTLE_HUB_URL, ...(process.env.MASS_TEST_ALLOWED_ORIGINS || "").split(",")]
+  const extraOrigins = [
+    process.env.BATTLE_HUB_URL,
+    ...(process.env.MASS_TEST_ALLOWED_ORIGINS || "").split(","),
+  ]
     .filter((origin): origin is string => Boolean(origin))
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -251,7 +252,9 @@ function currencyFor(countryCode: string): string {
 // ─── Data fetchers ────────────────────────────────────────────────────────────
 
 async function fetchShopifyLocations(): Promise<TestLocation[]> {
-  const res = await fetch(shopifyUrl("/locations.json"), { headers: shopifyHeaders() });
+  const res = await shopifyProviderFetch(shopifyUrl("/locations.json"), {
+    headers: shopifyHeaders(),
+  });
   if (!res.ok) throw new Error(`Shopify locations error: ${res.status}`);
   const { locations = [] } = await res.json();
 
@@ -276,7 +279,7 @@ async function fetchShopifyLocations(): Promise<TestLocation[]> {
 
 async function fetchShopifyProducts(): Promise<TestProduct[]> {
   // Fetch up to 50 products with their variants
-  const res = await fetch(
+  const res = await shopifyProviderFetch(
     shopifyUrl("/products.json?status=active&limit=50&fields=id,title,variants"),
     { headers: shopifyHeaders() }
   );
@@ -301,9 +304,12 @@ async function fetchShopifyProducts(): Promise<TestProduct[]> {
 }
 
 async function fetchNextShopifyStyleOrderNumber(): Promise<number> {
-  const res = await fetch(shopifyUrl("/orders.json?status=any&limit=50&fields=name"), {
-    headers: shopifyHeaders(),
-  });
+  const res = await shopifyProviderFetch(
+    shopifyUrl("/orders.json?status=any&limit=50&fields=name"),
+    {
+      headers: shopifyHeaders(),
+    }
+  );
 
   if (!res.ok) {
     throw new Error(`Shopify recent orders error: ${res.status}`);

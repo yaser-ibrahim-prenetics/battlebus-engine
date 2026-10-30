@@ -28,6 +28,12 @@ import {
   classifyD365InventoryFailure,
   InventoryUnavailableError,
 } from "../services/oos-recovery/inventory-failure";
+import {
+  ProviderCapacityStoreError,
+  ProviderCapacityTimeoutError,
+  withProviderCapacity,
+} from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 import type {
   D365AuthToken,
   D365SalesOrderHeader,
@@ -131,10 +137,6 @@ export function getCircuitState(): {
   consecutiveFailures: number;
   openedAt: number;
 } {
-  // Re-evaluate in case the open duration has elapsed
-  if (circuit.state === "OPEN" && Date.now() - circuit.openedAt >= CIRCUIT_OPEN_DURATION_MS) {
-    circuit.state = "HALF_OPEN";
-  }
   return {
     state: circuit.state,
     consecutiveFailures: circuit.consecutiveFailures,
@@ -207,13 +209,19 @@ const D365_MIN_INTERVAL_MS = Math.max(
 );
 let d365LastRequestAt = 0;
 
-async function pacedFetch(
+export async function pacedFetch(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1]
 ): Promise<Response> {
   const startedAt = Date.now();
   const url = String(input);
   const method = String(init?.method || "GET").toUpperCase();
+  let capacityPath = "request";
+  try {
+    capacityPath = new URL(url, "https://d365.invalid").pathname;
+  } catch {
+    // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
+  }
   // Circuit breaker gate — throws CircuitOpenError if circuit is open
   const isProbe = circuitPreFlight();
 
@@ -229,7 +237,9 @@ async function pacedFetch(
   const requestBodyForLog = normalizeBodyForLog(init?.body);
 
   try {
-    const response = await fetch(input, init);
+    const response = await withProviderCapacity("d365", `${method}:${capacityPath}`, () =>
+      fetch(input, boundedProviderRequestInit(init))
+    );
     const durationMs = Date.now() - startedAt;
     const responseBodyForLog = await readResponseBodyForLog(response);
 
@@ -272,15 +282,25 @@ async function pacedFetch(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const capacityExhausted =
+      err instanceof ProviderCapacityTimeoutError ||
+      (err instanceof Error && err.name === "ProviderCapacityTimeoutError");
+    const capacityStoreUnavailable =
+      err instanceof ProviderCapacityStoreError ||
+      (err instanceof Error &&
+        ["ProviderCapacityStoreError", "ProviderCapacityDatabaseTimeoutError"].includes(err.name));
+    const capacityBackpressure = capacityExhausted || capacityStoreUnavailable;
 
-    logD365HttpTrace({
-      source: "d365_api",
-      method,
-      url,
-      durationMs,
-      requestBody: requestBodyForLog,
-      errorMessage,
-    });
+    if (!capacityBackpressure) {
+      logD365HttpTrace({
+        source: "d365_api",
+        method,
+        url,
+        durationMs,
+        requestBody: requestBodyForLog,
+        errorMessage,
+      });
+    }
 
     logFlowEvent({
       level: "error",
@@ -289,16 +309,26 @@ async function pacedFetch(
       client: "d365",
       status: "failed",
       durationMs,
-      errorType: "network_or_runtime_error",
+      errorType: capacityExhausted
+        ? "capacity_exhausted"
+        : capacityStoreUnavailable
+          ? "capacity_store_unavailable"
+          : "network_or_runtime_error",
       errorMessage,
       payload: {
         method,
         url,
         isProbe,
         requestBody: requestBodyForLog,
+        capacityStoreCause: err instanceof ProviderCapacityStoreError ? err.causeCode : undefined,
       },
     });
-    circuitRecordFailure();
+    if (capacityBackpressure && isProbe) {
+      // No provider request occurred. Re-arm the already-cooled circuit so the
+      // next caller can become the probe instead of leaving HALF_OPEN wedged.
+      circuit.state = "OPEN";
+    }
+    if (!capacityBackpressure) circuitRecordFailure();
     throw err;
   }
 }

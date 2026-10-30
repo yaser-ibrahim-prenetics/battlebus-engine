@@ -158,6 +158,14 @@ the OOS queue metrics remain healthy. Enable the repository variable only after
 the candidate revision and migration job have passed those checks. Disabling the
 flag returns new orders to the legacy backorder path without removing parked data.
 
+Keep `PROVIDER_CAPACITY_ENABLED=false` for the first deployment containing
+migration `000052`. Verify `provider_capacity_leases` contains 100 free slots for
+each provider and that the operations health response reports zero active and
+expired leases. Enable the repository variable only after a dry-run candidate is
+healthy, using the conservative per-provider defaults. Disabling the flag removes
+the admission wait immediately without deleting or invalidating any in-flight
+provider work; outstanding leases expire automatically.
+
 The Node.js Cloud SQL connector obtains short-lived IAM credentials from the
 Cloud Run service account. `DATABASE_URL` remains reserved for local tooling
 and the isolated migration job.

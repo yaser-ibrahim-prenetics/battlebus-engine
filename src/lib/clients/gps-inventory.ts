@@ -14,6 +14,8 @@
 import crypto from "crypto";
 import { config } from "../config";
 import { logFlowEvent } from "@/lib/services/flow-logs";
+import { withProviderCapacity } from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 
 // Client-side pacing for OMS API calls (adds protection beyond function-level throttle).
 const _omsMinIntervalParsed = parseInt(process.env.OMS_CLIENT_MIN_INTERVAL_MS || "120", 10);
@@ -39,7 +41,17 @@ async function pacedFetch(
     }
     omsLastRequestAt = Date.now();
   }
-  return fetch(input, init);
+  let capacityPath = "inventory";
+  try {
+    capacityPath = new URL(String(input), "https://gps.invalid").pathname;
+  } catch {
+    // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
+  }
+  return withProviderCapacity(
+    "gps",
+    `${String(init?.method || "GET").toUpperCase()}:${capacityPath}`,
+    () => fetch(input, boundedProviderRequestInit(init))
+  );
 }
 
 // ============================================================================
@@ -218,7 +230,8 @@ export async function queryOmsInventory(options: {
       if (result.code === 0 || result.code === 200 || result.success) {
         console.log(`[GPS-Inventory] Successfully queried via ${endpoint}`);
         const rows = result.data?.list ?? result.data;
-        if (options.strict && !Array.isArray(rows)) throw new Error("Incomplete GPS inventory evidence");
+        if (options.strict && !Array.isArray(rows))
+          throw new Error("Incomplete GPS inventory evidence");
         return rows || [];
       }
 

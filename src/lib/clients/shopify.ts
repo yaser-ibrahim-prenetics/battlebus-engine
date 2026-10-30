@@ -8,6 +8,8 @@ import crypto from "crypto";
 import { config } from "../config";
 import { IShopifyFulfillmentOrder, IShopifyOrder } from "../types/shopify";
 import { logFlowEvent } from "../services/flow-logs";
+import { withProviderCapacity } from "@/lib/services/provider-capacity";
+import { boundedProviderRequestInit } from "@/lib/clients/provider-request";
 
 const SHOPIFY_API_VERSION = config.shopify.im8.apiVersion;
 
@@ -28,6 +30,22 @@ function buildUrl(endpoint: string): string {
   return `https://${config.shopify.im8.shopDomain}/admin/api/${SHOPIFY_API_VERSION}${endpoint}`;
 }
 
+export async function shopifyProviderFetch(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Promise<Response> {
+  const method = String(init?.method || "GET").toUpperCase();
+  let capacityPath = "request";
+  try {
+    capacityPath = new URL(String(input), "https://shopify.invalid").pathname;
+  } catch {
+    // Invalid test fixtures still exercise the existing fetch mock without persisting the URL.
+  }
+  return withProviderCapacity("shopify", `${method}:${capacityPath}`, () =>
+    fetch(input, boundedProviderRequestInit(init))
+  );
+}
+
 /**
  * Execute a Shopify Admin GraphQL request using shared store config.
  */
@@ -38,7 +56,7 @@ export async function shopifyAdminGraphql<T = any>(
 ): Promise<T> {
   const credentials = resolveShopifyAdminCredentials(options.shopDomain);
   const url = `https://${credentials.shopDomain}/admin/api/${options.apiVersion || credentials.apiVersion}/graphql.json`;
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     redirect: "error",
     signal: AbortSignal.timeout(30_000),
     method: "POST",
@@ -90,7 +108,7 @@ export async function getVariantSkusByVariantIds(
 
   async function fetchChunk(chunk: number[]): Promise<void> {
     const gqlIds = chunk.map((id) => `gid://shopify/ProductVariant/${id}`);
-    const response = await fetch(url, {
+    const response = await shopifyProviderFetch(url, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify({
@@ -162,7 +180,7 @@ export async function getInventoryLevelsByLocation(inventoryItemId: number): Pro
 > {
   const url = buildUrl(`/inventory_levels.json?inventory_item_ids=${inventoryItemId}`);
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: getHeaders(),
   });
@@ -182,7 +200,7 @@ export async function getInventoryLevelsByLocation(inventoryItemId: number): Pro
   if (locationIds.length > 0) {
     try {
       const locationsUrl = buildUrl(`/locations.json?ids=${locationIds.join(",")}`);
-      const locationsResponse = await fetch(locationsUrl, {
+      const locationsResponse = await shopifyProviderFetch(locationsUrl, {
         method: "GET",
         headers: getHeaders(),
       });
@@ -229,7 +247,7 @@ export async function getAllLocations(): Promise<
 > {
   const url = buildUrl(`/locations.json`);
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: getHeaders(),
   });
@@ -290,7 +308,7 @@ export async function getOrder(
     "Content-Type": "application/json",
   };
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers,
   });
@@ -353,7 +371,7 @@ export async function getOrderMetafields(
   const credentials = resolveShopifyAdminCredentials(shopDomainForCredentials);
   const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/metafields.json?limit=250`;
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: {
       "X-Shopify-Access-Token": credentials.accessToken,
@@ -377,7 +395,7 @@ export async function getOrderMetafields(
 export async function uncancelOrder(orderId: string | number): Promise<ShopifyOrder> {
   const url = buildUrl(`/orders/${orderId}/open.json`);
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "POST",
     headers: getHeaders(),
   });
@@ -407,7 +425,7 @@ export async function getFulfillmentOrders(
   const credentials = resolveShopifyAdminCredentials(shopDomain);
   const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/fulfillment_orders.json`;
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
     redirect: "error",
@@ -480,7 +498,7 @@ export async function createFulfillment(
     },
   };
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(body),
@@ -521,7 +539,7 @@ export async function getUnfulfilledOrders(
 
   console.log(`[Shopify] Fetching unfulfilled orders (limit=${limit}, daysBack=${daysBack})`);
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: getHeaders(),
   });
@@ -553,7 +571,7 @@ export async function searchOrdersByName(
   const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
   const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders.json?name=${encodeURIComponent(orderName)}&status=any`;
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: {
       "X-Shopify-Access-Token": c.accessToken,
@@ -581,7 +599,7 @@ export async function getOrderTransactions(
   const credentials = resolveShopifyAdminCredentials(shopDomain);
   const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/transactions.json${options.inShopCurrency ? "?in_shop_currency=true" : ""}`;
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
     redirect: "error",
@@ -614,7 +632,7 @@ export async function getOrderEvents(
 ): Promise<{ events: ShopifyOrderEvent[] }> {
   const url = buildUrl(`/orders/${orderId}/events.json`);
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: getHeaders(),
   });
@@ -790,7 +808,7 @@ export async function setGpsOrderMetafield(
     },
   };
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(body),
@@ -815,7 +833,7 @@ export async function getGpsOrderMetafield(
   const c = resolveShopifyAdminCredentials(shopDomainForCredentials);
   const url = `https://${c.shopDomain}/admin/api/${c.apiVersion}/orders/${orderId}/metafields.json?namespace=${GPS_METAFIELD_NAMESPACE}&key=${GPS_METAFIELD_KEY}`;
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: {
       "X-Shopify-Access-Token": c.accessToken,
@@ -873,7 +891,7 @@ export async function setFulfillmentMetadata(
     },
   };
 
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(body),
@@ -943,7 +961,7 @@ export async function getOrderRisks(
 
   const credentials = resolveShopifyAdminCredentials(shopDomain);
   const url = `https://${credentials.shopDomain}/admin/api/${credentials.apiVersion}/orders/${orderId}/risks.json`;
-  const response = await fetch(url, {
+  const response = await shopifyProviderFetch(url, {
     method: "GET",
     headers: { ...getHeaders(), "X-Shopify-Access-Token": credentials.accessToken },
     redirect: "error",

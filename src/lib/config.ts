@@ -293,6 +293,33 @@ export const config = {
     ),
   },
 
+  providerCapacity: {
+    // Expand/deploy gate. Migration 52 must be present before activation.
+    enabled: process.env.PROVIDER_CAPACITY_ENABLED === "true",
+    limits: {
+      d365: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_D365_LIMIT, 4), 1, 100),
+      gps: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_GPS_LIMIT, 4), 1, 100),
+      shopify: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_SHOPIFY_LIMIT, 8), 1, 100),
+      stord: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_STORD_LIMIT, 4), 1, 100),
+      loop: clampInt(safeParseInt(process.env.PROVIDER_CAPACITY_LOOP_LIMIT, 4), 1, 100),
+    },
+    leaseSeconds: clampInt(
+      safeParseInt(process.env.PROVIDER_CAPACITY_LEASE_SECONDS, 120),
+      120,
+      600
+    ),
+    acquireTimeoutMs: clampInt(
+      safeParseInt(process.env.PROVIDER_CAPACITY_ACQUIRE_TIMEOUT_MS, 30_000),
+      1,
+      60_000
+    ),
+    pollIntervalMs: clampInt(
+      safeParseInt(process.env.PROVIDER_CAPACITY_ACQUIRE_POLL_INTERVAL, 250),
+      25,
+      2_000
+    ),
+  },
+
   // Pending lifecycle action drain sweep
   pendingActions: {
     // Expand/deploy gate. Enable only after migrations are applied and no old

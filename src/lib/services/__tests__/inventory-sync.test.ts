@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
+  d365Fetch: vi.fn(),
   gpsQuery: vi.fn(),
   graphql: vi.fn(),
   location: vi.fn(),
@@ -9,10 +10,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/services/reconciliation-history/record", () => ({
-  recordReconciliation: async <T>(
-    _context: unknown,
-    execute: () => Promise<T>
-  ): Promise<T> => execute(),
+  recordReconciliation: async <T>(_context: unknown, execute: () => Promise<T>): Promise<T> =>
+    execute(),
 }));
 vi.mock("@/lib/clients/gps-inventory", () => ({
   queryProductInventory: mocks.gpsQuery,
@@ -20,6 +19,7 @@ vi.mock("@/lib/clients/gps-inventory", () => ({
 }));
 vi.mock("@/lib/clients/dynamics", () => ({
   authenticate: mocks.authenticate,
+  pacedFetch: mocks.d365Fetch,
 }));
 vi.mock("@/lib/clients/gps", () => ({}));
 vi.mock("@/lib/clients/shopify", () => ({
@@ -49,6 +49,9 @@ describe("regional inventory reconciliation", () => {
     config.features.dryRunMode = false;
     config.features.enableInventorySync = true;
     mocks.authenticate.mockResolvedValue({ access_token: "token" });
+    mocks.d365Fetch.mockImplementation(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => fetch(input, init)
+    );
     mocks.location.mockImplementation(async (warehouse: string) =>
       warehouse === "GPS UK Warehouse" ? "uk-location" : "us-location"
     );
@@ -150,6 +153,7 @@ describe("regional inventory reconciliation", () => {
 
     expect(result.skusChecked).toBe(2);
     expect(result.errors).toEqual([]);
+    expect(mocks.d365Fetch).toHaveBeenCalledTimes(6);
     expect(mocks.setInventory).toHaveBeenCalledTimes(2);
     expect(mocks.setInventory.mock.calls.map(([call]) => call)).toEqual([
       expect.objectContaining({

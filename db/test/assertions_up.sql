@@ -178,3 +178,4 @@ ROLLBACK;
 \ir assertions_up/011_backorder_recovery_leases.sql
 \ir assertions_up/012_webhook_inbox_delivery.sql
 \ir assertions_up/013_oos_recovery_queue.sql
+\ir assertions_up/014_provider_capacity.sql
