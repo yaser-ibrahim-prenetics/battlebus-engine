@@ -31,14 +31,21 @@ BEGIN
   IF rls_enabled IS DISTINCT FROM true
     OR attempts_rls_enabled IS DISTINCT FROM true
     OR identities_rls_enabled IS DISTINCT FROM true
-    OR NOT has_table_privilege(
-      'battle_bus_runtime', 'public.channel_lift_runs', 'SELECT,INSERT'
-    )
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.channel_lift_runs', 'SELECT')
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.channel_lift_runs', 'INSERT')
     OR NOT has_column_privilege(
       'battle_bus_runtime', 'public.channel_lift_runs', 'status', 'UPDATE'
     )
-    OR has_column_privilege(
-      'battle_bus_runtime', 'public.channel_lift_runs', 'reason_code', 'UPDATE'
+    OR EXISTS (
+      SELECT 1
+      FROM unnest(ARRAY[
+        'run_id', 'reporting_date', 'mode', 'source', 'request_id',
+        'requested_by', 'reason_code', 'reference_id',
+        'eligibility_cutoff_seconds', 'created_at', 'updated_at'
+      ]) AS immutable(column_name)
+      WHERE has_column_privilege(
+        'battle_bus_runtime', 'public.channel_lift_runs', immutable.column_name, 'UPDATE'
+      )
     )
     OR has_table_privilege(
       'battle_bus_runtime', 'public.channel_lift_runs', 'DELETE,TRUNCATE'
@@ -49,9 +56,8 @@ BEGIN
       'battle_hub_runtime', 'public.battle_hub_channel_lift_runs', 'SELECT'
     )
     OR has_table_privilege('battle_hub_runtime', 'public.channel_lift_runs', 'SELECT')
-    OR NOT has_table_privilege(
-      'battle_bus_runtime', 'public.channel_lift_run_attempts', 'SELECT,INSERT'
-    )
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.channel_lift_run_attempts', 'SELECT')
+    OR NOT has_table_privilege('battle_bus_runtime', 'public.channel_lift_run_attempts', 'INSERT')
     OR has_table_privilege(
       'battle_bus_runtime', 'public.channel_lift_run_attempts', 'UPDATE,DELETE,TRUNCATE'
     )
@@ -62,7 +68,10 @@ BEGIN
       'battle_hub_runtime', 'public.battle_hub_channel_lift_run_attempts', 'SELECT'
     )
     OR NOT has_table_privilege(
-      'battle_bus_runtime', 'public.channel_lift_request_identities', 'SELECT,INSERT'
+      'battle_bus_runtime', 'public.channel_lift_request_identities', 'SELECT'
+    )
+    OR NOT has_table_privilege(
+      'battle_bus_runtime', 'public.channel_lift_request_identities', 'INSERT'
     )
     OR has_any_column_privilege(
       'battle_bus_runtime', 'public.channel_lift_request_identities', 'UPDATE'
@@ -111,6 +120,24 @@ BEGIN
     )
   THEN
     RAISE EXCEPTION 'Channel-lift RLS policy contract failed';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'public.channel_lift_runs'::regclass
+        AND conname = 'channel_lift_runs_request_identity_fkey'
+        AND pg_get_constraintdef(oid) LIKE
+          'FOREIGN KEY (request_id, mode, source) REFERENCES channel_lift_request_identities(request_id, mode, source)%'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'public.channel_lift_run_attempts'::regclass
+        AND conname = 'channel_lift_attempt_request_identity_fkey'
+        AND pg_get_constraintdef(oid) LIKE
+          'FOREIGN KEY (request_id, mode, source) REFERENCES channel_lift_request_identities(request_id, mode, source)%'
+    )
+  THEN
+    RAISE EXCEPTION 'Channel-lift request identity foreign-key contract failed';
   END IF;
 END
 $$;

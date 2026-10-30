@@ -69,10 +69,10 @@ export async function checkReadiness() {
               )
           )
           AND (
-            SELECT COUNT(*) = 6 FROM information_schema.columns
+            SELECT COUNT(*) = 8 FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'channel_lift_run_attempts'
               AND column_name IN (
-                'request_id', 'run_id', 'source',
+                'request_id', 'run_id', 'mode', 'source', 'requested_by',
                 'reason_code', 'reference_id', 'requested_at'
               )
           )
@@ -81,9 +81,12 @@ export async function checkReadiness() {
             WHERE table_schema = 'public' AND table_name = 'channel_lift_request_identities'
               AND column_name IN ('request_id', 'mode', 'source', 'first_seen_at')
           )
-          AND has_table_privilege(current_user, 'public.channel_lift_runs', 'SELECT,INSERT')
-          AND has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'SELECT,INSERT')
-          AND has_table_privilege(current_user, 'public.channel_lift_request_identities', 'SELECT,INSERT')
+          AND has_table_privilege(current_user, 'public.channel_lift_runs', 'SELECT')
+          AND has_table_privilege(current_user, 'public.channel_lift_runs', 'INSERT')
+          AND has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'SELECT')
+          AND has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'INSERT')
+          AND has_table_privilege(current_user, 'public.channel_lift_request_identities', 'SELECT')
+          AND has_table_privilege(current_user, 'public.channel_lift_request_identities', 'INSERT')
           AND (
             SELECT bool_and(has_column_privilege(
               current_user, 'public.channel_lift_runs', allowed.column_name, 'UPDATE'
@@ -98,8 +101,17 @@ export async function checkReadiness() {
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'UPDATE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'DELETE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_runs', 'TRUNCATE')
-          AND NOT has_column_privilege(current_user, 'public.channel_lift_runs', 'request_id', 'UPDATE')
-          AND NOT has_column_privilege(current_user, 'public.channel_lift_runs', 'reason_code', 'UPDATE')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest(ARRAY[
+              'run_id', 'reporting_date', 'mode', 'source', 'request_id',
+              'requested_by', 'reason_code', 'reference_id',
+              'eligibility_cutoff_seconds', 'created_at', 'updated_at'
+            ]) AS immutable(column_name)
+            WHERE has_column_privilege(
+              current_user, 'public.channel_lift_runs', immutable.column_name, 'UPDATE'
+            )
+          )
           AND NOT has_any_column_privilege(current_user, 'public.channel_lift_run_attempts', 'UPDATE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'DELETE')
           AND NOT has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'TRUNCATE')

@@ -222,6 +222,7 @@ export async function startChannelLiftRun({
           const auditValues = [
             requestId,
             runId,
+            mode,
             source,
             requestedBy?.slice(0, 320) || null,
             source === "manual" ? reasonCode || null : null,
@@ -231,6 +232,7 @@ export async function startChannelLiftRun({
           if (insertedAttempt.rowCount === 0) {
             const existingAttempt = await queryDatabase<{
               run_id: string;
+              mode: ChannelLiftMode;
               source: ChannelLiftSource;
               requested_by: string | null;
               reason_code: string | null;
@@ -240,6 +242,7 @@ export async function startChannelLiftRun({
             if (
               !attempt ||
               attempt.run_id !== runId ||
+              attempt.mode !== mode ||
               attempt.source !== source ||
               attempt.requested_by !== (requestedBy?.slice(0, 320) || null) ||
               attempt.reason_code !== (source === "manual" ? reasonCode || null : null) ||

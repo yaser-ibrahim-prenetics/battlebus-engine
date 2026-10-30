@@ -4,7 +4,9 @@ CREATE TABLE public.channel_lift_request_identities (
   request_id text PRIMARY KEY CHECK (request_id ~ '^[A-Za-z0-9:_-]{1,200}$'),
   mode text NOT NULL CHECK (mode IN ('dry_run', 'live')),
   source text NOT NULL CHECK (source IN ('schedule', 'manual')),
-  first_seen_at timestamptz NOT NULL DEFAULT now()
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT channel_lift_request_identity_tuple_unique
+    UNIQUE (request_id, mode, source)
 );
 
 DO $$
@@ -27,12 +29,14 @@ GROUP BY request_id;
 
 ALTER TABLE public.channel_lift_runs
   ADD CONSTRAINT channel_lift_runs_request_identity_fkey
-  FOREIGN KEY (request_id) REFERENCES public.channel_lift_request_identities(request_id)
+  FOREIGN KEY (request_id, mode, source)
+  REFERENCES public.channel_lift_request_identities(request_id, mode, source)
   ON DELETE RESTRICT;
 
 CREATE TABLE public.channel_lift_run_attempts (
   request_id text NOT NULL CHECK (request_id ~ '^[A-Za-z0-9:_-]{1,200}$'),
   run_id text NOT NULL REFERENCES public.channel_lift_runs(run_id) ON DELETE RESTRICT,
+  mode text NOT NULL CHECK (mode IN ('dry_run', 'live')),
   source text NOT NULL CHECK (source IN ('schedule', 'manual')),
   requested_by text CHECK (requested_by IS NULL OR length(requested_by) BETWEEN 1 AND 320),
   reason_code text,
@@ -40,8 +44,8 @@ CREATE TABLE public.channel_lift_run_attempts (
   requested_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT channel_lift_run_attempts_pkey PRIMARY KEY (request_id, run_id),
   CONSTRAINT channel_lift_attempt_request_identity_fkey
-    FOREIGN KEY (request_id)
-    REFERENCES public.channel_lift_request_identities(request_id)
+    FOREIGN KEY (request_id, mode, source)
+    REFERENCES public.channel_lift_request_identities(request_id, mode, source)
     ON DELETE RESTRICT,
   CONSTRAINT channel_lift_attempt_reason_valid CHECK (
     (source = 'schedule' AND reason_code IS NULL AND reference_id IS NULL)
@@ -73,7 +77,7 @@ CREATE POLICY channel_lift_request_identity_runtime ON public.channel_lift_reque
   FOR ALL TO battle_bus_runtime USING (true) WITH CHECK (true);
 
 CREATE VIEW public.battle_hub_channel_lift_run_attempts AS
-SELECT request_id, run_id, source, requested_by, reason_code, reference_id, requested_at
+SELECT request_id, run_id, mode, source, requested_by, reason_code, reference_id, requested_at
 FROM public.channel_lift_run_attempts;
 
 CREATE VIEW public.battle_hub_channel_lift_request_identities AS

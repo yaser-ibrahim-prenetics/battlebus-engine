@@ -13,12 +13,12 @@ export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
   RETURNING run_id`;
 
 export const insertChannelLiftRunAttemptSQL = `INSERT INTO public.channel_lift_run_attempts
-  (request_id, run_id, source, requested_by, reason_code, reference_id)
-  VALUES ($1, $2, $3, $4, $5, $6)
+  (request_id, run_id, mode, source, requested_by, reason_code, reference_id)
+  VALUES ($1, $2, $3, $4, $5, $6, $7)
   ON CONFLICT (request_id, run_id) DO NOTHING
   RETURNING request_id`;
 
-export const readChannelLiftRunAttemptSQL = `SELECT run_id, source, requested_by,
+export const readChannelLiftRunAttemptSQL = `SELECT run_id, mode, source, requested_by,
     reason_code, reference_id
   FROM public.channel_lift_run_attempts WHERE request_id=$1 AND run_id=$2`;
 

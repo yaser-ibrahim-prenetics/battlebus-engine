@@ -137,6 +137,7 @@ describe("channel-lift run state", () => {
     expect(mocks.query.mock.calls[3][1]).toEqual([
       "da90cc5c-b1a2-4245-8ea4-bc57a10481ed",
       row.run_id,
+      "live",
       "manual",
       null,
       "operator_replay",
@@ -197,6 +198,7 @@ describe("channel-lift run state", () => {
       rows: [
         {
           run_id: row.run_id,
+          mode: "live",
           source: "manual",
           requested_by: null,
           reason_code: "incident_recovery",
