@@ -30,7 +30,8 @@ async function collect() {
       if (
         !dependency.required ||
         dependency.status !== "ready" ||
-        dependency.check === "connectivity"
+        dependency.check === "connectivity" ||
+        dependency.check === "schema-and-privileges"
       )
         return dependency;
       const probe = dependencyProbes[dependency.name];
