@@ -8,7 +8,7 @@ BEGIN
     'refund_hold_decisions', 'audit_entities', 'audit_log', 'backorder_recovery_leases', 'flow_logs', 'inventory', 'locations',
     'fulfillment_evidence_claims', 'mission_runs', 'order_lines', 'order_segment_refunds',
     'oos_drain_command_receipts', 'oos_drain_requests', 'oos_recovery_dependencies', 'oos_recovery_mutation_leases', 'oos_recovery_outbox',
-    'orders', 'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'provider_capacity_leases',
+    'openai_ads_conversions', 'orders', 'pending_lifecycle_action_resolutions', 'pending_lifecycle_actions', 'provider_capacity_leases',
     'permissions', 'products', 'reconciliation_attempts', 'recovery_commands',
     'roles', 'sku_mapping_audit_log', 'sku_mappings', 'stocks', 'user_permissions',
     'user_preferences', 'users', 'webhook_inbox', 'workflow_observations',
@@ -30,6 +30,10 @@ BEGIN
 
   IF to_regclass('public.battle_hub_oos_recovery') IS NOT NULL THEN
     RAISE EXCEPTION 'Rollback left Battle Hub OOS recovery view behind';
+  END IF;
+
+  IF to_regclass('public.battle_hub_openai_ads_conversions') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback left Battle Hub OpenAI Ads view behind';
   END IF;
 
   IF to_regprocedure('public.battle_platform_scrub_pending_action_payload()') IS NOT NULL THEN
