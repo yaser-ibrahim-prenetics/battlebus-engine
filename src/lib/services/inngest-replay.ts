@@ -1,4 +1,7 @@
-import { toCanonicalShopifyOrderKey } from "@/lib/helpers/shopify-order-identity";
+import {
+  canonicalShopifyOrderId,
+  toCanonicalShopifyOrderKey,
+} from "@/lib/helpers/shopify-order-identity";
 
 const shopifyIdOnlyRerunNames = new Set([
   "shopify/order.paid",
@@ -26,7 +29,12 @@ export function prepareInngestReplayData(
 
   if (shopifyIdOnlyRerunNames.has(eventName) && prepared.shopifyOrderId != null) {
     const rawOrderId = String(prepared.shopifyOrderId);
-    const canonicalOrderId = rawOrderId.split("-rerun-")[0] || rawOrderId;
+    const canonicalOrderId = canonicalShopifyOrderId(
+      rawOrderId,
+      prepared.originalShopifyOrderId == null
+        ? undefined
+        : String(prepared.originalShopifyOrderId)
+    );
     prepared.shopifyOrderId = `${canonicalOrderId}-rerun-${replayTimestamp}`;
     if (prepared.originalShopifyOrderId == null) {
       prepared.originalShopifyOrderId = canonicalOrderId;

@@ -31,7 +31,7 @@ describe("Inngest replay data", () => {
     const prepared = prepareInngestReplayData(
       "shopify/subscription.renewed",
       {
-        shopifyOrderId: "123-rerun-old",
+        shopifyOrderId: "999-rerun-old",
         originalShopifyOrderId: "123",
         shopifyStore: "active.myshopify.com",
         canonicalShopifyOrderKey: "stale",
@@ -40,6 +40,7 @@ describe("Inngest replay data", () => {
       456
     );
 
+    expect(prepared.shopifyOrderId).toBe("123-rerun-456");
     expect(prepared.canonicalShopifyOrderKey).toBe(
       toCanonicalShopifyOrderKey({
         shopifyStore: "active.myshopify.com",
