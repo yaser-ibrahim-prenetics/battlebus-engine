@@ -174,14 +174,12 @@ export async function prepareChannelLiftReport(
     const batch = buildEvents({ pairs, orders, shop, eligibilityCutoffSeconds });
     mergeCounts(exclusionCounts, batch.exclusions);
     events.push(...batch.events);
-    if (batch.events.length > 0) {
-      deliveryBatches.push({
-        candidateOffset: offset,
-        candidateCount: pairs.length,
-        eventCount: batch.events.length,
-        digest: channelLiftDigest([pairs, batch.events]),
-      });
-    }
+    deliveryBatches.push({
+      candidateOffset: offset,
+      candidateCount: pairs.length,
+      eventCount: batch.events.length,
+      digest: channelLiftDigest([pairs, batch.events]),
+    });
   }
 
   events.sort((left, right) => left.event_id.localeCompare(right.event_id));

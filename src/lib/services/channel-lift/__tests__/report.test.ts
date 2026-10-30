@@ -84,6 +84,8 @@ describe("channel-lift report preparation", () => {
         .mockResolvedValue(new Map([["123", { ...order, financialStatus: "pending" }]])),
     });
     expect(report.events).toHaveLength(0);
+    expect(report.evidence.deliveryBatches).toHaveLength(1);
+    expect(report.evidence.deliveryBatches[0].eventCount).toBe(0);
     expect(report.evidence.exclusionCounts).toEqual({
       cancelled_refunded_or_unpaid: 1,
       shopify_order_missing_or_mismatched: 1,

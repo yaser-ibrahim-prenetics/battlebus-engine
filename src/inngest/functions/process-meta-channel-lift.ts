@@ -100,35 +100,58 @@ export const processMetaChannelLift = inngest.createFunction(
       let attemptedEvents = reservation.run.attemptedEvents;
       let deliveredEvents = reservation.run.deliveredEvents;
       let confirmedEvents = 0;
-      let startIndex = 0;
-      for (const batch of evidence.deliveryBatches) {
+      let confirmedPositiveBatches = 0;
+      for (const batch of evidence.deliveryBatches.filter((item) => item.eventCount > 0)) {
         if (confirmedEvents + batch.eventCount > deliveredEvents) break;
         confirmedEvents += batch.eventCount;
-        startIndex += 1;
+        confirmedPositiveBatches += 1;
       }
       if (confirmedEvents !== deliveredEvents || attemptedEvents > evidence.eligibleEvents) {
         throw new ChannelLiftError("delivery_progress_inconsistent");
       }
 
-      const batchCount = evidence.deliveryBatches.length;
-      let cumulativeEvents = evidence.deliveryBatches
-        .slice(0, startIndex)
-        .reduce((total, batch) => total + batch.eventCount, 0);
-      for (let index = startIndex; index < batchCount; index += 1) {
+      const batchCount = evidence.deliveryBatches.filter((item) => item.eventCount > 0).length;
+      let cumulativeEvents = 0;
+      let positiveBatchIndex = 0;
+      for (let index = 0; index < evidence.deliveryBatches.length; index += 1) {
         const batchEvidence = evidence.deliveryBatches[index];
         const fence = channelLiftDigest([
           evidence.configHash,
           evidence.snapshotHash,
           batchEvidence.digest,
         ]).slice(0, 16);
+        if (batchEvidence.eventCount === 0) {
+          await step.run(`validate-empty-meta-batch-${index}-${fence}`, async () => {
+            const replay = await prepareChannelLiftDeliveryBatch({
+              reportingDate: event.data.reportingDate,
+              eligibilityCutoffSeconds,
+              expectedCounts: evidence.counts,
+              expectedMappedPairs: evidence.mappedPairs,
+              batch: batchEvidence,
+            });
+            await recordChannelLiftPrepared({ runId, ...evidence });
+            if (
+              replay.configHash !== evidence.configHash ||
+              replay.digest !== batchEvidence.digest ||
+              replay.events.length !== 0
+            ) {
+              throw new ChannelLiftError("prepared_snapshot_changed");
+            }
+          });
+          continue;
+        }
         cumulativeEvents += batchEvidence.eventCount;
+        if (positiveBatchIndex < confirmedPositiveBatches) {
+          positiveBatchIndex += 1;
+          continue;
+        }
         attemptedEvents = Math.max(attemptedEvents, cumulativeEvents);
         // Persist the logical attempt before the provider call so a timeout or
         // ambiguous receipt remains visible to operators.
         await step.run(`record-meta-attempt-${index}-${fence}`, () =>
           recordChannelLiftProgress({
             runId,
-            batchCount: index + 1,
+            batchCount: positiveBatchIndex + 1,
             attemptedEvents,
             deliveredEvents,
           })
@@ -163,11 +186,12 @@ export const processMetaChannelLift = inngest.createFunction(
         await step.run(`record-meta-batch-${index}-${fence}`, () =>
           recordChannelLiftProgress({
             runId,
-            batchCount: index + 1,
+            batchCount: positiveBatchIndex + 1,
             attemptedEvents,
             deliveredEvents,
           })
         );
+        positiveBatchIndex += 1;
       }
 
       await step.run("complete-channel-lift-live-run", () => completeChannelLiftRun(runId, "live"));

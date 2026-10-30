@@ -243,6 +243,33 @@ describe("Meta channel-lift workflow", () => {
     );
   });
 
+  it("revalidates an empty candidate batch without calling Meta", async () => {
+    const deliveryBatches = [
+      { candidateOffset: 0, candidateCount: 500, eventCount: 0, digest: "a".repeat(64) },
+      { candidateOffset: 500, candidateCount: 1, eventCount: 1, digest: "d".repeat(64) },
+    ];
+    mocks.prepare.mockResolvedValue({
+      events: [event],
+      evidence: { ...evidence, deliveryBatches },
+    });
+    mocks.prepareBatch.mockImplementation(
+      async ({ batch }: { batch: (typeof deliveryBatches)[number] }) => ({
+        events: batch.eventCount === 0 ? [] : [event],
+        digest: batch.digest,
+        configHash: evidence.configHash,
+      })
+    );
+    await expect(
+      (
+        processMetaChannelLift as unknown as (
+          input: ReturnType<typeof invocation>
+        ) => Promise<Record<string, unknown>>
+      )(invocation("live"))
+    ).resolves.toMatchObject({ status: "completed", batchCount: 1, deliveredEvents: 1 });
+    expect(mocks.prepareBatch).toHaveBeenCalledTimes(2);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed on an ambiguous Meta receipt", async () => {
     mocks.send.mockRejectedValue(new ChannelLiftError("meta_receipt_mismatch"));
     await expect(
