@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireServiceAuth } from "@/lib/auth/service-auth";
 import { readHubLocationMappings, sendHubWebhook } from "@/lib/clients/hub-transport";
@@ -16,7 +17,11 @@ export async function GET(request: Request) {
   const auth = authorize(request);
   if (!auth.ok) return NextResponse.json(auth.body, {status: auth.status});
   try { return relay(await readHubLocationMappings()); }
-  catch { return NextResponse.json({error: "hub_unavailable"}, {status: 502}); }
+  catch (error) {
+    console.error(JSON.stringify({tag: "inventory.hub-relay.failure", requestId: randomUUID(), operation: "read-mappings",
+      errorType: error instanceof Error ? error.name : "UnknownError"}));
+    return NextResponse.json({error: "hub_unavailable"}, {status: 502});
+  }
 }
 /** Preserve Hub's existing Battle Bus identity gate for inventory-only callbacks. */
 export async function POST(request: Request) {
@@ -27,5 +32,9 @@ export async function POST(request: Request) {
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({error: "invalid_json"}, {status: 400}); }
   try { return relay(await sendHubWebhook(path, body)); }
-  catch { return NextResponse.json({error: "hub_unavailable"}, {status: 502}); }
+  catch (error) {
+    console.error(JSON.stringify({tag: "inventory.hub-relay.failure", requestId: randomUUID(), operation: "callback", path,
+      errorType: error instanceof Error ? error.name : "UnknownError"}));
+    return NextResponse.json({error: "hub_unavailable"}, {status: 502});
+  }
 }
