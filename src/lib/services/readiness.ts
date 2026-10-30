@@ -81,6 +81,33 @@ export async function checkReadiness() {
             WHERE table_schema = 'public' AND table_name = 'channel_lift_request_identities'
               AND column_name IN ('request_id', 'mode', 'source', 'first_seen_at')
           )
+          AND (
+            SELECT COUNT(*) = 3
+            FROM pg_constraint
+            WHERE contype = 'f' AND convalidated AND (
+              (
+                conrelid = 'public.channel_lift_runs'::regclass
+                AND confrelid = 'public.channel_lift_request_identities'::regclass
+                AND conname = 'channel_lift_runs_request_identity_fkey'
+                AND pg_get_constraintdef(oid) LIKE
+                  'FOREIGN KEY (request_id, mode, source) REFERENCES channel_lift_request_identities(request_id, mode, source)%'
+              )
+              OR (
+                conrelid = 'public.channel_lift_run_attempts'::regclass
+                AND confrelid = 'public.channel_lift_request_identities'::regclass
+                AND conname = 'channel_lift_attempt_request_identity_fkey'
+                AND pg_get_constraintdef(oid) LIKE
+                  'FOREIGN KEY (request_id, mode, source) REFERENCES channel_lift_request_identities(request_id, mode, source)%'
+              )
+              OR (
+                conrelid = 'public.channel_lift_run_attempts'::regclass
+                AND confrelid = 'public.channel_lift_runs'::regclass
+                AND conname = 'channel_lift_attempt_run_identity_fkey'
+                AND pg_get_constraintdef(oid) LIKE
+                  'FOREIGN KEY (run_id, mode) REFERENCES channel_lift_runs(run_id, mode)%'
+              )
+            )
+          )
           AND has_table_privilege(current_user, 'public.channel_lift_runs', 'SELECT')
           AND has_table_privilege(current_user, 'public.channel_lift_runs', 'INSERT')
           AND has_table_privilege(current_user, 'public.channel_lift_run_attempts', 'SELECT')

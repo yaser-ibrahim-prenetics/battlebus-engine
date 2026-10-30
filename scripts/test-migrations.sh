@@ -33,6 +33,8 @@ bootstrap_test_admin() {
 psql "${MIGRATION_TEST_DATABASE_URL}" \
   --set ON_ERROR_STOP=1 \
   --file "${repo_root}/db/test/bootstrap.sql"
+# Reproduce an upgrade from the schema released on main before applying new work.
+migrate "${migration_args[@]}" goto 56
 migrate "${migration_args[@]}" up
 bootstrap_test_admin
 psql "${MIGRATION_TEST_DATABASE_URL}" \
