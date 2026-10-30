@@ -9,6 +9,7 @@ import {
   resolveLoopWebhookVerifyDisabled,
 } from "./helpers/loop-integration";
 import { openAiAdsConfigurationProblems } from "@/lib/helpers/openai-ads-config";
+import { validateChannelLiftSourceUrl } from "@/lib/channel-lift/model";
 
 function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
@@ -450,8 +451,15 @@ export function channelLiftConfigurationProblems(): string[] {
   ) {
     errors.push("CHANNEL_LIFT_TRIPLE_WHALE_SHOP_ID must match the active Shopify store");
   }
-  if (!config.channelLift.sourceUrl)
+  if (!config.channelLift.sourceUrl) {
     errors.push("CHANNEL_LIFT_SOURCE_URL is required when channel lift is enabled");
+  } else {
+    try {
+      validateChannelLiftSourceUrl(config.channelLift.sourceUrl);
+    } catch {
+      errors.push("CHANNEL_LIFT_SOURCE_URL is not an approved channel-lift URL");
+    }
+  }
   if (!/^\d+$/.test(config.channelLift.metaDatasetId))
     errors.push("CHANNEL_LIFT_META_DATASET_ID must be numeric when channel lift is enabled");
   return errors;

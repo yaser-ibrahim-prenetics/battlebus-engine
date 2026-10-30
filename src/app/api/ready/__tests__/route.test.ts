@@ -2,21 +2,24 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const database = vi.hoisted(() => ({ configured: vi.fn(), query: vi.fn() }));
+const appConfig = vi.hoisted(() => ({
+  shopify: { im8: { shopDomain: "test.invalid", accessToken: "local-only" } },
+  csPlatform: { enabled: true, baseUrl: "https://hub.invalid", webhookSecret: "local-only" },
+  features: { dryRunMode: true },
+  channelLift: { enabled: false },
+}));
 vi.mock("@/lib/db/database", () => ({
   isDatabaseConfigured: database.configured,
   queryDatabase: database.query,
 }));
-vi.mock("@/lib/config", () => ({ config: {
-  shopify: { im8: { shopDomain: "test.invalid", accessToken: "local-only" } },
-  csPlatform: { enabled: true, baseUrl: "https://hub.invalid", webhookSecret: "local-only" },
-  features: { dryRunMode: true },
-} }));
+vi.mock("@/lib/config", () => ({ config: appConfig }));
 import { GET } from "../route";
 import { GET as detailed } from "../../readiness/route";
 
 beforeEach(() => {
   database.configured.mockReturnValue(true);
   database.query.mockResolvedValue({ rows: [{ ready: 1 }] });
+  appConfig.channelLift.enabled = false;
   vi.stubEnv("INNGEST_EVENT_KEY", "local-only");
   vi.stubEnv("INNGEST_SIGNING_KEY", "local-only");
   vi.stubEnv("K_SERVICE", "battle-bus");
@@ -50,6 +53,14 @@ it("requires queue and Hub identity configuration", async () => {
   vi.stubEnv("INNGEST_EVENT_KEY", "local-only");
   vi.stubEnv("BATTLE_HUB_IAP_ENABLED", "false");
   expect((await GET()).status).toBe(503);
+});
+it("fails closed when enabled channel-lift schema is unavailable", async () => {
+  appConfig.channelLift.enabled = true;
+  database.query
+    .mockResolvedValueOnce({ rows: [{ ready: 1 }] })
+    .mockResolvedValueOnce({ rows: [{ ready: false }] });
+  expect((await GET()).status).toBe(503);
+  expect(database.query).toHaveBeenCalledTimes(2);
 });
 it("keeps detailed readiness authenticated before querying", async () => {
   expect((await detailed(new NextRequest("https://bus.invalid/api/readiness"))).status).toBe(401);

@@ -1,6 +1,6 @@
 export const insertChannelLiftRunSQL = `INSERT INTO public.channel_lift_runs
-  (run_id, reporting_date, mode, source, request_id, requested_by, request_reason)
-  VALUES ($1, $2::date, $3, $4, $5, $6, $7)
+  (run_id, reporting_date, mode, source, request_id, requested_by, reason_code, reference_id)
+  VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8)
   ON CONFLICT (reporting_date, mode) DO NOTHING
   RETURNING run_id`;
 

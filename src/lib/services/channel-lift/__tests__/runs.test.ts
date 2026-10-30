@@ -50,7 +50,8 @@ describe("channel-lift run state", () => {
         source: "manual",
         requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
         requestedBy: "operator@example.com",
-        requestReason: "Run the approved Meta delivery canary",
+        reasonCode: "live_canary",
+        referenceId: "BB-123",
       })
     ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
   });
@@ -67,7 +68,8 @@ describe("channel-lift run state", () => {
         mode: "live",
         source: "manual",
         requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
-        requestReason: "Retry the failed Meta delivery date",
+        reasonCode: "operator_replay",
+        referenceId: "BB-124",
       })
     ).resolves.toMatchObject({ disposition: "already_completed" });
   });
@@ -81,7 +83,8 @@ describe("channel-lift run state", () => {
         mode: "live",
         source: "manual",
         requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
-        requestReason: "Resume the approved Meta delivery canary",
+        reasonCode: "operator_replay",
+        referenceId: "BB-125",
       })
     ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
   });
@@ -96,10 +99,27 @@ describe("channel-lift run state", () => {
         mode: "live",
         source: "manual",
         requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
-        requestReason: "Resume the approved Meta delivery canary",
+        reasonCode: "operator_replay",
+        referenceId: "BB-126",
       })
     ).resolves.toMatchObject({ disposition: "started", run: { status: "running" } });
     expect(mocks.query).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a different request identity for a failed partial run", async () => {
+    mocks.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mocks.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ ...row, status: "failed" }] });
+    await expect(
+      startChannelLiftRun({
+        reportingDate: "2026-10-28",
+        mode: "live",
+        source: "manual",
+        requestId: "da90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+        reasonCode: "operator_replay",
+        referenceId: "BB-127",
+      })
+    ).resolves.toMatchObject({ disposition: "request_mismatch" });
+    expect(mocks.query).toHaveBeenCalledTimes(2);
   });
 
   it("persists only bounded aggregate preparation evidence", async () => {

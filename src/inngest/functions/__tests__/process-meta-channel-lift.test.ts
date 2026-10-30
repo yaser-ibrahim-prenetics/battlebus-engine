@@ -5,6 +5,7 @@ import { ChannelLiftError, type MetaChannelLiftEvent } from "@/lib/channel-lift/
 const mocks = vi.hoisted(() => ({
   options: undefined as Record<string, unknown> | undefined,
   prepare: vi.fn(),
+  prepareBatch: vi.fn(),
   send: vi.fn(),
   start: vi.fn(),
   prepared: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/lib/config", () => ({
 }));
 vi.mock("@/lib/services/channel-lift/report", () => ({
   prepareChannelLiftReport: mocks.prepare,
+  prepareChannelLiftDeliveryBatch: mocks.prepareBatch,
 }));
 vi.mock("@/lib/clients/meta-conversions", () => ({
   sendMetaChannelLiftBatch: mocks.send,
@@ -64,6 +66,9 @@ const evidence = {
   exclusionCounts: {},
   configHash: "b".repeat(64),
   snapshotHash: "c".repeat(64),
+  deliveryBatches: [
+    { candidateOffset: 0, candidateCount: 1, eventCount: 1, digest: "d".repeat(64) },
+  ],
 };
 
 function step() {
@@ -98,9 +103,17 @@ describe("Meta channel-lift workflow", () => {
         runId,
         reportingDate: "2026-10-28",
         eligibilityCutoffSeconds: 1_798_000_000,
+        attemptedEvents: 0,
+        deliveredEvents: 0,
+        batchCount: 0,
       },
     });
     mocks.prepare.mockResolvedValue({ events: [event], evidence });
+    mocks.prepareBatch.mockResolvedValue({
+      events: [event],
+      digest: evidence.deliveryBatches[0].digest,
+      configHash: evidence.configHash,
+    });
     mocks.send.mockResolvedValue({ eventsReceived: 1 });
     mocks.prepared.mockResolvedValue(undefined);
     mocks.progress.mockResolvedValue(undefined);
@@ -133,7 +146,21 @@ describe("Meta channel-lift workflow", () => {
       ...event,
       event_id: `event-${index}`,
     }));
-    mocks.prepare.mockResolvedValue({ events, evidence: { ...evidence, eligibleEvents: 501 } });
+    const deliveryBatches = [
+      { candidateOffset: 0, candidateCount: 500, eventCount: 500, digest: "d".repeat(64) },
+      { candidateOffset: 500, candidateCount: 1, eventCount: 1, digest: "e".repeat(64) },
+    ];
+    mocks.prepare.mockResolvedValue({
+      events,
+      evidence: { ...evidence, eligibleEvents: 501, deliveryBatches },
+    });
+    mocks.prepareBatch.mockImplementation(
+      async ({ batch }: { batch: (typeof deliveryBatches)[number] }) => ({
+        events: events.slice(batch.candidateOffset, batch.candidateOffset + batch.eventCount),
+        digest: batch.digest,
+        configHash: evidence.configHash,
+      })
+    );
     mocks.send.mockImplementation(async ({ events: batch }: { events: unknown[] }) => ({
       eventsReceived: batch.length,
     }));
@@ -148,7 +175,8 @@ describe("Meta channel-lift workflow", () => {
       batchCount: 2,
     });
     expect(mocks.send).toHaveBeenCalledTimes(2);
-    expect(mocks.prepare).toHaveBeenCalledTimes(3);
+    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+    expect(mocks.prepareBatch).toHaveBeenCalledTimes(2);
     expect(mocks.progress).toHaveBeenLastCalledWith({
       runId,
       batchCount: 2,
@@ -158,12 +186,11 @@ describe("Meta channel-lift workflow", () => {
   });
 
   it("fails closed when provider data drifts before a delivery checkpoint", async () => {
-    mocks.prepare
-      .mockResolvedValueOnce({ events: [event], evidence })
-      .mockResolvedValueOnce({
-        events: [{ ...event, custom_data: { value: 99, currency: "USD" } }],
-        evidence: { ...evidence, snapshotHash: "d".repeat(64) },
-      });
+    mocks.prepareBatch.mockResolvedValueOnce({
+      events: [{ ...event, custom_data: { value: 99, currency: "USD" } }],
+      digest: "f".repeat(64),
+      configHash: evidence.configHash,
+    });
     await expect(
       (
         processMetaChannelLift as unknown as (
@@ -172,6 +199,48 @@ describe("Meta channel-lift workflow", () => {
       )(invocation("live"))
     ).resolves.toEqual({ status: "failed", runId, errorCode: "prepared_snapshot_changed" });
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("resumes after the last confirmed batch without resending it", async () => {
+    const events = Array.from({ length: 501 }, (_, index) => ({
+      ...event,
+      event_id: `event-${index}`,
+    }));
+    const deliveryBatches = [
+      { candidateOffset: 0, candidateCount: 500, eventCount: 500, digest: "d".repeat(64) },
+      { candidateOffset: 500, candidateCount: 1, eventCount: 1, digest: "e".repeat(64) },
+    ];
+    mocks.start.mockResolvedValue({
+      disposition: "started",
+      run: {
+        runId,
+        reportingDate: "2026-10-28",
+        eligibilityCutoffSeconds: 1_798_000_000,
+        attemptedEvents: 501,
+        deliveredEvents: 500,
+        batchCount: 2,
+      },
+    });
+    mocks.prepare.mockResolvedValue({
+      events,
+      evidence: { ...evidence, eligibleEvents: 501, deliveryBatches },
+    });
+    mocks.prepareBatch.mockResolvedValue({
+      events: [events[500]],
+      digest: deliveryBatches[1].digest,
+      configHash: evidence.configHash,
+    });
+    await expect(
+      (
+        processMetaChannelLift as unknown as (
+          input: ReturnType<typeof invocation>
+        ) => Promise<Record<string, unknown>>
+      )(invocation("live"))
+    ).resolves.toMatchObject({ status: "completed", deliveredEvents: 501, batchCount: 2 });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.prepareBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ batch: deliveryBatches[1] })
+    );
   });
 
   it("fails closed on an ambiguous Meta receipt", async () => {

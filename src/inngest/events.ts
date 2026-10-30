@@ -518,7 +518,8 @@ export type MetaChannelLiftRunRequestedEvent = {
     mode: "dry_run" | "live";
     source: "schedule" | "manual";
     requestedBy?: string;
-    requestReason?: string;
+    reasonCode?: "parity_validation" | "live_canary" | "incident_recovery" | "operator_replay";
+    referenceId?: string;
   };
 };
 

@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { config } from "@/lib/config";
-import { prepareChannelLiftReport } from "@/lib/services/channel-lift/report";
+import { tripleWhaleAttributionConfigHash } from "@/lib/clients/triple-whale";
+import {
+  prepareChannelLiftDeliveryBatch,
+  prepareChannelLiftReport,
+} from "@/lib/services/channel-lift/report";
 
 const original = { ...config.channelLift };
 const originalShop = config.shopify.im8.shopDomain;
@@ -26,6 +30,7 @@ describe("channel-lift report preparation", () => {
       tripleWhaleShopId: "im8store.myshopify.com",
       tripleWhaleApiKey: "secret",
       sourceUrl: "https://im8health.com/",
+      metaDatasetId: "123",
       maxEventAgeSeconds: 604_800,
     });
     Object.assign(config.shopify.im8, { shopDomain: "im8store.myshopify.com" });
@@ -111,6 +116,46 @@ describe("channel-lift report preparation", () => {
     expect(changed.evidence.configHash).toBe(first.evidence.configHash);
     expect(changed.evidence.snapshotHash).not.toBe(first.evidence.snapshotHash);
     expect(JSON.stringify(changed.evidence)).not.toContain("changed@example.com");
+  });
+
+  it("reconstructs only the requested candidate batch and matches its digest", async () => {
+    const extractionConfigHash = tripleWhaleAttributionConfigHash({
+      reportingDate: "2026-10-28",
+      shopId: "im8store.myshopify.com",
+      pageSize: config.channelLift.pageSize,
+      maxRows: config.channelLift.maxRows,
+    });
+    const report = await prepareChannelLiftReport("2026-10-28", 1_793_275_200, {
+      readAttribution: vi.fn().mockResolvedValue({
+        rows: [{ orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" }],
+        counts: { rows: 1, orders: 1, pairs: 1 },
+        configHash: extractionConfigHash,
+        snapshotHash: "b".repeat(64),
+      }),
+      readOrders: vi.fn().mockResolvedValue(new Map([["123", order]])),
+    });
+    const readOrders = vi.fn().mockResolvedValue(new Map([["123", order]]));
+    const batch = await prepareChannelLiftDeliveryBatch(
+      {
+        reportingDate: "2026-10-28",
+        eligibilityCutoffSeconds: 1_793_275_200,
+        expectedCounts: report.evidence.counts,
+        batch: report.evidence.deliveryBatches[0],
+      },
+      {
+        readCounts: vi.fn().mockResolvedValue(report.evidence.counts),
+        readPairPage: vi
+          .fn()
+          .mockResolvedValue([
+            { orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" },
+          ]),
+        readOrders,
+      }
+    );
+    expect(batch.events).toHaveLength(1);
+    expect(batch.digest).toBe(report.evidence.deliveryBatches[0].digest);
+    expect(batch.configHash).toBe(report.evidence.configHash);
+    expect(readOrders).toHaveBeenCalledWith(["123"]);
   });
 
   afterAll(() => {

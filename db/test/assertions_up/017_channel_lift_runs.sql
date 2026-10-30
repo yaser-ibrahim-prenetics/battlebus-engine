@@ -22,7 +22,7 @@ BEGIN
       'battle_bus_runtime', 'public.channel_lift_runs', 'status', 'UPDATE'
     )
     OR has_column_privilege(
-      'battle_bus_runtime', 'public.channel_lift_runs', 'request_reason', 'UPDATE'
+      'battle_bus_runtime', 'public.channel_lift_runs', 'reason_code', 'UPDATE'
     )
     OR has_table_privilege(
       'battle_bus_runtime', 'public.channel_lift_runs', 'DELETE,TRUNCATE'

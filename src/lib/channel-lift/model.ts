@@ -3,6 +3,13 @@ import { isIP } from "node:net";
 
 export type ChannelLiftMode = "dry_run" | "live";
 export type ChannelLiftSource = "schedule" | "manual";
+export const CHANNEL_LIFT_REASON_CODES = [
+  "parity_validation",
+  "live_canary",
+  "incident_recovery",
+  "operator_replay",
+] as const;
+export type ChannelLiftReasonCode = (typeof CHANNEL_LIFT_REASON_CODES)[number];
 
 export class ChannelLiftError extends Error {
   constructor(
@@ -212,7 +219,7 @@ function prepareMetaUserData(
   return user;
 }
 
-function validateSourceUrl(value: string): string {
+export function validateChannelLiftSourceUrl(value: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -274,7 +281,7 @@ export function buildMetaPurchaseEvent({
     event_id: channelLiftDigest([shop, order.id, eventName]),
     event_time: eventTime,
     action_source: "website",
-    event_source_url: validateSourceUrl(sourceUrl),
+    event_source_url: validateChannelLiftSourceUrl(sourceUrl),
     user_data: prepareMetaUserData(shop, order),
     custom_data: { value: decimalValue(order.totalPrice), currency: order.currency },
   };

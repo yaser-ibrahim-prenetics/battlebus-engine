@@ -42,7 +42,8 @@ describe("channel-lift operations route", () => {
       request(
         {
           requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
-          reason: "Compare the cutover attribution counts",
+          reasonCode: "parity_validation",
+          referenceId: "BB-123",
           startDate: "2026-10-01",
           endDate: "2026-10-03",
         },
@@ -64,7 +65,8 @@ describe("channel-lift operations route", () => {
       request(
         {
           requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
-          reason: "Attempt a guarded live canary run",
+          reasonCode: "live_canary",
+          referenceId: "BB-124",
           date: "2026-10-01",
           live: true,
         },
@@ -72,6 +74,21 @@ describe("channel-lift operations route", () => {
       )
     );
     expect(response.status).toBe(403);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("rejects free-text audit narratives before they reach Inngest", async () => {
+    const response = await POST(
+      request(
+        {
+          requestId: "ca90cc5c-b1a2-4245-8ea4-bc57a10481ed",
+          reason: "Customer email person@example.com requested a replay",
+          date: "2026-10-01",
+        },
+        "operations-key"
+      )
+    );
+    expect(response.status).toBe(400);
     expect(mocks.send).not.toHaveBeenCalled();
   });
 });

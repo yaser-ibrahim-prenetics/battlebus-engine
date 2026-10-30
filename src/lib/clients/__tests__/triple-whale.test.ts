@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { readTripleWhaleAttribution } from "@/lib/clients/triple-whale";
+import {
+  readTripleWhaleAttribution,
+  readTripleWhaleMappedPairPage,
+} from "@/lib/clients/triple-whale";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -168,5 +171,31 @@ describe("Triple Whale channel-lift client", () => {
         { fetch, sleep: vi.fn() }
       )
     ).resolves.toMatchObject({ counts: { rows: 2, orders: 1, pairs: 1 } });
+  });
+
+  it("reconstructs one bounded mapped-pair page for delivery", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse([{ order_id: "123", channel: "klaviyo", event_date: "2026-10-28" }])
+      );
+    await expect(
+      readTripleWhaleMappedPairPage(
+        {
+          apiKey: "secret",
+          shopId: "im8store.myshopify.com",
+          reportingDate: "2026-10-28",
+          sourceChannels: ["klaviyo"],
+          offset: 500,
+          limit: 500,
+        },
+        { fetch, sleep: vi.fn() }
+      )
+    ).resolves.toEqual([
+      { orderId: "123", channel: "klaviyo", eventDate: "2026-10-28" },
+    ]);
+    const request = JSON.parse(String(fetch.mock.calls[0][1]?.body));
+    expect(request.query).toContain("GROUP BY order_id, channel");
+    expect(request.query).toContain("LIMIT 500 OFFSET 500");
   });
 });

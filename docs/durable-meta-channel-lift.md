@@ -23,6 +23,10 @@ Europa is out of scope.
 - Accept authenticated manual requests for one date or an inclusive bounded
   date range. Live delivery requires an explicit `live` flag; the safe default
   is dry-run.
+- Manual requests use a bounded reason code (`parity_validation`, `live_canary`,
+  `incident_recovery`, or `operator_replay`) and an optional issue reference
+  such as `BB-123`; free-text narratives are never placed on the event bus or
+  in delivery evidence.
 - Reject future dates, invalid ranges, and ranges longer than 31 days.
 
 ### Triple Whale extraction
@@ -60,6 +64,9 @@ Europa is out of scope.
   ambiguous receipts fail closed.
 - Checkpoint each batch in its own Inngest step. If acceptance is uncertain, a
   retry resends identical event IDs so Meta can deduplicate the attempt.
+- Persist the logical batch attempt before the provider call. On replay, skip
+  contiguous batches with exact receipts, reconstruct only the current bounded
+  candidate page, and compare its privacy-safe payload digest before resending.
 - Dry-run mode performs no Meta write.
 
 ### Persistence and operations

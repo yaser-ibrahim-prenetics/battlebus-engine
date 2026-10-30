@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { requireServiceAuth } from "@/lib/auth/service-auth";
-import { ChannelLiftError } from "@/lib/channel-lift/model";
+import { CHANNEL_LIFT_REASON_CODES, ChannelLiftError } from "@/lib/channel-lift/model";
 import { config } from "@/lib/config";
 import { inngest } from "@/inngest/client";
 import { channelLiftDateRange } from "@/lib/services/channel-lift/schedule";
@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
 const requestSchema = z
   .object({
     requestId: z.uuid(),
-    reason: z.string().trim().min(10).max(1_000),
+    reasonCode: z.enum(CHANNEL_LIFT_REASON_CODES),
+    referenceId: z.string().regex(/^[A-Z][A-Z0-9]{1,15}-[1-9]\d{0,9}$/).optional(),
     date: z.iso.date().optional(),
     startDate: z.iso.date().optional(),
     endDate: z.iso.date().optional(),
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
   const traceId = request.headers.get("x-request-id") || crypto.randomUUID();
   const auth = requireServiceAuth(request, { envVars: ["BATTLE_BUS_OPERATIONS_API_KEY"] });
   if (!auth.ok) {
-    console.warn(`[ChannelLift] request rejected traceId=${traceId} errorCode=unauthorized`);
+    console.warn(`[ChannelLift] [${traceId}] request rejected errorCode=unauthorized`);
     return NextResponse.json(auth.body, { status: auth.status });
   }
   if (!config.channelLift.enabled) {
@@ -63,13 +64,14 @@ export async function POST(request: NextRequest) {
             mode,
             source: "manual",
             requestedBy: "service:battle-bus-operations",
-            requestReason: body.reason,
+            reasonCode: body.reasonCode,
+            referenceId: body.referenceId,
           },
         })
       )
     );
     console.info(
-      `[ChannelLift] request queued traceId=${traceId} requestId=${body.requestId} mode=${mode} dates=${reportingDates.length}`
+      `[ChannelLift] [${traceId}] request queued requestId=${body.requestId} mode=${mode} dates=${reportingDates.length}`
     );
     return NextResponse.json(
       {
@@ -90,7 +92,7 @@ export async function POST(request: NextRequest) {
         : error instanceof ChannelLiftError
           ? error.code
           : "channel_lift_request_failed";
-    console.error(`[ChannelLift] request failed traceId=${traceId} errorCode=${code}`);
+    console.error(`[ChannelLift] [${traceId}] request failed errorCode=${code}`);
     return NextResponse.json(
       {
         error: code,

@@ -30,6 +30,31 @@ export type TripleWhaleAttributionConfig = {
   maxRows?: number;
 };
 
+type TripleWhaleCredentials = {
+  shopId: string;
+  reportingDate: string;
+  apiKey: string;
+};
+
+const ATTRIBUTION_WHERE =
+  "event_date BETWEEN @startDate AND @endDate AND (model = 'Triple Attribution' AND attribution_window = 'lifetime')";
+
+function attributionSql(pageSize: number): { baseSql: string; countSql: string } {
+  const from = `FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE}`;
+  return {
+    baseSql: `SELECT order_id, channel, event_date ${from} ORDER BY order_id, channel, event_date LIMIT ${pageSize}`,
+    countSql: `SELECT COUNT(*) AS rows, COUNT(DISTINCT order_id) AS orders, COUNT(DISTINCT tuple(order_id, channel)) AS pairs ${from}`,
+  };
+}
+
+function validateCredentials(input: TripleWhaleCredentials): string {
+  const reportingDate = validateReportingDate(input.reportingDate);
+  if (!input.shopId || input.shopId.length > 253 || !input.apiKey) {
+    throw new ChannelLiftError("triple_whale_configuration_invalid");
+  }
+  return reportingDate;
+}
+
 function responseRows(value: unknown): Record<string, unknown>[] {
   if (
     !Array.isArray(value) ||
@@ -60,6 +85,105 @@ function parseCounts(rows: Record<string, unknown>[]): AttributionCounts {
   };
 }
 
+async function queryTripleWhale(
+  input: TripleWhaleCredentials,
+  sql: string,
+  dependencies: TripleWhaleDependencies
+): Promise<Record<string, unknown>[]> {
+  const reportingDate = validateCredentials(input);
+  return withBoundedChannelLiftRetry({
+    operation: async () => {
+      const response = await dependencies.fetch(ENDPOINT, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
+        headers: { "Content-Type": "application/json", "x-api-key": input.apiKey },
+        body: JSON.stringify({
+          shopId: input.shopId,
+          query: sql,
+          period: { startDate: reportingDate, endDate: reportingDate },
+        }),
+      });
+      if (!response.ok) {
+        const retryable = response.status === 429 || response.status >= 500;
+        throw new ChannelLiftError(
+          response.status === 429
+            ? "triple_whale_rate_limited"
+            : response.status >= 500
+              ? "triple_whale_unavailable"
+              : "triple_whale_rejected",
+          retryable
+        );
+      }
+      return responseRows(await response.json());
+    },
+    normalizeError: (error) =>
+      error instanceof ChannelLiftError
+        ? error
+        : new ChannelLiftError("triple_whale_network_error", true),
+    sleep: dependencies.sleep,
+  });
+}
+
+export function tripleWhaleAttributionConfigHash(input: TripleWhaleAttributionConfig): string {
+  const reportingDate = validateReportingDate(input.reportingDate);
+  const { baseSql, countSql } = attributionSql(input.pageSize);
+  return channelLiftDigest({
+    shopId: input.shopId,
+    reportingDate,
+    pageSize: input.pageSize,
+    baseSql,
+    countSql,
+  });
+}
+
+export async function readTripleWhaleAttributionCounts(
+  input: TripleWhaleCredentials,
+  dependencies: TripleWhaleDependencies = defaultDependencies
+): Promise<AttributionCounts> {
+  const { countSql } = attributionSql(1);
+  return parseCounts(await queryTripleWhale(input, countSql, dependencies));
+}
+
+export async function readTripleWhaleMappedPairPage(
+  input: TripleWhaleCredentials & {
+    sourceChannels: readonly string[];
+    offset: number;
+    limit: number;
+  },
+  dependencies: TripleWhaleDependencies = defaultDependencies
+): Promise<AttributionRow[]> {
+  const reportingDate = validateCredentials(input);
+  if (
+    input.sourceChannels.length < 1 ||
+    input.sourceChannels.some((channel) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(channel)) ||
+    !Number.isInteger(input.offset) ||
+    input.offset < 0 ||
+    !Number.isInteger(input.limit) ||
+    input.limit < 1 ||
+    input.limit > 500
+  ) {
+    throw new ChannelLiftError("triple_whale_pair_page_invalid");
+  }
+  const channelList = input.sourceChannels.map((channel) => `'${channel}'`).join(",");
+  const sql = `SELECT order_id, channel, MIN(event_date) AS event_date FROM pixel_orders_table WHERE ${ATTRIBUTION_WHERE} AND channel IN (${channelList}) GROUP BY order_id, channel ORDER BY order_id, channel LIMIT ${input.limit} OFFSET ${input.offset}`;
+  const page = await queryTripleWhale(input, sql, dependencies);
+  if (page.length > input.limit) throw new ChannelLiftError("triple_whale_page_oversized");
+  return page.map((row) => {
+    if (typeof row.channel !== "string" || !input.sourceChannels.includes(row.channel)) {
+      throw new ChannelLiftError("triple_whale_channel_invalid");
+    }
+    if (typeof row.event_date !== "string" || row.event_date.slice(0, 10) !== reportingDate) {
+      throw new ChannelLiftError("triple_whale_period_mismatch");
+    }
+    return {
+      orderId: validateShopifyOrderId(row.order_id),
+      channel: row.channel,
+      eventDate: row.event_date,
+    };
+  });
+}
+
 export async function readTripleWhaleAttribution(
   input: TripleWhaleAttributionConfig & { apiKey: string },
   dependencies: TripleWhaleDependencies = defaultDependencies
@@ -69,10 +193,7 @@ export async function readTripleWhaleAttribution(
   configHash: string;
   snapshotHash: string;
 }> {
-  const reportingDate = validateReportingDate(input.reportingDate);
-  if (!input.shopId || input.shopId.length > 253 || !input.apiKey) {
-    throw new ChannelLiftError("triple_whale_configuration_invalid");
-  }
+  const reportingDate = validateCredentials(input);
   if (!Number.isInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 50_000) {
     throw new ChannelLiftError("triple_whale_page_size_invalid");
   }
@@ -81,46 +202,8 @@ export async function readTripleWhaleAttribution(
     throw new ChannelLiftError("triple_whale_max_rows_invalid");
   }
 
-  const where =
-    "event_date BETWEEN @startDate AND @endDate AND (model = 'Triple Attribution' AND attribution_window = 'lifetime')";
-  const from = `FROM pixel_orders_table WHERE ${where}`;
-  const baseSql = `SELECT order_id, channel, event_date ${from} ORDER BY order_id, channel, event_date LIMIT ${input.pageSize}`;
-  const countSql = `SELECT COUNT(*) AS rows, COUNT(DISTINCT order_id) AS orders, COUNT(DISTINCT tuple(order_id, channel)) AS pairs ${from}`;
-
-  const query = async (sql: string): Promise<Record<string, unknown>[]> => {
-    return withBoundedChannelLiftRetry({
-      operation: async () => {
-        const response = await dependencies.fetch(ENDPOINT, {
-          method: "POST",
-          redirect: "error",
-          signal: AbortSignal.timeout(30_000),
-          headers: { "Content-Type": "application/json", "x-api-key": input.apiKey },
-          body: JSON.stringify({
-            shopId: input.shopId,
-            query: sql,
-            period: { startDate: reportingDate, endDate: reportingDate },
-          }),
-        });
-        if (!response.ok) {
-          const retryable = response.status === 429 || response.status >= 500;
-          throw new ChannelLiftError(
-            response.status === 429
-              ? "triple_whale_rate_limited"
-              : response.status >= 500
-                ? "triple_whale_unavailable"
-                : "triple_whale_rejected",
-            retryable
-          );
-        }
-        return responseRows(await response.json());
-      },
-      normalizeError: (error) =>
-        error instanceof ChannelLiftError
-          ? error
-          : new ChannelLiftError("triple_whale_network_error", true),
-      sleep: dependencies.sleep,
-    });
-  };
+  const { baseSql, countSql } = attributionSql(input.pageSize);
+  const query = (sql: string) => queryTripleWhale(input, sql, dependencies);
 
   const counts = parseCounts(await query(countSql));
   if (counts.rows > maxRows) throw new ChannelLiftError("triple_whale_row_limit_exceeded");
@@ -165,13 +248,7 @@ export async function readTripleWhaleAttribution(
   return {
     rows,
     counts,
-    configHash: channelLiftDigest({
-      shopId: input.shopId,
-      reportingDate,
-      pageSize: input.pageSize,
-      baseSql,
-      countSql,
-    }),
+    configHash: tripleWhaleAttributionConfigHash(input),
     snapshotHash: channelLiftDigest(snapshot),
   };
 }

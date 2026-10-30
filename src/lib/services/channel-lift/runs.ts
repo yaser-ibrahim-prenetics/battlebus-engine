@@ -2,10 +2,12 @@ import type { QueryResultRow } from "pg";
 
 import {
   ChannelLiftError,
+  CHANNEL_LIFT_REASON_CODES,
   channelLiftRunId,
   validateReportingDate,
   type AttributionCounts,
   type ChannelLiftMode,
+  type ChannelLiftReasonCode,
   type ChannelLiftSource,
 } from "@/lib/channel-lift/model";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
@@ -118,25 +120,30 @@ export async function startChannelLiftRun({
   source,
   requestId,
   requestedBy,
-  requestReason,
+  reasonCode,
+  referenceId,
 }: {
   reportingDate: string;
   mode: ChannelLiftMode;
   source: ChannelLiftSource;
   requestId: string;
   requestedBy?: string;
-  requestReason?: string;
-}): Promise<{ disposition: "started" | "active" | "already_completed"; run: ChannelLiftRun }> {
+  reasonCode?: ChannelLiftReasonCode;
+  referenceId?: string;
+}): Promise<{
+  disposition: "started" | "active" | "already_completed" | "request_mismatch";
+  run: ChannelLiftRun;
+}> {
   requireDatabase();
   const reportingDate = validateReportingDate(rawReportingDate);
   if (!/^[A-Za-z0-9:_-]{1,200}$/.test(requestId)) {
     throw new ChannelLiftError("request_id_invalid");
   }
-  if (
-    source === "manual" &&
-    (!requestReason || requestReason.trim().length < 10 || requestReason.length > 1_000)
-  ) {
-    throw new ChannelLiftError("manual_request_reason_invalid");
+  if (source === "manual" && !CHANNEL_LIFT_REASON_CODES.includes(reasonCode as ChannelLiftReasonCode)) {
+    throw new ChannelLiftError("manual_reason_code_invalid");
+  }
+  if (referenceId && !/^[A-Z][A-Z0-9]{1,15}-[1-9]\d{0,9}$/.test(referenceId)) {
+    throw new ChannelLiftError("manual_reference_id_invalid");
   }
   const runId = channelLiftRunId(reportingDate, mode);
   try {
@@ -147,7 +154,8 @@ export async function startChannelLiftRun({
       source,
       requestId,
       requestedBy?.slice(0, 320) || null,
-      source === "manual" ? requestReason?.slice(0, 1_000) || null : null,
+      source === "manual" ? reasonCode || null : null,
+      source === "manual" ? referenceId || null : null,
     ]);
     if (inserted.rowCount === 0) {
       const existing = await queryDatabase<RunRow>(readChannelLiftRunSQL, [runId]);
@@ -164,6 +172,9 @@ export async function startChannelLiftRun({
         }
         if (run.status === "completed" || run.status === "dry_run_completed") {
           return { disposition: "already_completed", run };
+        }
+        if (run.status === "failed" && run.requestId !== requestId) {
+          return { disposition: "request_mismatch", run };
         }
       }
     }

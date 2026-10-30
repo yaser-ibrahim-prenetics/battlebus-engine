@@ -21,7 +21,8 @@ CREATE TABLE public.channel_lift_runs (
   snapshot_hash text,
   last_error_code text,
   requested_by text,
-  request_reason text,
+  reason_code text,
+  reference_id text,
   eligibility_cutoff_seconds bigint NOT NULL DEFAULT (
     EXTRACT(EPOCH FROM clock_timestamp())::bigint
   ),
@@ -62,9 +63,18 @@ CREATE TABLE public.channel_lift_runs (
   CONSTRAINT channel_lift_requested_by_length CHECK (
     requested_by IS NULL OR length(requested_by) BETWEEN 1 AND 320
   ),
-  CONSTRAINT channel_lift_request_reason_valid CHECK (
-    (source = 'schedule' AND request_reason IS NULL)
-    OR (source = 'manual' AND length(request_reason) BETWEEN 10 AND 1000)
+  CONSTRAINT channel_lift_reason_code_valid CHECK (
+    (source = 'schedule' AND reason_code IS NULL AND reference_id IS NULL)
+    OR (
+      source = 'manual'
+      AND reason_code IN (
+        'parity_validation', 'live_canary', 'incident_recovery', 'operator_replay'
+      )
+      AND (
+        reference_id IS NULL
+        OR reference_id ~ '^[A-Z][A-Z0-9]{1,15}-[1-9][0-9]{0,9}$'
+      )
+    )
   ),
   CONSTRAINT channel_lift_eligibility_cutoff_valid CHECK (
     eligibility_cutoff_seconds BETWEEN 1 AND 253402300799
@@ -141,7 +151,8 @@ BEGIN
     OR NEW.source IS DISTINCT FROM OLD.source
     OR NEW.request_id IS DISTINCT FROM OLD.request_id
     OR NEW.requested_by IS DISTINCT FROM OLD.requested_by
-    OR NEW.request_reason IS DISTINCT FROM OLD.request_reason
+    OR NEW.reason_code IS DISTINCT FROM OLD.reason_code
+    OR NEW.reference_id IS DISTINCT FROM OLD.reference_id
     OR NEW.eligibility_cutoff_seconds IS DISTINCT FROM OLD.eligibility_cutoff_seconds
     OR NEW.created_at IS DISTINCT FROM OLD.created_at
   THEN
@@ -314,7 +325,8 @@ SELECT
   config_hash,
   snapshot_hash,
   last_error_code,
-  request_reason,
+  reason_code,
+  reference_id,
   eligibility_cutoff_seconds,
   started_at,
   completed_at,
