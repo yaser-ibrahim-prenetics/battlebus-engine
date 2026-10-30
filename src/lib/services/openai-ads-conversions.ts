@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
 
 import { openAiAdsConfigurationIssue } from "@/lib/clients/openai-ads";
+import { config } from "@/lib/config";
 import { isDatabaseConfigured, queryDatabase } from "@/lib/db/database";
 import { openAiAdsConversionQueries } from "@/lib/db/queries/openai-ads-conversions";
 
@@ -78,6 +79,15 @@ export function toOpenAiAdsEventId(shopifyStore: string, shopifyOrderId: string 
   return `bb_order_created_${createHash("sha256").update(identity).digest("hex").slice(0, 40)}`;
 }
 
+export function normalizeOpenAiAdsShopifyStore(
+  shopifyStore: string,
+  activeStore = config.shopify.im8.shopDomain
+): string {
+  const normalized = shopifyStore.trim().toLowerCase();
+  if (normalized === "im8-battle-bus") return activeStore.trim().toLowerCase();
+  return normalized;
+}
+
 export function openAiAdsRetryDelaySeconds(attempt: number): number {
   return OPENAI_ADS_RETRY_DELAYS_SECONDS[Math.max(0, attempt - 1)] ?? 0;
 }
@@ -92,7 +102,7 @@ export async function enqueueOpenAiAdsConversion({
   occurredAt: string;
 }): Promise<OpenAiAdsConversionSummary> {
   requireDatabase();
-  const store = shopifyStore.trim().toLowerCase();
+  const store = normalizeOpenAiAdsShopifyStore(shopifyStore);
   const orderId = String(shopifyOrderId);
   if (!/^[a-z0-9][a-z0-9.-]{1,251}[a-z0-9]$/.test(store)) {
     throw new Error("OpenAI Ads conversion store identity is invalid");

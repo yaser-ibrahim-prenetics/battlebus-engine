@@ -12,6 +12,12 @@ export type OosRecoveryReplayMarker = {
   oosRecoveryAttemptToken?: string;
 };
 
+/** Canonical identity markers shared by paid-order and subscription reruns. */
+export type ShopifyOrderReplayMarker = {
+  originalShopifyOrderId?: string;
+  testMode?: boolean;
+};
+
 export type ShopifyOrderCreatedEvent = {
   name: "shopify/order.created";
   data: {
@@ -67,7 +73,8 @@ export type ShopifyOrderPaidEvent = {
     runSequence?: RunSequenceStage[];
     /** Marker so downstream knows this came from a sequenced retry. */
     fromSequencedRetry?: boolean;
-  } & OosRecoveryReplayMarker;
+  } & OosRecoveryReplayMarker &
+    ShopifyOrderReplayMarker;
 };
 
 export type ShopifyOrderUpdatedEvent = {
@@ -246,7 +253,7 @@ export type SubscriptionRenewalEvent = {
     subscriptionContractId: string;
     orderJson: ShopifyOrderPayload;
     receivedAt: string;
-  };
+  } & ShopifyOrderReplayMarker;
 };
 
 // ============================================================================

@@ -16,6 +16,7 @@ vi.mock("@/lib/clients/openai-ads", () => ({
 
 import {
   enqueueOpenAiAdsConversion,
+  normalizeOpenAiAdsShopifyStore,
   openAiAdsRetryDelaySeconds,
   toOpenAiAdsEventId,
 } from "../openai-ads-conversions";
@@ -32,6 +33,15 @@ describe("durable OpenAI Ads conversions", () => {
     expect(first).toBe(toOpenAiAdsEventId("store.myshopify.com", 123));
     expect(first).toMatch(/^bb_order_created_[a-f0-9]{40}$/);
     expect(first).not.toBe(toOpenAiAdsEventId("other.myshopify.com", "123"));
+  });
+
+  it("maps only the explicit legacy alias and preserves unknown store identities", () => {
+    expect(normalizeOpenAiAdsShopifyStore("im8-battle-bus", "active.myshopify.com")).toBe(
+      "active.myshopify.com"
+    );
+    expect(normalizeOpenAiAdsShopifyStore("Other.MyShopify.com", "active.myshopify.com")).toBe(
+      "other.myshopify.com"
+    );
   });
 
   it("persists one queued minimal conversion", async () => {
