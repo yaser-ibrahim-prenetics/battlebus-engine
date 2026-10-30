@@ -491,6 +491,11 @@ export type OrderLifecycleReadyEvent = {
   };
 };
 
+export type OpenAiAdsConversionQueuedEvent = {
+  name: "openai.ads/conversion.queued";
+  data: { eventId: string };
+};
+
 // Union type for all events
 export type BattleBusEvents =
   | ShopifyOrderCreatedEvent
@@ -518,7 +523,8 @@ export type BattleBusEvents =
   | BackorderCreatedEvent
   | BackorderResolvedEvent
   | BackorderRetryEvent
-  | OrderLifecycleReadyEvent;
+  | OrderLifecycleReadyEvent
+  | OpenAiAdsConversionQueuedEvent;
 
 // ============================================================================
 // PAYLOAD TYPES (Simplified - extend as needed from spock-store types)
@@ -531,6 +537,7 @@ export interface ShopifyOrderPayload {
   name: string;
   email: string;
   created_at: string;
+  processed_at?: string;
   updated_at: string;
   cancelled_at: string | null;
   total_price: string;

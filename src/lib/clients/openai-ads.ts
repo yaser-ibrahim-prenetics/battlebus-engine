@@ -126,14 +126,16 @@ export async function sendOpenAiAdsOrderCreatedConversion(
   {
     eventId,
     occurredAt,
+    shopifyStore,
   }: {
     eventId: string;
     occurredAt: string;
+    shopifyStore: string;
   },
   settings: OpenAiAdsConfiguration = config.openAiAds,
   fetchImplementation: typeof fetch = fetch
 ): Promise<number> {
-  const issue = openAiAdsConfigurationIssue(settings.allowedStore, settings);
+  const issue = openAiAdsConfigurationIssue(shopifyStore, settings);
   if (issue) {
     throw new OpenAiAdsDeliveryError(
       "OpenAI Ads delivery configuration is incomplete",

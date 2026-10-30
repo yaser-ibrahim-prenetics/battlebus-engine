@@ -27,7 +27,7 @@ describe("OpenAI Ads client", () => {
 
     await expect(
       sendOpenAiAdsOrderCreatedConversion(
-        { eventId: "bb_order_created_123", occurredAt },
+        { eventId: "bb_order_created_123", occurredAt, shopifyStore: settings.allowedStore },
         settings,
         fetchMock
       )
@@ -51,7 +51,11 @@ describe("OpenAI Ads client", () => {
 
   it.each([408, 429, 500, 503])("classifies HTTP %s as retryable", async (status) => {
     const request = sendOpenAiAdsOrderCreatedConversion(
-      { eventId: "event", occurredAt: new Date().toISOString() },
+      {
+        eventId: "event",
+        occurredAt: new Date().toISOString(),
+        shopifyStore: settings.allowedStore,
+      },
       settings,
       vi.fn().mockResolvedValue(new Response("ignored-sensitive-body", { status }))
     );
@@ -60,7 +64,11 @@ describe("OpenAI Ads client", () => {
 
   it("classifies HTTP 400 as permanent without reading the response", async () => {
     const request = sendOpenAiAdsOrderCreatedConversion(
-      { eventId: "event", occurredAt: new Date().toISOString() },
+      {
+        eventId: "event",
+        occurredAt: new Date().toISOString(),
+        shopifyStore: settings.allowedStore,
+      },
       settings,
       vi.fn().mockResolvedValue(new Response("customer@example.com", { status: 400 }))
     );
@@ -74,7 +82,11 @@ describe("OpenAI Ads client", () => {
   it("rejects an endpoint that could receive the bearer credential", async () => {
     await expect(
       sendOpenAiAdsOrderCreatedConversion(
-        { eventId: "event", occurredAt: new Date().toISOString() },
+        {
+          eventId: "event",
+          occurredAt: new Date().toISOString(),
+          shopifyStore: settings.allowedStore,
+        },
         { ...settings, endpoint: "https://attacker.example" },
         vi.fn()
       )
